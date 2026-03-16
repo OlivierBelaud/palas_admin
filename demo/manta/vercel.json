@@ -1,8 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx vite build && NITRO_PRESET=vercel npx nitropack build",
+  "buildCommand": "npx vite build && npx nitropack build",
   "installCommand": "cd ../.. && pnpm install",
   "framework": null,
+  "rewrites": [
+    { "source": "/admin/:path*", "destination": "/admin/index.html" }
+  ],
   "crons": [
     {
       "path": "/api/crons/cleanup-drafts",
