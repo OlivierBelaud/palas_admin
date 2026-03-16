@@ -124,6 +124,12 @@ export async function GET(_req: MantaRequest) {
         to: "/products",
         items: [],
       },
+      {
+        icon: "RocketLaunch",
+        label: "Workflow Tests",
+        to: "/test",
+        items: [],
+      },
     ],
     endpoints: {
       product: "/api/admin/products",
