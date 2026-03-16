@@ -31,79 +31,31 @@ async function bootstrapContainer() {
   logger.info("[manta:nitro] Bootstrapping container (Drizzle + Neon)...")
 
   // Create Drizzle db instance via Neon adapter
-  const { db, sql, close } = createNeonDatabase({ url: process.env.DATABASE_URL! })
+  const { db, rawSql, close } = createNeonDatabase({ url: process.env.DATABASE_URL! })
   logger.info("[manta:nitro] Neon connected via Drizzle")
 
-  // Run migrations (create tables if not exist)
-  // Using raw SQL for DDL since Drizzle doesn't handle CREATE TABLE IF NOT EXISTS
+  // Run migrations only if tables don't exist yet
   try {
-    await sql`
-      DO $$ BEGIN
-        CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived', 'active');
-      EXCEPTION
-        WHEN duplicate_object THEN null;
-      END $$
-    `
-    await sql`
-      CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, sku TEXT,
-        price INTEGER NOT NULL DEFAULT 0, status product_status NOT NULL DEFAULT 'draft',
-        image_urls TEXT[] DEFAULT '{}', catalog_file_url TEXT, metadata JSONB DEFAULT '{}',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        deleted_at TIMESTAMPTZ
-      )
-    `
-    await sql`
-      CREATE TABLE IF NOT EXISTS inventory_items (
-        id TEXT PRIMARY KEY, sku TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
-        reorder_point INTEGER NOT NULL DEFAULT 10, warehouse TEXT NOT NULL DEFAULT 'default',
-        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `
-    await sql`CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)`
-    await sql`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`
-    await sql`
-      CREATE TABLE IF NOT EXISTS workflow_checkpoints (
-        id SERIAL PRIMARY KEY, transaction_id TEXT NOT NULL, step_id TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending', data JSONB DEFAULT '{}', error TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(transaction_id, step_id)
-      )
-    `
-    await sql`CREATE INDEX IF NOT EXISTS idx_wf_checkpoints_tx ON workflow_checkpoints(transaction_id)`
-    await sql`
-      CREATE TABLE IF NOT EXISTS workflow_executions (
-        transaction_id TEXT PRIMARY KEY, workflow_name TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'running', input JSONB DEFAULT '{}',
-        result JSONB, error TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
-      )
-    `
-    await sql`
-      CREATE TABLE IF NOT EXISTS events (
-        id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, data JSONB DEFAULT '{}',
-        metadata JSONB DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending',
-        attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, last_error TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ
-      )
-    `
-    await sql`CREATE INDEX IF NOT EXISTS idx_events_status ON events(status)`
-    await sql`CREATE INDEX IF NOT EXISTS idx_events_name ON events(event_name)`
-    await sql`
-      CREATE TABLE IF NOT EXISTS job_executions (
-        id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running',
-        result JSONB, error TEXT, duration_ms INTEGER,
-        started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
-      )
-    `
-    await sql`
-      CREATE TABLE IF NOT EXISTS cron_heartbeats (
-        id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT,
-        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `
-    logger.info("[manta:nitro] All tables ready (incl. cron_heartbeats)")
-  } catch (err) {
-    logger.warn("[manta:nitro] Migration warning: " + (err as Error).message)
+    await rawSql("SELECT 1 FROM products LIMIT 1")
+    logger.info("[manta:nitro] Tables already exist — skipping migrations")
+  } catch {
+    logger.info("[manta:nitro] Running migrations (first boot)...")
+    try {
+      await rawSql(`DO $$ BEGIN CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived', 'active'); EXCEPTION WHEN duplicate_object THEN null; END $$`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, sku TEXT, price INTEGER NOT NULL DEFAULT 0, status product_status NOT NULL DEFAULT 'draft', image_urls TEXT[] DEFAULT '{}', catalog_file_url TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS inventory_items (id TEXT PRIMARY KEY, sku TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0, reorder_point INTEGER NOT NULL DEFAULT 10, warehouse TEXT NOT NULL DEFAULT 'default', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`)
+      await rawSql(`CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS workflow_checkpoints (id SERIAL PRIMARY KEY, transaction_id TEXT NOT NULL, step_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', data JSONB DEFAULT '{}', error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(transaction_id, step_id))`)
+      await rawSql(`CREATE INDEX IF NOT EXISTS idx_wf_checkpoints_tx ON workflow_checkpoints(transaction_id)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS workflow_executions (transaction_id TEXT PRIMARY KEY, workflow_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', input JSONB DEFAULT '{}', result JSONB, error TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS events (id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, data JSONB DEFAULT '{}', metadata JSONB DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, last_error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS job_executions (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', result JSONB, error TEXT, duration_ms INTEGER, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ)`)
+      await rawSql(`CREATE TABLE IF NOT EXISTS cron_heartbeats (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT, executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`)
+      logger.info("[manta:nitro] All tables created")
+    } catch (err) {
+      logger.warn("[manta:nitro] Migration warning: " + (err as Error).message)
+    }
   }
 
   // Container

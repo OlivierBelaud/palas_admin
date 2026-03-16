@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "postgres": "^3.4.0",
-    "drizzle-orm": "^0.35.0"
+    "drizzle-orm": "^0.35.0",
+    "@neondatabase/serverless": "^0.10.0"
   },
   "peerDependencies": {
     "@manta/core": "workspace:*"

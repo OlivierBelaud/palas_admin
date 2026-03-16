@@ -109,8 +109,7 @@ export const createProductPipeline = createWorkflow({
         const product = (previousOutput['create-product'] as { product: { id: string; title: string; sku: string; price: number } }).product
         const imageUrls = (previousOutput['upload-images'] as { imageUrls: string[] }).imageUrls
 
-        // Simulate a long task
-        await new Promise(resolve => setTimeout(resolve, 100))
+
 
         const catalogEntry = JSON.stringify({
           id: product.id,
