@@ -7,13 +7,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./ports": "./src/ports/index.ts",
-    "./errors": "./src/errors/manta-error.ts"
+    "./errors": "./src/errors/manta-error.ts",
+    "./db": "./src/db/index.ts"
   },
   "dependencies": {
     "awilix": "^11.0.0",
+    "drizzle-orm": "^0.35.0",
     "zod": "^3.23.0"
-  },
-  "peerDependencies": {
-    "drizzle-orm": "^0.35.0"
   }
 }

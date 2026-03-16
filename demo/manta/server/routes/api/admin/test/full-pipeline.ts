@@ -53,8 +53,8 @@ export default defineEventHandler(async (event) => {
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
     container.register("productService", new ProductService())
-    container.register("inventoryService", new InventoryService())
-    container.register("statsService", new StatsService())
+    container.register("inventoryService", new InventoryService(sql))
+    container.register("statsService", new StatsService(sql))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     // Register workflows
@@ -134,8 +134,8 @@ export default defineEventHandler(async (event) => {
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
     container.register("productService", new ProductService())
-    container.register("inventoryService", new InventoryService())
-    container.register("statsService", new StatsService())
+    container.register("inventoryService", new InventoryService(sql))
+    container.register("statsService", new StatsService(sql))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     const wm = new WorkflowManager(container)
@@ -290,8 +290,8 @@ export default defineEventHandler(async (event) => {
     const { FileService } = await import("~src/modules/file/service")
     const ps = new ProductService()
     container.register("productService", ps)
-    container.register("inventoryService", new InventoryService())
-    container.register("statsService", new StatsService())
+    container.register("inventoryService", new InventoryService(sql))
+    container.register("statsService", new StatsService(sql))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     const wm = new WorkflowManager(container)
@@ -358,7 +358,7 @@ export default defineEventHandler(async (event) => {
     container.register(ContainerRegistrationKeys.LOCKING, new NeonLockingAdapter(sql))
 
     const { InventoryService } = await import("~src/modules/inventory/index")
-    container.register("inventoryService", new InventoryService())
+    container.register("inventoryService", new InventoryService(sql))
 
     const wm = new WorkflowManager(container)
     const { initializeInventory } = await import("~src/workflows/initialize-inventory")

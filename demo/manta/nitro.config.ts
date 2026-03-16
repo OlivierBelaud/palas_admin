@@ -15,6 +15,7 @@ export default defineNitroConfig({
   // Aliases so server code can import from src/ and workspace packages
   alias: {
     "~src": resolve(__dirname, "src"),
+    "@manta/core/db": resolve(__dirname, "../../packages/core/src/db/index.ts"),
     "@manta/core/ports": resolve(__dirname, "../../packages/core/src/ports/index.ts"),
     "@manta/core/errors": resolve(__dirname, "../../packages/core/src/errors/manta-error.ts"),
     "@manta/core": resolve(__dirname, "../../packages/core/src/index.ts"),

@@ -115,8 +115,8 @@ export async function POST(req: MantaRequest) {
 
     const ps = new ProductService()
     tempContainer.register("productService", ps)
-    tempContainer.register("inventoryService", new InventoryService())
-    tempContainer.register("statsService", new StatsService())
+    tempContainer.register("inventoryService", new InventoryService(sql))
+    tempContainer.register("statsService", new StatsService(sql))
     tempContainer.register("fileService", new FileService(failingFile))
 
     const wm = new WorkflowManager(tempContainer)

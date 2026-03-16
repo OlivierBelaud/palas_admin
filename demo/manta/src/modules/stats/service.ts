@@ -1,17 +1,34 @@
-// StatsService — simple in-memory counter for demo
+// StatsService — Drizzle ORM implementation
+
+import { eq, sql } from "drizzle-orm"
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
+import { stats } from "@manta/core/db"
 
 export class StatsService {
-  private _counters = new Map<string, number>()
+  private db: PostgresJsDatabase
+
+  constructor(db: PostgresJsDatabase) {
+    this.db = db
+  }
 
   async increment(key: string): Promise<void> {
-    this._counters.set(key, (this._counters.get(key) ?? 0) + 1)
+    await this.db.insert(stats)
+      .values({ key, value: 1 })
+      .onConflictDoUpdate({
+        target: stats.key,
+        set: { value: sql`${stats.value} + 1` },
+      })
   }
 
   async get(key: string): Promise<number> {
-    return this._counters.get(key) ?? 0
+    const [row] = await this.db.select({ value: stats.value })
+      .from(stats)
+      .where(eq(stats.key, key))
+
+    return row?.value ?? 0
   }
 
-  _reset(): void {
-    this._counters.clear()
+  async _reset(): Promise<void> {
+    await this.db.delete(stats)
   }
 }

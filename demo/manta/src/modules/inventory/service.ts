@@ -1,44 +1,51 @@
-// InventoryService — in-memory implementation for demo scenario
+// InventoryService — Drizzle ORM implementation
 
+import { eq } from "drizzle-orm"
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
+import { inventoryItems } from "@manta/core/db"
 import type { InventoryItemData } from './models/inventory-item'
 
 export class InventoryService {
-  private _items = new Map<string, InventoryItemData>()
+  private db: PostgresJsDatabase
+
+  constructor(db: PostgresJsDatabase) {
+    this.db = db
+  }
 
   async createStock(data: { sku: string; quantity: number; warehouse?: string }): Promise<InventoryItemData> {
     const id = `inv_${crypto.randomUUID().slice(0, 8)}`
-    const now = new Date()
+    const warehouse = data.warehouse ?? 'default'
 
-    const item: InventoryItemData = {
+    const [item] = await this.db.insert(inventoryItems).values({
       id,
       sku: data.sku,
       quantity: data.quantity,
       reorder_point: 10,
-      warehouse: data.warehouse ?? 'default',
-      created_at: now,
-      updated_at: now,
-    }
+      warehouse,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }).returning()
 
-    this._items.set(id, item)
-    return { ...item }
+    return item as InventoryItemData
   }
 
   async setReorderPoint(sku: string, point: number): Promise<void> {
-    for (const item of this._items.values()) {
-      if (item.sku === sku) {
-        item.reorder_point = point
-        item.updated_at = new Date()
-        return
-      }
+    const result = await this.db.update(inventoryItems)
+      .set({ reorder_point: point, updated_at: new Date() })
+      .where(eq(inventoryItems.sku, sku))
+      .returning({ id: inventoryItems.id })
+
+    if (result.length === 0) {
+      throw new Error(`Inventory item with SKU "${sku}" not found`)
     }
-    throw new Error(`Inventory item with SKU "${sku}" not found`)
   }
 
   async findBySku(sku: string): Promise<InventoryItemData | null> {
-    for (const item of this._items.values()) {
-      if (item.sku === sku) return { ...item }
-    }
-    return null
+    const [item] = await this.db.select().from(inventoryItems)
+      .where(eq(inventoryItems.sku, sku))
+      .limit(1)
+
+    return (item as InventoryItemData) ?? null
   }
 
   async isLowStock(sku: string): Promise<boolean> {
@@ -48,10 +55,10 @@ export class InventoryService {
   }
 
   async delete(id: string): Promise<void> {
-    this._items.delete(id)
+    await this.db.delete(inventoryItems).where(eq(inventoryItems.id, id))
   }
 
-  _reset(): void {
-    this._items.clear()
+  async _reset(): Promise<void> {
+    await this.db.delete(inventoryItems)
   }
 }
