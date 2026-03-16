@@ -8,8 +8,8 @@
     "db:generate": "tsx ../../packages/cli/bin/manta.ts db generate",
     "db:migrate": "tsx ../../packages/cli/bin/manta.ts db migrate",
     "db:create": "tsx ../../packages/cli/bin/manta.ts db create",
-    "build": "tsx ../../packages/cli/bin/manta.ts build --preset vercel",
-    "build:node": "tsx ../../packages/cli/bin/manta.ts build --preset node"
+    "build": "nitropack build",
+    "build:legacy": "tsx ../../packages/cli/bin/manta.ts build --preset vercel"
   },
   "dependencies": {
     "@manta/core": "workspace:*",
@@ -18,7 +18,9 @@
     "@manta/adapter-drizzle-pg": "workspace:*",
     "@manta/adapter-nitro": "workspace:*",
     "@manta/dashboard": "workspace:*",
-    "drizzle-orm": "^0.35.0"
+    "drizzle-orm": "^0.35.0",
+    "nitropack": "^2.10.0",
+    "h3": "^1.12.0"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

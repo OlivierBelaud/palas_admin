@@ -6,6 +6,9 @@ dist/
 **/.vercel/
 **/.manta/
 **/.medusa/
+**/.nitro/
+**/.output/
+**/public/admin/
 
 # Environment
 .env
