@@ -47,9 +47,12 @@ export class NeonEventBusAdapter implements IEventBusPort {
         // Mark as processed in DB
         await this.sql`
           UPDATE events SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
-          WHERE event_name = ${msg.eventName} AND status = 'pending'
-          AND data::text = ${JSON.stringify(msg.data)}
-          LIMIT 1
+          WHERE id = (
+            SELECT id FROM events
+            WHERE event_name = ${msg.eventName} AND status = 'pending'
+            AND data::text = ${JSON.stringify(msg.data)}
+            LIMIT 1
+          )
         `
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err)
@@ -58,9 +61,12 @@ export class NeonEventBusAdapter implements IEventBusPort {
         await this.sql`
           UPDATE events SET attempts = attempts + 1, last_error = ${errorMsg},
           status = CASE WHEN attempts + 1 >= max_attempts THEN 'dead_letter' ELSE 'pending' END
-          WHERE event_name = ${msg.eventName} AND status = 'pending'
-          AND data::text = ${JSON.stringify(msg.data)}
-          LIMIT 1
+          WHERE id = (
+            SELECT id FROM events
+            WHERE event_name = ${msg.eventName} AND status = 'pending'
+            AND data::text = ${JSON.stringify(msg.data)}
+            LIMIT 1
+          )
         `
       }
     }
