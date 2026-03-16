@@ -97,9 +97,9 @@ export function TestPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4">
         <div>
-          <Heading level="h2">Workflow Tests</Heading>
+          <Heading level="h2">Serverless E2E Tests</Heading>
           <Text size="small" className="text-ui-fg-subtle">
-            Battle-test the framework: workflows, events, compensation, locking
+            Battle-test real edge cases: DB persistence, crash recovery, checkpoints, compensation, cron
           </Text>
         </div>
       </div>
@@ -173,7 +173,7 @@ export function TestPanel() {
           isLoading={running === "Full Test Suite"}
           onClick={runTestSuite}
         >
-          Run Full Test Suite (7 tests)
+          Run Full Test Suite (8 tests)
         </Button>
       </div>
 

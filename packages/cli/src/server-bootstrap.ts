@@ -5,6 +5,8 @@ import { discoverResources } from './resource-loader'
 import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
 import { DrizzlePgAdapter } from '@manta/adapter-drizzle-pg'
 import { NitroAdapter } from '@manta/adapter-nitro'
+import postgres from 'postgres'
+import { drizzle } from 'drizzle-orm/postgres-js'
 import {
   MantaContainer,
   ContainerRegistrationKeys,
@@ -76,8 +78,13 @@ export async function bootstrapAndStart(options: ServerBootstrapOptions): Promis
     // [3] Auto-create tables (dev mode only)
     if (mode === 'dev') {
       const sql = db.getPool()
-      await ensureProductTable(sql, logger)
+      await ensureAllTables(sql, logger)
     }
+
+    // [3b] Create Drizzle db instance for services
+    const pgSql = postgres(config.database!.url!, { max: 5 })
+    const drizzleDb = drizzle(pgSql)
+    logger.info('Drizzle ORM initialized')
 
     // [4] Create container and register infrastructure adapters
     const container = new MantaContainer()
@@ -87,6 +94,7 @@ export async function bootstrapAndStart(options: ServerBootstrapOptions): Promis
     container.register(ContainerRegistrationKeys.LOCKING, new InMemoryLockingAdapter())
     container.register('IFilePort', new InMemoryFileAdapter())
     container.register(ContainerRegistrationKeys.DATABASE, db)
+    container.register('db', drizzleDb)
 
     // [5-18] Discover and wire all resources via ResourceLoader (lazy boot)
     logger.info('Discovering resources...')
@@ -113,7 +121,7 @@ export async function bootstrapAndStart(options: ServerBootstrapOptions): Promis
     }
 
     // [Step 12] Load and register workflows
-    const wm = new WorkflowManager(container)
+    const wm = new WorkflowManager(container, drizzleDb)
     for (const wfInfo of resources.workflows) {
       try {
         const imported = await import(`${wfInfo.path}?t=${Date.now()}`)
@@ -224,14 +232,19 @@ function tryInstantiateService(
     if (ServiceClass.length === 0) {
       return new ServiceClass()
     }
+    // Determine dependency by class name
+    const name = ServiceClass.name || ''
+    if (name === 'FileService') {
+      return new ServiceClass(container.resolve('IFilePort'))
+    }
+    // Default: pass Drizzle db instance (ProductService, InventoryService, StatsService)
+    try {
+      return new ServiceClass(container.resolve('db'))
+    } catch {}
+    // Fallback: try other ports
     const portKeys = ['IFilePort', 'IDatabasePort', 'ILoggerPort', 'IEventBusPort', 'ICachePort']
     for (const key of portKeys) {
-      try {
-        const port = container.resolve(key)
-        return new ServiceClass(port)
-      } catch {
-        continue
-      }
+      try { return new ServiceClass(container.resolve(key)) } catch {}
     }
     return null
   } catch {
@@ -337,31 +350,68 @@ async function setupAdminProxy(
   })
 }
 
-async function ensureProductTable(sql: unknown, logger: ILoggerPort): Promise<void> {
+async function ensureAllTables(sql: unknown, logger: ILoggerPort): Promise<void> {
   const pg = sql as { (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> }
   try {
     await pg`
       DO $$ BEGIN
-        CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived');
+        CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived', 'active');
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$
     `
     await pg`
       CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT,
-        price INTEGER NOT NULL,
-        status product_status NOT NULL DEFAULT 'draft',
-        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        deleted_at TIMESTAMP
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, sku TEXT,
+        price INTEGER NOT NULL DEFAULT 0, status product_status NOT NULL DEFAULT 'draft',
+        image_urls TEXT[] DEFAULT '{}', catalog_file_url TEXT, metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at TIMESTAMPTZ
       )
     `
-    logger.info('Table "products" ready')
+    await pg`
+      CREATE TABLE IF NOT EXISTS inventory_items (
+        id TEXT PRIMARY KEY, sku TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+        reorder_point INTEGER NOT NULL DEFAULT 10, warehouse TEXT NOT NULL DEFAULT 'default',
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `
+    await pg`CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)`
+    await pg`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`
+    await pg`
+      CREATE TABLE IF NOT EXISTS workflow_checkpoints (
+        id SERIAL PRIMARY KEY, transaction_id TEXT NOT NULL, step_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', data JSONB DEFAULT '{}', error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(transaction_id, step_id)
+      )
+    `
+    await pg`CREATE INDEX IF NOT EXISTS idx_wf_checkpoints_tx ON workflow_checkpoints(transaction_id)`
+    await pg`
+      CREATE TABLE IF NOT EXISTS workflow_executions (
+        transaction_id TEXT PRIMARY KEY, workflow_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running', input JSONB DEFAULT '{}',
+        result JSONB, error TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
+      )
+    `
+    await pg`
+      CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, data JSONB DEFAULT '{}',
+        metadata JSONB DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, last_error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ
+      )
+    `
+    await pg`
+      CREATE TABLE IF NOT EXISTS job_executions (
+        id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running',
+        result JSONB, error TEXT, duration_ms INTEGER,
+        started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
+      )
+    `
+    logger.info('All tables ready (products, inventory, stats, workflows, events, jobs)')
   } catch (err) {
-    logger.error('Failed to create table', err)
+    logger.error('Failed to create tables', err)
     throw err
   }
 }
