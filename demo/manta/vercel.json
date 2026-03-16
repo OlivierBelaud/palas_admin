@@ -3,8 +3,5 @@
   "buildCommand": "npx tsx ../../packages/cli/bin/manta.ts build --preset vercel",
   "outputDirectory": ".vercel/output",
   "framework": null,
-  "installCommand": "cd ../.. && pnpm install",
-  "env": {
-    "DATABASE_URL": "@database-url"
-  }
+  "installCommand": "cd ../.. && pnpm install"
 }
