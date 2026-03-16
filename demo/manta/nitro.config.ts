@@ -18,6 +18,7 @@ export default defineNitroConfig({
     "@manta/core": resolve(__dirname, "../../packages/core/src/index.ts"),
     "@manta/adapter-logger-pino": resolve(__dirname, "../../packages/adapter-logger-pino/src/index.ts"),
     "@manta/adapter-drizzle-pg": resolve(__dirname, "../../packages/adapter-drizzle-pg/src/index.ts"),
+    "@manta/adapter-neon": resolve(__dirname, "../../packages/adapter-neon/src/index.ts"),
   },
 
   // Static files — admin dashboard goes in public/admin after Vite build

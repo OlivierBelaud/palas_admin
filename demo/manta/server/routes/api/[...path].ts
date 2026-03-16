@@ -21,32 +21,35 @@ async function getContainer() {
 }
 
 async function bootstrapContainer() {
-  const { MantaContainer, ContainerRegistrationKeys, InMemoryEventBusAdapter, InMemoryCacheAdapter, InMemoryLockingAdapter, InMemoryFileAdapter, WorkflowManager } = await import("@manta/core")
+  const { MantaContainer, ContainerRegistrationKeys, InMemoryCacheAdapter, InMemoryFileAdapter, WorkflowManager } = await import("@manta/core")
   const { PinoLoggerAdapter } = await import("@manta/adapter-logger-pino")
   const { DrizzlePgAdapter } = await import("@manta/adapter-drizzle-pg")
+  const { NeonWorkflowStorageAdapter, NeonLockingAdapter, NeonEventBusAdapter, runMigrations } = await import("@manta/adapter-neon")
+  const postgres = (await import("postgres")).default
 
   const logger = new PinoLoggerAdapter({ level: "info", pretty: false })
-  logger.info("[manta:nitro] Bootstrapping container...")
+  logger.info("[manta:nitro] Bootstrapping container (serverless)...")
 
-  // Database
-  const db = new DrizzlePgAdapter()
-  await db.initialize({
-    url: process.env.DATABASE_URL!,
-    pool: { min: 1, max: 3 },
+  // Raw SQL connection for Neon adapters
+  const isServerless = !!process.env.VERCEL
+  const sql = postgres(process.env.DATABASE_URL!, {
+    ssl: "require",
+    max: isServerless ? 1 : 5,
+    idle_timeout: isServerless ? 0 : 30,
+    connect_timeout: 5,
   })
-  logger.info("[manta:nitro] Database connected")
+  logger.info("[manta:nitro] PostgreSQL connected (Neon)")
 
-  // Auto-create tables
-  const sql = db.getPool()
+  // Run all migrations (products table + adapter tables)
   try {
-    await (sql as any)`
+    await sql`
       DO $$ BEGIN
         CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived', 'active');
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$
     `
-    await (sql as any)`
+    await sql`
       CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -63,18 +66,38 @@ async function bootstrapContainer() {
       )
     `
     logger.info("[manta:nitro] Table 'products' ready")
+
+    // Neon adapter tables (workflow_checkpoints, events, job_executions)
+    await runMigrations(sql)
+    logger.info("[manta:nitro] Neon adapter tables ready")
   } catch (err) {
-    logger.warn("[manta:nitro] Table creation warning: " + (err as Error).message)
+    logger.warn("[manta:nitro] Migration warning: " + (err as Error).message)
   }
+
+  // Database adapter (for modules that use it)
+  const db = new DrizzlePgAdapter()
+  await db.initialize({
+    url: process.env.DATABASE_URL!,
+    pool: { min: 1, max: isServerless ? 1 : 5 },
+  })
+
+  // Neon-backed adapters (persistent, survive function crashes)
+  const workflowStorage = new NeonWorkflowStorageAdapter(sql)
+  const locking = new NeonLockingAdapter(sql)
+  const eventBus = new NeonEventBusAdapter(sql)
 
   // Container
   const container = new MantaContainer()
   container.register(ContainerRegistrationKeys.LOGGER, logger)
-  container.register(ContainerRegistrationKeys.EVENT_BUS, new InMemoryEventBusAdapter())
+  container.register(ContainerRegistrationKeys.EVENT_BUS, eventBus)
   container.register(ContainerRegistrationKeys.CACHE, new InMemoryCacheAdapter())
-  container.register(ContainerRegistrationKeys.LOCKING, new InMemoryLockingAdapter())
+  container.register(ContainerRegistrationKeys.LOCKING, locking)
+  container.register("IWorkflowStoragePort", workflowStorage)
   container.register("IFilePort", new InMemoryFileAdapter())
   container.register(ContainerRegistrationKeys.DATABASE, db)
+  container.register("sql", sql) // Raw SQL for direct queries
+
+  logger.info("[manta:nitro] Adapters: EventBus=Neon, Locking=Neon, WorkflowStorage=Neon, Cache=InMemory, File=InMemory")
 
   // Load modules
   const moduleImports = [
@@ -122,7 +145,7 @@ async function bootstrapContainer() {
   container.register("workflowManager", wm)
 
   // Subscribers
-  const eventBus = container.resolve<any>(ContainerRegistrationKeys.EVENT_BUS)
+  const registeredEventBus = container.resolve<any>(ContainerRegistrationKeys.EVENT_BUS)
   const resolve = <T>(key: string): T => container.resolve<T>(key)
 
   const subImports = [
@@ -134,7 +157,7 @@ async function bootstrapContainer() {
     const mod = await subPromise
     const sub = mod.default
     if (sub?.event && typeof sub.handler === "function") {
-      eventBus.subscribe(sub.event, (msg: any) => sub.handler(msg, resolve))
+      registeredEventBus.subscribe(sub.event, (msg: any) => sub.handler(msg, resolve))
       logger.info(`[manta:nitro] Subscriber: ${sub.event}`)
     }
   }

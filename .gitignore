@@ -22,10 +22,10 @@ medusa-source/
 audit-output/
 
 # Docs & specs (internal only)
-docs/
-SPEC/
-TEST/
-IMPL/
+/docs/
+/SPEC/
+/TEST/
+/IMPL/
 
 # OS
 .DS_Store
