@@ -8,6 +8,7 @@ const routeModules = {
   "admin/products": () => import("~src/api/admin/products/route"),
   "admin/products/[id]": () => import("~src/api/admin/products/[id]/route"),
   "admin/registry": () => import("~src/api/admin/registry/route"),
+  "admin/test": () => import("~src/api/admin/test/route"),
 }
 
 // Lazy-loaded container bootstrap

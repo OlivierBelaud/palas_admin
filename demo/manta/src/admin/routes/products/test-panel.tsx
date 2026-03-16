@@ -67,7 +67,13 @@ export function TestPanel() {
         method: "POST",
         credentials: "include",
       })
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}: ${res.statusText}`)
+      }
       const data: TestReport = await res.json()
+      if (!data?.summary) {
+        throw new Error("Invalid response — no summary in response")
+      }
       setReport(data)
       if (data.summary.allPassed) {
         toast.success(`All ${data.summary.total} tests passed`, {
