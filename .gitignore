@@ -18,6 +18,12 @@ medusa-source/
 # Audit output (generated)
 audit-output/
 
+# Docs & specs (internal only)
+docs/
+SPEC/
+TEST/
+IMPL/
+
 # OS
 .DS_Store
 Thumbs.db
