@@ -409,7 +409,13 @@ async function ensureAllTables(sql: unknown, logger: ILoggerPort): Promise<void>
         started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
       )
     `
-    logger.info('All tables ready (products, inventory, stats, workflows, events, jobs)')
+    await pg`
+      CREATE TABLE IF NOT EXISTS cron_heartbeats (
+        id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT,
+        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+    logger.info('All tables ready (products, inventory, stats, workflows, events, jobs, cron_heartbeats)')
   } catch (err) {
     logger.error('Failed to create tables', err)
     throw err

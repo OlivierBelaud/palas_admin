@@ -123,3 +123,14 @@ export const jobExecutions = pgTable("job_executions", {
 }, (table) => [
   index("idx_job_executions_name").on(table.job_name),
 ])
+
+// ──────────────────────────────────────────────
+// Cron heartbeats (proves cron runs automatically)
+// ──────────────────────────────────────────────
+
+export const cronHeartbeats = pgTable("cron_heartbeats", {
+  id: serial("id").primaryKey(),
+  job_name: text("job_name").notNull(),
+  message: text("message"),
+  executed_at: timestamp("executed_at", { withTimezone: true }).notNull().defaultNow(),
+})

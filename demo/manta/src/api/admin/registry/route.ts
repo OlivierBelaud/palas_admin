@@ -130,6 +130,12 @@ export async function GET(_req: MantaRequest) {
         to: "/test",
         items: [],
       },
+      {
+        icon: "ChartBar",
+        label: "Cron Monitor",
+        to: "/crons",
+        items: [],
+      },
     ],
     endpoints: {
       product: "/api/admin/products",

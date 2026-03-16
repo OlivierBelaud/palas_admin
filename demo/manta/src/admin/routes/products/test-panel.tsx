@@ -168,6 +168,53 @@ export function TestPanel() {
         </Button>
 
         <Button
+          variant="secondary"
+          size="small"
+          isLoading={running === "Concurrence Test"}
+          onClick={async () => {
+            setRunning("Concurrence Test")
+            setLastAction("Concurrence Test")
+            setLastResult(null)
+            try {
+              const sku = `CONCURRENT-${Date.now()}`
+              // Fire 2 requests simultaneously with the same SKU
+              const [r1, r2] = await Promise.allSettled([
+                fetch("/api/admin/products", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ title: "Concurrent A", sku, price: 100, initialStock: 1, reorderPoint: 1 }),
+                }).then(r => r.json()),
+                fetch("/api/admin/products", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify({ title: "Concurrent B", sku, price: 200, initialStock: 1, reorderPoint: 1 }),
+                }).then(r => r.json()),
+              ])
+              const successes = [r1, r2].filter(r => r.status === "fulfilled" && r.value?.product?.status === "active")
+              const failures = [r1, r2].filter(r => r.status === "fulfilled" && r.value?.type === "INVALID_DATA")
+              setLastResult({
+                sku,
+                request1: r1.status === "fulfilled" ? r1.value : { error: (r1 as any).reason?.message },
+                request2: r2.status === "fulfilled" ? r2.value : { error: (r2 as any).reason?.message },
+                successes: successes.length,
+                failures: failures.length,
+                verdict: successes.length === 1 && failures.length === 1 ? "PASS — only 1 of 2 concurrent requests succeeded" : `${successes.length} succeeded, ${failures.length} failed`,
+              })
+              toast.success(`Concurrence: ${successes.length} success, ${failures.length} rejected`)
+              queryClient.invalidateQueries({ queryKey: ["products"] })
+            } catch (err) {
+              setLastResult({ error: (err as Error).message })
+            } finally {
+              setRunning(null)
+            }
+          }}
+        >
+          Test Concurrence (2 simultaneous)
+        </Button>
+
+        <Button
           variant="primary"
           size="small"
           isLoading={running === "Full Test Suite"}

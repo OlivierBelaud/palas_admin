@@ -9,6 +9,7 @@ const routeModules = {
   "admin/products/[id]": () => import("~src/api/admin/products/[id]/route"),
   "admin/registry": () => import("~src/api/admin/registry/route"),
   "admin/test": () => import("~src/api/admin/test/route"),
+  "admin/crons": () => import("~src/api/admin/crons/route"),
 }
 
 // Lazy-loaded container bootstrap
@@ -94,7 +95,13 @@ async function bootstrapContainer() {
         started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ
       )
     `
-    logger.info("[manta:nitro] All tables ready")
+    await sql`
+      CREATE TABLE IF NOT EXISTS cron_heartbeats (
+        id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT,
+        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+    logger.info("[manta:nitro] All tables ready (incl. cron_heartbeats)")
   } catch (err) {
     logger.warn("[manta:nitro] Migration warning: " + (err as Error).message)
   }
