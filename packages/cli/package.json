@@ -1,0 +1,22 @@
+{
+  "name": "@manta/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "manta": "./bin/manta.ts"
+  },
+  "main": "src/index.ts",
+  "dependencies": {
+    "@manta/core": "workspace:*",
+    "@manta/adapter-logger-pino": "workspace:*",
+    "@manta/adapter-drizzle-pg": "workspace:*",
+    "@manta/adapter-nitro": "workspace:*",
+    "dotenv": "^16.4.0",
+    "commander": "^12.0.0",
+    "chokidar": "^4.0.0",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}

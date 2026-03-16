@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+**/.vercel/
+**/.manta/
+**/.medusa/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Medusa source (reference only, not part of the project)
+medusa-source/
+
+# Audit output (generated)
+audit-output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+pino-pretty.log
+
+# Lock files (keep pnpm-lock.yaml)
+yarn.lock
+package-lock.json
+
+# Vitest
+coverage/
+.env.test

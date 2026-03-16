@@ -1,0 +1,18 @@
+// @manta/core/adapters — In-memory adapter implementations for dev/test
+
+export { InMemoryCacheAdapter } from './cache-memory'
+export { InMemoryEventBusAdapter } from './eventbus-memory'
+export { InMemoryLockingAdapter } from './locking-memory'
+export { TestLogger, type LogEntry } from './logger-test'
+export { InMemoryFileAdapter } from './file-memory'
+export { InMemoryNotificationAdapter } from './notification-memory'
+export { NoOpTranslationAdapter } from './translation-noop'
+export { InMemoryWorkflowStorage } from './workflow-storage-memory'
+export { InMemoryWorkflowEngine } from './workflow-engine-memory'
+export { InMemoryJobScheduler } from './job-scheduler-memory'
+export { InMemoryHttpAdapter } from './http-memory'
+export { InMemoryRepository } from './repository-memory'
+export { InMemoryDatabaseAdapter, InMemoryTransaction } from './database-memory'
+export { InMemoryContainer } from './container-memory'
+export { InMemoryMessageAggregator } from './message-aggregator-memory'
+export { MockAuthPort, MockAuthModuleService, MockAuthGateway, type TestAuthConfig } from './auth-mock'

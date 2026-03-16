@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@manta/core": ["../../packages/core/src/index.ts"],
+      "@manta/core/*": ["../../packages/core/src/*/index.ts"],
+      "@manta/adapter-logger-pino": ["../../packages/adapter-logger-pino/src/index.ts"],
+      "@manta/adapter-drizzle-pg": ["../../packages/adapter-drizzle-pg/src/index.ts"],
+      "@manta/adapter-nitro": ["../../packages/adapter-nitro/src/index.ts"],
+      "@manta/cli": ["../../packages/cli/src/index.ts"],
+      "@manta/dashboard": ["../../packages/dashboard/src/index.tsx"],
+      "@manta/dashboard-core": ["../../packages/dashboard-core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "manta.config.ts"]
+}

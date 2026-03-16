@@ -1,0 +1,10 @@
+// SPEC-057 — DML public API
+export { model } from './model'
+export { DmlEntity } from './entity'
+export { DmlProperty } from './property'
+export type { DmlPropertyDefinition, DmlRelationDefinition, DmlEntityOptions } from './entity'
+export { nullable, defaultValue, indexed, unique, computed, searchable, translatable } from './modifiers'
+export { hasOne, hasOneWithFK } from './relations/has-one'
+export { hasMany } from './relations/has-many'
+export { belongsTo } from './relations/belongs-to'
+export { manyToMany } from './relations/many-to-many'

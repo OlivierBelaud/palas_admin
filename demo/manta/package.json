@@ -1,0 +1,48 @@
+{
+  "name": "manta-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx ../../packages/cli/bin/manta.ts dev",
+    "db:generate": "tsx ../../packages/cli/bin/manta.ts db generate",
+    "db:migrate": "tsx ../../packages/cli/bin/manta.ts db migrate",
+    "db:create": "tsx ../../packages/cli/bin/manta.ts db create",
+    "build": "tsx ../../packages/cli/bin/manta.ts build --preset vercel",
+    "build:node": "tsx ../../packages/cli/bin/manta.ts build --preset node"
+  },
+  "dependencies": {
+    "@manta/core": "workspace:*",
+    "@manta/cli": "workspace:*",
+    "@manta/adapter-logger-pino": "workspace:*",
+    "@manta/adapter-drizzle-pg": "workspace:*",
+    "@manta/adapter-nitro": "workspace:*",
+    "@manta/dashboard": "workspace:*",
+    "drizzle-orm": "^0.35.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "vite": "^5.2.11",
+    "@vitejs/plugin-react": "^4.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.30.0",
+    "@tanstack/react-query": "^5.64.2",
+    "@tanstack/react-table": "^8.20.6",
+    "@ai-sdk/react": "^1.0.0",
+    "@hookform/resolvers": "^3.4.2",
+    "react-hook-form": "^7.49.1",
+    "react-helmet-async": "^2.0.5",
+    "radix-ui": "^1.1.2",
+    "motion": "^11.15.0",
+    "zod": "^3.23.0",
+    "@types/react": "^18.3.2",
+    "@types/react-dom": "^18.2.25",
+    "@medusajs/ui": "^4.1.3",
+    "@medusajs/icons": "^2.13.3",
+    "@medusajs/ui-preset": "^2.1.3",
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0"
+  }
+}

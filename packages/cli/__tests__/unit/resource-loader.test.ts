@@ -1,0 +1,170 @@
+// Phase 1 — ResourceLoader unit tests
+// Verifies filesystem scanning to discover modules, subscribers, workflows, jobs, links, middlewares
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { discoverResources, type DiscoveredResources } from '../../src/resource-loader'
+
+let testDir: string
+
+function createFile(relativePath: string, content: string): void {
+  const fullPath = join(testDir, relativePath)
+  const dir = fullPath.substring(0, fullPath.lastIndexOf('/'))
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(fullPath, content)
+}
+
+beforeEach(() => {
+  testDir = join(tmpdir(), `manta-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(testDir, { recursive: true })
+})
+
+afterEach(() => {
+  rmSync(testDir, { recursive: true, force: true })
+})
+
+describe('ResourceLoader — discoverResources()', () => {
+  // RL-01 — Empty project returns empty arrays
+  it('RL-01 — empty project returns empty DiscoveredResources', async () => {
+    mkdirSync(join(testDir, 'src'), { recursive: true })
+    const result = await discoverResources(testDir)
+
+    expect(result.modules).toEqual([])
+    expect(result.subscribers).toEqual([])
+    expect(result.workflows).toEqual([])
+    expect(result.jobs).toEqual([])
+    expect(result.links).toEqual([])
+    expect(result.middlewares).toBeNull()
+  })
+
+  // RL-02 — Discovers modules from src/modules/*/index.ts
+  it('RL-02 — discovers modules from src/modules/*/index.ts', async () => {
+    createFile('src/modules/product/index.ts', `
+      export const __module = { name: 'product' }
+      export class ProductService {}
+    `)
+    createFile('src/modules/product/models/product.ts', `
+      export const Product = { name: 'Product' }
+    `)
+
+    const result = await discoverResources(testDir)
+
+    expect(result.modules).toHaveLength(1)
+    expect(result.modules[0]!.name).toBe('product')
+    expect(result.modules[0]!.path).toContain('modules/product/index.ts')
+    expect(result.modules[0]!.models).toContain('product')
+  })
+
+  // RL-03 — Discovers multiple modules
+  it('RL-03 — discovers multiple modules', async () => {
+    createFile('src/modules/product/index.ts', `export const __module = { name: 'product' }`)
+    createFile('src/modules/order/index.ts', `export const __module = { name: 'order' }`)
+
+    const result = await discoverResources(testDir)
+    expect(result.modules).toHaveLength(2)
+    const names = result.modules.map((m) => m.name).sort()
+    expect(names).toEqual(['order', 'product'])
+  })
+
+  // RL-04 — Discovers subscribers from src/subscribers/*.ts
+  it('RL-04 — discovers subscribers from src/subscribers/*.ts', async () => {
+    createFile('src/subscribers/on-product-created.ts', `
+      export const event = 'product.created'
+      export default async function handler() {}
+    `)
+
+    const result = await discoverResources(testDir)
+    expect(result.subscribers).toHaveLength(1)
+    expect(result.subscribers[0]!.path).toContain('on-product-created.ts')
+  })
+
+  // RL-05 — Discovers workflows from src/workflows/*.ts
+  it('RL-05 — discovers workflows from src/workflows/*.ts', async () => {
+    createFile('src/workflows/create-product.ts', `
+      export const id = 'create-product-workflow'
+    `)
+
+    const result = await discoverResources(testDir)
+    expect(result.workflows).toHaveLength(1)
+    expect(result.workflows[0]!.path).toContain('create-product.ts')
+  })
+
+  // RL-06 — Discovers jobs from src/jobs/*.ts
+  it('RL-06 — discovers jobs from src/jobs/*.ts', async () => {
+    createFile('src/jobs/cleanup.ts', `
+      export const id = 'cleanup-job'
+      export const schedule = '0 * * * *'
+    `)
+
+    const result = await discoverResources(testDir)
+    expect(result.jobs).toHaveLength(1)
+    expect(result.jobs[0]!.path).toContain('cleanup.ts')
+  })
+
+  // RL-07 — Discovers links from src/links/*.ts
+  it('RL-07 — discovers links from src/links/*.ts', async () => {
+    createFile('src/links/product-order.ts', `
+      export const id = 'product-order-link'
+    `)
+
+    const result = await discoverResources(testDir)
+    expect(result.links).toHaveLength(1)
+    expect(result.links[0]!.path).toContain('product-order.ts')
+  })
+
+  // RL-08 — Discovers middlewares.ts if present
+  it('RL-08 — discovers src/middlewares.ts if present', async () => {
+    createFile('src/middlewares.ts', `
+      export function defineMiddlewares() { return [] }
+    `)
+
+    const result = await discoverResources(testDir)
+    expect(result.middlewares).not.toBeNull()
+    expect(result.middlewares!.path).toContain('middlewares.ts')
+  })
+
+  // RL-09 — middlewares is null if file absent
+  it('RL-09 — middlewares is null if file does not exist', async () => {
+    mkdirSync(join(testDir, 'src'), { recursive: true })
+    const result = await discoverResources(testDir)
+    expect(result.middlewares).toBeNull()
+  })
+
+  // RL-10 — Missing src/ directory returns empty results without error
+  it('RL-10 — missing src/ directory returns empty results', async () => {
+    const result = await discoverResources(testDir)
+    expect(result.modules).toEqual([])
+    expect(result.subscribers).toEqual([])
+  })
+
+  // RL-11 — Discovers models within modules
+  it('RL-11 — discovers models within module directories', async () => {
+    createFile('src/modules/product/index.ts', `export const __module = { name: 'product' }`)
+    createFile('src/modules/product/models/product.ts', `export const Product = {}`)
+    createFile('src/modules/product/models/variant.ts', `export const Variant = {}`)
+
+    const result = await discoverResources(testDir)
+    expect(result.modules).toHaveLength(1)
+    expect(result.modules[0]!.models.sort()).toEqual(['product', 'variant'])
+  })
+
+  // RL-12 — Module without models/ dir has empty models array
+  it('RL-12 — module without models/ dir has empty models array', async () => {
+    createFile('src/modules/simple/index.ts', `export const __module = { name: 'simple' }`)
+
+    const result = await discoverResources(testDir)
+    expect(result.modules).toHaveLength(1)
+    expect(result.modules[0]!.models).toEqual([])
+  })
+
+  // RL-13 — Module name derived from directory name
+  it('RL-13 — module name derived from directory name', async () => {
+    createFile('src/modules/my-custom-module/index.ts', `export const x = 1`)
+
+    const result = await discoverResources(testDir)
+    expect(result.modules).toHaveLength(1)
+    expect(result.modules[0]!.name).toBe('my-custom-module')
+  })
+})

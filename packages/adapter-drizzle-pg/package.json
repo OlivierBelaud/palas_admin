@@ -1,0 +1,20 @@
+{
+  "name": "@manta/adapter-drizzle-pg",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.35.0",
+    "postgres": "^3.4.0"
+  },
+  "peerDependencies": {
+    "@manta/core": "workspace:*"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@manta/dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@manta/dashboard-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@medusajs/icons": "^2.13.3",
+    "@medusajs/ui": "^4.1.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.30.0"
+  }
+}

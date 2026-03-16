@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "paths": {
+      "@manta/test-utils": ["./packages/test-utils/src/index.ts"]
+    }
+  },
+  "include": ["tests/**/*.ts", "packages/**/*.ts"]
+}
