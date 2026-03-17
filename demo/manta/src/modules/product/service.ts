@@ -98,6 +98,17 @@ export class ProductService {
     if (result.length === 0) throw new Error(`Product "${id}" not found`)
   }
 
+  async activate(id: string, fields: { image_urls?: string[]; catalog_file_url?: string }): Promise<void> {
+    const sets: Record<string, unknown> = { status: 'active', updated_at: new Date() }
+    if (fields.image_urls !== undefined) sets.image_urls = fields.image_urls
+    if (fields.catalog_file_url !== undefined) sets.catalog_file_url = fields.catalog_file_url
+    const result = await this.db.update(products)
+      .set(sets)
+      .where(eq(products.id, id))
+      .returning({ id: products.id })
+    if (result.length === 0) throw new Error(`Product "${id}" not found`)
+  }
+
   async delete(id: string): Promise<void> {
     await this.db.delete(products).where(eq(products.id, id))
   }

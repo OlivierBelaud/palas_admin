@@ -62,11 +62,12 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
         try { interceptor(msg) } catch { /* ignored */ }
       }
 
-      // Deliver to subscribers (concurrent — Promise.all)
+      // Deliver to subscribers — fire-and-forget (async, not awaited)
+      // Same pattern as Medusa: "Subscribers listening to the event(s) are executed asynchronously."
       const handlers = this._subscribers.get(msg.eventName) ?? []
-      await Promise.all(handlers.map((s) => {
+      Promise.all(handlers.map((s) => {
         try { return Promise.resolve(s.handler(msg)) } catch { return Promise.resolve() }
-      }))
+      })).catch(() => {})
     }
   }
 

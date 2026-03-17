@@ -99,7 +99,7 @@ export async function POST(req: MantaRequest) {
     logger.info(`[POST /api/admin/products] Workflow input: ${JSON.stringify(input)}`)
 
     try {
-      const result = await wm.run('create-product-pipeline', { input })
+      const result = await wm.run('create-product-pipeline', { input, checkpointMode: 'batched' })
       logger.info(`[POST /api/admin/products] Workflow completed successfully`)
       logger.info(`[POST /api/admin/products]   Events emitted: ${JSON.stringify(result.events)}`)
       logger.info(`[POST /api/admin/products]   Product: id=${result.product?.id}, status=${result.product?.status}`)

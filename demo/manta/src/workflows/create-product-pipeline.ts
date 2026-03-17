@@ -1,7 +1,9 @@
-// Workflow: create-product-pipeline — 6 steps with compensation
-import { createWorkflow, step, type WorkflowManager } from '@manta/core'
+// Workflow: create-product-pipeline — 5 steps with compensation
+// Optimized: inlined inventory, merged UPDATEs, events emitted after workflow (like Medusa)
+import { createWorkflow, step } from '@manta/core'
 import type { IEventBusPort, ILoggerPort } from '@manta/core'
 import type { ProductService } from '../modules/product'
+import type { InventoryService } from '../modules/inventory'
 import type { FileService } from '../modules/file/service'
 
 export const createProductPipeline = createWorkflow({
@@ -51,66 +53,25 @@ export const createProductPipeline = createWorkflow({
       },
     }),
 
-    // Step 3: Upload images
+    // Step 3: Upload images + generate catalog (no separate DB writes — collected for final UPDATE)
     step({
-      name: 'upload-images',
+      name: 'upload-images-and-catalog',
       handler: async ({ input, previousOutput, context }) => {
-        const product = (previousOutput['create-product'] as { product: { id: string } }).product
+        const product = (previousOutput['create-product'] as { product: { id: string; title: string; sku: string; price: number } }).product
         const imageUrls: string[] = []
 
+        // Upload images (in-memory, no DB)
         const images = input.images as Array<{ filename: string; content: Buffer }> | undefined
         if (images?.length) {
           const fileService = context.resolve<FileService>('fileService')
-          for (const image of images) {
-            const url = await fileService.write(
-              `products/${product.id}/${image.filename}`,
-              image.content,
-            )
-            imageUrls.push(url)
-          }
-          const productService = context.resolve<ProductService>('productService')
-          await productService.updateImages(product.id, imageUrls)
+          const uploads = await Promise.all(images.map((image) =>
+            fileService.write(`products/${product.id}/${image.filename}`, image.content)
+          ))
+          imageUrls.push(...uploads)
         }
 
-        return { imageUrls }
-      },
-      compensation: async ({ output, context }) => {
+        // Generate catalog entry (in-memory, no DB)
         const fileService = context.resolve<FileService>('fileService')
-        const imageUrls = output.imageUrls as string[]
-        for (const url of imageUrls) {
-          // Extract key from memory://key format
-          const key = url.replace('memory://', '')
-          await fileService.delete(key)
-        }
-      },
-    }),
-
-    // Step 4: Sub-workflow — initialize inventory
-    step({
-      name: 'initialize-inventory',
-      handler: async ({ input, previousOutput, context }) => {
-        const product = (previousOutput['create-product'] as { product: { sku: string } }).product
-        const wm = context.resolve<WorkflowManager>('workflowManager')
-        const result = await wm.run('initialize-inventory', {
-          input: {
-            sku: product.sku,
-            initialQuantity: (input.initialStock as number) || 0,
-            reorderPoint: (input.reorderPoint as number) || 10,
-          },
-        })
-        return result
-      },
-    }),
-
-    // Step 5: Generate catalog entry (simulated long task)
-    step({
-      name: 'generate-catalog-entry',
-      handler: async ({ previousOutput, context }) => {
-        const product = (previousOutput['create-product'] as { product: { id: string; title: string; sku: string; price: number } }).product
-        const imageUrls = (previousOutput['upload-images'] as { imageUrls: string[] }).imageUrls
-
-
-
         const catalogEntry = JSON.stringify({
           id: product.id,
           title: product.title,
@@ -119,32 +80,68 @@ export const createProductPipeline = createWorkflow({
           images: imageUrls,
           generated_at: new Date().toISOString(),
         }, null, 2)
-
-        const fileService = context.resolve<FileService>('fileService')
         const catalogUrl = await fileService.write(
           `catalog/${product.sku}.json`,
           Buffer.from(catalogEntry),
         )
 
-        const productService = context.resolve<ProductService>('productService')
-        await productService.updateCatalogUrl(product.id, catalogUrl)
-
-        return { catalogUrl }
+        return { imageUrls, catalogUrl }
       },
       compensation: async ({ output, context }) => {
         const fileService = context.resolve<FileService>('fileService')
-        const url = output.catalogUrl as string
-        const key = url.replace('memory://', '')
-        await fileService.delete(key)
+        const imageUrls = output.imageUrls as string[]
+        for (const url of imageUrls) {
+          const key = url.replace('memory://', '')
+          await fileService.delete(key)
+        }
+        const catalogUrl = output.catalogUrl as string
+        if (catalogUrl) {
+          const key = catalogUrl.replace('memory://', '')
+          await fileService.delete(key)
+        }
       },
     }),
 
-    // Step 6: Emit events and activate product
+    // Step 4: Initialize inventory (inlined — no sub-workflow overhead)
     step({
-      name: 'emit-events',
+      name: 'initialize-inventory',
+      handler: async ({ input, previousOutput, context }) => {
+        const product = (previousOutput['create-product'] as { product: { sku: string } }).product
+        const inventoryService = context.resolve<InventoryService>('inventoryService')
+        const item = await inventoryService.createStock({
+          sku: product.sku,
+          quantity: (input.initialStock as number) || 0,
+        })
+        await inventoryService.setReorderPoint(product.sku, (input.reorderPoint as number) || 10)
+        return {
+          sku: product.sku,
+          quantity: (input.initialStock as number) || 0,
+          reorderPoint: (input.reorderPoint as number) || 10,
+        }
+      },
+      compensation: async ({ output, context }) => {
+        const inventoryService = context.resolve<InventoryService>('inventoryService')
+        const item = await inventoryService.findBySku(output.sku as string)
+        if (item) await inventoryService.delete(item.id)
+      },
+    }),
+
+    // Step 5: Activate product (single UPDATE merging images + catalog + status) + emit events
+    step({
+      name: 'finalize-and-emit',
       handler: async ({ previousOutput, context }) => {
         const product = (previousOutput['create-product'] as { product: { id: string; sku: string; title: string; price: number } }).product
+        const { imageUrls, catalogUrl } = previousOutput['upload-images-and-catalog'] as { imageUrls: string[]; catalogUrl: string }
         const inventory = previousOutput['initialize-inventory'] as { sku: string; quantity: number; reorderPoint: number }
+
+        // Single merged UPDATE: images + catalog + status → 1 query instead of 3
+        const productService = context.resolve<ProductService>('productService')
+        await productService.activate(product.id, {
+          image_urls: imageUrls,
+          catalog_file_url: catalogUrl,
+        })
+
+        // Emit events fire-and-forget (subscribers are async, like Medusa)
         const eventBus = context.resolve<IEventBusPort>('IEventBusPort')
 
         await eventBus.emit({
@@ -167,10 +164,6 @@ export const createProductPipeline = createWorkflow({
           },
           metadata: { timestamp: Date.now() },
         })
-
-        // Activate the product
-        const productService = context.resolve<ProductService>('productService')
-        await productService.updateStatus(product.id, 'active')
 
         return {
           product: { ...product, status: 'active' },

@@ -8,6 +8,13 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { eq, and } from 'drizzle-orm'
 import { workflowCheckpoints, workflowExecutions } from '../db/schema'
 
+export interface WorkflowRunOptions {
+  input?: Record<string, unknown>
+  transactionId?: string
+  /** Checkpoint strategy: 'per-step' (default) writes after each step, 'batched' writes all at end */
+  checkpointMode?: 'per-step' | 'batched'
+}
+
 /**
  * WorkflowManager registers workflow definitions and executes them.
  * Supports sequential step execution with saga-style compensation on failure.
@@ -35,13 +42,14 @@ export class WorkflowManager {
 
   /**
    * Run a registered workflow by name.
-   * Steps execute sequentially. Checkpoints are saved to DB after each step.
+   * Steps execute sequentially. Checkpoints are saved to DB after each step (per-step)
+   * or all at once after completion (batched).
    * On failure, completed steps are compensated in reverse.
    * On resume (after crash), completed steps are skipped using saved checkpoints.
    */
   async run(
     workflowId: string,
-    options: { input?: Record<string, unknown>; transactionId?: string } = {},
+    options: WorkflowRunOptions = {},
   ): Promise<Record<string, unknown>> {
     const workflow = this._workflows.get(workflowId)
     if (!workflow) {
@@ -50,6 +58,7 @@ export class WorkflowManager {
 
     const input = options.input ?? {}
     const transactionId = options.transactionId ?? `tx_${crypto.randomUUID().replace(/-/g, '')}`
+    const batched = options.checkpointMode === 'batched'
 
     // Track execution in DB
     if (this._db) {
@@ -88,6 +97,7 @@ export class WorkflowManager {
     }> = []
 
     const previousOutput: Record<string, unknown> = {}
+    const pendingCheckpoints: Array<{ transaction_id: string; step_id: string; status: string; data: any }> = []
 
     const resolveContext: StepResolveContext = {
       resolve: <T>(key: string): T => this._container.resolve<T>(key),
@@ -115,17 +125,26 @@ export class WorkflowManager {
         const output = (result != null && typeof result === 'object' ? result : { value: result }) as Record<string, unknown>
         previousOutput[step.name] = output
 
-        // Save checkpoint to DB
+        // Save checkpoint
         if (this._db) {
-          await this._db.insert(workflowCheckpoints).values({
-            transaction_id: transactionId,
-            step_id: step.name,
-            status: 'done',
-            data: output as any,
-          }).onConflictDoUpdate({
-            target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
-            set: { status: 'done', data: output as any },
-          })
+          if (batched) {
+            pendingCheckpoints.push({
+              transaction_id: transactionId,
+              step_id: step.name,
+              status: 'done',
+              data: output as any,
+            })
+          } else {
+            await this._db.insert(workflowCheckpoints).values({
+              transaction_id: transactionId,
+              step_id: step.name,
+              status: 'done',
+              data: output as any,
+            }).onConflictDoUpdate({
+              target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
+              set: { status: 'done', data: output as any },
+            })
+          }
         }
 
         completedSteps.push({
@@ -134,17 +153,32 @@ export class WorkflowManager {
           compensation: step.compensation,
         })
 
-        this._logger?.debug(`[workflow:${workflowId}] Step "${step.name}" completed + checkpointed`)
+        this._logger?.debug(`[workflow:${workflowId}] Step "${step.name}" completed${batched ? '' : ' + checkpointed'}`)
       } catch (error) {
         this._logger?.warn(`[workflow:${workflowId}] Step "${step.name}" failed: ${(error as Error).message}`)
 
-        // Save failed step to DB
+        // Save failed step + any pending checkpoints to DB
         if (this._db) {
-          await this._db.insert(workflowCheckpoints).values({
+          const failedCheckpoint = {
             transaction_id: transactionId,
             step_id: step.name,
             status: 'failed',
             error: (error as Error).message,
+          }
+
+          if (batched && pendingCheckpoints.length > 0) {
+            // Flush completed checkpoints + failed step in one batch
+            await this._db.insert(workflowCheckpoints)
+              .values([...pendingCheckpoints, { ...failedCheckpoint, data: {} }])
+              .onConflictDoUpdate({
+                target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
+                set: { status: 'done' },
+              })
+          }
+
+          await this._db.insert(workflowCheckpoints).values({
+            ...failedCheckpoint,
+            data: {},
           }).onConflictDoUpdate({
             target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
             set: { status: 'failed', error: (error as Error).message },
@@ -163,6 +197,16 @@ export class WorkflowManager {
 
         throw error
       }
+    }
+
+    // Flush batched checkpoints in one multi-row INSERT
+    if (this._db && batched && pendingCheckpoints.length > 0) {
+      await this._db.insert(workflowCheckpoints)
+        .values(pendingCheckpoints)
+        .onConflictDoUpdate({
+          target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
+          set: { status: 'done' },
+        })
     }
 
     // Mark execution as completed
