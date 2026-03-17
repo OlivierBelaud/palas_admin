@@ -3,6 +3,7 @@
 // View results at /admin/crons
 
 import { defineEventHandler, getHeader } from "h3"
+import { getContainer } from "../../../lib/container"
 
 export default defineEventHandler(async (event) => {
   // Validate CRON_SECRET
@@ -14,25 +15,20 @@ export default defineEventHandler(async (event) => {
   }
 
   const startTime = Date.now()
-  console.log("[cron:heartbeat] Tick...")
 
   try {
-    const postgres = (await import("postgres")).default
-    const { drizzle } = await import("drizzle-orm/postgres-js")
-    const { cronHeartbeats } = await import("@manta/core/db")
+    const { db, logger } = await getContainer()
+    logger.info("[cron:heartbeat] Tick...")
 
-    const sql = postgres(process.env.DATABASE_URL!, { ssl: "require", max: 1 })
-    const db = drizzle(sql)
+    const { cronHeartbeats } = await import("@manta/core/db")
 
     await db.insert(cronHeartbeats).values({
       job_name: "heartbeat",
       message: `Heartbeat at ${new Date().toISOString()} — ${Math.round(process.uptime())}s uptime`,
     })
 
-    await sql.end()
-
     const durationMs = Date.now() - startTime
-    console.log(`[cron:heartbeat] Done in ${durationMs}ms`)
+    logger.info(`[cron:heartbeat] Done in ${durationMs}ms`)
 
     return { job: "heartbeat", status: "ok", durationMs }
   } catch (err) {

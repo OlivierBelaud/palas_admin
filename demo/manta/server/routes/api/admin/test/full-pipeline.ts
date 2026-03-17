@@ -16,9 +16,11 @@ export default defineEventHandler(async (event) => {
   const results: TestResult[] = []
   const startTime = Date.now()
 
-  // Get SQL connection
+  // Get SQL connection + Drizzle instance
   const postgres = (await import("postgres")).default
   const sql = postgres(process.env.DATABASE_URL!, { ssl: "require", max: 3 })
+  const { drizzle } = await import("drizzle-orm/postgres-js")
+  const db = drizzle(sql)
 
   // Bootstrap a lightweight container for tests
   const { MantaContainer, ContainerRegistrationKeys, InMemoryCacheAdapter, InMemoryFileAdapter, WorkflowManager } = await import("@manta/core")
@@ -52,9 +54,9 @@ export default defineEventHandler(async (event) => {
     const { InventoryService } = await import("~src/modules/inventory/index")
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
-    container.register("productService", new ProductService())
-    container.register("inventoryService", new InventoryService(sql))
-    container.register("statsService", new StatsService(sql))
+    container.register("productService", new ProductService(db))
+    container.register("inventoryService", new InventoryService(db))
+    container.register("statsService", new StatsService(db))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     // Register workflows
@@ -133,9 +135,9 @@ export default defineEventHandler(async (event) => {
     const { InventoryService } = await import("~src/modules/inventory/index")
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
-    container.register("productService", new ProductService())
-    container.register("inventoryService", new InventoryService(sql))
-    container.register("statsService", new StatsService(sql))
+    container.register("productService", new ProductService(db))
+    container.register("inventoryService", new InventoryService(db))
+    container.register("statsService", new StatsService(db))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     const wm = new WorkflowManager(container)
@@ -239,10 +241,10 @@ export default defineEventHandler(async (event) => {
     const { InventoryService } = await import("~src/modules/inventory/index")
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
-    const ps = new ProductService()
+    const ps = new ProductService(db)
     container.register("productService", ps)
-    container.register("inventoryService", new InventoryService())
-    container.register("statsService", new StatsService())
+    container.register("inventoryService", new InventoryService(db))
+    container.register("statsService", new StatsService(db))
     container.register("fileService", new FileService(failingFileAdapter))
 
     const wm = new WorkflowManager(container)
@@ -288,10 +290,10 @@ export default defineEventHandler(async (event) => {
     const { InventoryService } = await import("~src/modules/inventory/index")
     const { StatsService } = await import("~src/modules/stats/index")
     const { FileService } = await import("~src/modules/file/service")
-    const ps = new ProductService()
+    const ps = new ProductService(db)
     container.register("productService", ps)
-    container.register("inventoryService", new InventoryService(sql))
-    container.register("statsService", new StatsService(sql))
+    container.register("inventoryService", new InventoryService(db))
+    container.register("statsService", new StatsService(db))
     container.register("fileService", new FileService(new InMemoryFileAdapter()))
 
     const wm = new WorkflowManager(container)
@@ -331,7 +333,7 @@ export default defineEventHandler(async (event) => {
   await runTest(results, "6. Cron job — cleanup draft products", async (logs) => {
     // Create a draft product directly in the in-memory service
     const { ProductService } = await import("~src/modules/product/index")
-    const ps = new ProductService()
+    const ps = new ProductService(db)
     const draft = await ps.create({ title: "Old Draft", price: 100, status: "draft" })
     logs.push(`✓ Draft created: ${draft.id}`)
 
@@ -358,7 +360,7 @@ export default defineEventHandler(async (event) => {
     container.register(ContainerRegistrationKeys.LOCKING, new NeonLockingAdapter(sql))
 
     const { InventoryService } = await import("~src/modules/inventory/index")
-    container.register("inventoryService", new InventoryService(sql))
+    container.register("inventoryService", new InventoryService(db))
 
     const wm = new WorkflowManager(container)
     const { initializeInventory } = await import("~src/workflows/initialize-inventory")

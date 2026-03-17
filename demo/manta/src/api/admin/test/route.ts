@@ -3,6 +3,9 @@
 // All data goes through Drizzle → Neon. No in-memory shortcuts.
 
 import type { MantaRequest } from "@manta/cli"
+import type { ILoggerPort } from "@manta/core"
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
+import type { ProductService } from "~src/modules/product/service"
 import { eq, and, sql } from "drizzle-orm"
 
 interface TestResult {
@@ -31,8 +34,8 @@ export async function POST(req: MantaRequest) {
   const startTime = Date.now()
   const scope = req.scope
 
-  const logger = scope.resolve<any>("ILoggerPort")
-  const db = scope.resolve<any>("db")
+  const logger = scope.resolve<ILoggerPort>("ILoggerPort")
+  const db = scope.resolve<PostgresJsDatabase>("db")
   logger.info("[TEST] Starting serverless E2E test suite...")
 
   // Import schemas

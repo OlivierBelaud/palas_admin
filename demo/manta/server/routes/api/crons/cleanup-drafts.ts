@@ -2,7 +2,8 @@
 // Schedule: every 6 hours (configured in vercel.json)
 // Secured by CRON_SECRET validation
 
-import { defineEventHandler, getRequestURL, getHeader } from "h3"
+import { defineEventHandler, getHeader } from "h3"
+import { getContainer } from "../../../lib/container"
 
 export default defineEventHandler(async (event) => {
   // Validate CRON_SECRET (Vercel sends this header for cron invocations)
@@ -13,59 +14,20 @@ export default defineEventHandler(async (event) => {
     return { error: "Unauthorized" }
   }
 
-  console.log("[cron:cleanup-drafts] Starting cleanup job...")
-
-  // Bootstrap container (reuse from catch-all handler pattern)
-  const { getOrBootstrapContainer } = await import("../[...path]" as any).catch(() => null) || {}
-
-  // For now, inline a lightweight bootstrap for the cron job
   try {
-    const { NeonWorkflowStorageAdapter } = await import("@manta/adapter-neon" as any)
-    const postgres = (await import("postgres")).default
-    const sql = postgres(process.env.DATABASE_URL!, { ssl: "require", max: 1 })
+    const { container, logger } = await getContainer()
+    logger.info("[cron:cleanup-drafts] Starting cleanup job...")
 
-    // Track job execution
-    await sql`
-      INSERT INTO job_executions (job_name, status, started_at)
-      VALUES ('cleanup-draft-products', 'running', NOW())
-    `
     const startTime = Date.now()
-
-    // Find and delete drafts older than 24h
-    const deleted = await sql`
-      DELETE FROM products
-      WHERE status = 'draft' AND created_at < NOW() - INTERVAL '24 hours'
-      RETURNING id, title
-    `
-
+    const productService = container.resolve<any>("productService")
+    const deleted = await productService.deleteDraftsOlderThan(24)
     const durationMs = Date.now() - startTime
 
-    // Log each deleted product
-    for (const row of deleted) {
-      console.log(`[cron:cleanup-drafts] Deleted draft: ${row.id} — "${row.title}"`)
+    for (const id of deleted) {
+      logger.info(`[cron:cleanup-drafts] Deleted draft: ${id}`)
     }
 
-    // Persist event for each deleted product
-    for (const row of deleted) {
-      await sql`
-        INSERT INTO events (event_name, data, metadata, status)
-        VALUES ('product.cleaned', ${JSON.stringify({ id: row.id, title: row.title })}::jsonb, ${JSON.stringify({ source: 'cron', timestamp: Date.now() })}::jsonb, 'pending')
-      `
-    }
-
-    // Update job execution record
-    await sql`
-      UPDATE job_executions
-      SET status = 'completed', duration_ms = ${durationMs},
-          result = ${JSON.stringify({ deletedCount: deleted.length, deletedIds: deleted.map((r: any) => r.id) })}::jsonb,
-          completed_at = NOW()
-      WHERE job_name = 'cleanup-draft-products' AND status = 'running'
-      ORDER BY started_at DESC LIMIT 1
-    `
-
-    console.log(`[cron:cleanup-drafts] Completed: ${deleted.length} drafts removed in ${durationMs}ms`)
-
-    await sql.end()
+    logger.info(`[cron:cleanup-drafts] Completed: ${deleted.length} drafts removed in ${durationMs}ms`)
 
     return {
       job: "cleanup-draft-products",
@@ -75,6 +37,7 @@ export default defineEventHandler(async (event) => {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    // Fallback to console.error if container failed to boot
     console.error(`[cron:cleanup-drafts] FAILED: ${message}`)
     return { job: "cleanup-draft-products", status: "failed", error: message }
   }

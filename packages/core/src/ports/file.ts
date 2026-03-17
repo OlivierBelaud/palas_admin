@@ -49,6 +49,13 @@ export interface IFilePort {
   getAsBuffer(key: string): Promise<Buffer>
 
   /**
+   * List files matching a prefix.
+   * @param prefix - The prefix to filter by
+   * @returns Array of matching file keys
+   */
+  list(prefix?: string): Promise<string[]>
+
+  /**
    * Optional: get a writable stream for uploading a file.
    * @param key - The file key
    * @returns An object with the writable stream and a done promise

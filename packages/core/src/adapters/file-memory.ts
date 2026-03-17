@@ -43,6 +43,11 @@ export class InMemoryFileAdapter implements IFilePort {
     return file.data
   }
 
+  async list(prefix?: string): Promise<string[]> {
+    const keys = Array.from(this._files.keys())
+    return prefix ? keys.filter(k => k.startsWith(prefix)) : keys
+  }
+
   /**
    * Returns a WritableStream that stores the uploaded data in memory.
    * The key is written when the stream is closed.

@@ -22,14 +22,7 @@ export class FileService {
   }
 
   async list(prefix: string): Promise<string[]> {
-    // InMemoryFileAdapter stores by key — we access the internal _files map
-    // For a real adapter this would call a list API
-    const adapter = this.filePort as Record<string, unknown>
-    if (adapter._files instanceof Map) {
-      const files = adapter._files as Map<string, unknown>
-      return Array.from(files.keys()).filter(k => k.startsWith(prefix))
-    }
-    return []
+    return this.filePort.list(prefix)
   }
 
   async delete(key: string): Promise<void> {

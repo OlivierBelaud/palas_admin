@@ -35,12 +35,12 @@ export class ProductService {
   }
 
   async findById(id: string): Promise<ProductData | null> {
-    const [row] = await this.db.select().from(products).where(eq(products.id, id))
+    const [row] = await this.db.select().from(products).where(and(eq(products.id, id), isNull(products.deleted_at)))
     return row ? toProductData(row) : null
   }
 
   async findBySku(sku: string): Promise<ProductData | null> {
-    const [row] = await this.db.select().from(products).where(eq(products.sku, sku))
+    const [row] = await this.db.select().from(products).where(and(eq(products.sku, sku), isNull(products.deleted_at)))
     return row ? toProductData(row) : null
   }
 
@@ -116,7 +116,7 @@ export class ProductService {
   async countByStatus(status: string): Promise<number> {
     const [row] = await this.db.select({ count: sql<number>`count(*)::int` })
       .from(products)
-      .where(eq(products.status, status as typeof products.status.enumValues[number]))
+      .where(and(eq(products.status, status as typeof products.status.enumValues[number]), isNull(products.deleted_at)))
     return row.count
   }
 

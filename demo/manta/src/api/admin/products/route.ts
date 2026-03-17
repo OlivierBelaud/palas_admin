@@ -1,7 +1,9 @@
 import type { MantaRequest } from "@manta/cli"
+import type { ProductService } from "~src/modules/product/service"
+import type { ILoggerPort } from "@manta/core"
 
 export async function GET(req: MantaRequest) {
-  const productService = req.scope.resolve<any>('productService')
+  const productService = req.scope.resolve<ProductService>('productService')
   const url = new URL(req.url)
 
   // Parse query params
@@ -76,7 +78,7 @@ export async function GET(req: MantaRequest) {
 }
 
 export async function POST(req: MantaRequest) {
-  const logger = req.scope.resolve<any>('ILoggerPort')
+  const logger = req.scope.resolve<ILoggerPort>('ILoggerPort')
   const body = req.validatedBody as Record<string, unknown>
 
   // If body has a sku → run the full create-product-pipeline workflow
@@ -112,8 +114,8 @@ export async function POST(req: MantaRequest) {
 
   // Simple creation (no workflow) — for products without SKU
   logger.info(`[POST /api/admin/products] Simple creation (no SKU): "${body.title}"`)
-  const productService = req.scope.resolve<any>('productService')
-  const product = await productService.create(body)
+  const productService = req.scope.resolve<ProductService>('productService')
+  const product = await productService.create(body as any)
   logger.info(`[POST /api/admin/products] Created: ${product.id}`)
   return Response.json({ product }, { status: 201 })
 }

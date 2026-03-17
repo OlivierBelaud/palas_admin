@@ -323,6 +323,7 @@ export interface IFilePort {
   getPresignedUploadUrl?(key: string): Promise<string>
   getDownloadStream(key: string): Promise<ReadableStream>
   getAsBuffer(key: string): Promise<Buffer>
+  list(prefix?: string): Promise<string[]>
   getUploadStream?(key: string): Promise<{ stream: WritableStream; done: Promise<void> }>
 }
 
