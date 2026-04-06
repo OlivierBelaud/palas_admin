@@ -313,6 +313,14 @@ async function handleQueryRequest(
  */
 async function registerGlobals() {
   const core = await import('@manta/core')
+
+  // Force-reference NullableModifier so the bundler doesn't tree-shake nullable.ts.
+  // That module has a side-effect: `_registerNullableModifier(NullableModifier)` at the
+  // bottom. Without this, `.nullable()` throws "NullableModifier not registered" in
+  // production bundles because rolldown eliminates the dead import + its side-effect.
+  // biome-ignore lint/correctness/noUnusedVariables: side-effect anchor
+  const _nm = core.NullableModifier
+
   const g = globalThis as Record<string, unknown>
   if (!g.defineModel) g.defineModel = core.defineModel
   if (!g.defineService) g.defineService = core.defineService
