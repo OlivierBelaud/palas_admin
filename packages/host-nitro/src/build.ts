@@ -53,6 +53,15 @@ export async function buildForProduction(options: BuildOptions): Promise<BuildRe
   copyFileSync(resolve(templatesDir, 'manta-bootstrap.ts'), resolve(targetDir, 'manta-bootstrap.ts'))
   copyFileSync(resolve(templatesDir, 'routes', '[...].ts'), resolve(routesDir, '[...].ts'))
 
+  // Copy manta.config.ts into .manta/server/ so Nitro bundles it into the serverless function.
+  // On Vercel, process.cwd() = /var/task/ (the function directory) and the original config file
+  // doesn't exist there. By copying it next to the bootstrap template, the bootstrap can import
+  // it via a relative path and Nitro's bundler includes it — preserving runtime process.env refs.
+  const configSrc = resolve(cwd, 'manta.config.ts')
+  if (existsSync(configSrc)) {
+    copyFileSync(configSrc, resolve(targetDir, 'manta.config.ts'))
+  }
+
   const presetArg = preset === 'node' ? 'node-server' : preset
 
   execSync(`npx nitro build --preset ${presetArg}`, {
