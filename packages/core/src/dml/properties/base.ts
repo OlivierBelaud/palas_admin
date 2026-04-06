@@ -17,23 +17,41 @@ export interface PropertyMetadata {
   values?: unknown
 }
 
-// Lazy references — set by nullable.ts and computed.ts at module load time
-// to avoid circular dependency issues in ESM.
+// Direct lazy-loaded references — resolved on first call, NOT via deferred registration.
+// The old pattern (_registerNullableModifier called as a side-effect from nullable.ts) was
+// broken by production bundlers (rolldown/rollup) that split base.ts and nullable.ts into
+// different chunks with no guaranteed execution order → "NullableModifier not registered"
+// on Vercel serverless. Lazy require() breaks the circular dep safely at call time.
 // biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-let NullableModifierCtor: (new (schema: any) => any) | null = null
+let _NullableMod: (new (schema: any) => any) | null = null
 // biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-let ComputedPropertyCtor: (new (schema: any) => any) | null = null
+let _ComputedMod: (new (schema: any) => any) | null = null
 
-/** @internal Called by nullable.ts to register its constructor */
-// biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-export function _registerNullableModifier(ctor: new (schema: any) => any): void {
-  NullableModifierCtor = ctor
+function getNullableModifier() {
+  if (!_NullableMod) {
+    // Lazy require — called only when .nullable() is first invoked, breaking circular dep
+    _NullableMod = (require('./nullable') as { NullableModifier: new (schema: any) => any }).NullableModifier
+  }
+  return _NullableMod
 }
 
-/** @internal Called by computed.ts to register its constructor */
-// biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-export function _registerComputedProperty(ctor: new (schema: any) => any): void {
-  ComputedPropertyCtor = ctor
+function getComputedProperty() {
+  if (!_ComputedMod) {
+    _ComputedMod = (require('./computed') as { ComputedProperty: new (schema: any) => any }).ComputedProperty
+  }
+  return _ComputedMod
+}
+
+/** @internal Kept for backward compatibility — no-op, lazy loading handles it now. */
+// biome-ignore lint/suspicious/noExplicitAny: backward compat
+export function _registerNullableModifier(_ctor: new (schema: any) => any): void {
+  // No-op — lazy require in getNullableModifier() replaces this
+}
+
+/** @internal Kept for backward compatibility — no-op. */
+// biome-ignore lint/suspicious/noExplicitAny: backward compat
+export function _registerComputedProperty(_ctor: new (schema: any) => any): void {
+  // No-op
 }
 
 // ── Public API interface — what the developer sees in autocompletion ──
@@ -125,15 +143,13 @@ export abstract class BaseProperty<T> {
 
   /** Mark property as nullable. Returns an object with $dataType: T | null for type inference. */
   nullable(): { $dataType: T | null; parse: (fieldName: string) => PropertyMetadata } {
-    if (!NullableModifierCtor) throw new MantaError('INVALID_STATE', 'NullableModifier not registered')
-    return new NullableModifierCtor(this)
+    return new (getNullableModifier())(this)
   }
 
   /** Mark as computed. Returns ComputedProperty<T | null, this> for type inference. */
   // biome-ignore lint/suspicious/noExplicitAny: returns ComputedProperty
   computed(): any {
-    if (!ComputedPropertyCtor) throw new MantaError('INVALID_STATE', 'ComputedProperty not registered')
-    return new ComputedPropertyCtor(this)
+    return new (getComputedProperty())(this)
   }
 
   /** Add an index. */
