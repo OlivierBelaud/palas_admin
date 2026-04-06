@@ -757,7 +757,14 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
     await ensureEntityTables(db.getPool(), discoveredEntities, discoveredLinks, logger)
 
     // [7d] Generate .manta/types.ts — typed step proxy from discovered entities
-    await generateMantaTypes(cwd, resources.modules, doImport, logger)
+    // Wrapped in try-catch: on Vercel serverless the filesystem is read-only,
+    // so mkdir/writeFile will throw ENOENT or EROFS. This is a dev-only DX
+    // feature (TypeScript types) and is NOT needed for runtime operation.
+    try {
+      await generateMantaTypes(cwd, resources.modules, doImport, logger)
+    } catch {
+      // Silently skip — filesystem is likely read-only (Vercel, Lambda, etc.)
+    }
   }
 
   // [7e] Register generated tables + links + entity registry in the app for step functions
