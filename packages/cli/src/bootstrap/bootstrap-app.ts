@@ -1594,7 +1594,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
               headers: {},
               query: {},
               protocol: 'http',
-              body: { email: seedEmail, password: 'admin' },
+              body: { email: seedEmail, password: process.env['MANTA_ADMIN_PASSWORD'] ?? 'admin' },
             })
             if (seedResult?.authIdentity) {
               await authService.updateAuthIdentity(seedResult.authIdentity.id, {
