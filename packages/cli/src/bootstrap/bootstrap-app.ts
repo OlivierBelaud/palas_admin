@@ -107,8 +107,8 @@ const ADAPTER_FACTORIES: Record<
   '@manta/adapter-logger-pino': (opts) => new PinoLoggerAdapter(opts),
   '@manta/adapter-database-pg': () => new DrizzlePgAdapter(),
   '@manta/adapter-database-neon': async () => {
-    const { DrizzlePgAdapter: Adapter } = await import('@manta/adapter-database-pg')
-    return new Adapter()
+    const { NeonDrizzleAdapter } = await import('@manta/adapter-database-neon')
+    return new NeonDrizzleAdapter()
   },
   '@manta/adapter-cache-upstash': async (opts) => {
     const { UpstashCacheAdapter } = await import('@manta/adapter-cache-upstash')
