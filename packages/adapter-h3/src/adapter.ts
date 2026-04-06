@@ -296,9 +296,23 @@ export class H3Adapter implements IHttpPort {
 
       // Step 11 -- Handler
       const reqUrl = new URL(event.path ?? '/', `http://${this._host}:${this._port}`)
+      const method = getMethod(event)
+      const contentType = getRequestHeader(event, 'content-type') ?? 'application/json'
+      const reqHeaders: Record<string, string> = {
+        'content-type': contentType,
+        'x-request-id': requestId,
+      }
+      // Forward user-agent for proxy routes (PostHog, etc.)
+      const ua = getRequestHeader(event, 'user-agent')
+      if (ua) reqHeaders['user-agent'] = ua
+
       const reqInit: RequestInit = {
-        method: getMethod(event),
-        headers: { 'content-type': 'application/json', 'x-request-id': requestId },
+        method,
+        headers: reqHeaders,
+      }
+      // Include raw body for non-GET/HEAD/OPTIONS requests so proxy routes can forward it
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        reqInit.body = body !== undefined ? JSON.stringify(body) : undefined
       }
 
       const request = new Request(reqUrl.toString(), reqInit)
