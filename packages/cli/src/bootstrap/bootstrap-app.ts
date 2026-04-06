@@ -23,6 +23,30 @@ import {
 import { H3Adapter } from '@manta/adapter-h3'
 import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
 import type { IEventBusPort, ILockingPort, ILoggerPort, MantaApp, Message, WorkflowStorage } from '@manta/core'
+// Static value imports for registerGlobals — these are bundled by Nitro at build time.
+// CRITICAL: do NOT use `await import('@manta/core')` for globals registration — on Vercel,
+// the dynamic import resolves to the RAW .ts files in node_modules/@manta/core (which we
+// copy for jiti) instead of the bundled chunks. Node.js can't import .ts → globals not set
+// → every user file import fails → 0 commands registered → everything 404s.
+import {
+  NullableModifier as _NullableModifier,
+  defineAgent as _defineAgent,
+  defineCommand as _defineCommand,
+  defineConfig as _defineConfig,
+  defineJob as _defineJob,
+  defineLink as _defineLink,
+  defineMiddleware as _defineMiddleware,
+  defineModel as _defineModel,
+  definePreset as _definePreset,
+  defineQuery as _defineQuery,
+  defineQueryGraph as _defineQueryGraph,
+  defineService as _defineService,
+  defineSubscriber as _defineSubscriber,
+  defineUserModel as _defineUserModel,
+  defineWorkflow as _defineWorkflow,
+  field as _field,
+  many as _many,
+} from '@manta/core'
 import {
   type CommandRegistry,
   createApp,
@@ -312,32 +336,30 @@ async function handleQueryRequest(
  * Must be called BEFORE any user module is imported.
  */
 async function registerGlobals() {
-  const core = await import('@manta/core')
-
   // Force-reference NullableModifier so the bundler doesn't tree-shake nullable.ts.
-  // That module has a side-effect: `_registerNullableModifier(NullableModifier)` at the
-  // bottom. Without this, `.nullable()` throws "NullableModifier not registered" in
-  // production bundles because rolldown eliminates the dead import + its side-effect.
   // biome-ignore lint/correctness/noUnusedVariables: side-effect anchor
-  const _nm = core.NullableModifier
+  const _nm = _NullableModifier
 
+  // Register all define* functions + field/many as globals so user source files
+  // (loaded by jiti at runtime) can use them without imports.
+  // Uses STATIC imports (bundled by Nitro at build time), NOT dynamic import('@manta/core').
   const g = globalThis as Record<string, unknown>
-  if (!g.defineModel) g.defineModel = core.defineModel
-  if (!g.defineService) g.defineService = core.defineService
-  if (!g.defineLink) g.defineLink = core.defineLink
-  if (!g.defineCommand) g.defineCommand = core.defineCommand
-  if (!g.defineAgent) g.defineAgent = core.defineAgent
-  if (!g.defineSubscriber) g.defineSubscriber = core.defineSubscriber
-  if (!g.defineJob) g.defineJob = core.defineJob
-  if (!g.defineUserModel) g.defineUserModel = core.defineUserModel
-  if (!g.defineQuery) g.defineQuery = core.defineQuery
-  if (!g.defineQueryGraph) g.defineQueryGraph = core.defineQueryGraph
-  if (!g.defineWorkflow) g.defineWorkflow = core.defineWorkflow
-  if (!g.defineConfig) g.defineConfig = core.defineConfig
-  if (!g.definePreset) g.definePreset = core.definePreset
-  if (!g.defineMiddleware) g.defineMiddleware = core.defineMiddleware
-  if (!g.field) g.field = core.field
-  if (!g.many) g.many = core.many
+  if (!g.defineModel) g.defineModel = _defineModel
+  if (!g.defineService) g.defineService = _defineService
+  if (!g.defineLink) g.defineLink = _defineLink
+  if (!g.defineCommand) g.defineCommand = _defineCommand
+  if (!g.defineAgent) g.defineAgent = _defineAgent
+  if (!g.defineSubscriber) g.defineSubscriber = _defineSubscriber
+  if (!g.defineJob) g.defineJob = _defineJob
+  if (!g.defineUserModel) g.defineUserModel = _defineUserModel
+  if (!g.defineQuery) g.defineQuery = _defineQuery
+  if (!g.defineQueryGraph) g.defineQueryGraph = _defineQueryGraph
+  if (!g.defineWorkflow) g.defineWorkflow = _defineWorkflow
+  if (!g.defineConfig) g.defineConfig = _defineConfig
+  if (!g.definePreset) g.definePreset = _definePreset
+  if (!g.defineMiddleware) g.defineMiddleware = _defineMiddleware
+  if (!g.field) g.field = _field
+  if (!g.many) g.many = _many
 }
 
 /**

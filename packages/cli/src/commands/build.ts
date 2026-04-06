@@ -236,7 +236,10 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[]): void {
   const vercelJson: Record<string, unknown> = {
     $schema: 'https://openapi.vercel.sh/vercel.json',
     framework: null,
-    rewrites: [{ source: '/admin/:path*', destination: '/admin/index.html' }],
+    rewrites: [
+      { source: '/', destination: '/admin' },
+      { source: '/admin/:path*', destination: '/admin/index.html' },
+    ],
   }
   if (jobs.length > 0) {
     vercelJson.crons = jobs.map((job) => ({
