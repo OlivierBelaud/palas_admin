@@ -102,6 +102,8 @@ async function processEvents(body: unknown, config: PostHogProxyConfig) {
   console.log(`[posthog-proxy] Processing ${(events as unknown[]).length} event(s) for Klaviyo bridge`)
 
   for (const event of events as Record<string, unknown>[]) {
+    console.log(`[posthog-proxy] RAW EVENT: ${JSON.stringify(event)}`)
+
     const props = event.properties as Record<string, unknown> | undefined
     const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
     const kx = props?.$_kx as string | undefined
