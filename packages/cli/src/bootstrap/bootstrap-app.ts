@@ -358,7 +358,11 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   logger.info('Connecting to database...')
   const dbEntry = resolvedAdapters.find((a) => a.port === 'IDatabasePort')
   const dbFactory = dbEntry ? ADAPTER_FACTORIES[dbEntry.adapter] : undefined
-  const db = (dbFactory ? dbFactory(dbEntry!.options) : new DrizzlePgAdapter()) as DrizzlePgAdapter
+  // await is critical here — some adapter factories are async (e.g. Neon dynamically imports
+  // @manta/adapter-database-pg). Without await, `db` becomes a Promise → db.initialize() fails
+  // at runtime with "initialize is not a function" — a bug that only appears on Vercel where
+  // the Neon adapter is auto-selected via the vercel preset.
+  const db = (dbFactory ? await dbFactory(dbEntry!.options) : new DrizzlePgAdapter()) as DrizzlePgAdapter
 
   await db.initialize({
     url: config.database!.url!,
