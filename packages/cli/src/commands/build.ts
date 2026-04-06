@@ -189,10 +189,9 @@ export async function buildCommand(
           }
 
           // Copy packages that user source files import at runtime (resolved by jiti).
-          // We skip nested node_modules to avoid circular symlink issues with pnpm.
-          // Only packages directly imported by src/ files need to be here.
-          const skipNodeModules = (src: string) => !src.includes('node_modules')
-
+          // Uses filter to skip nested node_modules WITHIN the package to avoid
+          // circular pnpm symlinks. The filter checks if 'node_modules' appears in the
+          // path RELATIVE to the package root — not in the absolute source path.
           const depsToResolve = ['@manta/core', 'zod']
           for (const dep of depsToResolve) {
             const depPath = join(cwd, 'node_modules', ...dep.split('/'))
@@ -201,24 +200,18 @@ export async function buildCommand(
               const realPath = realpathSync(depPath)
               const targetPath = join(funcDir, 'node_modules', ...dep.split('/'))
               mkdirSync(join(funcDir, 'node_modules', dep.startsWith('@') ? dep.split('/')[0] : ''), { recursive: true })
-              cpSync(realPath, targetPath, { recursive: true, filter: skipNodeModules })
+              // Filter: skip nested node_modules inside the package (prevents circular copies).
+              // We compare the relative path from the package root, not the absolute path.
+              cpSync(realPath, targetPath, {
+                recursive: true,
+                filter: (src) => {
+                  const rel = src.slice(realPath.length)
+                  return !rel.includes('node_modules')
+                },
+              })
               console.log(`  ✓ ${dep} copied to function directory`)
             } catch (e) {
               console.warn(`  ⚠ Failed to copy ${dep}: ${(e as Error).message}`)
-            }
-          }
-
-          // Also copy zod's sub-dependencies if any (it's self-contained, but just in case)
-          const zodDeps = ['drizzle-orm']
-          for (const dep of zodDeps) {
-            const depPath = join(cwd, 'node_modules', dep)
-            if (!existsSync(depPath)) continue
-            try {
-              const realPath = realpathSync(depPath)
-              const targetPath = join(funcDir, 'node_modules', dep)
-              cpSync(realPath, targetPath, { recursive: true, filter: skipNodeModules })
-            } catch {
-              // non-critical
             }
           }
         }
