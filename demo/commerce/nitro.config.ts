@@ -4,7 +4,7 @@ const adminBuildExists = existsSync('./public/admin')
 
 export default {
   compatibilityDate: '2025-01-01',
-  srcDir: '.manta/server',
+  serverDir: '.manta/server',
   publicAssets: adminBuildExists
     ? [{ dir: 'public/admin', baseURL: '/admin' }]
     : [],

@@ -33,8 +33,25 @@ export interface BuildResult {
  */
 export async function buildForProduction(options: BuildOptions): Promise<BuildResult> {
   const { cwd, preset, outputDir = '.output' } = options
-  const { resolve } = await import('node:path')
+  const { resolve, dirname } = await import('node:path')
   const { execSync } = await import('node:child_process')
+  const { copyFileSync, mkdirSync, existsSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+
+  // Copy framework server templates to .manta/server/ BEFORE running Nitro build.
+  // In dev mode, dev.ts handles this. In build mode, we must do it here because
+  // nitro.config.ts has `srcDir: '.manta/server'` — without these files, Nitro
+  // compiles an empty server with no routes and the deploy 404s on everything.
+  const __dirname = dirname(fileURLToPath(import.meta.url))
+  const templatesDir = resolve(__dirname, '..', 'templates', 'server')
+  const targetDir = resolve(cwd, '.manta', 'server')
+  const routesDir = resolve(targetDir, 'routes')
+
+  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true })
+  if (!existsSync(routesDir)) mkdirSync(routesDir, { recursive: true })
+
+  copyFileSync(resolve(templatesDir, 'manta-bootstrap.ts'), resolve(targetDir, 'manta-bootstrap.ts'))
+  copyFileSync(resolve(templatesDir, 'routes', '[...].ts'), resolve(routesDir, '[...].ts'))
 
   const presetArg = preset === 'node' ? 'node-server' : preset
 
