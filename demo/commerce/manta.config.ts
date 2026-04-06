@@ -9,14 +9,10 @@ export default defineConfig({
   },
   plugins: ['@manta/plugin-posthog-proxy'],
 
-  // Override Vercel preset's Upstash/Blob adapters with in-memory alternatives.
-  // The Vercel preset auto-selects Upstash Redis (cache, eventbus), Neon locking,
-  // and Vercel Blob (files) — all of which require additional env vars / services.
-  // For now, use in-memory adapters which work in serverless without external deps.
-  // Add Upstash/Blob later when you need persistent cache or file storage.
+  // Override adapters that need services not yet configured.
+  // Upstash Redis (cache + eventbus) is now connected via Vercel integration.
+  // Locking, files, and jobs stay in-memory until Vercel Blob / QStash are added.
   adapters: {
-    ICachePort: { adapter: '@manta/core/InMemoryCacheAdapter' },
-    IEventBusPort: { adapter: '@manta/core/InMemoryEventBusAdapter' },
     ILockingPort: { adapter: '@manta/core/InMemoryLockingAdapter' },
     IFilePort: { adapter: '@manta/core/InMemoryFileAdapter' },
     IJobSchedulerPort: { adapter: '@manta/core/InMemoryJobScheduler' },
