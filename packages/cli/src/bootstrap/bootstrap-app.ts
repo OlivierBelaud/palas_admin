@@ -489,6 +489,10 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   // discovery and plugin resolution. This is critical for serverless deployments (Vercel,
   // Lambda, Cloudflare) where source files aren't on disk as individual .ts files.
   let resources: Awaited<ReturnType<typeof discoverResources>>
+  // resolvedPlugins must be declared at this scope because it's used later for API routes (line ~2292).
+  // When preloaded, plugins are already merged into the resources → empty array.
+  let resolvedPlugins: Array<{ name: string; rootDir: string }> = []
+
   if (options.preloadedResources) {
     logger.info('Using pre-loaded resources (build-time manifest)')
     resources = options.preloadedResources
@@ -497,7 +501,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
     const { resolvePlugins } = await import('../plugins/resolve-plugins')
     const { mergePluginResources } = await import('../plugins/merge-resources')
 
-    const resolvedPlugins = resolvePlugins(config, cwd)
+    resolvedPlugins = resolvePlugins(config, cwd)
     if (resolvedPlugins.length > 0) {
       logger.info(`  Plugins: ${resolvedPlugins.map((p) => p.name).join(', ')}`)
     }

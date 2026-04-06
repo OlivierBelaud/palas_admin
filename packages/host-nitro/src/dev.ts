@@ -158,6 +158,15 @@ function copyServerTemplates(cwd: string): void {
 
   // Copy catch-all route
   copyFileSync(resolve(templatesDir, 'routes', '[...].ts'), resolve(targetDir, 'routes', '[...].ts'))
+
+  // Copy manta.config.ts so the bootstrap's static import resolves.
+  // In dev mode, the manifest doesn't exist → bootstrap falls back to jiti for
+  // module loading. But the config import is always static (no jiti needed for config).
+  const { existsSync } = require('node:fs') as typeof import('node:fs')
+  const configSrc = resolve(cwd, 'manta.config.ts')
+  if (existsSync(configSrc)) {
+    copyFileSync(configSrc, resolve(targetDir, 'manta.config.ts'))
+  }
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: child process return
