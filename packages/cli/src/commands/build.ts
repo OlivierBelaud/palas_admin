@@ -1,6 +1,6 @@
 // SPEC-074, SPEC-100 — manta build command
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import type {
   BuildOptions,
@@ -129,6 +129,32 @@ export async function buildCommand(
       const { buildForProduction } = await import('@manta/host-nitro')
       await buildForProduction({ cwd, preset })
       console.log('  ✓ Nitro build complete')
+
+      // Patch Vercel config.json to add SPA rewrite for /admin/* → /admin/index.html.
+      // Nitro's Build Output API generates config.json with routes that bypass vercel.json
+      // rewrites entirely. Without this patch, /admin falls through to the serverless
+      // catch-all and 404s because Nitro has no handler for it (the SPA is static).
+      if (preset === 'vercel') {
+        const configPath = join(cwd, '.vercel', 'output', 'config.json')
+        if (existsSync(configPath)) {
+          const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+          const routes: Array<Record<string, unknown>> = config.routes ?? []
+          // Insert the SPA fallback AFTER 'handle: filesystem' so that
+          // /admin/assets/*.js is served by the filesystem handler first,
+          // and only bare /admin/* paths (no matching file) get the index.html.
+          const fsIdx = routes.findIndex((r) => r.handle === 'filesystem')
+          if (fsIdx >= 0) {
+            routes.splice(fsIdx + 1, 0, {
+              src: '/admin(/.*)?',
+              dest: '/admin/index.html',
+              status: 200,
+            })
+          }
+          config.routes = routes
+          writeFileSync(configPath, JSON.stringify(config, null, 2))
+          console.log('  ✓ Vercel config.json patched (SPA /admin fallback)')
+        }
+      }
     } catch (err) {
       result.exitCode = 1
       result.errors.push('Nitro build failed: ' + (err instanceof Error ? err.message : String(err)))

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "manta dev",
-    "build": "manta build --preset vercel",
+    "build": "manta generate && manta build --preset vercel",
     "start": "manta start",
     "generate": "manta generate",
     "db:generate": "manta db:generate",
