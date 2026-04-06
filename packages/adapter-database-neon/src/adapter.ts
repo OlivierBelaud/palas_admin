@@ -59,8 +59,16 @@ export class NeonDrizzleAdapter implements IDatabasePort {
     if (!this._neonDb) {
       throw new MantaError('INVALID_STATE', 'Database not initialized. Call initialize() first.')
     }
-    // Return the rawSql function as the "pool" for DDL operations
-    return this._neonDb.rawSql
+    // Return an object that exposes BOTH:
+    //   - .unsafe(query) — used by ensureFrameworkTables/ensureEntityTables (postgres.js interface)
+    //   - direct call — used by any code that expects rawSql as a function
+    // This bridges the gap between postgres.js API (used by DrizzlePgAdapter) and
+    // Neon's HTTP driver (used by NeonDrizzleAdapter).
+    const rawSql = this._neonDb.rawSql
+    return Object.assign(
+      (query: string) => rawSql(query),
+      { unsafe: (query: string) => rawSql(query) },
+    )
   }
 
   async transaction<T>(fn: (tx: unknown) => Promise<T>, _options?: TransactionOptions): Promise<T> {
