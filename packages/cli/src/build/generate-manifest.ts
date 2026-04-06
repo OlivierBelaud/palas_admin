@@ -86,24 +86,21 @@ export function generateBuildManifest(
     '',
   ]
 
-  // Generate import statements with relative paths from .manta/server/ to each file
+  // Generate LAZY import functions — NOT static imports at the top level.
+  // Static imports execute module-level code (defineModel(...), defineCommand(...), etc.)
+  // at import time, BEFORE registerGlobals() runs → "defineModel is not defined".
+  // Lazy imports (`() => import(...)`) are traced by the bundler for code-splitting BUT
+  // only execute when called — AFTER registerGlobals() sets up the globals.
+  lines.push('// Lazy import functions: each returns a Promise<module> when called.')
+  lines.push('// Bundled by Nitro/rolldown (code-splitting), but only executed after')
+  lines.push('// registerGlobals() sets up defineModel/field/etc. on globalThis.')
+  lines.push('export const moduleImports: Record<string, () => Promise<Record<string, unknown>>> = {')
   for (let i = 0; i < uniquePaths.length; i++) {
     const { absPath } = uniquePaths[i]
     let relPath = relative(targetDir, absPath)
-    // Remove .ts extension for import (bundler resolves it)
     relPath = relPath.replace(/\.tsx?$/, '')
-    // Ensure relative path starts with ./
     if (!relPath.startsWith('.')) relPath = './' + relPath
-    lines.push(`import * as _i${i} from '${relPath}'`)
-  }
-
-  lines.push('')
-  lines.push('// Import lookup: absolute path (at build time) → pre-imported module.')
-  lines.push('// bootstrapApp\'s importFn uses this map instead of jiti.import().')
-  lines.push('export const moduleExports: Record<string, Record<string, unknown>> = {')
-  for (let i = 0; i < uniquePaths.length; i++) {
-    const { absPath } = uniquePaths[i]
-    lines.push(`  ${JSON.stringify(absPath)}: _i${i} as unknown as Record<string, unknown>,`)
+    lines.push(`  ${JSON.stringify(absPath)}: () => import('${relPath}') as Promise<Record<string, unknown>>,`)
   }
   lines.push('}')
 
