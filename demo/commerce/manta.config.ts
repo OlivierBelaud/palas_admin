@@ -9,10 +9,10 @@ export default defineConfig({
   },
   plugins: ['@manta/plugin-posthog-proxy'],
 
-  // Override adapters that need services not yet configured.
-  // Upstash Redis (cache + eventbus) is now connected via Vercel integration.
-  // Locking, files, and jobs stay in-memory until Vercel Blob / QStash are added.
+  // All adapters in-memory — no external services needed beyond Neon Postgres.
   adapters: {
+    ICachePort: { adapter: '@manta/core/InMemoryCacheAdapter' },
+    IEventBusPort: { adapter: '@manta/core/InMemoryEventBusAdapter' },
     ILockingPort: { adapter: '@manta/core/InMemoryLockingAdapter' },
     IFilePort: { adapter: '@manta/core/InMemoryFileAdapter' },
     IJobSchedulerPort: { adapter: '@manta/core/InMemoryJobScheduler' },
