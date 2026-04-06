@@ -3,6 +3,10 @@
   "framework": null,
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/admin"
+    },
+    {
       "source": "/admin/:path*",
       "destination": "/admin/index.html"
     }

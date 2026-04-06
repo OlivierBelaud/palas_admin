@@ -1,6 +1,6 @@
 // SPEC-074, SPEC-100 — manta build command
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import type {
   BuildOptions,
@@ -127,6 +127,39 @@ export async function buildCommand(
     }
   }
 
+  // Generate build-time manifest for serverless: static imports of all user files.
+  // This replaces runtime filesystem discovery (readdirSync + jiti) which is incompatible
+  // with Vercel/Lambda/Cloudflare where the function directory is read-only and source
+  // files aren't available as individual .ts files on disk.
+  if (preset === 'vercel' || preset === 'cloudflare' || preset === 'aws-lambda') {
+    try {
+      const { generateBuildManifest } = await import('../build/generate-manifest')
+      const { resolvePlugins } = await import('../plugins/resolve-plugins')
+      const { loadConfig } = await import('../config/load-config')
+
+      // Discover plugin resources at build time
+      let pluginResources: Array<{ name: string; resources: typeof resources; rootDir: string }> = []
+      try {
+        const config = await loadConfig(cwd)
+        const plugins = resolvePlugins(config, cwd)
+        const pluginResults = await Promise.all(
+          plugins.map(async (p) => ({
+            name: p.name,
+            resources: await discoverResources(p.rootDir),
+            rootDir: p.rootDir,
+          })),
+        )
+        pluginResources = pluginResults
+      } catch (pluginErr) {
+        console.warn(`  ⚠ Plugin discovery failed: ${(pluginErr as Error).message}`)
+      }
+
+      generateBuildManifest(cwd, resources, pluginResources)
+    } catch (manifestErr) {
+      console.warn(`  ⚠ Manifest generation failed: ${(manifestErr as Error).message}`)
+    }
+  }
+
   // Generate vercel.json for Vercel preset
   if (preset === 'vercel') {
     generateVercelConfig(cwd, jobs)
@@ -166,55 +199,10 @@ export async function buildCommand(
           console.log('  ✓ Vercel config.json patched (SPA /admin fallback)')
         }
 
-        // Copy source files into the Vercel function directory so they're available
-        // at runtime for filesystem-based resource discovery (discoverResources + jiti).
-        // On Vercel serverless, the function runs from /var/task/ which only contains
-        // the Nitro bundle — NOT the project source files. Without this copy, bootstrapApp
-        // finds 0 modules → 0 tables created → 0 routes registered → everything 404s.
-        const funcDir = join(cwd, '.vercel', 'output', 'functions', '__server.func')
-        if (existsSync(funcDir)) {
-          const srcDir = join(cwd, 'src')
-          const configFile = join(cwd, 'manta.config.ts')
-          const pkgFile = join(cwd, 'package.json')
-
-          if (existsSync(srcDir)) {
-            cpSync(srcDir, join(funcDir, 'src'), { recursive: true })
-            console.log('  ✓ Source files copied to function directory (src/)')
-          }
-          if (existsSync(configFile)) {
-            cpSync(configFile, join(funcDir, 'manta.config.ts'))
-          }
-          if (existsSync(pkgFile)) {
-            cpSync(pkgFile, join(funcDir, 'package.json'))
-          }
-
-          // Copy packages that user source files import at runtime (resolved by jiti).
-          // Uses filter to skip nested node_modules WITHIN the package to avoid
-          // circular pnpm symlinks. The filter checks if 'node_modules' appears in the
-          // path RELATIVE to the package root — not in the absolute source path.
-          const depsToResolve = ['@manta/core', 'zod']
-          for (const dep of depsToResolve) {
-            const depPath = join(cwd, 'node_modules', ...dep.split('/'))
-            if (!existsSync(depPath)) continue
-            try {
-              const realPath = realpathSync(depPath)
-              const targetPath = join(funcDir, 'node_modules', ...dep.split('/'))
-              mkdirSync(join(funcDir, 'node_modules', dep.startsWith('@') ? dep.split('/')[0] : ''), { recursive: true })
-              // Filter: skip nested node_modules inside the package (prevents circular copies).
-              // We compare the relative path from the package root, not the absolute path.
-              cpSync(realPath, targetPath, {
-                recursive: true,
-                filter: (src) => {
-                  const rel = src.slice(realPath.length)
-                  return !rel.includes('node_modules')
-                },
-              })
-              console.log(`  ✓ ${dep} copied to function directory`)
-            } catch (e) {
-              console.warn(`  ⚠ Failed to copy ${dep}: ${(e as Error).message}`)
-            }
-          }
-        }
+        // NOTE: source files are NOT copied to the function directory anymore.
+        // The build-time manifest (manifest.ts) statically imports all user modules
+        // at build time → Nitro/rolldown bundles them into the function. No jiti,
+        // no readdirSync, no filesystem access at runtime.
       }
     } catch (err) {
       result.exitCode = 1

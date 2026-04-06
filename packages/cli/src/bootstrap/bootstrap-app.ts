@@ -104,6 +104,10 @@ export interface BootstrapOptions {
   verbose?: boolean
   /** Custom import function for .ts files (e.g. jiti). Falls back to native import(). */
   importFn?: (path: string) => Promise<Record<string, unknown>>
+  /** Pre-discovered resources (from build-time manifest). Skips filesystem scan when provided. */
+  preloadedResources?: import('../resource-loader').DiscoveredResources
+  /** Pre-loaded module exports map (from build-time manifest). Used as importFn fallback. */
+  preloadedImports?: Record<string, Record<string, unknown>>
 }
 
 export interface BootstrappedApp {
@@ -369,7 +373,23 @@ async function registerGlobals() {
  */
 export async function bootstrapApp(options: BootstrapOptions): Promise<BootstrappedApp> {
   const { config, cwd, mode, verbose } = options
-  const doImport = options.importFn ?? ((path: string) => import(`${path}?t=${Date.now()}`))
+  // Import function: when preloadedImports is available (build-time manifest), look up
+  // the module from the static import map first. Falls back to importFn (jiti) or native
+  // dynamic import. The preloaded map eliminates ALL runtime filesystem access.
+  const preloaded = options.preloadedImports
+  const baseFn = options.importFn ?? ((path: string) => import(`${path}?t=${Date.now()}`))
+  const doImport = preloaded
+    ? async (path: string): Promise<Record<string, unknown>> => {
+        if (preloaded[path]) return preloaded[path]
+        // Try without trailing extension variations
+        const withoutTs = path.replace(/\.tsx?$/, '')
+        for (const key of Object.keys(preloaded)) {
+          if (key === path || key.replace(/\.tsx?$/, '') === withoutTs) return preloaded[key]
+        }
+        // Fallback to runtime import (for edge cases not in manifest)
+        return baseFn(path)
+      }
+    : baseFn
 
   // Register globals BEFORE any user code is imported
   await registerGlobals()
@@ -465,17 +485,26 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   }
 
   // [6] Discover resources (app + plugins — Nuxt Layers style)
-  logger.info('Discovering resources...')
-  const { resolvePlugins } = await import('../plugins/resolve-plugins')
-  const { mergePluginResources } = await import('../plugins/merge-resources')
+  // When preloadedResources is provided (from build-time manifest), skip ALL filesystem
+  // discovery and plugin resolution. This is critical for serverless deployments (Vercel,
+  // Lambda, Cloudflare) where source files aren't on disk as individual .ts files.
+  let resources: Awaited<ReturnType<typeof discoverResources>>
+  if (options.preloadedResources) {
+    logger.info('Using pre-loaded resources (build-time manifest)')
+    resources = options.preloadedResources
+  } else {
+    logger.info('Discovering resources...')
+    const { resolvePlugins } = await import('../plugins/resolve-plugins')
+    const { mergePluginResources } = await import('../plugins/merge-resources')
 
-  const resolvedPlugins = resolvePlugins(config, cwd)
-  if (resolvedPlugins.length > 0) {
-    logger.info(`  Plugins: ${resolvedPlugins.map((p) => p.name).join(', ')}`)
+    const resolvedPlugins = resolvePlugins(config, cwd)
+    if (resolvedPlugins.length > 0) {
+      logger.info(`  Plugins: ${resolvedPlugins.map((p) => p.name).join(', ')}`)
+    }
+
+    const appResources = await discoverResources(cwd)
+    resources = await mergePluginResources(resolvedPlugins, appResources)
   }
-
-  const appResources = await discoverResources(cwd)
-  const resources = await mergePluginResources(resolvedPlugins, appResources)
 
   // [6b] Pre-load table generation utilities
   const { generatePgTableFromDml, generateLinkPgTable } = await import('@manta/adapter-database-pg')
