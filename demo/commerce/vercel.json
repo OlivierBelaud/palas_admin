@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx manta build --preset vercel",
   "framework": null,
   "rewrites": [
     {
