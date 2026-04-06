@@ -1,26 +1,27 @@
-import { SidebarLeft, TriangleRightMini, XMark } from "@medusajs/icons"
-import { IconButton, clx } from "@medusajs/ui"
-import { AnimatePresence } from "motion/react"
-import { Dialog as RadixDialog } from "radix-ui"
-import { PropsWithChildren, ReactNode, useEffect, useState } from "react"
-import {
-  Link,
-  Outlet,
-  UIMatch,
-  useMatches,
-  useNavigation,
-} from "react-router-dom"
-
-import { ProgressBar } from "../components/common/progress-bar"
-import { useSidebar } from "../providers/sidebar-provider"
-// import { useAi, AiPanel, SparklesIcon } from "../ai"
+import { cn, IconButton } from '@manta/ui'
+import { ChevronRight, PanelLeft, X } from 'lucide-react'
+import { AnimatePresence } from 'motion/react'
+import { Dialog as RadixDialog } from 'radix-ui'
+import { type PropsWithChildren, type ReactNode, useEffect, useState } from 'react'
+import { Link, Outlet, type UIMatch, useMatches, useNavigation } from 'react-router-dom'
+import { AiPanel, SparklesIcon, useAi } from '../ai'
+import { ProgressBar } from '../components/common/progress-bar'
+import { useDashboardContext } from '../context'
+import { useSidebar } from '../providers/sidebar-provider'
 
 export const Shell = ({ children }: PropsWithChildren) => {
   const navigation = useNavigation()
-  const loading = navigation.state === "loading"
+  const loading = navigation.state === 'loading'
+  const { isOpen, isFullscreen, panelWidth } = useAi()
+
+  // Push content when AI sidebar is open (not in fullscreen — fullscreen floats)
+  const pushRight = isOpen && !isFullscreen ? panelWidth : 0
 
   return (
-    <div className="relative flex h-screen flex-col items-start overflow-hidden lg:flex-row">
+    <div
+      className="relative flex h-screen flex-col items-start overflow-hidden transition-[padding] duration-200 lg:flex-row"
+      style={{ paddingRight: pushRight }}
+    >
       <NavigationBar loading={loading} />
       <div>
         <MobileSidebarContainer>{children}</MobileSidebarContainer>
@@ -30,11 +31,11 @@ export const Shell = ({ children }: PropsWithChildren) => {
         <div className="flex flex-1 flex-col overflow-auto">
           <Topbar />
           <main
-            className={clx(
-              "flex h-full w-full flex-col items-center overflow-y-auto transition-opacity delay-200 duration-200",
+            className={cn(
+              'flex h-full w-full flex-col items-center overflow-y-auto bg-background transition-opacity delay-200 duration-200',
               {
-                "opacity-25": loading,
-              }
+                'opacity-25': loading,
+              },
             )}
           >
             <Gutter>
@@ -42,8 +43,8 @@ export const Shell = ({ children }: PropsWithChildren) => {
             </Gutter>
           </main>
         </div>
-        {/* <AiPanel /> */}
       </div>
+      <AiPanel />
     </div>
   )
 }
@@ -75,11 +76,7 @@ const NavigationBar = ({ loading }: { loading: boolean }) => {
 }
 
 const Gutter = ({ children }: PropsWithChildren) => {
-  return (
-    <div className="flex w-full max-w-[1600px] flex-col gap-y-2 p-3">
-      {children}
-    </div>
-  )
+  return <div className="flex w-full max-w-[1600px] flex-col gap-y-4 px-6 pt-10 pb-6">{children}</div>
 }
 
 const Breadcrumbs = () => {
@@ -95,7 +92,7 @@ const Breadcrumbs = () => {
     .map((match) => {
       const handle = match.handle
 
-      let label: string | ReactNode | undefined = undefined
+      let label: string | ReactNode | undefined
 
       try {
         label = handle.breadcrumb?.(match)
@@ -115,22 +112,15 @@ const Breadcrumbs = () => {
     .filter(Boolean) as { label: string | ReactNode; path: string }[]
 
   return (
-    <ol
-      className={clx(
-        "text-ui-fg-muted txt-compact-small-plus flex select-none items-center"
-      )}
-    >
+    <ol className={cn('flex select-none items-center text-sm font-medium text-muted-foreground')}>
       {crumbs.map((crumb, index) => {
         const isLast = index === crumbs.length - 1
         const isSingle = crumbs.length === 1
 
         return (
-          <li key={index} className={clx("flex items-center")}>
+          <li key={index} className={cn('flex items-center')}>
             {!isLast ? (
-              <Link
-                className="transition-fg hover:text-ui-fg-subtle"
-                to={crumb.path}
-              >
+              <Link className="transition-colors hover:text-muted-foreground" to={crumb.path}>
                 {crumb.label}
               </Link>
             ) : (
@@ -138,8 +128,8 @@ const Breadcrumbs = () => {
                 {!isSingle && <span className="block lg:hidden">...</span>}
                 <span
                   key={index}
-                  className={clx({
-                    "hidden lg:block": !isSingle,
+                  className={cn({
+                    'hidden lg:block': !isSingle,
                   })}
                 >
                   {crumb.label}
@@ -148,7 +138,7 @@ const Breadcrumbs = () => {
             )}
             {!isLast && (
               <span className="mx-2">
-                <TriangleRightMini className="rtl:rotate-180" />
+                <ChevronRight className="h-3 w-3 rtl:rotate-180" />
               </span>
             )}
           </li>
@@ -163,34 +153,33 @@ const ToggleSidebar = () => {
 
   return (
     <div>
-      <IconButton
-        className="hidden lg:flex"
-        variant="transparent"
-        onClick={() => toggle("desktop")}
-        size="small"
-      >
-        <SidebarLeft className="text-ui-fg-muted rtl:rotate-180" />
+      <IconButton className="hidden lg:flex" variant="ghost" onClick={() => toggle('desktop')} size="small">
+        <PanelLeft className="h-4 w-4 text-muted-foreground rtl:rotate-180" />
       </IconButton>
-      <IconButton
-        className="hidden max-lg:flex"
-        variant="transparent"
-        onClick={() => toggle("mobile")}
-        size="small"
-      >
-        <SidebarLeft className="text-ui-fg-muted rtl:rotate-180" />
+      <IconButton className="hidden max-lg:flex" variant="ghost" onClick={() => toggle('mobile')} size="small">
+        <PanelLeft className="h-4 w-4 text-muted-foreground rtl:rotate-180" />
       </IconButton>
     </div>
   )
 }
 
 const AiToggleButton = () => {
-  // AI panel disabled temporarily for debugging
-  return null
+  const { toggle, isOpen } = useAi()
+  const { aiEnabled } = useDashboardContext()
+  if (!aiEnabled || isOpen) return null
+  return (
+    <IconButton variant="ghost" onClick={toggle}>
+      <SparklesIcon className="h-4 w-4" />
+    </IconButton>
+  )
 }
 
 const Topbar = () => {
   return (
-    <div className="grid w-full grid-cols-2 border-b p-3">
+    <div
+      className="grid shrink-0 w-full grid-cols-2 items-center border-b border-border bg-card px-3"
+      style={{ height: 49 }}
+    >
       <div className="flex items-center gap-x-1.5">
         <ToggleSidebar />
         <Breadcrumbs />
@@ -207,8 +196,8 @@ const DesktopSidebarContainer = ({ children }: PropsWithChildren) => {
 
   return (
     <div
-      className={clx("hidden h-screen w-[220px] border-e", {
-        "lg:flex": desktop,
+      className={cn('hidden h-screen w-[240px] border-e border-border bg-background', {
+        'lg:flex': desktop,
       })}
     >
       {children}
@@ -220,36 +209,28 @@ const MobileSidebarContainer = ({ children }: PropsWithChildren) => {
   const { mobile, toggle } = useSidebar()
 
   return (
-    <RadixDialog.Root open={mobile} onOpenChange={() => toggle("mobile")}>
+    <RadixDialog.Root open={mobile} onOpenChange={() => toggle('mobile')}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay
-          className={clx(
-            "bg-ui-bg-overlay fixed inset-0",
-            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          className={cn(
+            'fixed inset-0 bg-black/80',
+            'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           )}
         />
         <RadixDialog.Content
-          className={clx(
-            "bg-ui-bg-subtle shadow-elevation-modal fixed inset-y-2 start-2 flex w-full max-w-[304px] flex-col overflow-hidden rounded-lg border-r",
-            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-start-1/2 data-[state=open]:slide-in-from-start-1/2 duration-200"
+          className={cn(
+            'fixed inset-y-2 start-2 flex w-full max-w-[304px] flex-col overflow-hidden rounded-lg border-r bg-muted shadow-lg',
+            'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-start-1/2 data-[state=open]:slide-in-from-start-1/2 duration-200',
           )}
         >
           <div className="p-3">
             <RadixDialog.Close asChild>
-              <IconButton
-                size="small"
-                variant="transparent"
-                className="text-ui-fg-subtle"
-              >
-                <XMark />
+              <IconButton size="small" variant="ghost" className="text-muted-foreground">
+                <X className="h-4 w-4" />
               </IconButton>
             </RadixDialog.Close>
-            <RadixDialog.Title className="sr-only">
-              Navigation
-            </RadixDialog.Title>
-            <RadixDialog.Description className="sr-only">
-              Main navigation sidebar
-            </RadixDialog.Description>
+            <RadixDialog.Title className="sr-only">Navigation</RadixDialog.Title>
+            <RadixDialog.Description className="sr-only">Main navigation sidebar</RadixDialog.Description>
           </div>
           {children}
         </RadixDialog.Content>

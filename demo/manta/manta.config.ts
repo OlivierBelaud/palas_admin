@@ -1,16 +1,16 @@
-// Demo app config — loaded by `manta dev`
+// Manta project config — single source of truth
+// All infrastructure (Vite, Tailwind, Vercel, bootstrap) is handled by the CLI.
 
-export default {
+import { defineConfig } from '@manta/core'
+
+export default defineConfig({
   database: {
     url: process.env.DATABASE_URL ?? 'postgresql://localhost:5432/manta_demo',
     pool: { min: 2, max: 10 },
   },
-  http: { port: 9001 },
+  http: { port: 3000 },
   admin: {
-    // Enable admin dashboard on /admin
     enabled: true,
-    // Vite dev server port (auto-spawned in dev mode)
-    vitePort: 5174,
   },
-  appEnv: 'dev',
-}
+  plugins: ['@manta/plugin-posthog-proxy'],
+})

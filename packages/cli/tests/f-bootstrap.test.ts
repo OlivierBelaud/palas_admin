@@ -1,7 +1,7 @@
 // Section F — Bootstrap sequence
 // Tests: F-01 → F-12
 
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { boot, lazyBoot } from '../src/bootstrap/boot'
 import type { BootContext } from '../src/types'
 

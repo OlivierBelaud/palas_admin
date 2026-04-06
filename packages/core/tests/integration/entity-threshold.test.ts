@@ -1,25 +1,38 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { TestMantaApp } from '@manta/core'
 import {
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
   MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('Entity Counting Threshold Integration', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
+    app = createTestMantaApp({ infra: makeInfra() })
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-011: counts root + nested entities iteratively
   it('counts root + nested entities iteratively', () => {
-    // 100 products × 50 variants = 5100 total < 10000 limit
+    // 100 products x 50 variants = 5100 total < 10000 limit
     const products = Array.from({ length: 100 }, (_, i) => ({
       id: `p${i}`,
       variants: Array.from({ length: 50 }, (_, j) => ({ id: `v${i}-${j}` })),
@@ -39,7 +52,7 @@ describe('Entity Counting Threshold Integration', () => {
   it('throws when threshold exceeded', () => {
     const maxEntities = 500 // Configured limit
 
-    // 100 products × 50 variants = 5100 > 500
+    // 100 products x 50 variants = 5100 > 500
     let totalEntities = 100
     const variantsPerProduct = 50
 
@@ -64,7 +77,7 @@ describe('Entity Counting Threshold Integration', () => {
     // Level 0: 100 products
     let total = 100
 
-    // Level 1: 100 × 5 variants = 500
+    // Level 1: 100 x 5 variants = 500
     const level1Count = 100 * 5
     total += level1Count // = 600 > 200
 

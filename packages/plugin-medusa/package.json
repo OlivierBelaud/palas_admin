@@ -1,0 +1,25 @@
+{
+  "name": "@manta/plugin-medusa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@medusajs/framework": "2.13.3",
+    "@medusajs/medusa": "2.13.3",
+    "@medusajs/core-flows": "2.13.3",
+    "@medusajs/utils": "2.13.3",
+    "@medusajs/modules-sdk": "2.13.3",
+    "@medusajs/types": "2.13.3"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,7 +1,8 @@
 // SPEC-049/050/049b — Mock auth implementations for dev/test
 
-import type { IAuthPort, IAuthModuleService, IAuthGateway } from '../ports/auth'
+import type { AuthenticationInput, AuthenticationResponse } from '../auth/providers/types'
 import type { AuthContext, AuthCredentials, SessionOptions } from '../auth/types'
+import type { IAuthGateway, IAuthModuleService, IAuthPort } from '../ports/auth'
 
 export interface TestAuthConfig {
   jwt?: AuthContext
@@ -39,7 +40,7 @@ export class MockAuthPort implements IAuthPort {
   }
 
   createJwt(payload: AuthContext, options?: { expiresIn?: string | number }): string {
-    const token = `jwt_${payload.actor_type}_${payload.actor_id}_${Date.now()}`
+    const token = `jwt_${payload.type}_${payload.id}_${Date.now()}`
 
     if (options?.expiresIn) {
       let expiresInMs: number
@@ -86,19 +87,35 @@ export class MockAuthModuleService implements IAuthModuleService {
     }
   }
 
-  async authenticate(_data: Record<string, unknown>): Promise<AuthContext | null> {
-    return this._config.jwt ?? null
+  async authenticate(_provider: string, _data: AuthenticationInput): Promise<AuthenticationResponse> {
+    const ctx = this._config.jwt
+    if (!ctx) return { success: false, error: 'No mock JWT configured' }
+    return {
+      success: true,
+      authIdentity: { id: ctx.auth_identity_id ?? crypto.randomUUID(), app_metadata: ctx.metadata },
+    }
   }
 
-  async register(_data: Record<string, unknown>): Promise<{ authIdentity: unknown }> {
-    return { authIdentity: { id: crypto.randomUUID() } }
+  async register(_provider: string, _data: AuthenticationInput): Promise<AuthenticationResponse> {
+    return {
+      success: true,
+      authIdentity: { id: crypto.randomUUID() },
+    }
   }
 
-  async validateCallback(_data: Record<string, unknown>): Promise<AuthContext | null> {
-    return this._config.jwt ?? null
+  async validateCallback(_provider: string, _data: AuthenticationInput): Promise<AuthenticationResponse> {
+    const ctx = this._config.jwt
+    if (!ctx) return { success: false, error: 'No mock JWT configured' }
+    return {
+      success: true,
+      authIdentity: { id: ctx.auth_identity_id ?? crypto.randomUUID(), app_metadata: ctx.metadata },
+    }
   }
 
-  async createSession(authContext: AuthContext, options?: SessionOptions): Promise<{ sessionId: string; expiresAt: Date }> {
+  async createSession(
+    authContext: AuthContext,
+    options?: SessionOptions,
+  ): Promise<{ sessionId: string; expiresAt: Date }> {
     const sessionId = crypto.randomUUID()
     const ttl = (options?.ttl ?? 86400) * 1000
     const expiresAt = new Date(Date.now() + ttl)
@@ -127,7 +144,9 @@ export class MockAuthModuleService implements IAuthModuleService {
   }
 
   /** Test helper */
-  _reset() { this._sessions.clear() }
+  _reset() {
+    this._sessions.clear()
+  }
 }
 
 /** SPEC-049b — Auth Gateway facade */

@@ -1,22 +1,34 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { ICachePort, TestMantaApp } from '@manta/core'
 import {
-  type ICachePort,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('ICachePort Conformance', () => {
   let cache: ICachePort
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    cache = container.resolve<ICachePort>('ICachePort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    cache = app.infra.cache
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // C-01 — SPEC-064: basic set/get roundtrip
@@ -109,7 +121,7 @@ describe('ICachePort Conformance', () => {
     }
     await Promise.all(promises)
 
-    const getPromises: Promise<string | null>[] = []
+    const getPromises: Promise<unknown>[] = []
     for (let i = 0; i < 100; i++) {
       getPromises.push(cache.get(`key:${i}`))
     }
@@ -130,8 +142,8 @@ describe('ICachePort Conformance', () => {
   // C-09 — SPEC-064: JSON serialization roundtrip
   it('set/get > sérialisation JSON', async () => {
     const obj = { nested: { deep: true } }
-    await cache.set('obj', JSON.stringify(obj), 60)
+    await cache.set('obj', obj, 60)
     const result = await cache.get('obj')
-    expect(JSON.parse(result!)).toEqual(obj)
+    expect(result).toEqual(obj)
   })
 })

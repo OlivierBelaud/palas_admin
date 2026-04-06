@@ -2,15 +2,15 @@
 // Ref: CLI_SPEC §2.2, CLI_TESTS_SPEC §B6
 // Tests: DML scanning, rename detection, dangerous changes, command with mocked deps
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  scanDmlModels,
-  detectRenames,
-  isNonInteractive,
   detectDangerousChanges,
+  detectRenames,
   generateCommand,
+  isNonInteractive,
+  scanDmlModels,
 } from '../../../../src/commands/db/generate'
 import type { GenerateDeps } from '../../../../src/commands/db/types'
 
@@ -59,8 +59,8 @@ describe('B6 — db:generate — pure functions', () => {
 
     const result = scanDmlModels(TMP)
     expect(result.entities).toHaveLength(2)
-    expect(result.entities.map(e => e.name)).toContain('product')
-    expect(result.entities.map(e => e.name)).toContain('order')
+    expect(result.entities.map((e) => e.name)).toContain('product')
+    expect(result.entities.map((e) => e.name)).toContain('order')
   })
 
   // -------------------------------------------------------------------
@@ -92,7 +92,10 @@ describe('B6 — db:generate — pure functions', () => {
     const renames = detectRenames(dropped, added)
     expect(renames).toHaveLength(1)
     expect(renames[0]).toEqual({
-      table: 'products', from: 'title', to: 'name', type: 'text',
+      table: 'products',
+      from: 'title',
+      to: 'name',
+      type: 'text',
     })
   })
 
@@ -159,7 +162,7 @@ describe('B6 — db:generate — pure functions', () => {
     const sql = 'ALTER TABLE products\n  DROP COLUMN legacy_sku;'
     const warnings = detectDangerousChanges(sql)
     expect(warnings.length).toBeGreaterThan(0)
-    expect(warnings.some(w => w.includes('DROP COLUMN'))).toBe(true)
+    expect(warnings.some((w) => w.includes('DROP COLUMN'))).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -210,7 +213,7 @@ describe('B6 — db:generate — command', () => {
     const deps = createMockDeps()
     const result = await generateCommand({}, TMP, deps)
     expect(result.noChanges).toBe(true)
-    expect(result.warnings.some(w => w.includes('No DML entities'))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('No DML entities'))).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -292,6 +295,6 @@ describe('B6 — db:generate — command', () => {
     })
 
     const result = await generateCommand({}, TMP, deps)
-    expect(result.warnings.some(w => w.includes('DROP TABLE'))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('DROP TABLE'))).toBe(true)
   })
 })

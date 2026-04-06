@@ -1,10 +1,9 @@
 // SPEC-070 — manta start command (production)
-// JSON logs, no auto-migration, secrets required
+// Launches the compiled Nitro output. Bootstrap happens inside the catch-all route.
 
-import type { StartOptions, LoadedConfig } from '../types'
-import { loadEnv } from '../config/load-env'
 import { loadConfig, validateConfigForCommand } from '../config/load-config'
-import { bootstrapAndStart } from '../server-bootstrap'
+import { loadEnv } from '../config/load-env'
+import type { LoadedConfig, StartOptions } from '../types'
 
 export interface StartCommandResult {
   exitCode: number
@@ -58,13 +57,27 @@ export async function startCommand(
   // [5] Resolve port
   const port = options.port ?? config.http?.port ?? 9000
 
-  // [6] Bootstrap and start (never returns — blocks on HTTP server)
+  // [6] Start production server via @manta/host-nitro
+  // Bootstrap happens inside the compiled catch-all route, not here.
+  console.log(`\n  Starting Manta production server on port ${port}...`)
+
   try {
-    await bootstrapAndStart({
-      config,
-      port,
-      cwd,
-      mode: 'prod',
+    const { resolve } = await import('node:path')
+    const { startProduction } = await import('@manta/host-nitro')
+    const outputDir = resolve(cwd, '.output')
+
+    const server = await startProduction({ outputDir, port })
+
+    // Block until process exits
+    await new Promise<void>((resolvePromise) => {
+      process.on('SIGINT', async () => {
+        await server.close()
+        resolvePromise()
+      })
+      process.on('SIGTERM', async () => {
+        await server.close()
+        resolvePromise()
+      })
     })
   } catch (err) {
     result.exitCode = 1

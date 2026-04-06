@@ -9,8 +9,17 @@
     "outDir": "dist",
     "rootDir": ".",
     "paths": {
-      "@manta/test-utils": ["./packages/test-utils/src/index.ts"]
+      "@manta/core": ["./packages/core/src/index.ts"],
+      "@manta/test-utils": ["./packages/test-utils/src/index.ts"],
+      "@manta/test-utils/pg": ["./packages/test-utils/src/pg.ts"],
+      "@manta/adapter-cache-upstash": ["./packages/adapter-cache-upstash/src/index.ts"],
+      "@manta/adapter-locking-neon": ["./packages/adapter-locking-neon/src/index.ts"],
+      "@manta/adapter-file-vercel-blob": ["./packages/adapter-file-vercel-blob/src/index.ts"],
+      "@manta/adapter-jobs-vercel-cron": ["./packages/adapter-jobs-vercel-cron/src/index.ts"],
+      "@manta/adapter-eventbus-upstash": ["./packages/adapter-eventbus-upstash/src/index.ts"],
+      "@manta/adapter-h3": ["./packages/adapter-h3/src/index.ts"]
     }
   },
-  "include": ["tests/**/*.ts", "packages/**/*.ts"]
+  "include": ["tests/**/*.ts", "packages/**/*.ts", "demo/**/*.ts", "demo/**/.manta/generated.d.ts"],
+  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "dist/**", "demo/**/.manta/server/**"]
 }

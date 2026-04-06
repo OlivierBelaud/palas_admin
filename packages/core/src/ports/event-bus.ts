@@ -24,7 +24,7 @@ export interface IEventBusPort {
   subscribe(
     eventName: string,
     handler: (event: Message) => Promise<void> | void,
-    options?: { subscriberId?: string }
+    options?: { subscriberId?: string },
   ): void
 
   /**
@@ -50,13 +50,17 @@ export interface IEventBusPort {
    * Interceptors are read-only, fire-and-forget.
    * @param fn - The interceptor function
    */
-  addInterceptor(fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void): void
+  addInterceptor(
+    fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void,
+  ): void
 
   /**
    * Remove a previously added interceptor.
    * @param fn - The interceptor function to remove
    */
-  removeInterceptor(fn: Function): void
+  removeInterceptor(
+    fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void,
+  ): void
 
   /**
    * Optional: hook called when a new event group is created.

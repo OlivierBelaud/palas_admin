@@ -62,10 +62,7 @@ export function checkUnboundedRelations(
 ): { allowed: boolean; warning?: string } {
   if (opts.dangerouslyUnboundedRelations) {
     if (strict) {
-      throw new MantaError(
-        'INVALID_STATE',
-        'dangerouslyUnboundedRelations is forbidden in strict mode',
-      )
+      throw new MantaError('INVALID_STATE', 'dangerouslyUnboundedRelations is forbidden in strict mode')
     }
     return { allowed: true, warning: 'dangerouslyUnboundedRelations is enabled — nested relations are unbounded' }
   }

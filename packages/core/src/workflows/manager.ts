@@ -1,289 +1,269 @@
-// SPEC-019b — WorkflowManager: registers and executes workflows with compensation
-// Supports persistent checkpoints via Drizzle for crash recovery in serverless.
+// WorkflowManager — registers and executes imperative workflows.
 
-import type { IContainer } from '../container'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import type { MantaApp } from '../app'
+import { MantaError } from '../errors/manta-error'
+import type { Message } from '../events/types'
+import type { IEventBusPort } from '../ports/event-bus'
+import type { ILockingPort } from '../ports/locking'
 import type { ILoggerPort } from '../ports/logger'
-import type { WorkflowDefinition, WorkflowResult, StepResolveContext } from './types'
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { eq, and } from 'drizzle-orm'
-import { workflowCheckpoints, workflowExecutions } from '../db/schema'
+import type {
+  CompletedStep,
+  StepContext,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowRunOptions,
+  WorkflowRunResult,
+} from './types'
+import { RETRY_POLICY } from './types'
 
-export interface WorkflowRunOptions {
-  input?: Record<string, unknown>
-  transactionId?: string
-  /** Checkpoint strategy: 'per-step' (default) writes after each step, 'batched' writes all at end */
-  checkpointMode?: 'per-step' | 'batched'
+export const workflowContextStorage = new AsyncLocalStorage<WorkflowContext>()
+
+export interface WorkflowStorage {
+  save(transactionId: string, stepId: string, data: unknown): Promise<void>
+  list(transactionId: string): Promise<Array<{ stepId: string; data: unknown }>>
+  delete(transactionId: string): Promise<void>
+  /** Track workflow execution start (optional) */
+  trackStart?(transactionId: string, workflowName: string, input: unknown): Promise<void>
+  /** Track workflow execution completion (optional) */
+  trackComplete?(transactionId: string, result: unknown): Promise<void>
+  /** Track workflow execution failure (optional) */
+  trackFailed?(transactionId: string, error: string): Promise<void>
+}
+
+class MemoryStorage implements WorkflowStorage {
+  private _store = new Map<string, unknown>()
+
+  async save(transactionId: string, stepId: string, data: unknown): Promise<void> {
+    this._store.set(`${transactionId}:${stepId}`, data)
+  }
+
+  async list(transactionId: string): Promise<Array<{ stepId: string; data: unknown }>> {
+    const results: Array<{ stepId: string; data: unknown }> = []
+    for (const [key, value] of this._store) {
+      if (key.startsWith(`${transactionId}:`)) {
+        results.push({ stepId: key.slice(transactionId.length + 1), data: value })
+      }
+    }
+    return results
+  }
+
+  async delete(transactionId: string): Promise<void> {
+    for (const key of this._store.keys()) {
+      if (key.startsWith(`${transactionId}:`)) this._store.delete(key)
+    }
+  }
+}
+
+export interface WorkflowManagerOptions {
+  storage?: WorkflowStorage
 }
 
 /**
- * WorkflowManager registers workflow definitions and executes them.
- * Supports sequential step execution with saga-style compensation on failure.
- * When a Drizzle db instance is provided, checkpoints are persisted for crash recovery.
+ * WorkflowManager — registers and runs imperative workflows.
+ * Steps access the workflow context via AsyncLocalStorage.
  */
 export class WorkflowManager {
   private _workflows = new Map<string, WorkflowDefinition>()
-  private _container: IContainer
   private _logger: ILoggerPort | null = null
-  private _db: PostgresJsDatabase | null = null
+  private _eventBus: IEventBusPort | null = null
+  private _locking: ILockingPort | null = null
+  private _storage: WorkflowStorage
+  private _app: MantaApp
 
-  constructor(container: IContainer, db?: PostgresJsDatabase) {
-    this._container = container
-    this._db = db ?? null
-    try {
-      this._logger = container.resolve<ILoggerPort>('ILoggerPort')
-    } catch {
-      // Logger not available — run without logging
-    }
+  constructor(app: MantaApp, options?: WorkflowManagerOptions) {
+    this._app = app
+    this._storage = options?.storage ?? new MemoryStorage()
+
+    this._logger = app.infra.logger ?? null
+    this._eventBus = app.infra.eventBus ?? null
+    this._locking = app.infra.locking ?? null
   }
 
-  register(workflow: WorkflowDefinition): void {
+  // biome-ignore lint/suspicious/noExplicitAny: workflow definitions have varied type params
+  register(workflow: WorkflowDefinition<any, any>): void {
     this._workflows.set(workflow.name, workflow)
   }
 
-  /**
-   * Run a registered workflow by name.
-   * Steps execute sequentially. Checkpoints are saved to DB after each step (per-step)
-   * or all at once after completion (batched).
-   * On failure, completed steps are compensated in reverse.
-   * On resume (after crash), completed steps are skipped using saved checkpoints.
-   */
-  async run(
-    workflowId: string,
-    options: WorkflowRunOptions = {},
-  ): Promise<Record<string, unknown>> {
+  async run(workflowId: string, options: WorkflowRunOptions = {}): Promise<WorkflowRunResult> {
     const workflow = this._workflows.get(workflowId)
-    if (!workflow) {
-      throw new Error(`Workflow "${workflowId}" not registered`)
-    }
+    if (!workflow) throw new MantaError('UNKNOWN_MODULES', `Workflow "${workflowId}" not registered`)
 
     const input = options.input ?? {}
     const transactionId = options.transactionId ?? `tx_${crypto.randomUUID().replace(/-/g, '')}`
-    const batched = options.checkpointMode === 'batched'
+    const cleanup = options.cleanup ?? true
 
-    // Track execution in DB
-    if (this._db) {
-      await this._db.insert(workflowExecutions).values({
-        transaction_id: transactionId,
-        workflow_name: workflowId,
-        status: 'running',
-        input: input as any,
-      }).onConflictDoUpdate({
-        target: workflowExecutions.transaction_id,
-        set: { status: 'running' },
-      })
+    if (this._locking) {
+      const acquired = await this._locking.acquire(`workflow:${transactionId}`, { expire: 60000 })
+      if (!acquired) throw new MantaError('CONFLICT', `Workflow "${workflowId}" already running: ${transactionId}`)
     }
 
-    // Load existing checkpoints (for crash recovery)
-    const existingCheckpoints = new Map<string, Record<string, unknown>>()
-    if (this._db) {
-      const rows = await this._db.select()
-        .from(workflowCheckpoints)
-        .where(and(
-          eq(workflowCheckpoints.transaction_id, transactionId),
-          eq(workflowCheckpoints.status, 'done'),
-        ))
-      for (const row of rows) {
-        existingCheckpoints.set(row.step_id, row.data as Record<string, unknown>)
-      }
-      if (existingCheckpoints.size > 0) {
-        this._logger?.info(`[workflow:${workflowId}] Resuming: ${existingCheckpoints.size} steps already completed`)
-      }
-    }
+    try {
+      // Durable execution: retry up to RETRY_POLICY.maxAttempts before compensating
+      let lastError: Error | null = null
+      for (let attempt = 1; attempt <= RETRY_POLICY.maxAttempts; attempt++) {
+        try {
+          return await this._execute(workflow, workflowId, input, transactionId, cleanup, attempt)
+        } catch (error) {
+          lastError = error as Error
 
-    const completedSteps: Array<{
-      name: string
-      output: Record<string, unknown>
-      compensation?: (ctx: { output: Record<string, unknown>; context: StepResolveContext }) => Promise<void>
-    }> = []
-
-    const previousOutput: Record<string, unknown> = {}
-    const pendingCheckpoints: Array<{ transaction_id: string; step_id: string; status: string; data: any }> = []
-
-    const resolveContext: StepResolveContext = {
-      resolve: <T>(key: string): T => this._container.resolve<T>(key),
-    }
-
-    for (const step of workflow.steps) {
-      // Check if step was already completed (crash recovery)
-      const savedOutput = existingCheckpoints.get(step.name)
-      if (savedOutput) {
-        this._logger?.info(`[workflow:${workflowId}] Step "${step.name}" — SKIPPED (already completed)`)
-        previousOutput[step.name] = savedOutput
-        completedSteps.push({ name: step.name, output: savedOutput, compensation: step.compensation })
-        continue
-      }
-
-      try {
-        this._logger?.debug(`[workflow:${workflowId}] Running step: ${step.name}`)
-
-        const result = await step.handler({
-          input,
-          previousOutput,
-          context: resolveContext,
-        })
-
-        const output = (result != null && typeof result === 'object' ? result : { value: result }) as Record<string, unknown>
-        previousOutput[step.name] = output
-
-        // Save checkpoint
-        if (this._db) {
-          if (batched) {
-            pendingCheckpoints.push({
-              transaction_id: transactionId,
-              step_id: step.name,
-              status: 'done',
-              data: output as any,
-            })
-          } else {
-            await this._db.insert(workflowCheckpoints).values({
-              transaction_id: transactionId,
-              step_id: step.name,
-              status: 'done',
-              data: output as any,
-            }).onConflictDoUpdate({
-              target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
-              set: { status: 'done', data: output as any },
-            })
+          if (attempt < RETRY_POLICY.maxAttempts) {
+            // Backoff delay before next attempt
+            const delay = Math.min(
+              RETRY_POLICY.initialIntervalMs * RETRY_POLICY.backoffMultiplier ** (attempt - 1),
+              RETRY_POLICY.maxIntervalMs,
+            )
+            this._logger?.info(
+              `[workflow:${workflowId}] Retrying (${attempt + 1}/${RETRY_POLICY.maxAttempts}) in ${delay}ms`,
+            )
+            await new Promise((resolve) => setTimeout(resolve, delay))
           }
         }
+      }
 
-        completedSteps.push({
-          name: step.name,
-          output,
-          compensation: step.compensation,
+      // Should never reach here, but TypeScript needs it
+      throw lastError!
+    } finally {
+      if (this._locking) {
+        await this._locking.release(`workflow:${transactionId}`).catch((err) => {
+          ;(this._logger ?? console).warn(`[WorkflowManager] Lock release failed: ${err?.message ?? err}`)
         })
-
-        this._logger?.debug(`[workflow:${workflowId}] Step "${step.name}" completed${batched ? '' : ' + checkpointed'}`)
-      } catch (error) {
-        this._logger?.warn(`[workflow:${workflowId}] Step "${step.name}" failed: ${(error as Error).message}`)
-
-        // Save failed step + any pending checkpoints to DB
-        if (this._db) {
-          const failedCheckpoint = {
-            transaction_id: transactionId,
-            step_id: step.name,
-            status: 'failed',
-            error: (error as Error).message,
-          }
-
-          if (batched && pendingCheckpoints.length > 0) {
-            // Flush completed checkpoints + failed step in one batch
-            await this._db.insert(workflowCheckpoints)
-              .values([...pendingCheckpoints, { ...failedCheckpoint, data: {} }])
-              .onConflictDoUpdate({
-                target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
-                set: { status: 'done' },
-              })
-          }
-
-          await this._db.insert(workflowCheckpoints).values({
-            ...failedCheckpoint,
-            data: {},
-          }).onConflictDoUpdate({
-            target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
-            set: { status: 'failed', error: (error as Error).message },
-          })
-        }
-
-        // Compensate in reverse order
-        await this._compensate(workflowId, completedSteps, resolveContext)
-
-        // Mark execution as failed
-        if (this._db) {
-          await this._db.update(workflowExecutions)
-            .set({ status: 'failed', error: (error as Error).message, completed_at: new Date() })
-            .where(eq(workflowExecutions.transaction_id, transactionId))
-        }
-
-        throw error
       }
     }
-
-    // Flush batched checkpoints in one multi-row INSERT
-    if (this._db && batched && pendingCheckpoints.length > 0) {
-      await this._db.insert(workflowCheckpoints)
-        .values(pendingCheckpoints)
-        .onConflictDoUpdate({
-          target: [workflowCheckpoints.transaction_id, workflowCheckpoints.step_id],
-          set: { status: 'done' },
-        })
-    }
-
-    // Mark execution as completed
-    const lastStep = workflow.steps[workflow.steps.length - 1]
-    const finalOutput = previousOutput[lastStep.name] as Record<string, unknown>
-
-    if (this._db) {
-      await this._db.update(workflowExecutions)
-        .set({ status: 'completed', result: finalOutput as any, completed_at: new Date() })
-        .where(eq(workflowExecutions.transaction_id, transactionId))
-    }
-
-    return finalOutput ?? {}
   }
 
   /**
-   * Resume incomplete workflows (call at bootstrap for crash recovery).
-   * Finds workflows stuck in 'running' state and re-runs them.
+   * Execute a single attempt. Throws on failure — the retry loop in run() handles retries.
+   * On the final attempt, compensates before re-throwing.
    */
-  async resumeIncomplete(): Promise<number> {
-    if (!this._db) return 0
+  private async _execute(
+    workflow: WorkflowDefinition,
+    workflowId: string,
+    input: Record<string, unknown>,
+    transactionId: string,
+    cleanup: boolean,
+    attempt = 1,
+  ): Promise<WorkflowRunResult> {
+    const isFinalAttempt = attempt >= RETRY_POLICY.maxAttempts
 
-    const incomplete = await this._db.select()
-      .from(workflowExecutions)
-      .where(eq(workflowExecutions.status, 'running'))
-
-    let resumed = 0
-    for (const exec of incomplete) {
-      const workflow = this._workflows.get(exec.workflow_name)
-      if (!workflow) {
-        this._logger?.warn(`[workflow] Cannot resume "${exec.workflow_name}" — not registered`)
-        continue
-      }
-
-      this._logger?.info(`[workflow] Resuming incomplete: ${exec.transaction_id} (${exec.workflow_name})`)
-      try {
-        await this.run(exec.workflow_name, {
-          input: exec.input as Record<string, unknown>,
-          transactionId: exec.transaction_id,
-        })
-        resumed++
-      } catch (err) {
-        this._logger?.error(`[workflow] Resume failed for ${exec.transaction_id}: ${(err as Error).message}`)
-      }
+    // Track execution start
+    if (this._storage.trackStart) {
+      await this._storage.trackStart(transactionId, workflowId, input).catch((err) => {
+        ;(this._logger ?? console).warn(`[WorkflowManager] trackStart failed: ${err?.message ?? err}`)
+      })
     }
 
-    return resumed
+    // Load existing checkpoints (durable resume — completed steps skip in 0ms)
+    const checkpoints = new Map<string, unknown>()
+    const existing = await this._storage.list(transactionId)
+    for (const cp of existing) checkpoints.set(cp.stepId, cp.data)
+    if (checkpoints.size > 0) {
+      this._logger?.info(
+        `[workflow:${workflowId}] Resuming (attempt ${attempt}): ${checkpoints.size} steps already completed`,
+      )
+    }
+
+    // Event buffering
+    const eventGroupId = `wf:${transactionId}`
+
+    // Create workflow context (accessible via AsyncLocalStorage)
+    const storage = this._storage
+    const wfCtx: WorkflowContext = {
+      transactionId,
+      checkpoints,
+      completedSteps: [],
+      stepCounter: new Map(),
+      eventGroupId,
+      bufferEvent: this._eventBus
+        ? (event: Message) => {
+            this._eventBus!.emit(event, { groupId: eventGroupId }).catch((err) => {
+              ;(this._logger ?? console).warn(`[WorkflowManager] Event buffer failed: ${err?.message ?? err}`)
+            })
+          }
+        : undefined,
+      // Durable execution: persist each checkpoint immediately so retries can resume
+      saveCheckpoint: async (stepKey: string, output: unknown) => {
+        await storage.save(transactionId, stepKey, output)
+      },
+    }
+
+    // Build step context — pass wfCtx explicitly for bundler compatibility
+    const stepCtx: StepContext = { app: this._app, __wfCtx: wfCtx }
+
+    // Execute within AsyncLocalStorage context
+    try {
+      const result = await workflowContextStorage.run(wfCtx, () => workflow.fn(input, stepCtx))
+
+      // Release buffered events
+      if (this._eventBus) {
+        await this._eventBus.releaseGroupedEvents(eventGroupId).catch(() => {
+          this._logger?.warn(`[workflow:${workflowId}] Failed to release buffered events`)
+        })
+      }
+
+      // Track completion
+      if (this._storage.trackComplete) {
+        await this._storage.trackComplete(transactionId, result).catch((err) => {
+          ;(this._logger ?? console).warn(`[WorkflowManager] trackComplete failed: ${err?.message ?? err}`)
+        })
+      }
+
+      if (cleanup) {
+        await this._storage.delete(transactionId).catch((err) => {
+          ;(this._logger ?? console).warn(`[WorkflowManager] Checkpoint cleanup failed: ${err?.message ?? err}`)
+        })
+      }
+
+      return {
+        transaction: { transactionId, state: 'done' },
+        result: result as Record<string, unknown>,
+      }
+    } catch (error) {
+      this._logger?.warn(
+        `[workflow:${workflowId}] Failed (attempt ${attempt}/${RETRY_POLICY.maxAttempts}): ${(error as Error).message}`,
+      )
+
+      // Track failure
+      if (this._storage.trackFailed) {
+        await this._storage.trackFailed(transactionId, (error as Error).message).catch((err) => {
+          ;(this._logger ?? console).warn(`[WorkflowManager] trackFailed failed: ${err?.message ?? err}`)
+        })
+      }
+
+      if (this._eventBus) {
+        await this._eventBus.clearGroupedEvents(eventGroupId).catch((err) => {
+          ;(this._logger ?? console).warn(`[WorkflowManager] Clear grouped events failed: ${err?.message ?? err}`)
+        })
+      }
+
+      if (isFinalAttempt) {
+        // All retries exhausted — compensate and cleanup
+        await this._compensate(workflowId, wfCtx.completedSteps, stepCtx)
+        if (cleanup) {
+          await this._storage.delete(transactionId).catch((err) => {
+            ;(this._logger ?? console).warn(`[WorkflowManager] Checkpoint cleanup failed: ${err?.message ?? err}`)
+          })
+        }
+      }
+      // Non-final: checkpoints remain in storage for next attempt to resume from
+
+      throw error
+    }
   }
 
-  private async _compensate(
-    workflowId: string,
-    completedSteps: Array<{
-      name: string
-      output: Record<string, unknown>
-      compensation?: (ctx: { output: Record<string, unknown>; context: StepResolveContext }) => Promise<void>
-    }>,
-    context: StepResolveContext,
-  ): Promise<void> {
-    this._logger?.warn(`[workflow:${workflowId}] Starting compensation (${completedSteps.length} steps)`)
+  private async _compensate(workflowId: string, completedSteps: CompletedStep[], ctx: StepContext): Promise<void> {
+    if (completedSteps.length === 0) return
+    this._logger?.warn(`[workflow:${workflowId}] Compensating ${completedSteps.length} steps`)
 
     for (let i = completedSteps.length - 1; i >= 0; i--) {
       const step = completedSteps[i]
-      if (!step.compensation) {
-        this._logger?.debug(`[workflow:${workflowId}] No compensation for step "${step.name}" — skipping`)
-        continue
-      }
-
+      if (!step.compensate) continue
       try {
-        this._logger?.debug(`[workflow:${workflowId}] Compensating step "${step.name}"`)
-        await step.compensation({ output: step.output, context })
-        this._logger?.debug(`[workflow:${workflowId}] Step "${step.name}" compensated`)
-      } catch (compError) {
-        this._logger?.error(`[workflow:${workflowId}] Compensation failed for step "${step.name}": ${(compError as Error).message}`)
+        await step.compensate(step.output, ctx)
+      } catch (err) {
+        this._logger?.error(`[workflow:${workflowId}] Compensation failed "${step.name}": ${(err as Error).message}`)
       }
     }
-
-    this._logger?.warn(`[workflow:${workflowId}] Compensation complete`)
   }
 
   _reset(): void {

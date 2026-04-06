@@ -3,6 +3,13 @@
 import type { AuthContext } from '../auth/types'
 
 /**
+ * Event data map — augmented by .manta/types/events.d.ts codegen.
+ * When codegen runs, `defineSubscriber({ event: 'product.created' })` infers the data type.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmented by codegen via declare global
+export interface MantaEventMap extends MantaGeneratedEventMap {}
+
+/**
  * A message envelope for events emitted through the framework.
  */
 export interface Message<T = unknown> {
@@ -28,7 +35,7 @@ export interface GetMessagesOptions {
 
 /**
  * SPEC-018 — IMessageAggregator contract.
- * SCOPED lifetime — each scope gets its own aggregator instance.
+ * One instance per request (via AsyncLocalStorage).
  */
 export interface IMessageAggregator {
   /** @param messages - Messages to save (accumulated) */

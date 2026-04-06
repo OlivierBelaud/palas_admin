@@ -1,16 +1,16 @@
 // Strict Mode Tests — SM-01 to SM-06
 // Tests both normal mode (warnings/graceful) and strict mode (errors/fatal)
 
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { MantaError } from '../../src/errors/manta-error'
 import {
+  checkAutoDiscovery,
+  checkEventNameAutoGeneration,
+  checkLinkLocations,
   checkRouteConflicts,
   checkUnboundedRelations,
   getEntityThreshold,
-  checkLinkLocations,
-  checkAutoDiscovery,
-  checkEventNameAutoGeneration,
 } from '../../src/strict-mode'
-import { MantaError } from '../../src/errors/manta-error'
 
 describe('Strict Mode Tests', () => {
   // SM-01 -- SPEC-068/140: route conflict inter-plugins
@@ -50,8 +50,7 @@ describe('Strict Mode Tests', () => {
     })
 
     it('strict mode: MantaError forbidden', () => {
-      expect(() => checkUnboundedRelations({ dangerouslyUnboundedRelations: true }, true))
-        .toThrow(MantaError)
+      expect(() => checkUnboundedRelations({ dangerouslyUnboundedRelations: true }, true)).toThrow(MantaError)
     })
   })
 
@@ -82,9 +81,7 @@ describe('Strict Mode Tests', () => {
     })
 
     it('strict mode: error at boot', () => {
-      const links = [
-        { id: 'bad-link', path: '/project/src/modules/product/my-link.ts' },
-      ]
+      const links = [{ id: 'bad-link', path: '/project/src/modules/product/my-link.ts' }]
       expect(() => checkLinkLocations(links, true)).toThrow(MantaError)
     })
   })

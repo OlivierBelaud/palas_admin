@@ -1,7 +1,7 @@
 // SPEC-057f — manta db:generate command
 
 import { existsSync, readdirSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { GenerateDeps } from './types'
 
 export interface GenerateOptions {
@@ -23,7 +23,7 @@ export interface GenerateCommandResult {
 }
 
 /**
- * Scan src/modules/**\/models/*.ts for DML model.define() calls.
+ * Scan src/modules/**\/models/*.ts for DML defineModel() calls.
  */
 export function scanDmlModels(cwd: string): DmlScanResult {
   const entities: Array<{ name: string; file: string }> = []

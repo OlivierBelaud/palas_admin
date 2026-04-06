@@ -1,7 +1,7 @@
 // SPEC-056 — InMemoryDatabaseAdapter implements IDatabasePort
 
-import type { IDatabasePort, TransactionOptions, DatabaseConfig } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { DatabaseConfig, IDatabasePort, TransactionOptions } from '../ports'
 
 export class InMemoryTransaction {
   private _tables: Map<string, Map<string, Record<string, unknown>>>
@@ -74,7 +74,10 @@ export class InMemoryTransaction {
       if (schema) {
         for (const col of schema.notNull) {
           if (row[col] === null || row[col] === undefined) {
-            throw new MantaError('INVALID_DATA', `NOT NULL violation: column "${col}" in table "${tableName}" cannot be null`)
+            throw new MantaError(
+              'INVALID_DATA',
+              `NOT NULL violation: column "${col}" in table "${tableName}" cannot be null`,
+            )
           }
         }
       }
@@ -84,7 +87,10 @@ export class InMemoryTransaction {
       if (tableName === 'child_table' && row['parent_id']) {
         const parentTable = this._tables.get('test_table')
         if (!parentTable || !parentTable.has(String(row['parent_id']))) {
-          throw new MantaError('NOT_FOUND', `Foreign key violation: referenced row in "test_table" not found for parent_id="${row['parent_id']}"`)
+          throw new MantaError(
+            'NOT_FOUND',
+            `Foreign key violation: referenced row in "test_table" not found for parent_id="${row['parent_id']}"`,
+          )
         }
       }
 

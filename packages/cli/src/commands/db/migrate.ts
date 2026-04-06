@@ -28,10 +28,7 @@ export function detectConcurrentIndex(sql: string): boolean {
 /**
  * Parse pending migrations from filesystem vs tracking table.
  */
-export function findPendingMigrations(
-  filesystemMigrations: string[],
-  appliedMigrations: string[],
-): string[] {
+export function findPendingMigrations(filesystemMigrations: string[], appliedMigrations: string[]): string[] {
   const appliedSet = new Set(appliedMigrations)
   return filesystemMigrations.filter((m) => !appliedSet.has(m))
 }
@@ -40,10 +37,7 @@ export function findPendingMigrations(
  * manta db:migrate — Apply pending SQL migrations.
  * Accepts injectable deps for testability (hexagonal architecture).
  */
-export async function migrateCommand(
-  options: MigrateOptions = {},
-  deps: MigrateDeps,
-): Promise<MigrateCommandResult> {
+export async function migrateCommand(options: MigrateOptions = {}, deps: MigrateDeps): Promise<MigrateCommandResult> {
   const result: MigrateCommandResult = {
     exitCode: 0,
     errors: [],

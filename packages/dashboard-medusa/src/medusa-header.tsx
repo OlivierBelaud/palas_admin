@@ -1,14 +1,8 @@
-import {
-  BuildingStorefront,
-  EllipsisHorizontal,
-  OpenRectArrowOut,
-} from "@medusajs/icons"
-import { Avatar, DropdownMenu, Text, clx } from "@medusajs/ui"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useNavigate } from "react-router-dom"
-import { useDashboardContext } from "@manta/dashboard-core"
-import { useDocumentDirection } from "@manta/dashboard-core"
-import { Skeleton } from "@manta/dashboard-core"
+import { Skeleton, useDashboardContext, useDocumentDirection } from '@manta/dashboard-core'
+import { BuildingStorefront, EllipsisHorizontal, OpenRectArrowOut } from '@medusajs/icons'
+import { Avatar, clx, DropdownMenu, Text } from '@medusajs/ui'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from 'react-router-dom'
 
 export const MedusaHeader = () => {
   const { dataSource, authAdapter } = useDashboardContext()
@@ -17,11 +11,11 @@ export const MedusaHeader = () => {
   const queryClient = useQueryClient()
 
   const { data, isPending, isError, error } = useQuery({
-    queryKey: ["store", "detail"],
+    queryKey: ['store', 'detail'],
     queryFn: async () => {
-      const response = await dataSource.fetch("/admin/stores") as any
+      const response = (await dataSource.fetch('/admin/stores')) as any
       const activeStore = response?.stores?.[0]
-      if (!activeStore) throw new Error("No active store found")
+      if (!activeStore) throw new Error('No active store found')
       return activeStore
     },
   })
@@ -37,7 +31,7 @@ export const MedusaHeader = () => {
   const handleLogout = async () => {
     await authAdapter.logout()
     queryClient.clear()
-    navigate("/login")
+    navigate('/login')
   }
 
   return (
@@ -46,10 +40,10 @@ export const MedusaHeader = () => {
         <DropdownMenu.Trigger
           disabled={!isLoaded}
           className={clx(
-            "bg-ui-bg-subtle transition-fg grid w-full grid-cols-[24px_1fr_15px] items-center gap-x-3 rounded-md p-0.5 pe-2 outline-none",
-            "hover:bg-ui-bg-subtle-hover",
-            "data-[state=open]:bg-ui-bg-subtle-hover",
-            "focus-visible:shadow-borders-focus"
+            'bg-ui-bg-subtle transition-fg grid w-full grid-cols-[24px_1fr_15px] items-center gap-x-3 rounded-md p-0.5 pe-2 outline-none',
+            'hover:bg-ui-bg-subtle-hover',
+            'data-[state=open]:bg-ui-bg-subtle-hover',
+            'focus-visible:shadow-borders-focus',
           )}
         >
           {fallback ? (
@@ -59,12 +53,7 @@ export const MedusaHeader = () => {
           )}
           <div className="block overflow-hidden text-start">
             {name ? (
-              <Text
-                size="small"
-                weight="plus"
-                leading="compact"
-                className="truncate"
-              >
+              <Text size="small" weight="plus" leading="compact" className="truncate">
                 {name}
               </Text>
             ) : (
@@ -78,19 +67,10 @@ export const MedusaHeader = () => {
             <div className="flex items-center gap-x-3 px-2 py-1">
               <Avatar variant="squared" size="small" fallback={fallback} />
               <div className="flex flex-col overflow-hidden">
-                <Text
-                  size="small"
-                  weight="plus"
-                  leading="compact"
-                  className="truncate"
-                >
+                <Text size="small" weight="plus" leading="compact" className="truncate">
                   {name}
                 </Text>
-                <Text
-                  size="xsmall"
-                  leading="compact"
-                  className="text-ui-fg-subtle"
-                >
+                <Text size="xsmall" leading="compact" className="text-ui-fg-subtle">
                   Store
                 </Text>
               </div>

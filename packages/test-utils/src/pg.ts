@@ -1,8 +1,7 @@
 // Test utility for PostgreSQL integration tests
 // Creates isolated databases per test file for parallel execution
 
-const TEST_DB_URL = process.env.TEST_DATABASE_URL
-  || 'postgresql://localhost:5432/manta_test_main'
+const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/manta_test_main'
 
 /**
  * Creates an isolated test database.
@@ -58,8 +57,12 @@ export async function waitForPg(maxRetries = 30): Promise<void> {
       await client.end()
       return
     } catch {
-      try { await client.end() } catch { /* ignore */ }
-      await new Promise(r => setTimeout(r, 1000))
+      try {
+        await client.end()
+      } catch {
+        /* ignore */
+      }
+      await new Promise((r) => setTimeout(r, 1000))
     }
   }
   throw new Error(`PostgreSQL not reachable at ${TEST_DB_URL} after ${maxRetries}s`)

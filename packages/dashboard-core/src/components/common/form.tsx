@@ -1,45 +1,32 @@
-import { InformationCircleSolid } from "@medusajs/icons"
-import {
-  Hint as HintComponent,
-  Label as LabelComponent,
-  Text,
-  Tooltip,
-  clx,
-} from "@medusajs/ui"
-import { Slot } from "radix-ui"
-import React, {
-  ReactNode,
-  createContext,
-  forwardRef,
-  useContext,
-  useId,
-} from "react"
+import { cn, Label as LabelComponent, Tooltip } from '@manta/ui'
+import { Info } from 'lucide-react'
+import { Slot } from 'radix-ui'
+import type React from 'react'
+import { createContext, forwardRef, type ReactNode, useContext, useId } from 'react'
 import {
   Controller,
-  ControllerProps,
-  FieldPath,
-  FieldValues,
+  type ControllerProps,
+  type FieldPath,
+  type FieldValues,
   FormProvider,
   useFormContext,
   useFormState,
-} from "react-hook-form"
+} from 'react-hook-form'
 
 const Provider = FormProvider
 
 type FormFieldContextValue<
   TFieldValues extends FieldValues = FieldValues,
-  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>
+  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
 > = {
   name: TName
 }
 
-const FormFieldContext = createContext<FormFieldContextValue>(
-  {} as FormFieldContextValue
-)
+const FormFieldContext = createContext<FormFieldContextValue>({} as FormFieldContextValue)
 
 const Field = <
   TFieldValues extends FieldValues = FieldValues,
-  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>
+  TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
 >({
   ...props
 }: ControllerProps<TFieldValues, TName>) => {
@@ -54,9 +41,7 @@ type FormItemContextValue = {
   id: string
 }
 
-const FormItemContext = createContext<FormItemContextValue>(
-  {} as FormItemContextValue
-)
+const FormItemContext = createContext<FormItemContextValue>({} as FormItemContextValue)
 
 const useFormField = () => {
   const fieldContext = useContext(FormFieldContext)
@@ -67,7 +52,7 @@ const useFormField = () => {
   const fieldState = getFieldState(fieldContext.name, formState)
 
   if (!fieldContext) {
-    throw new Error("useFormField should be used within a FormField")
+    throw new Error('useFormField should be used within a FormField')
   }
 
   const { id } = itemContext
@@ -83,22 +68,16 @@ const useFormField = () => {
   }
 }
 
-const Item = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const id = useId()
+const Item = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => {
+  const id = useId()
 
-    return (
-      <FormItemContext.Provider value={{ id }}>
-        <div
-          ref={ref}
-          className={clx("flex flex-col space-y-2", className)}
-          {...props}
-        />
-      </FormItemContext.Provider>
-    )
-  }
-)
-Item.displayName = "Form.Item"
+  return (
+    <FormItemContext.Provider value={{ id }}>
+      <div ref={ref} className={cn('flex flex-col space-y-2', className)} {...props} />
+    </FormItemContext.Provider>
+  )
+})
+Item.displayName = 'Form.Item'
 
 const Label = forwardRef<
   HTMLLabelElement,
@@ -115,97 +94,69 @@ const Label = forwardRef<
       <LabelComponent
         id={formLabelId}
         ref={ref}
-        className={clx(className)}
+        className={cn('text-sm font-medium', className)}
         htmlFor={formItemId}
-        size="small"
-        weight="plus"
         {...props}
       />
       {tooltip && (
         <Tooltip content={tooltip}>
-          <InformationCircleSolid className="text-ui-fg-muted" />
+          <Info className="h-3.5 w-3.5 text-muted-foreground" />
         </Tooltip>
       )}
       {icon}
-      {optional && (
-        <Text size="small" leading="compact" className="text-ui-fg-muted">
-          (optional)
-        </Text>
-      )}
+      {optional && <span className="text-sm text-muted-foreground">(optional)</span>}
     </div>
   )
 })
-Label.displayName = "Form.Label"
+Label.displayName = 'Form.Label'
 
-const Control = forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(
-  ({ ...props }, ref) => {
-    const {
-      error,
-      formItemId,
-      formDescriptionId,
-      formErrorMessageId,
-      formLabelId,
-    } = useFormField()
-
-    return (
-      <Slot.Root
-        ref={ref}
-        id={formItemId}
-        aria-describedby={
-          !error
-            ? `${formDescriptionId}`
-            : `${formDescriptionId} ${formErrorMessageId}`
-        }
-        aria-invalid={!!error}
-        aria-labelledby={formLabelId}
-        {...props}
-      />
-    )
-  }
-)
-Control.displayName = "Form.Control"
-
-const Hint = forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement>
->(({ className, ...props }, ref) => {
-  const { formDescriptionId } = useFormField()
+const Control = forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(({ ...props }, ref) => {
+  const { error, formItemId, formDescriptionId, formErrorMessageId, formLabelId } = useFormField()
 
   return (
-    <HintComponent
+    <Slot.Root
       ref={ref}
-      id={formDescriptionId}
-      className={className}
+      id={formItemId}
+      aria-describedby={!error ? `${formDescriptionId}` : `${formDescriptionId} ${formErrorMessageId}`}
+      aria-invalid={!!error}
+      aria-labelledby={formLabelId}
       {...props}
     />
   )
 })
-Hint.displayName = "Form.Hint"
+Control.displayName = 'Form.Control'
 
-const ErrorMessage = forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement>
->(({ className, children, ...props }, ref) => {
-  const { error, formErrorMessageId } = useFormField()
-  const msg = error ? String(error?.message) : children
+const Hint = forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
+  ({ className, ...props }, ref) => {
+    const { formDescriptionId } = useFormField()
 
-  if (!msg || msg === "undefined") {
-    return null
-  }
+    return <p ref={ref} id={formDescriptionId} className={cn('text-sm text-muted-foreground', className)} {...props} />
+  },
+)
+Hint.displayName = 'Form.Hint'
 
-  return (
-    <HintComponent
-      ref={ref}
-      id={formErrorMessageId}
-      className={className}
-      variant={error ? "error" : "info"}
-      {...props}
-    >
-      {msg}
-    </HintComponent>
-  )
-})
-ErrorMessage.displayName = "Form.ErrorMessage"
+const ErrorMessage = forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
+  ({ className, children, ...props }, ref) => {
+    const { error, formErrorMessageId } = useFormField()
+    const msg = error ? String(error?.message) : children
+
+    if (!msg || msg === 'undefined') {
+      return null
+    }
+
+    return (
+      <p
+        ref={ref}
+        id={formErrorMessageId}
+        className={cn('text-sm text-destructive', error && 'text-destructive', className)}
+        {...props}
+      >
+        {msg}
+      </p>
+    )
+  },
+)
+ErrorMessage.displayName = 'Form.ErrorMessage'
 
 const Form = Object.assign(Provider, {
   Item,

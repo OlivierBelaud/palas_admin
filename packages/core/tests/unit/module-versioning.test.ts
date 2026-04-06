@@ -1,9 +1,9 @@
 // Phase 7 -- Module versioning (SPEC-135)
 // Tests for version checking at boot time
 
-import { describe, it, expect, vi } from 'vitest'
-import { ModuleVersionChecker, type ModuleVersionStore } from '../../src/module/versioning'
+import { describe, expect, it, vi } from 'vitest'
 import type { ModuleExports } from '../../src/module'
+import { ModuleVersionChecker, type ModuleVersionStore } from '../../src/module/versioning'
 
 describe('Module versioning (SPEC-135)', () => {
   function createStore(stored: Record<string, string> = {}): ModuleVersionStore {
@@ -91,10 +91,7 @@ describe('Module versioning (SPEC-135)', () => {
     const store = createStore({ product: '1.0.0' })
     const checker = new ModuleVersionChecker(store)
 
-    const result = await checker.checkModules([
-      makeModule('product', '1.0.0'),
-      makeModule('order', '1.0.0'),
-    ])
+    const result = await checker.checkModules([makeModule('product', '1.0.0'), makeModule('order', '1.0.0')])
 
     expect(result.ok).toBe(true)
     expect(store.setVersion).toHaveBeenCalledWith('order', '1.0.0')

@@ -1,6 +1,6 @@
 // SPEC-056 — IDatabasePort interface
 
-import type { DatabaseConfig, TransactionOptions } from './types'
+import type { DatabaseConfig } from './types'
 
 /**
  * Database port contract.
@@ -35,14 +35,6 @@ export interface IDatabasePort {
    * @returns The connection pool
    */
   getPool(): unknown
-
-  /**
-   * Execute a function within a database transaction.
-   * @param fn - The function to execute, receiving the transaction object
-   * @param options - Transaction isolation level and nesting options
-   * @returns The result of the function
-   */
-  transaction<T>(fn: (tx: unknown) => Promise<T>, options?: TransactionOptions): Promise<T>
 
   /**
    * Optional: introspect the database schema.

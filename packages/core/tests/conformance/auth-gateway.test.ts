@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
-  type IAuthGateway,
-  type IAuthPort,
-  type IAuthModuleService,
   type AuthContext,
   type AuthCredentials,
   createTestAuth,
-  MockAuthPort,
-  MockAuthModuleService,
+  type IAuthGateway,
+  type IAuthModuleService,
+  type IAuthPort,
   MockAuthGateway,
+  type MockAuthModuleService,
+  type MockAuthPort,
 } from '@manta/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('IAuthGateway Conformance', () => {
   let gateway: MockAuthGateway
@@ -17,13 +17,13 @@ describe('IAuthGateway Conformance', () => {
   let authModuleService: MockAuthModuleService
 
   const userContext: AuthContext = {
-    actor_type: 'user',
-    actor_id: 'u1',
+    type: 'user',
+    id: 'u1',
   }
 
   const apiKeyContext: AuthContext = {
-    actor_type: 'user',
-    actor_id: 'api_user_1',
+    type: 'user',
+    id: 'api_user_1',
   }
 
   let validSessionId: string
@@ -54,8 +54,8 @@ describe('IAuthGateway Conformance', () => {
     const result = await gateway.authenticate({ bearer: token })
 
     expect(result).not.toBeNull()
-    expect(result!.actor_type).toBe('user')
-    expect(result!.actor_id).toBe('u1')
+    expect(result!.type).toBe('user')
+    expect(result!.id).toBe('u1')
   })
 
   // AG-02 — SPEC-049b: invalid Bearer (non-sk_) returns null, verifyApiKey NOT called
@@ -74,7 +74,7 @@ describe('IAuthGateway Conformance', () => {
     const result = await gateway.authenticate({ apiKey: 'sk_valid_123' })
 
     expect(result).not.toBeNull()
-    expect(result!.actor_id).toBe('api_user_1')
+    expect(result!.id).toBe('api_user_1')
   })
 
   // AG-04 — SPEC-049b: invalid API key returns null
@@ -88,8 +88,8 @@ describe('IAuthGateway Conformance', () => {
     const result = await gateway.authenticate({ sessionId: validSessionId })
 
     expect(result).not.toBeNull()
-    expect(result!.actor_type).toBe('user')
-    expect(result!.actor_id).toBe('u1')
+    expect(result!.type).toBe('user')
+    expect(result!.id).toBe('u1')
   })
 
   // AG-06 — SPEC-049b: invalid session returns null
@@ -111,7 +111,7 @@ describe('IAuthGateway Conformance', () => {
     })
 
     expect(result).not.toBeNull()
-    expect(result!.actor_id).toBe('u1')
+    expect(result!.id).toBe('u1')
 
     // Neither session nor API key verification should be called
     expect(verifySessionSpy).not.toHaveBeenCalled()
@@ -128,7 +128,7 @@ describe('IAuthGateway Conformance', () => {
     })
 
     expect(result).not.toBeNull()
-    expect(result!.actor_id).toBe('api_user_1')
+    expect(result!.id).toBe('api_user_1')
 
     // Session verification should NOT be called
     expect(verifySessionSpy).not.toHaveBeenCalled()
@@ -188,7 +188,7 @@ describe('IAuthGateway Conformance', () => {
 
     // Returns AuthContext from API key
     expect(result).not.toBeNull()
-    expect(result!.actor_id).toBe('api_user_1')
+    expect(result!.id).toBe('api_user_1')
   })
 
   // AG-13 — SPEC-049b: Bearer sk_ invalid → both methods fail

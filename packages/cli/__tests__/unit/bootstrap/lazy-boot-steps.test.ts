@@ -1,15 +1,11 @@
 // Phase 2 — Lazy boot steps 9-18 unit tests
 // Tests that each step calls the right methods and handles fatal/warning correctly
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ContainerRegistrationKeys, type InMemoryEventBusAdapter, type TestMantaApp } from '@manta/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, lazyBoot } from '../../../src/bootstrap/boot'
-import type { BootContext } from '../../../src/types'
 import type { DiscoveredResources } from '../../../src/resource-loader'
-import {
-  MantaContainer,
-  ContainerRegistrationKeys,
-  InMemoryEventBusAdapter,
-} from '@manta/core'
+import type { BootContext } from '../../../src/types'
 
 function makeContext(overrides: Partial<BootContext> = {}): BootContext {
   return {
@@ -30,7 +26,14 @@ function emptyResources(): DiscoveredResources {
     workflows: [],
     jobs: [],
     links: [],
+    commands: [],
+    queries: [],
+    users: [],
+    contexts: [],
+    agents: [],
     middlewares: null,
+    contextMiddlewares: [],
+    spas: [],
   }
 }
 
@@ -44,13 +47,18 @@ describe('Lazy boot steps 9-18', () => {
   // -------------------------------------------------------------------
   // LB-01 — Step 9: loads modules from discovered resources
   // -------------------------------------------------------------------
-  it('LB-01 — step 9 registers discovered modules in container', async () => {
+  it('LB-01 — step 9 registers discovered modules in app', async () => {
     const ctx = await bootWithContainer()
     ctx.discoveredResources = emptyResources()
     ctx.discoveredResources.modules = [
       {
         name: 'product',
-        path: '/fake/src/modules/product/index.ts',
+        path: '/fake/src/modules/product/entities/product/model.ts',
+        entities: [
+          { name: 'product', modelPath: '/fake/src/modules/product/entities/product/model.ts', servicePath: undefined },
+        ],
+        workflows: [],
+        intraLinks: [],
         models: ['product'],
         service: 'ProductService',
       },
@@ -77,6 +85,9 @@ describe('Lazy boot steps 9-18', () => {
       {
         name: 'broken-module',
         path: '/nonexistent/path/that/does/not/exist.ts',
+        entities: [{ name: 'broken', modelPath: '/nonexistent/path/that/does/not/exist.ts', servicePath: undefined }],
+        workflows: [],
+        intraLinks: [],
         models: [],
         service: 'BrokenService',
       },
@@ -108,9 +119,7 @@ describe('Lazy boot steps 9-18', () => {
   it('LB-04 — step 11 failure is warning, not fatal', async () => {
     const ctx = await bootWithContainer()
     ctx.discoveredResources = emptyResources()
-    ctx.discoveredResources.links = [
-      { id: 'bad-link', path: '/nonexistent/link.ts', modules: [] },
-    ]
+    ctx.discoveredResources.links = [{ id: 'bad-link', path: '/nonexistent/link.ts', modules: [] }]
     ctx.loadedModules = new Map()
 
     const result = await lazyBoot(ctx)
@@ -125,9 +134,7 @@ describe('Lazy boot steps 9-18', () => {
   it('LB-05 — step 12 failure is warning, not fatal', async () => {
     const ctx = await bootWithContainer()
     ctx.discoveredResources = emptyResources()
-    ctx.discoveredResources.workflows = [
-      { id: 'bad-workflow', path: '/nonexistent/workflow.ts' },
-    ]
+    ctx.discoveredResources.workflows = [{ id: 'bad-workflow', path: '/nonexistent/workflow.ts' }]
     ctx.loadedModules = new Map()
 
     const result = await lazyBoot(ctx)
@@ -141,9 +148,7 @@ describe('Lazy boot steps 9-18', () => {
   it('LB-06 — step 13 failure is warning, not fatal', async () => {
     const ctx = await bootWithContainer()
     ctx.discoveredResources = emptyResources()
-    ctx.discoveredResources.subscribers = [
-      { id: 'bad-sub', path: '/nonexistent/sub.ts', events: [] },
-    ]
+    ctx.discoveredResources.subscribers = [{ id: 'bad-sub', path: '/nonexistent/sub.ts', events: [] }]
     ctx.loadedModules = new Map()
 
     const result = await lazyBoot(ctx)
@@ -157,9 +162,7 @@ describe('Lazy boot steps 9-18', () => {
   it('LB-07 — step 15 failure is warning, not fatal', async () => {
     const ctx = await bootWithContainer()
     ctx.discoveredResources = emptyResources()
-    ctx.discoveredResources.jobs = [
-      { id: 'bad-job', path: '/nonexistent/job.ts' },
-    ]
+    ctx.discoveredResources.jobs = [{ id: 'bad-job', path: '/nonexistent/job.ts' }]
     ctx.loadedModules = new Map()
 
     const result = await lazyBoot(ctx)
@@ -198,7 +201,9 @@ describe('Lazy boot steps 9-18', () => {
       name: 'bad',
       service: class {},
       hooks: {
-        onApplicationStart: () => { throw new Error('module startup failed') },
+        onApplicationStart: () => {
+          throw new Error('module startup failed')
+        },
       },
     })
 
@@ -216,8 +221,8 @@ describe('Lazy boot steps 9-18', () => {
     ctx.loadedModules = new Map()
 
     // Emit an event during boot (simulating grouped events)
-    const eventBus = ctx.container!.resolve<InMemoryEventBusAdapter>(ContainerRegistrationKeys.EVENT_BUS)
-    const bootGroupId = `boot-${ctx.container!.id}`
+    const eventBus = ctx.app!.resolve<InMemoryEventBusAdapter>(ContainerRegistrationKeys.EVENT_BUS)
+    const bootGroupId = `boot-${ctx.app!.id}`
     await eventBus.emit(
       { eventName: 'test.event', data: {}, metadata: { timestamp: Date.now() } },
       { groupId: bootGroupId },
@@ -264,7 +269,7 @@ describe('Lazy boot steps 9-18', () => {
       addInterceptor: vi.fn(),
       removeInterceptor: vi.fn(),
     }
-    ctx.container!.register(ContainerRegistrationKeys.EVENT_BUS, brokenEventBus)
+    ;(ctx.app as TestMantaApp).register(ContainerRegistrationKeys.EVENT_BUS, brokenEventBus)
     ctx.bootEventGroupId = 'boot-broken'
 
     const result = await lazyBoot(ctx)

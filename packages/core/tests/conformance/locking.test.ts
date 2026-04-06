@@ -1,23 +1,34 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { ILockingPort, TestMantaApp } from '@manta/core'
 import {
-  type ILockingPort,
-  MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('ILockingPort Conformance', () => {
   let locking: ILockingPort
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    locking = container.resolve<ILockingPort>('ILockingPort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    locking = app.infra.locking
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // L-01 — SPEC-066: execute provides mutual exclusion
@@ -43,7 +54,7 @@ describe('ILockingPort Conformance', () => {
     // Executions must be serialized: either [1,2,3,4] or [3,4,1,2]
     expect(
       (order[0] === 1 && order[1] === 2 && order[2] === 3 && order[3] === 4) ||
-      (order[0] === 3 && order[1] === 4 && order[2] === 1 && order[3] === 2),
+        (order[0] === 3 && order[1] === 4 && order[2] === 1 && order[3] === 2),
     ).toBe(true)
   })
 
@@ -128,9 +139,13 @@ describe('ILockingPort Conformance', () => {
     await locking.acquire('lock-1')
 
     // execute should timeout waiting to acquire
-    const promise = locking.execute(['lock-1'], async () => {
-      return 'should not reach'
-    }, { timeout: 100 })
+    const promise = locking.execute(
+      ['lock-1'],
+      async () => {
+        return 'should not reach'
+      },
+      { timeout: 100 },
+    )
 
     await expect(promise).rejects.toThrow()
 

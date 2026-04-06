@@ -1,13 +1,12 @@
-import { zodResolver } from "@hookform/resolvers/zod"
-import { Alert, Button, Heading, Hint, Input, Text } from "@medusajs/ui"
-import { useForm } from "react-hook-form"
-import { Link, useLocation, useNavigate } from "react-router-dom"
-import * as z from "zod"
-
-import { Form } from "../components/common/form"
-import AvatarBox from "../components/common/avatar-box"
-import { useDashboardContext } from "../context"
-import { isFetchError } from "../lib/is-fetch-error"
+import { zodResolver } from '@hookform/resolvers/zod'
+import { Alert, Button, Input } from '@manta/ui'
+import { useForm } from 'react-hook-form'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import * as z from 'zod'
+import AvatarBox from '../components/common/avatar-box'
+import { Form } from '../components/common/form'
+import { useDashboardContext } from '../context'
+import { isFetchError } from '../lib/is-fetch-error'
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -21,10 +20,7 @@ export interface LoginPageProps {
   defaultRedirect?: string
 }
 
-export const LoginPage = ({
-  subtitle = "Sign in to your account",
-  defaultRedirect = "/orders",
-}: LoginPageProps) => {
+export const LoginPage = ({ subtitle = 'Sign in to your account', defaultRedirect = '/orders' }: LoginPageProps) => {
   const location = useLocation()
   const navigate = useNavigate()
   const { authAdapter } = useDashboardContext()
@@ -34,8 +30,8 @@ export const LoginPage = ({
   const form = useForm<z.infer<typeof LoginSchema>>({
     resolver: zodResolver(LoginSchema),
     defaultValues: {
-      email: "",
-      password: "",
+      email: '',
+      password: '',
     },
   })
 
@@ -46,41 +42,34 @@ export const LoginPage = ({
     } catch (error: unknown) {
       if (isFetchError(error)) {
         if ((error as { status: number }).status === 401) {
-          form.setError("email", {
-            type: "manual",
+          form.setError('email', {
+            type: 'manual',
             message: (error as Error).message,
           })
           return
         }
       }
-      form.setError("root.serverError", {
-        type: "manual",
-        message: error instanceof Error ? error.message : "Login failed",
+      form.setError('root.serverError', {
+        type: 'manual',
+        message: error instanceof Error ? error.message : 'Login failed',
       })
     }
   })
 
   const serverError = form.formState.errors?.root?.serverError?.message
-  const validationError =
-    form.formState.errors.email?.message ||
-    form.formState.errors.password?.message
+  const validationError = form.formState.errors.email?.message || form.formState.errors.password?.message
 
   return (
-    <div className="bg-ui-bg-subtle flex min-h-dvh w-dvw items-center justify-center">
+    <div className="flex min-h-dvh w-dvw items-center justify-center bg-muted">
       <div className="m-4 flex w-full max-w-[280px] flex-col items-center">
         <AvatarBox />
         <div className="mb-4 flex flex-col items-center">
-          <Heading>Welcome back</Heading>
-          <Text size="small" className="text-ui-fg-subtle text-center">
-            {subtitle}
-          </Text>
+          <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
+          <span className="text-sm text-muted-foreground text-center">{subtitle}</span>
         </div>
         <div className="flex w-full flex-col gap-y-3">
           <Form {...form}>
-            <form
-              onSubmit={handleSubmit}
-              className="flex w-full flex-col gap-y-6"
-            >
+            <form onSubmit={handleSubmit} className="flex w-full flex-col gap-y-6">
               <div className="flex flex-col gap-y-1">
                 <Form.Field
                   control={form.control}
@@ -89,12 +78,7 @@ export const LoginPage = ({
                     return (
                       <Form.Item>
                         <Form.Control>
-                          <Input
-                            autoComplete="email"
-                            {...field}
-                            className="bg-ui-bg-field-component"
-                            placeholder="Email"
-                          />
+                          <Input autoComplete="email" {...field} className="bg-background" placeholder="Email" />
                         </Form.Control>
                       </Form.Item>
                     )
@@ -112,7 +96,7 @@ export const LoginPage = ({
                             type="password"
                             autoComplete="current-password"
                             {...field}
-                            className="bg-ui-bg-field-component"
+                            className="bg-background"
                             placeholder="Password"
                           />
                         </Form.Control>
@@ -123,17 +107,11 @@ export const LoginPage = ({
               </div>
               {validationError && (
                 <div className="text-center">
-                  <Hint className="inline-flex" variant={"error"}>
-                    {validationError}
-                  </Hint>
+                  <p className="inline-flex text-sm text-destructive">{validationError}</p>
                 </div>
               )}
               {serverError && (
-                <Alert
-                  className="bg-ui-bg-base items-center p-2"
-                  dismissible
-                  variant="error"
-                >
+                <Alert className="items-center bg-background p-2" dismissible variant="error">
                   {serverError}
                 </Alert>
               )}
@@ -143,11 +121,11 @@ export const LoginPage = ({
             </form>
           </Form>
         </div>
-        <span className="text-ui-fg-muted txt-small my-6">
-          Forgot your password?{" "}
+        <span className="my-6 text-sm text-muted-foreground">
+          Forgot your password?{' '}
           <Link
             to="/reset-password"
-            className="text-ui-fg-interactive transition-fg hover:text-ui-fg-interactive-hover focus-visible:text-ui-fg-interactive-hover font-medium outline-none"
+            className="font-medium text-primary transition-colors hover:text-primary/80 outline-none"
           >
             Reset it
           </Link>

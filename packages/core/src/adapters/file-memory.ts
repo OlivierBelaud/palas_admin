@@ -1,13 +1,17 @@
 // SPEC-065/080/081 — InMemoryFileAdapter implements IFilePort
 
-import type { IFilePort } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { IFilePort } from '../ports'
 
 export class InMemoryFileAdapter implements IFilePort {
   private _files = new Map<string, { data: Buffer; contentType?: string }>()
 
-  async upload(key: string, data: Buffer | ReadableStream, contentType?: string): Promise<{ key: string; url: string }> {
-    const buffer = data instanceof Buffer ? data : Buffer.from(await new Response(data).arrayBuffer())
+  async upload(
+    key: string,
+    data: Buffer | ReadableStream,
+    contentType?: string,
+  ): Promise<{ key: string; url: string }> {
+    const buffer = data instanceof Buffer ? data : Buffer.from(await new Response(data as BodyInit).arrayBuffer())
     this._files.set(key, { data: buffer, contentType })
     return { key, url: `memory://${key}` }
   }
@@ -45,7 +49,7 @@ export class InMemoryFileAdapter implements IFilePort {
 
   async list(prefix?: string): Promise<string[]> {
     const keys = Array.from(this._files.keys())
-    return prefix ? keys.filter(k => k.startsWith(prefix)) : keys
+    return prefix ? keys.filter((k) => k.startsWith(prefix)) : keys
   }
 
   /**
@@ -57,7 +61,9 @@ export class InMemoryFileAdapter implements IFilePort {
     const files = this._files
 
     let resolveDone: () => void
-    const done = new Promise<void>((resolve) => { resolveDone = resolve })
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve
+    })
 
     const stream = new WritableStream<Uint8Array>({
       write(chunk) {
@@ -79,5 +85,7 @@ export class InMemoryFileAdapter implements IFilePort {
     return { stream, done }
   }
 
-  _reset() { this._files.clear() }
+  _reset() {
+    this._files.clear()
+  }
 }

@@ -1,30 +1,31 @@
 // SPEC-063 — IJobSchedulerPort interface
 
-import type { IContainer } from '../container/types'
-import type { JobResult, JobExecution } from './types'
+import type { MantaApp } from '../app'
+import type { JobExecution, JobResult } from './types'
 
 /**
  * Job scheduler port contract.
  * Adapters: NodeCronJobScheduler (dev), VercelCronAdapter (prod).
- * Dependencies: ILockingPort, ILoggerPort, IWorkflowStoragePort.
+ * Dependencies: ILockingPort, ILoggerPort.
  */
 export interface IJobSchedulerPort {
   /**
    * Register a scheduled job.
    * @param name - Unique job name
    * @param schedule - Cron expression
-   * @param handler - Job handler receiving a scoped container
+   * @param handler - Job handler receiving the app
    * @param options - Concurrency, execution limit, and retry options
    */
   register(
     name: string,
     schedule: string,
-    handler: (container: IContainer) => Promise<JobResult>,
+    handler: (ctx: { app: MantaApp }) => Promise<JobResult>,
     options?: {
       concurrency?: 'allow' | 'forbid'
       numberOfExecutions?: number
+      timeout?: number
       retry?: { maxRetries: number; backoff?: 'fixed' | 'exponential'; delay?: number }
-    }
+    },
   ): void
 
   /**

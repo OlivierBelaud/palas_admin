@@ -1,23 +1,37 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { IHttpPort, TestMantaApp } from '@manta/core'
 import {
-  type IHttpPort,
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryHttpAdapter,
+  InMemoryLockingAdapter,
   MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('HTTP Lifecycle Integration', () => {
   let http: IHttpPort
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    http = container.resolve<IHttpPort>('IHttpPort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    http = new InMemoryHttpAdapter()
+    app.register('IHttpPort', http)
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-039/047: full pipeline execution
@@ -29,15 +43,15 @@ describe('HTTP Lifecycle Integration', () => {
     })
 
     const req = new Request('http://localhost/api/products', {
-      headers: { 'Authorization': 'Bearer valid-jwt' },
+      headers: { Authorization: 'Bearer valid-jwt' },
     })
     const res = await http.handleRequest(req)
 
     expect(res.status).toBe(200)
   })
 
-  // SPEC-001: scoped container created per request
-  it('scoped container created per request', async () => {
+  // SPEC-001: scoped context created per request
+  it('scoped context created per request', async () => {
     const requestIds: string[] = []
 
     http.registerRoute('GET', '/api/test', async () => {
@@ -63,7 +77,7 @@ describe('HTTP Lifecycle Integration', () => {
 
     const res = await http.handleRequest(
       new Request('http://localhost/api/me', {
-        headers: { 'Authorization': 'Bearer valid-jwt' },
+        headers: { Authorization: 'Bearer valid-jwt' },
       }),
     )
 

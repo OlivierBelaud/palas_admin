@@ -1,10 +1,10 @@
 // Section B5 — manta exec command
 // Ref: CLI_SPEC §2.9, CLI_TESTS_SPEC §B5
-// Tests: script execution, container injection, args passing, --dry-run
+// Tests: script execution, app injection, args passing, --dry-run
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { execCommand } from '../../../src/commands/exec'
 
 const TMP = resolve(__dirname, '__tmp_exec_test__')
@@ -45,10 +45,7 @@ describe('B5 — manta exec', () => {
   // EXEC-03 — Executes valid script successfully
   // -------------------------------------------------------------------
   it('EXEC-03 — executes a valid script successfully', async () => {
-    writeFileSync(
-      join(TMP, 'good-script.mjs'),
-      'export default async ({ container, args }) => { /* ok */ }\n',
-    )
+    writeFileSync(join(TMP, 'good-script.mjs'), 'export default async ({ app, args }) => { /* ok */ }\n')
     const result = await execCommand({ script: 'good-script.mjs' }, TMP)
     expect(result.exitCode).toBe(0)
     expect(result.errors).toHaveLength(0)
@@ -58,10 +55,7 @@ describe('B5 — manta exec', () => {
   // EXEC-04 — Captures script errors
   // -------------------------------------------------------------------
   it('EXEC-04 — captures script errors and returns exitCode 1', async () => {
-    writeFileSync(
-      join(TMP, 'error-script.mjs'),
-      'export default async () => { throw new Error("boom") }\n',
-    )
+    writeFileSync(join(TMP, 'error-script.mjs'), 'export default async () => { throw new Error("boom") }\n')
     const result = await execCommand({ script: 'error-script.mjs' }, TMP)
     expect(result.exitCode).toBe(1)
     expect(result.errors[0]).toContain('Script failed')
@@ -78,25 +72,22 @@ describe('B5 — manta exec', () => {
         if (!args || args.length === 0) throw new Error('no args')
       }\n`,
     )
-    const result = await execCommand(
-      { script: 'args-script.mjs', args: ['--count', '10'] },
-      TMP,
-    )
+    const result = await execCommand({ script: 'args-script.mjs', args: ['--count', '10'] }, TMP)
     expect(result.exitCode).toBe(0)
   })
 
   // -------------------------------------------------------------------
-  // EXEC-06 — Script receives container (not null)
+  // EXEC-06 — Script receives app (not null)
   // -------------------------------------------------------------------
-  it('EXEC-06 — script receives a real container (not null)', async () => {
+  it('EXEC-06 — script receives a real app (not null)', async () => {
     writeFileSync(
-      join(TMP, 'container-check.mjs'),
-      `export default async ({ container }) => {
-        if (!container) throw new Error('container is null')
-        if (typeof container.resolve !== 'function') throw new Error('container has no resolve method')
+      join(TMP, 'app-check.mjs'),
+      `export default async ({ app }) => {
+        if (!app) throw new Error('app is null')
+        if (typeof app.resolve !== 'function') throw new Error('app has no resolve method')
       }\n`,
     )
-    const result = await execCommand({ script: 'container-check.mjs' }, TMP)
+    const result = await execCommand({ script: 'app-check.mjs' }, TMP)
     expect(result.exitCode).toBe(0)
     expect(result.errors).toHaveLength(0)
   })

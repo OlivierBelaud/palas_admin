@@ -6,10 +6,7 @@ import { createInterface } from 'node:readline'
  * Ask a yes/no question. Returns true if user answers 'y' or 'Y'.
  * In non-interactive mode, returns defaultValue.
  */
-export async function confirm(
-  question: string,
-  defaultValue: boolean = false,
-): Promise<boolean> {
+export async function confirm(question: string, defaultValue: boolean = false): Promise<boolean> {
   // Non-interactive check
   if (!process.stdin.isTTY || process.env['CI'] === 'true' || process.env['MANTA_NON_INTERACTIVE'] === 'true') {
     return defaultValue

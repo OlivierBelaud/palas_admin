@@ -1,73 +1,119 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { AuthContext, Message, TestMantaApp } from '@manta/core'
 import {
-  type AuthContext,
-  type Message,
-  createTestContainer,
-  resetAll,
-  spyOnEvents,
-  InMemoryContainer,
+  createTestMantaApp,
+  InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
-} from '@manta/test-utils'
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
+
+/** Simple event spy that hooks into the event bus interceptor */
+function spyOnEvents(bus: InMemoryEventBusAdapter) {
+  const captured: Array<{ name: string; payload: Message; timestamp: number }> = []
+  bus.addInterceptor((message: Message) => {
+    captured.push({ name: message.eventName, payload: message, timestamp: Date.now() })
+  })
+  return {
+    received(eventName: string) {
+      return captured.some((e) => e.name === eventName)
+    },
+    payloads(eventName: string) {
+      return captured.filter((e) => e.name === eventName).map((e) => e.payload)
+    },
+    count(eventName: string) {
+      return captured.filter((e) => e.name === eventName).length
+    },
+    all() {
+      return [...captured]
+    },
+    reset() {
+      captured.length = 0
+    },
+  }
+}
 
 describe('AuthContext Propagation Integration', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
   let bus: InMemoryEventBusAdapter
 
   const userAuth: AuthContext = {
-    actor_type: 'user',
-    actor_id: 'u1',
-    scope: 'admin',
+    type: 'user',
+    id: 'u1',
   }
 
   const systemAuth: AuthContext = {
-    actor_type: 'system',
-    actor_id: 'cron',
+    type: 'system',
+    id: 'cron',
   }
 
   beforeEach(() => {
-    container = createTestContainer()
-    bus = container.resolve<InMemoryEventBusAdapter>('IEventBusPort')
+    const infra = makeInfra()
+    app = createTestMantaApp({ infra })
+    bus = infra.eventBus
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-049/060: auth_context propagates through subscriber cascade
   it('propagates auth_context through subscriber cascade', async () => {
-    const spy = spyOnEvents(container)
+    const _spy = spyOnEvents(bus)
     const receivedAuth: (AuthContext | undefined)[] = []
 
-    // Level 1: order.created → emits inventory.reserved
-    bus.subscribe('order.created', async (event) => {
-      receivedAuth.push(event.metadata.auth_context)
-      await bus.emit({
-        eventName: 'inventory.reserved',
-        data: { orderId: event.data },
-        metadata: {
-          timestamp: Date.now(),
-          auth_context: event.metadata.auth_context, // Propagate
-        },
-      })
-    }, { subscriberId: 'inventory-subscriber' })
+    // Level 1: order.created -> emits inventory.reserved
+    bus.subscribe(
+      'order.created',
+      async (event) => {
+        receivedAuth.push(event.metadata.auth_context)
+        await bus.emit({
+          eventName: 'inventory.reserved',
+          data: { orderId: event.data },
+          metadata: {
+            timestamp: Date.now(),
+            auth_context: event.metadata.auth_context, // Propagate
+          },
+        })
+      },
+      { subscriberId: 'inventory-subscriber' },
+    )
 
-    // Level 2: inventory.reserved → emits notification.sent
-    bus.subscribe('inventory.reserved', async (event) => {
-      receivedAuth.push(event.metadata.auth_context)
-      await bus.emit({
-        eventName: 'notification.sent',
-        data: { type: 'inventory' },
-        metadata: {
-          timestamp: Date.now(),
-          auth_context: event.metadata.auth_context, // Propagate
-        },
-      })
-    }, { subscriberId: 'notification-subscriber' })
+    // Level 2: inventory.reserved -> emits notification.sent
+    bus.subscribe(
+      'inventory.reserved',
+      async (event) => {
+        receivedAuth.push(event.metadata.auth_context)
+        await bus.emit({
+          eventName: 'notification.sent',
+          data: { type: 'inventory' },
+          metadata: {
+            timestamp: Date.now(),
+            auth_context: event.metadata.auth_context, // Propagate
+          },
+        })
+      },
+      { subscriberId: 'notification-subscriber' },
+    )
 
     // Level 3: notification.sent
-    bus.subscribe('notification.sent', (event) => {
-      receivedAuth.push(event.metadata.auth_context)
-    }, { subscriberId: 'audit-subscriber' })
+    bus.subscribe(
+      'notification.sent',
+      (event) => {
+        receivedAuth.push(event.metadata.auth_context)
+      },
+      { subscriberId: 'audit-subscriber' },
+    )
 
     // Emit initial event with user auth
     await bus.emit({
@@ -111,21 +157,29 @@ describe('AuthContext Propagation Integration', () => {
   it('cron job propagates system AuthContext through cascade', async () => {
     const receivedAuth: (AuthContext | undefined)[] = []
 
-    bus.subscribe('cleanup.started', async (event) => {
-      receivedAuth.push(event.metadata.auth_context)
-      await bus.emit({
-        eventName: 'cleanup.completed',
-        data: {},
-        metadata: {
-          timestamp: Date.now(),
-          auth_context: event.metadata.auth_context,
-        },
-      })
-    }, { subscriberId: 'cleanup-handler' })
+    bus.subscribe(
+      'cleanup.started',
+      async (event) => {
+        receivedAuth.push(event.metadata.auth_context)
+        await bus.emit({
+          eventName: 'cleanup.completed',
+          data: {},
+          metadata: {
+            timestamp: Date.now(),
+            auth_context: event.metadata.auth_context,
+          },
+        })
+      },
+      { subscriberId: 'cleanup-handler' },
+    )
 
-    bus.subscribe('cleanup.completed', (event) => {
-      receivedAuth.push(event.metadata.auth_context)
-    }, { subscriberId: 'cleanup-audit' })
+    bus.subscribe(
+      'cleanup.completed',
+      (event) => {
+        receivedAuth.push(event.metadata.auth_context)
+      },
+      { subscriberId: 'cleanup-audit' },
+    )
 
     // Cron job emits with system AuthContext
     await bus.emit({

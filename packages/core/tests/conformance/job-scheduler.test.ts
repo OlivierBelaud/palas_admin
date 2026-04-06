@@ -1,29 +1,39 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { AuthContext, IJobSchedulerPort, ILockingPort, ILoggerPort, MantaApp, TestMantaApp } from '@manta/core'
 import {
-  type IJobSchedulerPort,
-  type ILockingPort,
-  type ILoggerPort,
-  type IWorkflowStoragePort,
-  type IContainer,
-  type JobResult,
-  type AuthContext,
-  MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryJobScheduler,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('IJobSchedulerPort Conformance', () => {
   let scheduler: IJobSchedulerPort
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    scheduler = container.resolve<IJobSchedulerPort>('IJobSchedulerPort')
+    const infra = makeInfra()
+    app = createTestMantaApp({ infra })
+    const locking = infra.locking
+    const logger = infra.logger
+    scheduler = new InMemoryJobScheduler(locking, logger)
+    app.register('IJobSchedulerPort', scheduler)
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // J-01 — SPEC-063: register cron expression
@@ -65,13 +75,18 @@ describe('IJobSchedulerPort Conformance', () => {
 
   // J-04 — SPEC-063: concurrency forbid — skip if locked
   it('concurrency forbid > skip si verrouillé', async () => {
-    const locking = container.resolve<ILockingPort>('ILockingPort')
+    const locking = app.infra.locking
 
-    scheduler.register('locked-job', '* * * * *', async () => {
-      // Simulate long job
-      await new Promise((r) => setTimeout(r, 100))
-      return { status: 'success' as const, duration_ms: 100 }
-    }, { concurrency: 'forbid' })
+    scheduler.register(
+      'locked-job',
+      '* * * * *',
+      async () => {
+        // Simulate long job
+        await new Promise((r) => setTimeout(r, 100))
+        return { status: 'success' as const, duration_ms: 100 }
+      },
+      { concurrency: 'forbid' },
+    )
 
     // Pre-acquire the lock
     await locking.acquire('job:locked-job')
@@ -87,13 +102,18 @@ describe('IJobSchedulerPort Conformance', () => {
   it('retry > maxRetries avec backoff', async () => {
     let attempts = 0
 
-    scheduler.register('retry-job', '* * * * *', async () => {
-      attempts++
-      if (attempts < 3) {
-        throw new Error(`attempt ${attempts} failed`)
-      }
-      return { status: 'success' as const, duration_ms: 0 }
-    }, { retry: { maxRetries: 3, backoff: 'fixed', delay: 10 } })
+    scheduler.register(
+      'retry-job',
+      '* * * * *',
+      async () => {
+        attempts++
+        if (attempts < 3) {
+          throw new Error(`attempt ${attempts} failed`)
+        }
+        return { status: 'success' as const, duration_ms: 0 }
+      },
+      { retry: { maxRetries: 3, backoff: 'fixed', delay: 10 } },
+    )
 
     const result = await scheduler.runJob('retry-job')
 
@@ -103,9 +123,14 @@ describe('IJobSchedulerPort Conformance', () => {
 
   // J-06 — SPEC-075: retry exhausted
   it('retry > maxRetries épuisés', async () => {
-    scheduler.register('always-fail', '* * * * *', async () => {
-      throw new Error('always fails')
-    }, { retry: { maxRetries: 2 } })
+    scheduler.register(
+      'always-fail',
+      '* * * * *',
+      async () => {
+        throw new Error('always fails')
+      },
+      { retry: { maxRetries: 2 } },
+    )
 
     const result = await scheduler.runJob('always-fail')
 
@@ -136,10 +161,15 @@ describe('IJobSchedulerPort Conformance', () => {
 
   // J-08 — SPEC-063: job timeout
   it('timeout > job dépasse le timeout', async () => {
-    scheduler.register('slow-job', '* * * * *', async () => {
-      await new Promise((r) => setTimeout(r, 5000)) // 5 seconds, way over timeout
-      return { status: 'success' as const, duration_ms: 5000 }
-    }, { timeout: 100 }) // 100ms timeout
+    scheduler.register(
+      'slow-job',
+      '* * * * *',
+      async () => {
+        await new Promise((r) => setTimeout(r, 5000)) // 5 seconds, way over timeout
+        return { status: 'success' as const, duration_ms: 5000 }
+      },
+      { timeout: 100 },
+    ) // 100ms timeout
 
     const result = await scheduler.runJob('slow-job')
     expect(result.status).toBe('failure')
@@ -147,27 +177,26 @@ describe('IJobSchedulerPort Conformance', () => {
     expect(result.error!.message).toContain('timeout')
   })
 
-  // J-09 — SPEC-063: 3 dependencies required
-  it('dependencies > 3 ports requis', () => {
-    // IJobSchedulerPort requires ILockingPort, ILoggerPort, IWorkflowStoragePort
-    // Verify all 3 are resolvable from the container
-    expect(() => container.resolve<ILockingPort>('ILockingPort')).not.toThrow()
-    expect(() => container.resolve<ILoggerPort>('ILoggerPort')).not.toThrow()
-    expect(() => container.resolve<IWorkflowStoragePort>('IWorkflowStoragePort')).not.toThrow()
+  // J-09 — SPEC-063: 2 dependencies required
+  it('dependencies > 2 ports requis', () => {
+    // IJobSchedulerPort requires ILockingPort, ILoggerPort
+    // Verify both are resolvable from the app
+    expect(() => app.resolve<ILockingPort>('ILockingPort')).not.toThrow()
+    expect(() => app.resolve<ILoggerPort>('ILoggerPort')).not.toThrow()
   })
 
   // J-10 — SPEC-063: cron AuthContext system propagation
   it('cron AuthContext > system propagé', async () => {
     let capturedAuth: AuthContext | undefined
 
-    scheduler.register('auth-job', '* * * * *', async (jobContainer: IContainer) => {
+    scheduler.register('auth-job', '* * * * *', async (ctx: { app: MantaApp }) => {
       // In production, the adapter creates a scope with system AuthContext
-      // The job handler can resolve AUTH_CONTEXT from the scoped container
+      // The job handler can resolve AUTH_CONTEXT from the app
       try {
-        capturedAuth = (jobContainer as any).resolve?.('AUTH_CONTEXT')
+        capturedAuth = (ctx.app as unknown as { resolve?: (key: string) => AuthContext }).resolve?.('AUTH_CONTEXT')
       } catch {
-        // AUTH_CONTEXT may not be registered in test container
-        capturedAuth = { actor_type: 'system', actor_id: 'cron' }
+        // AUTH_CONTEXT may not be registered in test app
+        capturedAuth = { type: 'system', id: 'cron' }
       }
       return { status: 'success' as const, duration_ms: 0 }
     })
@@ -176,7 +205,7 @@ describe('IJobSchedulerPort Conformance', () => {
 
     // Cron jobs should execute with system AuthContext
     expect(capturedAuth).toBeDefined()
-    expect(capturedAuth!.actor_type).toBe('system')
-    expect(capturedAuth!.actor_id).toBe('cron')
+    expect(capturedAuth!.type).toBe('system')
+    expect(capturedAuth!.id).toBe('cron')
   })
 })

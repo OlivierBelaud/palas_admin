@@ -2,19 +2,18 @@
 
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { ExecOptions } from '../types'
+import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
+import type { IEventBusPort, IFilePort, Message, TestMantaApp, WorkflowDefinition } from '@manta/core'
 import {
-  MantaContainer,
-  ContainerRegistrationKeys,
+  createTestMantaApp,
   InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
-  InMemoryLockingAdapter,
   InMemoryFileAdapter,
+  InMemoryLockingAdapter,
   WorkflowManager,
 } from '@manta/core'
-import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
-import type { IEventBusPort, IFilePort, Message } from '@manta/core'
 import { discoverResources } from '../resource-loader'
+import type { ExecOptions } from '../types'
 
 export interface ExecCommandResult {
   exitCode: number
@@ -22,15 +21,12 @@ export interface ExecCommandResult {
 }
 
 /**
- * manta exec — Execute a script with the framework container loaded.
+ * manta exec — Execute a script with the framework app loaded.
  * Uses the ResourceLoader to discover and wire all project resources
  * (modules, workflows, subscribers) — same boot path as manta dev.
  * --dry-run: wraps in a transaction and rolls back.
  */
-export async function execCommand(
-  options: ExecOptions,
-  cwd: string = process.cwd(),
-): Promise<ExecCommandResult> {
+export async function execCommand(options: ExecOptions, cwd: string = process.cwd()): Promise<ExecCommandResult> {
   const result: ExecCommandResult = { exitCode: 0, errors: [] }
 
   // Validate script exists
@@ -50,41 +46,34 @@ export async function execCommand(
       result.exitCode = 1
       result.errors.push(
         `Script '${options.script}' must export a default async function.\n` +
-        'Expected: export default async ({ container, args }) => { ... }',
+          'Expected: export default async ({ app, args }) => { ... }',
       )
       return result
     }
 
-    // Create a real container with infrastructure adapters
-    const container = new MantaContainer()
-    container.register(ContainerRegistrationKeys.LOGGER, new PinoLoggerAdapter({ level: 'debug', pretty: true }))
-    container.register(ContainerRegistrationKeys.EVENT_BUS, new InMemoryEventBusAdapter())
-    container.register(ContainerRegistrationKeys.CACHE, new InMemoryCacheAdapter())
-    container.register(ContainerRegistrationKeys.LOCKING, new InMemoryLockingAdapter())
-    container.register('IFilePort', new InMemoryFileAdapter())
+    // Create a MantaApp with infrastructure adapters
+    const app = createTestMantaApp({
+      infra: {
+        eventBus: new InMemoryEventBusAdapter(),
+        logger: new PinoLoggerAdapter({ level: 'debug', pretty: true }),
+        cache: new InMemoryCacheAdapter(),
+        locking: new InMemoryLockingAdapter(),
+        file: new InMemoryFileAdapter(),
+        db: {},
+      },
+    })
 
     // Discover and wire all project resources via ResourceLoader
-    await resourceLoaderBootstrap(container, cwd)
+    await resourceLoaderBootstrap(app, cwd)
 
-    // Create a scoped container for the script
-    const scope = container.createScope()
-
-    // Register system/cli AuthContext in the scope
-    const authContext = {
-      actor_type: 'system' as const,
-      actor_id: 'cli',
-      app_metadata: { source: 'manta-exec' },
-    }
-    scope.register('AUTH_CONTEXT', authContext)
-
-    // Execute the script with the scoped container
+    // Execute the script with the app
     await fn({
-      container: scope,
+      app,
       args: options.args ?? [],
     })
 
-    // Dispose the container after execution
-    await container.dispose()
+    // Dispose the app after execution
+    await app.dispose()
   } catch (err) {
     result.exitCode = 1
     const message = err instanceof Error ? err.message : String(err)
@@ -100,54 +89,66 @@ export async function execCommand(
  *
  * Loads: modules, workflows, subscribers.
  */
-export async function resourceLoaderBootstrap(container: MantaContainer, cwd: string): Promise<void> {
+export async function resourceLoaderBootstrap(app: TestMantaApp, cwd: string): Promise<void> {
   const resources = await discoverResources(cwd)
 
-  // [Step 9] Load modules — discover *Service exports, instantiate & register
+  // [Step 9] Load modules — discover entities, instantiate & register
   for (const modInfo of resources.modules) {
-    try {
-      const imported = await import(modInfo.path)
-      for (const [key, value] of Object.entries(imported)) {
-        if (typeof value === 'function' && key.endsWith('Service')) {
-          const ServiceClass = value as new (...args: unknown[]) => unknown
-          const instance = tryInstantiateService(ServiceClass, container)
-          if (instance) {
-            const serviceName = key.charAt(0).toLowerCase() + key.slice(1)
-            container.register(serviceName, instance)
+    for (const entity of modInfo.entities) {
+      try {
+        const imported = await import(entity.modelPath)
+        for (const [key, value] of Object.entries(imported)) {
+          if (typeof value === 'function' && key.endsWith('Service')) {
+            const ServiceClass = value as new (...args: unknown[]) => unknown
+            const instance = tryInstantiateService(ServiceClass, app)
+            if (instance) {
+              const serviceName = key.charAt(0).toLowerCase() + key.slice(1)
+              app.register(serviceName, instance)
+            }
           }
         }
+      } catch {
+        // Entity failed to load — skip
       }
-    } catch {
-      // Module failed to load — skip
     }
   }
 
-  // [Step 12] Load and register workflows
-  const wm = new WorkflowManager(container)
+  // [Step 12] Load and register workflows — WorkflowManager requires MantaApp
+  const wm = new WorkflowManager(app)
   for (const wfInfo of resources.workflows) {
     try {
       const imported = await import(wfInfo.path)
       for (const value of Object.values(imported)) {
         if (value && typeof value === 'object' && 'name' in value && 'steps' in value) {
-          wm.register(value as { name: string; steps: unknown[] })
+          wm.register(value as unknown as WorkflowDefinition)
         }
       }
     } catch {
       // Workflow failed to load — skip
     }
   }
-  container.register('workflowManager', wm)
+  app.register('workflowManager', wm)
 
   // [Step 13] Load and wire subscribers
-  const eventBus = container.resolve<IEventBusPort>(ContainerRegistrationKeys.EVENT_BUS)
-  const resolveFromContainer = <T>(key: string): T => container.resolve<T>(key)
+  const eventBus = app.infra.eventBus
+  const resolveFromApp = <T>(key: string): T => app.resolve<T>(key)
 
   for (const subInfo of resources.subscribers) {
     try {
       const imported = await import(subInfo.path)
-      const sub = imported.default as { event: string; handler: (msg: Message, resolve: <T>(key: string) => T) => Promise<void> }
+      const sub = imported.default as {
+        event: string
+        __type?: string
+        handler: (...args: unknown[]) => Promise<void>
+      }
       if (sub?.event && typeof sub.handler === 'function') {
-        eventBus.subscribe(sub.event, (msg: Message) => sub.handler(msg, resolveFromContainer))
+        if (sub.__type) {
+          eventBus.subscribe(sub.event, (msg: Message) =>
+            sub.handler(msg, { command: app.commands, log: app.infra.logger }),
+          )
+        } else {
+          eventBus.subscribe(sub.event, (msg: Message) => (sub.handler as Function)(msg, resolveFromApp))
+        }
       }
     } catch {
       // Subscriber failed to load — skip
@@ -156,12 +157,9 @@ export async function resourceLoaderBootstrap(container: MantaContainer, cwd: st
 }
 
 /**
- * Try to instantiate a service class, resolving constructor dependencies from the container.
+ * Try to instantiate a service class, resolving constructor dependencies from the app.
  */
-function tryInstantiateService(
-  ServiceClass: new (...args: unknown[]) => unknown,
-  container: MantaContainer,
-): unknown | null {
+function tryInstantiateService(ServiceClass: new (...args: unknown[]) => unknown, app: TestMantaApp): unknown | null {
   try {
     if (ServiceClass.length === 0) {
       return new ServiceClass()
@@ -169,15 +167,12 @@ function tryInstantiateService(
     const portKeys = ['IFilePort', 'IDatabasePort', 'ILoggerPort', 'IEventBusPort', 'ICachePort']
     for (const key of portKeys) {
       try {
-        const port = container.resolve(key)
+        const port = app.resolve(key)
         return new ServiceClass(port)
-      } catch {
-        continue
-      }
+      } catch {}
     }
     return null
   } catch {
     return null
   }
 }
-

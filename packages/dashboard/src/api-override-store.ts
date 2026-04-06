@@ -1,5 +1,5 @@
-import { LocalStorageOverrideStore } from "@manta/dashboard-core"
-import type { Overrides } from "@manta/dashboard-core"
+import type { Overrides } from '@manta/dashboard-core'
+import { LocalStorageOverrideStore } from '@manta/dashboard-core'
 
 /**
  * ApiOverrideStore — extends LocalStorageOverrideStore with API persistence.
@@ -19,25 +19,24 @@ export class ApiOverrideStore extends LocalStorageOverrideStore {
   async initialize(): Promise<void> {
     // Try to load overrides from API
     try {
-      const token = localStorage.getItem("manta-auth-token")
+      const token = localStorage.getItem('manta-auth-token')
       if (!token) return
 
       const res = await fetch(`${this.apiUrl}/api/admin/overrides`, {
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
       })
       if (res.ok) {
-        const data = await res.json() as { overrides?: Overrides }
+        const data = (await res.json()) as { overrides?: Overrides }
         if (data.overrides) {
           // Merge API overrides into local state
           const current = this.getOverrides()
           // API takes precedence for components/pages, local for custom pages
           // (custom pages may have been created offline)
           // For simplicity, just use API state if it has content
-          if (Object.keys(data.overrides.components).length > 0 ||
-              Object.keys(data.overrides.pages).length > 0) {
+          if (Object.keys(data.overrides.components).length > 0 || Object.keys(data.overrides.pages).length > 0) {
             // Apply each override through the parent methods
             for (const [id, comp] of Object.entries(data.overrides.components)) {
               super.setComponentOverride(id, comp)
@@ -70,15 +69,15 @@ export class ApiOverrideStore extends LocalStorageOverrideStore {
 
   private async syncToApi() {
     try {
-      const token = localStorage.getItem("manta-auth-token")
+      const token = localStorage.getItem('manta-auth-token')
       if (!token) return
 
       const overrides = this.getOverrides()
       await fetch(`${this.apiUrl}/api/admin/overrides`, {
-        method: "PUT",
+        method: 'PUT',
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ overrides }),
       })

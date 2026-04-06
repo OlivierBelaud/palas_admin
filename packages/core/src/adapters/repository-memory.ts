@@ -1,11 +1,15 @@
 // SPEC-126 — InMemoryRepository implements IRepository
 
-import type { IRepository, TransactionOptions } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { IRepository } from '../ports'
 
 export class InMemoryRepository implements IRepository<Record<string, unknown>> {
   private _store = new Map<string, Record<string, unknown>>()
-  private _entityName = 'entity'
+  private _entityName: string
+
+  constructor(entityName = 'entity') {
+    this._entityName = entityName
+  }
 
   async find(options?: {
     where?: Record<string, unknown>
@@ -85,14 +89,18 @@ export class InMemoryRepository implements IRepository<Record<string, unknown>> 
       all = all.filter((e) => e.deleted_at === null || e.deleted_at === undefined)
     }
     if ((options as Record<string, unknown> | undefined)?.where) {
-      for (const [key, value] of Object.entries((options as Record<string, unknown>).where as Record<string, unknown>)) {
+      for (const [key, value] of Object.entries(
+        (options as Record<string, unknown>).where as Record<string, unknown>,
+      )) {
         all = all.filter((e) => e[key] === value)
       }
     }
     return [results, all.length]
   }
 
-  async create(data: Record<string, unknown> | Record<string, unknown>[]): Promise<Record<string, unknown> | Record<string, unknown>[]> {
+  async create(
+    data: Record<string, unknown> | Record<string, unknown>[],
+  ): Promise<Record<string, unknown> | Record<string, unknown>[]> {
     if (Array.isArray(data)) {
       return data.map((d) => this._createOne(d))
     }
@@ -113,7 +121,9 @@ export class InMemoryRepository implements IRepository<Record<string, unknown>> 
     return entity
   }
 
-  async update(data: Record<string, unknown> | Record<string, unknown>[]): Promise<Record<string, unknown> | Record<string, unknown>[]> {
+  async update(
+    data: Record<string, unknown> | Record<string, unknown>[],
+  ): Promise<Record<string, unknown> | Record<string, unknown>[]> {
     if (Array.isArray(data)) {
       return data.map((d) => this._updateOne(d))
     }
@@ -201,28 +211,7 @@ export class InMemoryRepository implements IRepository<Record<string, unknown>> 
     return results
   }
 
-  async transaction<TManager = unknown>(
-    task: (transactionManager: TManager) => Promise<unknown>,
-    _options?: TransactionOptions,
-  ): Promise<unknown> {
-    // Snapshot for rollback
-    const snapshot = new Map<string, Record<string, unknown>>()
-    for (const [key, value] of this._store) {
-      snapshot.set(key, { ...value })
-    }
-
-    const txManager = {} as TManager
-    try {
-      return await task(txManager)
-    } catch (error) {
-      // Rollback
-      this._store.clear()
-      for (const [key, value] of snapshot) {
-        this._store.set(key, value)
-      }
-      throw error
-    }
+  _reset() {
+    this._store.clear()
   }
-
-  _reset() { this._store.clear() }
 }

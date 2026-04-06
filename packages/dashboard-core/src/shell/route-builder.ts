@@ -1,14 +1,14 @@
-import type { Resolver } from "../override/create-resolver"
+import type { Resolver } from '../override/create-resolver'
 
 export interface RouteEntry {
   path: string
-  type: "json-render" | "react-import" | "react-shell"
+  type: 'json-render' | 'react-import' | 'react-shell'
   pageId?: string
   componentKey?: string
 }
 
 export interface RouteResolution {
-  type: "json-render" | "react-import" | "react-shell"
+  type: 'json-render' | 'react-import' | 'react-shell'
   pageId?: string
   componentKey?: string
   params?: Record<string, string>
@@ -26,14 +26,14 @@ export function buildRouteMap(resolver: Resolver): RouteEntry[] {
 
     entries.push({
       path: page.route,
-      type: "json-render",
+      type: 'json-render',
       pageId: page.id,
     })
   }
 
   entries.sort((a, b) => {
-    const aSegments = a.path.split("/").length
-    const bSegments = b.path.split("/").length
+    const aSegments = a.path.split('/').length
+    const bSegments = b.path.split('/').length
     if (aSegments !== bSegments) return bSegments - aSegments
     const aParams = (a.path.match(/:/g) || []).length
     const bParams = (b.path.match(/:/g) || []).length
@@ -43,10 +43,7 @@ export function buildRouteMap(resolver: Resolver): RouteEntry[] {
   return entries
 }
 
-export function resolveRoute(
-  path: string,
-  routeMap: RouteEntry[]
-): RouteResolution | undefined {
+export function resolveRoute(path: string, routeMap: RouteEntry[]): RouteResolution | undefined {
   for (const entry of routeMap) {
     const params = matchPath(entry.path, path)
     if (params !== null) {
@@ -61,12 +58,9 @@ export function resolveRoute(
   return undefined
 }
 
-function matchPath(
-  pattern: string,
-  path: string
-): Record<string, string> | null {
-  const patternSegments = pattern.split("/").filter(Boolean)
-  const pathSegments = path.split("/").filter(Boolean)
+function matchPath(pattern: string, path: string): Record<string, string> | null {
+  const patternSegments = pattern.split('/').filter(Boolean)
+  const pathSegments = path.split('/').filter(Boolean)
 
   if (patternSegments.length !== pathSegments.length) return null
 
@@ -76,7 +70,7 @@ function matchPath(
     const pat = patternSegments[i]
     const seg = pathSegments[i]
 
-    if (pat.startsWith(":")) {
+    if (pat.startsWith(':')) {
       params[pat.slice(1)] = seg
     } else if (pat !== seg) {
       return null

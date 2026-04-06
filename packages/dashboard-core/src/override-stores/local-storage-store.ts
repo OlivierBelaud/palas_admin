@@ -1,12 +1,7 @@
-import type { DataComponent, PageSpec } from "../pages/types"
-import type {
-  OverrideStore,
-  Overrides,
-  CustomNavItem,
-  NavigationItem,
-} from "../interfaces/override-store"
+import type { CustomNavItem, NavigationItem, OverrideStore, Overrides } from '../interfaces/override-store'
+import type { DataComponent, PageSpec } from '../pages/types'
 
-const STORAGE_KEY = "manta-ai-overrides"
+const STORAGE_KEY = 'manta-ai-overrides'
 
 function emptyOverrides(): Overrides {
   return { components: {}, pages: {}, customPages: {}, customComponents: {}, customNavItems: [], navigation: null }
@@ -127,10 +122,7 @@ export class LocalStorageOverrideStore implements OverrideStore {
       ...this._overrides,
       customPages: { ...this._overrides.customPages, [page.id]: page },
       customComponents: newComponents,
-      customNavItems: [
-        ...this._overrides.customNavItems.filter((n) => n.key !== navItem.key),
-        navItem,
-      ],
+      customNavItems: [...this._overrides.customNavItems.filter((n) => n.key !== navItem.key), navItem],
     }
     saveToStorage(this._overrides)
     this.notify()
@@ -142,12 +134,12 @@ export class LocalStorageOverrideStore implements OverrideStore {
 
     const newComponents = { ...this._overrides.customComponents }
     for (const ref of page.main) {
-      const compId = typeof ref === "string" ? ref : (ref as { ref: string }).ref
+      const compId = typeof ref === 'string' ? ref : (ref as { ref: string }).ref
       delete newComponents[compId]
     }
     if (page.sidebar) {
       for (const ref of page.sidebar) {
-        const compId = typeof ref === "string" ? ref : (ref as { ref: string }).ref
+        const compId = typeof ref === 'string' ? ref : (ref as { ref: string }).ref
         delete newComponents[compId]
       }
     }

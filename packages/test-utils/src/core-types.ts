@@ -36,10 +36,7 @@ export class MantaError extends Error {
 
   static is(err: unknown): err is MantaError {
     return (
-      typeof err === 'object' &&
-      err !== null &&
-      '__isMantaError' in err &&
-      (err as MantaError).__isMantaError === true
+      typeof err === 'object' && err !== null && '__isMantaError' in err && (err as MantaError).__isMantaError === true
     )
   }
 }
@@ -59,12 +56,11 @@ export function permanentSubscriberFailure(error: Error): PermanentSubscriberErr
 export type ServiceLifetime = 'SINGLETON' | 'SCOPED' | 'TRANSIENT'
 
 export interface AuthContext {
-  actor_type: 'user' | 'customer' | 'system'
-  actor_id: string
+  id: string
+  type: string
+  email?: string
   auth_identity_id?: string
-  scope?: 'admin' | 'store'
-  session_id?: string
-  app_metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>
 }
 
 export interface Message<T = unknown> {
@@ -96,7 +92,7 @@ export interface Context {
 }
 
 export interface StepExecutionContext {
-  container: IContainer
+  container: MantaApp
   metadata: {
     attempt: number
     idempotencyKey: string
@@ -185,14 +181,18 @@ export interface GroupStatus {
 // Port Interfaces
 // =============================================================================
 
-/** SPEC-001 — Container DI */
-export interface IContainer {
+/** SPEC-001 — MantaApp (replaces IContainer) */
+export interface MantaApp<
+  TModules extends Record<string, unknown> = Record<string, unknown>,
+  TWorkflows extends Record<string, (...args: unknown[]) => Promise<unknown>> = Record<
+    string,
+    (...args: unknown[]) => Promise<unknown>
+  >,
+> {
   id: string
-  resolve<T>(key: string): T
-  register(key: string, value: unknown, lifetime?: ServiceLifetime): void
-  createScope(): IContainer
-  registerAdd(key: string, value: unknown): void
-  aliasTo(alias: string, target: string): void
+  modules: TModules
+  workflows: TWorkflows
+  resolve<T = unknown>(key: string): T
   dispose(): Promise<void>
 }
 
@@ -210,13 +210,17 @@ export interface IEventBusPort {
   subscribe(
     eventName: string,
     handler: (event: Message) => Promise<void> | void,
-    options?: { subscriberId?: string }
+    options?: { subscriberId?: string },
   ): void
   unsubscribe(subscriberId: string): void
   releaseGroupedEvents(eventGroupId: string): Promise<void>
   clearGroupedEvents(eventGroupId: string): Promise<void>
-  addInterceptor(fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void): void
-  removeInterceptor(fn: Function): void
+  addInterceptor(
+    fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void,
+  ): void
+  removeInterceptor(
+    fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void,
+  ): void
   onGroupCreated?(handler: (eventGroupId: string, eventCount: number) => void): void
   onGroupReleased?(handler: (eventGroupId: string, eventCount: number) => void): void
   onGroupCleared?(handler: (eventGroupId: string, eventCount: number, reason: 'explicit' | 'ttl') => void): void
@@ -259,44 +263,11 @@ export interface IRepository<T = unknown> {
   softDelete(ids: string | string[]): Promise<Record<string, string[]>>
   restore(ids: string | string[]): Promise<void>
   serialize(data: unknown, options?: unknown): Promise<unknown>
-  upsertWithReplace(
-    data: Record<string, unknown>[],
-    replaceFields?: string[],
-    conflictTarget?: string[]
-  ): Promise<T[]>
+  upsertWithReplace(data: Record<string, unknown>[], replaceFields?: string[], conflictTarget?: string[]): Promise<T[]>
   transaction<TManager = unknown>(
     task: (transactionManager: TManager) => Promise<unknown>,
-    options?: TransactionOptions
+    options?: TransactionOptions,
   ): Promise<unknown>
-}
-
-/** SPEC-019b — Workflow Engine */
-export interface IWorkflowEnginePort {
-  run(
-    workflowId: string,
-    options: {
-      input?: unknown
-      context?: Context
-      transactionId?: string
-      resultFrom?: string
-      throwOnError?: boolean
-    }
-  ): Promise<{ status: string; output?: unknown; errors?: unknown[] }>
-  getRunningTransaction(workflowId: string, transactionId: string): Promise<unknown>
-  setStepSuccess(idempotencyKey: string, response: unknown): Promise<void>
-  setStepFailure(idempotencyKey: string, error: Error): Promise<void>
-  subscribe(
-    options: { event: WorkflowLifecycleEvent['type']; workflowId?: string },
-    handler: (event: WorkflowLifecycleEvent) => Promise<void> | void
-  ): () => void
-}
-
-/** SPEC-020 — Workflow Storage */
-export interface IWorkflowStoragePort {
-  save(transactionId: string, stepId: string, data: Record<string, unknown>): Promise<void>
-  load(transactionId: string, stepId?: string): Promise<Record<string, unknown> | null>
-  list(transactionId: string): Promise<Array<{ stepId: string; data: Record<string, unknown> }>>
-  delete(transactionId: string): Promise<void>
 }
 
 /** SPEC-063 — Job Scheduler */
@@ -304,12 +275,12 @@ export interface IJobSchedulerPort {
   register(
     name: string,
     schedule: string,
-    handler: (container: IContainer) => Promise<JobResult>,
+    handler: (app: MantaApp) => Promise<JobResult>,
     options?: {
       concurrency?: 'allow' | 'forbid'
       numberOfExecutions?: number
       retry?: { maxRetries: number; backoff?: 'fixed' | 'exponential'; delay?: number }
-    }
+    },
   ): void
   runJob(name: string): Promise<JobResult>
   getJobHistory(jobName: string, limit?: number): Promise<JobExecution[]>
@@ -384,36 +355,11 @@ export interface INotificationPort {
     data?: Record<string, unknown>
     idempotency_key?: string
   }): Promise<{ status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: Error }>
-  sendBatch?(notifications: Array<Parameters<INotificationPort['send']>[0]>): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>>
+  sendBatch?(
+    notifications: Array<Parameters<INotificationPort['send']>[0]>,
+  ): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>>
   list?(): Promise<unknown[]>
   retrieve?(id: string): Promise<unknown | null>
-}
-
-/** SPEC-134 — Translation */
-export interface ITranslationPort {
-  applyTranslations<T>(results: T[], locale: string, entityType: string): Promise<T[]>
-  createTranslations(
-    data: Array<{
-      reference_id: string
-      reference: string
-      locale_code: string
-      translations: Record<string, string>
-    }>
-  ): Promise<unknown[]>
-  updateTranslations(
-    data: Array<{
-      reference_id: string
-      locale_code: string
-      translations: Record<string, string>
-    }>
-  ): Promise<unknown[]>
-  deleteTranslations(filters: { reference_id?: string[]; locale_code?: string[] }): Promise<void>
-  getStatistics(input: { entity_type: string; locale_code?: string }): Promise<{
-    expected: number
-    translated: number
-    missing: number
-  }>
-  listLocales(): Promise<Array<{ code: string; name: string }>>
 }
 
 /** SPEC-039 — HTTP Port (simplified for testing) */

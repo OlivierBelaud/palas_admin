@@ -1,9 +1,9 @@
 // Section G — exec command + miscellaneous utilities
 // Tests: G-01 → G-12
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execCommand } from '../src/commands/exec'
 import { createCliLogger } from '../src/utils/logger'
 import { createSpinner } from '../src/utils/spinner'
@@ -40,20 +40,14 @@ describe('G — manta exec', () => {
   })
 
   it('G-03 — executes a valid script successfully', async () => {
-    writeFileSync(
-      join(TMP, 'good-script.mjs'),
-      'export default async ({ container, args }) => { /* ok */ }\n',
-    )
+    writeFileSync(join(TMP, 'good-script.mjs'), 'export default async ({ app, args }) => { /* ok */ }\n')
     const result = await execCommand({ script: 'good-script.mjs' }, TMP)
     expect(result.exitCode).toBe(0)
     expect(result.errors).toHaveLength(0)
   })
 
   it('G-04 — captures script errors and returns exitCode 1', async () => {
-    writeFileSync(
-      join(TMP, 'error-script.mjs'),
-      'export default async () => { throw new Error("boom") }\n',
-    )
+    writeFileSync(join(TMP, 'error-script.mjs'), 'export default async () => { throw new Error("boom") }\n')
     const result = await execCommand({ script: 'error-script.mjs' }, TMP)
     expect(result.exitCode).toBe(1)
     expect(result.errors[0]).toContain('Script failed')
@@ -67,10 +61,7 @@ describe('G — manta exec', () => {
         if (!args || args.length === 0) throw new Error('no args')
       }\n`,
     )
-    const result = await execCommand(
-      { script: 'args-script.mjs', args: ['--count', '10'] },
-      TMP,
-    )
+    const result = await execCommand({ script: 'args-script.mjs', args: ['--count', '10'] }, TMP)
     expect(result.exitCode).toBe(0)
   })
 })

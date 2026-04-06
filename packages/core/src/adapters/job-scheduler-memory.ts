@@ -1,31 +1,38 @@
 // SPEC-063 — InMemoryJobScheduler implements IJobSchedulerPort
 
-import type { IContainer } from '../container'
-import type { IJobSchedulerPort, ILockingPort, ILoggerPort, IWorkflowStoragePort, JobResult, JobExecution } from '../ports'
+import type { MantaApp } from '../app'
 import { MantaError } from '../errors/manta-error'
+import type { IJobSchedulerPort, ILockingPort, ILoggerPort, JobExecution, JobResult } from '../ports'
 
 export class InMemoryJobScheduler implements IJobSchedulerPort {
-  private _jobs = new Map<string, {
-    schedule: string
-    handler: (container: IContainer) => Promise<JobResult>
-    options?: Record<string, unknown>
-  }>()
+  private _jobs = new Map<
+    string,
+    {
+      schedule: string
+      handler: (ctx: { app: MantaApp }) => Promise<JobResult>
+      options?: Record<string, unknown>
+    }
+  >()
   private _history: JobExecution[] = []
+  private _app: MantaApp | null = null
+
+  /** Set the app reference so job handlers receive the real app. */
+  setApp(app: MantaApp): void {
+    this._app = app
+  }
 
   constructor(
     private _locking: ILockingPort,
     private _logger: ILoggerPort,
-    private _storage: IWorkflowStoragePort,
   ) {
     if (!_locking) throw new MantaError('INVALID_STATE', 'IJobSchedulerPort requires ILockingPort')
     if (!_logger) throw new MantaError('INVALID_STATE', 'IJobSchedulerPort requires ILoggerPort')
-    if (!_storage) throw new MantaError('INVALID_STATE', 'IJobSchedulerPort requires IWorkflowStoragePort for job history persistence')
   }
 
   register(
     name: string,
     schedule: string,
-    handler: (container: IContainer) => Promise<JobResult>,
+    handler: (ctx: { app: MantaApp }) => Promise<JobResult>,
     options?: Record<string, unknown>,
   ): void {
     this._jobs.set(name, { schedule, handler, options })
@@ -59,7 +66,7 @@ export class InMemoryJobScheduler implements IJobSchedulerPort {
 
         try {
           result = await Promise.race([
-            job.handler(null as unknown as IContainer),
+            job.handler({ app: this._app! }),
             new Promise<never>((_resolve, reject) => {
               controller.signal.addEventListener('abort', () => {
                 reject(new MantaError('UNEXPECTED_STATE', `Job "${name}" exceeded timeout of ${timeoutMs}ms`))
@@ -70,7 +77,7 @@ export class InMemoryJobScheduler implements IJobSchedulerPort {
           clearTimeout(timer)
         }
       } else {
-        result = await job.handler(null as unknown as IContainer)
+        result = await job.handler({ app: this._app! })
       }
 
       this._recordExecution(name, started, result)
@@ -114,5 +121,8 @@ export class InMemoryJobScheduler implements IJobSchedulerPort {
     })
   }
 
-  _reset() { this._jobs.clear(); this._history = [] }
+  _reset() {
+    this._jobs.clear()
+    this._history = []
+  }
 }

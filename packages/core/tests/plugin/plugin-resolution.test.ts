@@ -1,8 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import {
-  MantaError,
-  InMemoryMessageAggregator,
-} from '@manta/test-utils'
+import { MantaError, MessageAggregator } from '@manta/test-utils'
+import { describe, expect, it } from 'vitest'
 
 describe('Plugin Resolution Tests', () => {
   // PL-01 — SPEC-068/093: CJS plugin resolution in pnpm monorepo
@@ -64,24 +61,26 @@ describe('Plugin Resolution Tests', () => {
 
   // CS-01 — SPEC-058-OVERRIDE: createService override — throw before super prevents insert and events
   it('override > throw before super prevents insert and events', () => {
-    const aggregator = new InMemoryMessageAggregator()
+    const aggregator = new MessageAggregator()
     let insertOccurred = false
 
     // Simulate service method override
     class ProductServiceBase {
       async createProducts(data: unknown) {
         insertOccurred = true
-        aggregator.save([{
-          eventName: 'product.created',
-          data,
-          metadata: { timestamp: Date.now() },
-        }])
+        aggregator.save([
+          {
+            eventName: 'product.created',
+            data,
+            metadata: { timestamp: Date.now() },
+          },
+        ])
         return { id: '1' }
       }
     }
 
     class CustomProductService extends ProductServiceBase {
-      async createProducts(data: unknown) {
+      async createProducts(data: unknown): Promise<{ id: string }> {
         // Throw BEFORE calling super
         throw new MantaError('INVALID_DATA', 'Custom validation failed')
         // super.createProducts(data) is never called

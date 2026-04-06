@@ -3,11 +3,11 @@
 // Tests that don't need PG run without Docker.
 // Tests that need PG require: docker-compose.test.yml running on port 5433.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFile } from 'node:child_process'
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..')
 const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
@@ -34,9 +34,10 @@ function runCli(
         resolve({
           stdout: stdout.toString(),
           stderr: stderr.toString(),
-          exitCode: error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
-            ? 1
-            : (error as NodeJS.ErrnoException & { status?: number })?.status ?? child.exitCode ?? 0,
+          exitCode:
+            error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+              ? 1
+              : ((error as NodeJS.ErrnoException & { status?: number })?.status ?? child.exitCode ?? 0),
         })
       },
     )
@@ -72,11 +73,12 @@ describe('CLI lifecycle e2e', () => {
     expect(existsSync(join(projectDir, 'package.json'))).toBe(true)
     expect(existsSync(join(projectDir, '.env'))).toBe(true)
     expect(existsSync(join(projectDir, 'tsconfig.json'))).toBe(true)
-    expect(existsSync(join(projectDir, 'drizzle.config.ts'))).toBe(true)
+    expect(existsSync(join(projectDir, '.gitignore'))).toBe(true)
 
     // Verify directories
-    expect(existsSync(join(projectDir, 'src', 'api', 'admin'))).toBe(true)
     expect(existsSync(join(projectDir, 'src', 'modules'))).toBe(true)
+    expect(existsSync(join(projectDir, 'src', 'commands'))).toBe(true)
+    expect(existsSync(join(projectDir, 'src', 'admin'))).toBe(true)
 
     // Verify package.json content
     const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'))
@@ -108,11 +110,14 @@ describe('CLI lifecycle e2e', () => {
     mkdirSync(projectDir, { recursive: true })
 
     // Create a minimal project structure with a config file that doesn't import @manta/core
-    writeFileSync(join(projectDir, 'manta.config.ts'), `export default {
+    writeFileSync(
+      join(projectDir, 'manta.config.ts'),
+      `export default {
   database: { url: 'postgresql://localhost/test' },
   http: { port: 9000 },
 }
-`)
+`,
+    )
     // Create an API route
     mkdirSync(join(projectDir, 'src', 'api', 'admin', 'products'), { recursive: true })
     writeFileSync(
@@ -144,11 +149,14 @@ describe('CLI lifecycle e2e', () => {
     const projectDir = join(tempDir, 'start-test')
     mkdirSync(projectDir, { recursive: true })
 
-    writeFileSync(join(projectDir, 'manta.config.ts'), `export default {
+    writeFileSync(
+      join(projectDir, 'manta.config.ts'),
+      `export default {
   database: { url: 'postgresql://localhost/test' },
   http: { port: 9000 },
 }
-`)
+`,
+    )
 
     const result = await runCli(['start'], {
       cwd: projectDir,
@@ -163,20 +171,23 @@ describe('CLI lifecycle e2e', () => {
 
   // ── manta exec ────────────────────────────────────────────────────
 
-  it('manta exec runs a script with container', async () => {
+  it('manta exec runs a script with app', async () => {
     const projectDir = join(tempDir, 'exec-test')
     mkdirSync(projectDir, { recursive: true })
 
-    writeFileSync(join(projectDir, 'manta.config.ts'), `export default {
+    writeFileSync(
+      join(projectDir, 'manta.config.ts'),
+      `export default {
   database: { url: 'postgresql://localhost/test' },
 }
-`)
+`,
+    )
 
     // Create a script that writes a marker file to prove it ran
     const markerFile = join(projectDir, 'exec-marker.txt')
     writeFileSync(
       join(projectDir, 'test-script.ts'),
-      `export default async ({ container, args }: { container: any, args: string[] }) => {
+      `export default async ({ app, args }: { app: any, args: string[] }) => {
   const fs = await import('node:fs')
   fs.writeFileSync('${markerFile.replace(/\\/g, '\\\\')}', 'executed:' + args.join(','))
 }`,
@@ -306,10 +317,7 @@ describe('CLI lifecycle e2e', () => {
     const files = readdirSync(migrationsDir)
     const downFile = files.find((f: string) => f.endsWith('.down.sql'))
     if (downFile) {
-      writeFileSync(
-        join(migrationsDir, downFile),
-        'DROP TABLE IF EXISTS "product";\n',
-      )
+      writeFileSync(join(migrationsDir, downFile), 'DROP TABLE IF EXISTS "product";\n')
     }
 
     const result = await runCli(['db', 'rollback'], {

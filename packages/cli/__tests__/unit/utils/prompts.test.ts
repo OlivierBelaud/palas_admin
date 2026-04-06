@@ -1,7 +1,7 @@
 // Section E1 — prompts utility
 // Ref: CLI_SPEC §2.2 flow step 6, CLI_TESTS_SPEC §E1
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { isNonInteractive } from '../../../src/commands/db/generate'
 
 describe('E1 — prompts / interactivity detection', () => {

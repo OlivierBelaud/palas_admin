@@ -23,7 +23,9 @@ export interface INotificationPort {
    * @param notifications - Array of notification payloads
    * @returns Array of send results
    */
-  sendBatch?(notifications: Array<Parameters<INotificationPort['send']>[0]>): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>>
+  sendBatch?(
+    notifications: Array<Parameters<INotificationPort['send']>[0]>,
+  ): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>>
 
   /**
    * Optional: list sent notifications.

@@ -1,15 +1,15 @@
 // SPEC-074, SPEC-100 — manta build command
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'node:fs'
-import { resolve, relative, join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import type {
   BuildOptions,
-  ManifestRouteEntry,
-  ManifestSubscriberEntry,
-  ManifestWorkflowEntry,
   ManifestJobEntry,
   ManifestLinkEntry,
   ManifestModuleEntry,
+  ManifestRouteEntry,
+  ManifestSubscriberEntry,
+  ManifestWorkflowEntry,
 } from '../types'
 
 const VALID_PRESETS = ['node', 'vercel', 'aws-lambda', 'cloudflare', 'bun']
@@ -43,9 +43,7 @@ export async function buildCommand(
   // Validate preset
   if (!VALID_PRESETS.includes(preset)) {
     result.exitCode = 1
-    result.errors.push(
-      `Unknown preset '${preset}'. Available presets: ${VALID_PRESETS.join(', ')}`,
-    )
+    result.errors.push(`Unknown preset '${preset}'. Available presets: ${VALID_PRESETS.join(', ')}`)
     return result
   }
 
@@ -70,174 +68,100 @@ export async function buildCommand(
 
   result.manifest = { routes, subscribers, workflows, jobs, links, modules }
 
-  // Preset-specific build
+  // Auto-detect SPAs from src/spa/{name}/ + merge defaults with config overrides
+  const { discoverResources } = await import('../resource-loader')
+  const resources = await discoverResources(cwd)
+
+  // Load config for SPA overrides (optional)
+  let spaOverrides: Record<string, { dashboard?: string | null; preset?: string | null }> = {}
+  try {
+    const { loadConfig } = await import('../config/load-config')
+    const loadedConfig = await loadConfig(cwd)
+    spaOverrides = (loadedConfig as { spa?: typeof spaOverrides }).spa ?? {}
+  } catch {
+    // No config — use defaults
+  }
+
+  if (resources.spas.length > 0) {
+    const { generateSpaArtifacts } = await import('../spa/generate-spa')
+    const { SPA_DEFAULTS } = await import('@manta/core')
+
+    for (const spa of resources.spas) {
+      const override = spaOverrides[spa.name] ?? {}
+      const dashboard = override.dashboard === null ? undefined : (override.dashboard ?? SPA_DEFAULTS.dashboard)
+      const presetPkg = override.preset === null ? undefined : (override.preset ?? SPA_DEFAULTS.preset)
+
+      console.log(`  Building SPA: ${spa.name} (${spa.pages.length} pages)...`)
+      try {
+        const viteConfig = generateSpaArtifacts({
+          cwd,
+          spa,
+          dashboard,
+          preset: presetPkg,
+        })
+        const { spawnSync } = await import('node:child_process')
+        const spaOutDir = resolve(cwd, 'public', spa.name)
+        const buildResult = spawnSync('npx', ['vite', 'build', '--config', viteConfig, '--outDir', spaOutDir], {
+          cwd,
+          stdio: 'inherit',
+          env: { ...process.env, NODE_ENV: 'production' },
+        })
+        if (buildResult.status !== 0) {
+          throw new Error(`Vite build for SPA "${spa.name}" exited with code ${buildResult.status}`)
+        }
+        console.log(`  ✓ SPA "${spa.name}" built`)
+      } catch (err) {
+        result.warnings.push(`Failed to build SPA "${spa.name}": ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  }
+
+  // Generate vercel.json for Vercel preset
   if (preset === 'vercel') {
-    await buildForVercel(cwd, result)
+    generateVercelConfig(cwd, jobs)
+  }
+
+  // Delegate to Nitro build via @manta/host-nitro (only if nitro.config.ts exists)
+  const nitroConfigPath = join(cwd, 'nitro.config.ts')
+  if (existsSync(nitroConfigPath)) {
+    console.log(`\n  Building for preset: ${preset}...`)
+    try {
+      const { buildForProduction } = await import('@manta/host-nitro')
+      await buildForProduction({ cwd, preset })
+      console.log('  ✓ Nitro build complete')
+    } catch (err) {
+      result.exitCode = 1
+      result.errors.push('Nitro build failed: ' + (err instanceof Error ? err.message : String(err)))
+    }
   }
 
   return result
 }
 
 // ──────────────────────────────────────────────
-// Vercel preset build
+// Vercel-specific config generation
 // ──────────────────────────────────────────────
 
-async function buildForVercel(cwd: string, result: BuildCommandResult): Promise<void> {
-  const outputDir = resolve(cwd, '.vercel', 'output')
-  const functionsDir = resolve(outputDir, 'functions', 'api', '__handler.func')
-  const staticDir = resolve(outputDir, 'static')
-
-  mkdirSync(functionsDir, { recursive: true })
-  mkdirSync(staticDir, { recursive: true })
-
-  // 1. Generate the serverless function entry point
-  const handlerCode = generateVercelHandler(cwd)
-  writeFileSync(resolve(functionsDir, 'index.mjs'), handlerCode)
-
-  // Write .vc-config.json for the function
-  writeFileSync(resolve(functionsDir, '.vc-config.json'), JSON.stringify({
-    runtime: 'nodejs20.x',
-    handler: 'index.mjs',
-    launcherType: 'Nodejs',
-    maxDuration: 30,
-  }, null, 2))
-
-  // 2. Build the admin dashboard (Vite static build)
-  const adminDir = resolve(cwd, 'src', 'admin')
-  const viteConfig = resolve(cwd, 'vite.config.ts')
-  if (existsSync(adminDir) && existsSync(join(adminDir, 'index.html'))) {
-    console.log('  Building admin dashboard...')
-    const { execSync } = await import('node:child_process')
-    try {
-      execSync(`npx vite build --config "${viteConfig}" --outDir "${resolve(staticDir, 'admin')}"`, {
-        cwd,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'production' },
-      })
-      console.log('  ✓ Admin dashboard built')
-    } catch (err) {
-      result.warnings.push('Failed to build admin dashboard: ' + (err instanceof Error ? err.message : String(err)))
-    }
+function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[]): void {
+  const vercelJson: Record<string, unknown> = {
+    $schema: 'https://openapi.vercel.sh/vercel.json',
+    buildCommand: 'npx manta build --preset vercel',
+    framework: null,
+    rewrites: [{ source: '/admin/:path*', destination: '/admin/index.html' }],
   }
-
-  // 3. Generate config.json (Vercel Build Output API)
-  const config = {
-    version: 3,
-    routes: [
-      // API routes → serverless function
-      { src: '/api/(.*)', dest: '/api/__handler' },
-      // Health endpoints → serverless
-      { src: '/health/(.*)', dest: '/api/__handler' },
-      // Admin dashboard → static files (SPA fallback)
-      { handle: 'filesystem' },
-      { src: '/admin/(.*)', dest: '/admin/index.html', status: 200 },
-    ],
+  if (jobs.length > 0) {
+    vercelJson.crons = jobs.map((job) => ({
+      path: `/api/crons/${job.id}`,
+      schedule: job.schedule || '0 */6 * * *',
+    }))
   }
-  writeFileSync(resolve(outputDir, 'config.json'), JSON.stringify(config, null, 2))
-
-  console.log('  ✓ Vercel output generated at .vercel/output/')
+  writeFileSync(resolve(cwd, 'vercel.json'), JSON.stringify(vercelJson, null, 2))
+  console.log('  ✓ vercel.json generated')
 }
 
-function generateVercelHandler(cwd: string): string {
-  const routes = scanRoutes(cwd)
-
-  const imports: string[] = []
-  const routeEntries: string[] = []
-
-  for (let i = 0; i < routes.length; i++) {
-    const route = routes[i]
-    const importName = `route_${i}`
-    const apiPath = '/api' + route.path.replace(/\[(\w+)\]/g, ':$1')
-    imports.push(`import * as ${importName} from '../../${route.file}';`)
-    routeEntries.push(`  { path: '${apiPath}', module: ${importName} },`)
-  }
-
-  return `// Auto-generated Vercel serverless handler — manta build --preset vercel
-${imports.join('\n')}
-
-const routes = [
-${routeEntries.join('\n')}
-];
-
-let container = null;
-
-async function getContainer() {
-  if (container) return container;
-  const mod = await import('../../src/bootstrap-vercel.mjs');
-  container = await mod.bootstrapContainer();
-  return container;
-}
-
-export default async function handler(req, res) {
-  const url = new URL(req.url, \`https://\${req.headers.host}\`);
-  const method = req.method;
-  const pathname = url.pathname;
-
-  // Health check
-  if (pathname === '/health/live' || pathname === '/api/health/live') {
-    return res.json({ status: 'alive', uptime_ms: Math.round(process.uptime() * 1000) });
-  }
-  if (pathname === '/health/ready' || pathname === '/api/health/ready') {
-    return res.json({ status: 'ready', uptime_ms: Math.round(process.uptime() * 1000) });
-  }
-
-  // Match route
-  for (const route of routes) {
-    const match = matchPath(route.path, pathname);
-    if (!match) continue;
-
-    const handlerFn = route.module[method] || route.module[method.toUpperCase()];
-    if (!handlerFn) continue;
-
-    try {
-      const c = await getContainer();
-      const scope = { resolve: (key) => c.resolve(key) };
-
-      // Parse body
-      let body = undefined;
-      if (method !== 'GET' && method !== 'HEAD' && req.body) {
-        body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      }
-
-      // Build MantaRequest-like object
-      const mantaReq = new Request(url.toString(), { method, headers: Object.fromEntries(Object.entries(req.headers)) });
-      Object.defineProperty(mantaReq, 'validatedBody', { value: body, enumerable: true });
-      Object.defineProperty(mantaReq, 'params', { value: match.params, enumerable: true });
-      Object.defineProperty(mantaReq, 'scope', { value: scope, enumerable: true });
-      Object.defineProperty(mantaReq, 'requestId', { value: crypto.randomUUID(), enumerable: true });
-
-      console.log('[manta]', method, pathname);
-      const response = await handlerFn(mantaReq);
-
-      res.status(response.status || 200);
-      response.headers?.forEach((value, key) => res.setHeader(key, value));
-      const responseBody = await response.text();
-      return res.send(responseBody);
-    } catch (err) {
-      console.error('[manta] Error:', method, pathname, err);
-      return res.status(500).json({ type: 'UNEXPECTED_STATE', message: 'An internal error occurred' });
-    }
-  }
-
-  return res.status(404).json({ type: 'NOT_FOUND', message: 'Route not found' });
-}
-
-function matchPath(pattern, pathname) {
-  const patternParts = pattern.split('/').filter(Boolean);
-  const pathParts = pathname.split('/').filter(Boolean);
-  if (patternParts.length !== pathParts.length) return null;
-  const params = {};
-  for (let i = 0; i < patternParts.length; i++) {
-    if (patternParts[i].startsWith(':')) {
-      params[patternParts[i].slice(1)] = pathParts[i];
-    } else if (patternParts[i] !== pathParts[i]) {
-      return null;
-    }
-  }
-  return { params };
-}
-`
-}
+// ──────────────────────────────────────────────
+// Filesystem scanning
+// ──────────────────────────────────────────────
 
 function scanRoutes(cwd: string): ManifestRouteEntry[] {
   const routes: ManifestRouteEntry[] = []
@@ -275,7 +199,10 @@ function scanRoutesRecursive(dir: string, apiDir: string, routes: ManifestRouteE
 
 function scanSubscribers(cwd: string): ManifestSubscriberEntry[] {
   return scanSimpleDir(cwd, 'src/subscribers').map((file) => ({
-    id: file.replace(/\.(ts|js)$/, '').split('/').pop()!,
+    id: file
+      .replace(/\.(ts|js)$/, '')
+      .split('/')
+      .pop()!,
     file,
     events: [], // Would parse from file
   }))
@@ -283,7 +210,10 @@ function scanSubscribers(cwd: string): ManifestSubscriberEntry[] {
 
 function scanWorkflows(cwd: string): ManifestWorkflowEntry[] {
   return scanSimpleDir(cwd, 'src/workflows').map((file) => ({
-    id: file.replace(/\.(ts|js)$/, '').split('/').pop()!,
+    id: file
+      .replace(/\.(ts|js)$/, '')
+      .split('/')
+      .pop()!,
     file,
     steps: [], // Would parse from file
   }))
@@ -291,7 +221,10 @@ function scanWorkflows(cwd: string): ManifestWorkflowEntry[] {
 
 function scanJobs(cwd: string): ManifestJobEntry[] {
   return scanSimpleDir(cwd, 'src/jobs').map((file) => ({
-    id: file.replace(/\.(ts|js)$/, '').split('/').pop()!,
+    id: file
+      .replace(/\.(ts|js)$/, '')
+      .split('/')
+      .pop()!,
     file,
     schedule: '', // Would parse from file
   }))
@@ -299,7 +232,10 @@ function scanJobs(cwd: string): ManifestJobEntry[] {
 
 function scanLinks(cwd: string): ManifestLinkEntry[] {
   return scanSimpleDir(cwd, 'src/links').map((file) => ({
-    id: file.replace(/\.(ts|js)$/, '').split('/').pop()!,
+    id: file
+      .replace(/\.(ts|js)$/, '')
+      .split('/')
+      .pop()!,
     file,
     modules: [],
     table: '',

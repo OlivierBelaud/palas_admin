@@ -2,7 +2,7 @@
 // Ref: CLI_SPEC §2.5, CLI_TESTS_SPEC §B9
 // Tests: schema comparison pure functions + command with mocked deps
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { compareSchemas, diffCommand } from '../../../../src/commands/db/diff'
 import type { DiffDeps } from '../../../../src/commands/db/types'
 
@@ -58,10 +58,10 @@ describe('B9 — db:diff — pure functions', () => {
     const actual = [{ table: 'products', columns: ['id'] }]
 
     const { diffs } = compareSchemas(expected, actual)
-    const missingCols = diffs.filter(d => d.entity === 'column')
+    const missingCols = diffs.filter((d) => d.entity === 'column')
     expect(missingCols).toHaveLength(2)
-    expect(missingCols.map(d => d.name)).toContain('products.title')
-    expect(missingCols.map(d => d.name)).toContain('products.price')
+    expect(missingCols.map((d) => d.name)).toContain('products.title')
+    expect(missingCols.map((d) => d.name)).toContain('products.price')
   })
 
   // -------------------------------------------------------------------
@@ -72,7 +72,7 @@ describe('B9 — db:diff — pure functions', () => {
     const actual = [{ table: 'products', columns: ['id', 'legacy_field'] }]
 
     const { notifications } = compareSchemas(expected, actual)
-    const extraCols = notifications.filter(n => n.entity === 'column')
+    const extraCols = notifications.filter((n) => n.entity === 'column')
     expect(extraCols).toHaveLength(1)
     expect(extraCols[0]!.name).toBe('products.legacy_field')
   })
@@ -96,11 +96,7 @@ describe('B9 — db:diff — command', () => {
   // -------------------------------------------------------------------
   it('DIFF-06 — diffCommand returns proper result', async () => {
     const deps = createMockDeps()
-    const result = await diffCommand(
-      {},
-      [{ table: 'products', columns: ['id', 'title'] }],
-      deps,
-    )
+    const result = await diffCommand({}, [{ table: 'products', columns: ['id', 'title'] }], deps)
     expect(typeof result.exitCode).toBe('number')
     expect(Array.isArray(result.errors)).toBe(true)
     expect(Array.isArray(result.diffs)).toBe(true)
@@ -117,11 +113,7 @@ describe('B9 — db:diff — command', () => {
       .mockResolvedValueOnce([{ table_name: 'products' }]) // tables query
       .mockResolvedValueOnce([{ column_name: 'id' }, { column_name: 'title' }]) // columns query
 
-    await diffCommand(
-      {},
-      [{ table: 'products', columns: ['id', 'title'] }],
-      deps,
-    )
+    await diffCommand({}, [{ table: 'products', columns: ['id', 'title'] }], deps)
     expect(deps.db.execute).not.toHaveBeenCalled()
   })
 
@@ -131,15 +123,10 @@ describe('B9 — db:diff — command', () => {
   it('DIFF-08 — detects missing tables from DB introspection', async () => {
     const deps = createMockDeps()
     // DB returns no tables
-    ;(deps.db.query as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([]) // no tables in DB
+    ;(deps.db.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]) // no tables in DB
 
-    const result = await diffCommand(
-      {},
-      [{ table: 'products', columns: ['id', 'title'] }],
-      deps,
-    )
-    expect(result.diffs.some(d => d.type === 'missing' && d.entity === 'table' && d.name === 'products')).toBe(true)
+    const result = await diffCommand({}, [{ table: 'products', columns: ['id', 'title'] }], deps)
+    expect(result.diffs.some((d) => d.type === 'missing' && d.entity === 'table' && d.name === 'products')).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -148,17 +135,16 @@ describe('B9 — db:diff — command', () => {
   it('DIFF-09 — detects extra tables from DB introspection', async () => {
     const deps = createMockDeps()
     // DB has a table not in expected schema
-    ;(deps.db.query as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce([
-        { table_name: 'legacy_data', column_name: 'id' },
-      ])
+    ;(deps.db.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { table_name: 'legacy_data', column_name: 'id' },
+    ])
 
     const result = await diffCommand(
       {},
       [], // empty expected schema
       deps,
     )
-    expect(result.notifications.some(n => n.type === 'extra' && n.name === 'legacy_data')).toBe(true)
+    expect(result.notifications.some((n) => n.type === 'extra' && n.name === 'legacy_data')).toBe(true)
   })
 
   // -------------------------------------------------------------------

@@ -1,0 +1,22 @@
+{
+  "name": "@manta/plugin-posthog-proxy",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "PostHog module for Manta — external entities, query-graph resolver via HogQL, capture/identify commands, and proxy route. 100% auto-discovered.",
+  "exports": {
+    "./package.json": "./package.json",
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "gen-schemas": "ts-to-zod scripts/posthog-types.ts src/modules/posthog/schemas.ts"
+  },
+  "dependencies": {
+    "@manta/core": "workspace:*",
+    "posthog-node": "^4.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "ts-to-zod": "^5.1.0",
+    "typescript": "^5.5.0"
+  }
+}

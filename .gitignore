@@ -1,7 +1,45 @@
-# Dependencies
+# ══════════════════════════════════════════════════════════════════
+# Manta monorepo — only packages/ and demo/commerce are tracked.
+# Everything else is internal dev tooling, experiments, docs, or
+# other demos that don't ship to production.
+# ══════════════════════════════════════════════════════════════════
+
+# ── Root-level files to IGNORE (keep only package.json, pnpm-*, tsconfig, biome) ──
+/ARCHITECTURE_V2.md
+/CLAUDE.md
+/DESIGN.md
+/DESIGN2.md
+/MANTA_VS_MEDUSA.md
+/PLAN_NEXTJS_ADAPTER.md
+/blog-test-spec.md
+/vitest.config.ts
+/vitest.integration.config.ts
+
+# ── Root-level directories to IGNORE ──
+/archive/
+/MAC/
+/audit-output/
+/dist/
+/docs/
+/medusa-doc/
+/medusa-source/
+/src/
+/SPEC/
+/TEST/
+/IMPL/
+
+# ── Demo projects to IGNORE (keep only demo/commerce) ──
+/demo/manta/
+/demo/blog/
+/demo/medusa/
+
+# ── Experiments to IGNORE ──
+/exp/
+
+# ── Dependencies ──
 node_modules/
 
-# Build outputs
+# ── Build outputs ──
 dist/
 **/.vercel/
 **/.manta/
@@ -10,41 +48,32 @@ dist/
 **/.output/
 **/public/admin/
 
-# Environment
+# ── Environment ──
 .env
 .env.local
 .env.*.local
+.env.test
 
-# Medusa source (reference only, not part of the project)
-medusa-source/
-
-# Audit output (generated)
-audit-output/
-
-# Docs & specs (internal only)
-/docs/
-/SPEC/
-/TEST/
-/IMPL/
-
-# OS
+# ── OS ──
 .DS_Store
 Thumbs.db
 
-# IDE
+# ── IDE ──
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Logs
+# ── Logs ──
 *.log
 pino-pretty.log
 
-# Lock files (keep pnpm-lock.yaml)
+# ── Lock files (keep pnpm-lock.yaml) ──
 yarn.lock
 package-lock.json
 
-# Vitest
+# ── Test / coverage ──
 coverage/
-.env.test
+
+# ── Playwright ──
+.playwright-mcp/

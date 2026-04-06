@@ -1,5 +1,5 @@
 // PinoLoggerAdapter — ILoggerPort conformance
-import { describe, it, expect, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { PinoLoggerAdapter } from '../src'
 
 describe('PinoLoggerAdapter — ILoggerPort conformance', () => {

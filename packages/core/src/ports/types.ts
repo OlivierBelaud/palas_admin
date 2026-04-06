@@ -3,6 +3,31 @@
 import type { MantaError } from '../errors/manta-error'
 
 /**
+ * Well-known registration keys for resolving ports.
+ */
+export const ContainerRegistrationKeys = {
+  CACHE: 'ICachePort',
+  EVENT_BUS: 'IEventBusPort',
+  LOCKING: 'ILockingPort',
+  LOGGER: 'ILoggerPort',
+  AUTH: 'IAuthPort',
+  AUTH_MODULE: 'IAuthModuleService',
+  AUTH_GATEWAY: 'IAuthGateway',
+  MESSAGE_AGGREGATOR: 'IMessageAggregator',
+  FILE: 'IFilePort',
+  DATABASE: 'IDatabasePort',
+  JOB_SCHEDULER: 'IJobSchedulerPort',
+  NOTIFICATION: 'INotificationPort',
+  HTTP: 'IHttpPort',
+  SCHEMA_GENERATOR: 'ISchemaGenerator',
+  REPOSITORY_FACTORY: 'IRepositoryFactory',
+  QUERY: 'query',
+  REMOTE_QUERY: 'remoteQuery',
+  LINK: 'link',
+  REMOTE_LINK: 'remoteLink',
+} as const
+
+/**
  * Execution context passed to workflow steps.
  */
 export interface Context {

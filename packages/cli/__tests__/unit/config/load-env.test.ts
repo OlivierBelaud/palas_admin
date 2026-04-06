@@ -1,9 +1,9 @@
 // Section A1 — load-env
 // Ref: CLI_SPEC §1.1 step 1, CLI_TESTS_SPEC §A1
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadEnv } from '../../../src/config/load-env'
 
 const TMP = resolve(__dirname, '__tmp_env_test__')
@@ -68,7 +68,7 @@ describe('A1 — load-env', () => {
   it('ENV-04 — warns when no .env file is found', () => {
     const result = loadEnv(TMP)
     expect(result.loaded).toHaveLength(0)
-    expect(result.warnings.some(w => w.includes('.env'))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('.env'))).toBe(true)
   })
 
   // -------------------------------------------------------------------

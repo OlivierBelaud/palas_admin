@@ -1,15 +1,8 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  type PropsWithChildren,
-} from "react"
+import { createContext, type PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react'
 
-const STORAGE_KEY_OPEN = "manta-ai-panel-open"
-const STORAGE_KEY_WIDTH = "manta-ai-panel-width"
-const STORAGE_KEY_MESSAGES = "manta-ai-chat-messages"
+const STORAGE_KEY_OPEN = 'manta-ai-panel-open'
+const STORAGE_KEY_WIDTH = 'manta-ai-panel-width'
+const STORAGE_KEY_MESSAGES = 'manta-ai-chat-messages'
 
 const DEFAULT_WIDTH = 500
 const MIN_WIDTH = 360
@@ -35,7 +28,7 @@ function writeStorage(key: string, value: unknown) {
 
 export interface StoredMessage {
   id: string
-  role: "user" | "assistant"
+  role: 'user' | 'assistant'
   content: string
 }
 
@@ -57,20 +50,18 @@ const AiContext = createContext<AiContextValue | null>(null)
 
 export const useAi = () => {
   const ctx = useContext(AiContext)
-  if (!ctx) throw new Error("useAi must be used within AiProvider")
+  if (!ctx) throw new Error('useAi must be used within AiProvider')
   return ctx
 }
 
-export { MIN_WIDTH, MAX_WIDTH }
+export { MAX_WIDTH, MIN_WIDTH }
 
 export const AiProvider = ({ children }: PropsWithChildren) => {
   const [isOpen, setIsOpen] = useState(() => readStorage(STORAGE_KEY_OPEN, false))
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [panelWidth, setPanelWidthState] = useState(() =>
-    readStorage(STORAGE_KEY_WIDTH, DEFAULT_WIDTH)
-  )
+  const [panelWidth, setPanelWidthState] = useState(() => readStorage(STORAGE_KEY_WIDTH, DEFAULT_WIDTH))
   const [storedMessages, setStoredMessagesState] = useState<StoredMessage[]>(() =>
-    readStorage(STORAGE_KEY_MESSAGES, [])
+    readStorage(STORAGE_KEY_MESSAGES, []),
   )
   const [conversationKey, setConversationKey] = useState(0)
 
@@ -116,7 +107,7 @@ export const AiProvider = ({ children }: PropsWithChildren) => {
   // Escape closes fullscreen, or panel if not fullscreen
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === 'Escape') {
         if (isFullscreen) {
           setIsFullscreen(false)
         } else if (isOpen) {
@@ -124,8 +115,8 @@ export const AiProvider = ({ children }: PropsWithChildren) => {
         }
       }
     }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, isFullscreen])
 
   return (

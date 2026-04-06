@@ -1,10 +1,11 @@
 // Section A2 — load-config
 // Ref: CLI_SPEC §1.1 step 2-3, CLI_TESTS_SPEC §A2
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
-import { findConfigFile, validateConfigForCommand, loadConfig } from '../../../src/config/load-config'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { MantaError } from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { findConfigFile, loadConfig, validateConfigForCommand } from '../../../src/config/load-config'
 import type { LoadedConfig } from '../../../src/types'
 
 const TMP = resolve(__dirname, '__tmp_cfg_test__')
@@ -147,5 +148,105 @@ describe('A2 — Config validation per command', () => {
   it('VALIDATE-07 — db:generate requires database.url', () => {
     const errors = validateConfigForCommand({}, 'db:generate')
     expect(errors.length).toBeGreaterThan(0)
+  })
+})
+
+describe('A2 — Zod schema validation', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  // -------------------------------------------------------------------
+  // SCHEMA-01 — rejects negative port number
+  // -------------------------------------------------------------------
+  it('SCHEMA-01 — rejects negative port number', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { http: { port: -1 } }\n')
+    await expect(loadConfig(TMP)).rejects.toThrow('Invalid configuration')
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-02 — rejects port > 65535
+  // -------------------------------------------------------------------
+  it('SCHEMA-02 — rejects port > 65535', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { http: { port: 70000 } }\n')
+    await expect(loadConfig(TMP)).rejects.toThrow('Invalid configuration')
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-03 — rejects pool.max < pool.min
+  // -------------------------------------------------------------------
+  it('SCHEMA-03 — rejects pool.max < pool.min', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { database: { pool: { min: 10, max: 2 } } }\n')
+    await expect(loadConfig(TMP)).rejects.toThrow('pool.max must be >= pool.min')
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-04 — rejects invalid sameSite value
+  // -------------------------------------------------------------------
+  it('SCHEMA-04 — rejects invalid sameSite value', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(
+      join(TMP, 'manta.config.mjs'),
+      `export default { auth: { session: { cookie: { sameSite: 'invalid' } } } }\n`,
+    )
+    await expect(loadConfig(TMP)).rejects.toThrow('Invalid configuration')
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-05 — rejects jwtSecret shorter than 16 chars
+  // -------------------------------------------------------------------
+  it('SCHEMA-05 — rejects jwtSecret shorter than 16 chars', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), `export default { auth: { jwtSecret: 'short' } }\n`)
+    await expect(loadConfig(TMP)).rejects.toThrow('jwtSecret must be at least 16 characters')
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-06 — accepts valid complete config
+  // -------------------------------------------------------------------
+  it('SCHEMA-06 — accepts valid complete config', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(
+      join(TMP, 'manta.config.mjs'),
+      `export default {
+        database: { url: 'postgresql://localhost/test', pool: { min: 2, max: 10 } },
+        http: { port: 3000 },
+        auth: { jwtSecret: 'a-very-long-secret-key-1234' },
+        strict: true,
+        featureFlags: { myFlag: true },
+      }\n`,
+    )
+    const config = await loadConfig(TMP)
+    expect(config.database?.url).toBe('postgresql://localhost/test')
+    expect(config.http?.port).toBe(3000)
+    expect(config.strict).toBe(true)
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-07 — accepts minimal empty config
+  // -------------------------------------------------------------------
+  it('SCHEMA-07 — accepts minimal empty config', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default {}\n')
+    const config = await loadConfig(TMP)
+    expect(config).toBeDefined()
+    expect(config.strict).toBe(false)
+  })
+
+  // -------------------------------------------------------------------
+  // SCHEMA-08 — thrown error is MantaError with INVALID_DATA
+  // -------------------------------------------------------------------
+  it('SCHEMA-08 — thrown error is MantaError with INVALID_DATA', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { http: { port: -5 } }\n')
+    try {
+      await loadConfig(TMP)
+      expect.fail('should have thrown')
+    } catch (err) {
+      expect(MantaError.is(err)).toBe(true)
+      expect((err as MantaError).type).toBe('INVALID_DATA')
+    }
   })
 })

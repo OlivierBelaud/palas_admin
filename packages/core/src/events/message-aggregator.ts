@@ -1,10 +1,10 @@
-// SPEC-018 — IMessageAggregator implementation (SCOPED)
+// SPEC-018 — IMessageAggregator implementation
 
-import type { Message, IMessageAggregator, GetMessagesOptions } from './types'
+import type { GetMessagesOptions, IMessageAggregator, Message } from './types'
 
 /**
- * In-memory message aggregator. SCOPED lifetime — one per request/scope.
- * Accumulates messages from @EmitEvents decorator, releases on success,
+ * In-memory message aggregator. One instance per request (via AsyncLocalStorage).
+ * Accumulates messages during a request scope, releases on success,
  * clears on error.
  */
 export class MessageAggregator implements IMessageAggregator {
@@ -24,7 +24,7 @@ export class MessageAggregator implements IMessageAggregator {
    * @returns All accumulated messages
    */
   getMessages(options?: GetMessagesOptions): Message[] {
-    let result = [...this._messages]
+    const result = [...this._messages]
 
     if (options?.sortBy === 'timestamp') {
       result.sort((a, b) => a.metadata.timestamp - b.metadata.timestamp)
@@ -34,7 +34,7 @@ export class MessageAggregator implements IMessageAggregator {
   }
 
   /**
-   * Clear all accumulated messages (called on error by @EmitEvents).
+   * Clear all accumulated messages (called on error).
    */
   clearMessages(): void {
     this._messages = []

@@ -1,0 +1,6 @@
+node_modules/
+.manta/
+dist/
+.output/
+public/
+.env

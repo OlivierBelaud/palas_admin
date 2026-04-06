@@ -5,6 +5,4 @@
  * Multiple simultaneous implementations possible.
  * TODO: Define full interface when implementing analytics features.
  */
-export interface IAnalyticsProvider {
-  // Placeholder — to be defined
-}
+export type IAnalyticsProvider = {}

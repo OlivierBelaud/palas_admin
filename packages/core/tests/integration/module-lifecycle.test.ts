@@ -1,19 +1,32 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { TestMantaApp } from '@manta/core'
 import {
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('Module Lifecycle Integration', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
+    app = createTestMantaApp({ infra: makeInfra() })
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-004/005: onApplicationStart called on boot
@@ -22,7 +35,9 @@ describe('Module Lifecycle Integration', () => {
 
     // Simulate module hook registration
     const moduleHook = {
-      onApplicationStart: () => { startCalled = true },
+      onApplicationStart: () => {
+        startCalled = true
+      },
     }
 
     moduleHook.onApplicationStart()
@@ -33,20 +48,20 @@ describe('Module Lifecycle Integration', () => {
   // SPEC-016: disabled module is not loaded
   it('disabled module is not loaded', () => {
     // Register a module service
-    container.register('TestModuleService', { name: 'test' }, 'SINGLETON')
+    app.register('TestModuleService', { name: 'test' })
 
     // In production, disabled modules are NOT registered
     // Here we verify the contract: resolving an unregistered key throws
-    expect(() => container.resolve('DisabledModuleService')).toThrow()
+    expect(() => app.resolve('DisabledModuleService')).toThrow()
   })
 
   // SPEC-013/017: MantaModule singleton
   it('MantaModule singleton consistent', () => {
     const service = { name: 'singleton-module' }
-    container.register('ModuleService', service, 'SINGLETON')
+    app.register('ModuleService', service)
 
-    const a = container.resolve('ModuleService')
-    const b = container.resolve('ModuleService')
+    const a = app.resolve('ModuleService')
+    const b = app.resolve('ModuleService')
 
     expect(a).toBe(b)
   })
@@ -70,10 +85,10 @@ describe('Module Lifecycle Integration', () => {
     expect(loadCount).toBe(2)
     // Both returns have identical shape — no mutation from double-loading
     expect(result1).toEqual(result2)
-    // Container should still have exactly one registration for the module
-    container.register('IdempotentModule', result1, 'SINGLETON')
-    container.register('IdempotentModule', result2, 'SINGLETON')
-    const resolved = container.resolve('IdempotentModule')
+    // Register twice — last registration wins
+    app.register('IdempotentModule', result1)
+    app.register('IdempotentModule', result2)
+    const resolved = app.resolve('IdempotentModule')
     // Last registration wins; resolved instance should equal result2
     expect(resolved).toBe(result2)
   })

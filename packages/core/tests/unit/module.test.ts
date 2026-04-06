@@ -1,35 +1,32 @@
-import { describe, it, expect } from 'vitest'
-import { Module, defineModule } from '@manta/core'
+import { describe, expect, it } from 'vitest'
+import { defineModule, Module } from '../../src/module'
 
 describe('Module System', () => {
-  class ProductService {}
-  class OrderService {}
+  class ProductModuleService {}
+  class OrderModuleService {}
 
-  // MOD-01 — Module() wraps a service class
-  it('Module() wraps a service class into ModuleExports', () => {
-    const mod = Module(ProductService)
-    expect(mod.service).toBe(ProductService)
+  // MOD-01 — Module() wraps a service class (Medusa V2 signature)
+  it('Module(name, { service }) wraps a service class into ModuleExports', () => {
+    const mod = Module('product', { service: ProductModuleService })
+    expect(mod.service).toBe(ProductModuleService)
     expect(mod.name).toBe('product')
   })
 
-  // MOD-02 — Module() derives name from service class
-  it('derives name by stripping "Service" suffix', () => {
-    expect(Module(ProductService).name).toBe('product')
-    expect(Module(OrderService).name).toBe('order')
+  // MOD-02 — Module() uses given name
+  it('uses the provided service name', () => {
+    expect(Module('product', { service: ProductModuleService }).name).toBe('product')
+    expect(Module('order', { service: OrderModuleService }).name).toBe('order')
   })
 
-  // MOD-03 — Module() accepts custom name
-  it('accepts custom name override', () => {
-    const mod = Module(ProductService, { name: 'my-product' })
-    expect(mod.name).toBe('my-product')
-  })
-
-  // MOD-04 — Module() accepts lifecycle hooks
+  // MOD-03 — Module() accepts lifecycle hooks
   it('accepts lifecycle hooks', () => {
     let started = false
-    const mod = Module(ProductService, {
+    const mod = Module('product', {
+      service: ProductModuleService,
       hooks: {
-        onApplicationStart: () => { started = true },
+        onApplicationStart: () => {
+          started = true
+        },
       },
     })
 
@@ -38,37 +35,24 @@ describe('Module System', () => {
     expect(started).toBe(true)
   })
 
-  // MOD-05 — Module() accepts loaders
+  // MOD-04 — Module() accepts loaders
   it('accepts loaders', () => {
     const loader = async () => {}
-    const mod = Module(ProductService, { loaders: [loader] })
+    const mod = Module('product', { service: ProductModuleService, loaders: [loader] })
     expect(mod.loaders).toHaveLength(1)
     expect(mod.loaders![0]).toBe(loader)
   })
 
-  // MOD-06 — Module() accepts version
+  // MOD-05 — Module() accepts version
   it('accepts version', () => {
-    const mod = Module(ProductService, { version: '1.0.0' })
+    const mod = Module('product', { service: ProductModuleService, version: '1.0.0' })
     expect(mod.version).toBe('1.0.0')
   })
 
-  // MOD-07 — defineModule() with explicit config
-  it('defineModule() works with explicit config', () => {
-    const mod = defineModule({
-      service: ProductService,
-      name: 'product',
-      version: '2.0.0',
-    })
-
-    expect(mod.service).toBe(ProductService)
-    expect(mod.name).toBe('product')
-    expect(mod.version).toBe('2.0.0')
-  })
-
-  // MOD-08 — defineModule() generates linkableKeys from models
-  it('defineModule() generates linkableKeys from models', () => {
-    const mod = defineModule({
-      service: ProductService,
+  // MOD-06 — Module() generates linkableKeys from models
+  it('generates linkableKeys from models', () => {
+    const mod = Module('product', {
+      service: ProductModuleService,
       models: {
         Product: { name: 'Product' },
         Variant: { name: 'Variant' },
@@ -81,9 +65,40 @@ describe('Module System', () => {
     })
   })
 
+  // MOD-07 — Module() generates linkable config from models
+  it('generates linkable config from models', () => {
+    const mod = Module('product', {
+      service: ProductModuleService,
+      models: {
+        Product: { name: 'Product' },
+      },
+    })
+
+    expect(mod.linkable).toBeDefined()
+    expect(mod.linkable!.product_id).toEqual({
+      serviceName: 'product',
+      entity: 'Product',
+      primaryKey: 'id',
+      field: 'product_id',
+    })
+  })
+
+  // MOD-08 — defineModule() works as alias
+  it('defineModule() works with explicit config', () => {
+    const mod = defineModule({
+      service: ProductModuleService,
+      name: 'product',
+      version: '2.0.0',
+    })
+
+    expect(mod.service).toBe(ProductModuleService)
+    expect(mod.name).toBe('product')
+    expect(mod.version).toBe('2.0.0')
+  })
+
   // MOD-09 — defineModule() without models has no linkableKeys
   it('defineModule() without models has undefined linkableKeys', () => {
-    const mod = defineModule({ service: ProductService })
+    const mod = defineModule({ service: ProductModuleService, name: 'product' })
     expect(mod.linkableKeys).toBeUndefined()
   })
 })

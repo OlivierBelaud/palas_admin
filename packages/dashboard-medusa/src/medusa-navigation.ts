@@ -1,61 +1,55 @@
 import {
-  ShoppingCart,
-  Tag,
-  Buildings,
-  Users,
-  ReceiptPercent,
-  CurrencyDollar,
   BuildingStorefront,
+  Buildings,
   CogSixTooth,
+  CurrencyDollar,
+  ReceiptPercent,
+  ShoppingCart,
   Sparkles,
   SquaresPlus,
-} from "@medusajs/icons"
-import React from "react"
+  Tag,
+  Users,
+} from '@medusajs/icons'
+import React from 'react'
 
 export const medusaNavigation = [
   {
     icon: React.createElement(ShoppingCart),
-    label: "Orders",
-    to: "/orders",
+    label: 'Orders',
+    to: '/orders',
     items: [],
   },
   {
     icon: React.createElement(Tag),
-    label: "Products",
-    to: "/products",
+    label: 'Products',
+    to: '/products',
     items: [
-      { label: "Collections", to: "/collections" },
-      { label: "Categories", to: "/categories" },
+      { label: 'Collections', to: '/collections' },
+      { label: 'Categories', to: '/categories' },
     ],
   },
   {
     icon: React.createElement(Buildings),
-    label: "Inventory",
-    to: "/inventory",
-    items: [
-      { label: "Reservations", to: "/reservations" },
-    ],
+    label: 'Inventory',
+    to: '/inventory',
+    items: [{ label: 'Reservations', to: '/reservations' }],
   },
   {
     icon: React.createElement(Users),
-    label: "Customers",
-    to: "/customers",
-    items: [
-      { label: "Customer Groups", to: "/customer-groups" },
-    ],
+    label: 'Customers',
+    to: '/customers',
+    items: [{ label: 'Customer Groups', to: '/customer-groups' }],
   },
   {
     icon: React.createElement(ReceiptPercent),
-    label: "Promotions",
-    to: "/promotions",
-    items: [
-      { label: "Campaigns", to: "/campaigns" },
-    ],
+    label: 'Promotions',
+    to: '/promotions',
+    items: [{ label: 'Campaigns', to: '/campaigns' }],
   },
   {
     icon: React.createElement(CurrencyDollar),
-    label: "Price Lists",
-    to: "/price-lists",
+    label: 'Price Lists',
+    to: '/price-lists',
   },
 ]
 

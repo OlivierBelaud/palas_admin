@@ -1,17 +1,8 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
-import {
-  Button,
-  Heading,
-  Input,
-  Label,
-  Text,
-  Textarea,
-  Select,
-  toast,
-  FocusModal,
-} from "@medusajs/ui"
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { Button, Input, Label, toast } from '@manta/ui'
+import { Dialog as RadixDialog } from 'radix-ui'
 
 export function CreateProductPage() {
   const navigate = useNavigate()
@@ -19,15 +10,15 @@ export function CreateProductPage() {
   const [submitting, setSubmitting] = useState(false)
 
   // Form state
-  const [title, setTitle] = useState("")
-  const [description, setDescription] = useState("")
-  const [sku, setSku] = useState("")
-  const [price, setPrice] = useState("")
-  const [status, setStatus] = useState("draft")
-  const [initialStock, setInitialStock] = useState("0")
-  const [reorderPoint, setReorderPoint] = useState("10")
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [sku, setSku] = useState('')
+  const [price, setPrice] = useState('')
+  const [status, setStatus] = useState('draft')
+  const [initialStock, setInitialStock] = useState('0')
+  const [reorderPoint, setReorderPoint] = useState('10')
 
-  const goBack = () => navigate("/products")
+  const goBack = () => navigate('/products')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -47,10 +38,10 @@ export function CreateProductPage() {
         body.reorderPoint = parseInt(reorderPoint, 10) || 10
       }
 
-      const res = await fetch("/api/admin/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+      const res = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
       })
 
@@ -60,24 +51,24 @@ export function CreateProductPage() {
       }
 
       const data = await res.json()
-      queryClient.invalidateQueries({ queryKey: ["products"] })
+      queryClient.invalidateQueries({ queryKey: ['products'] })
 
       if (data.events) {
-        toast.success("Product created via workflow", {
-          description: `${data.product.title} — Events: ${data.events.join(", ")}`,
+        toast.success('Product created via workflow', {
+          description: `${data.product.title} — Events: ${data.events.join(', ')}`,
         })
       } else {
-        toast.success("Product created", { description: data.product.title })
+        toast.success('Product created', { description: data.product.title })
       }
 
       if (data.product.id) {
         navigate(`/products/${data.product.id}`)
       } else {
-        navigate("/products")
+        navigate('/products')
       }
     } catch (err: unknown) {
-      toast.error("Failed to create product", {
-        description: err instanceof Error ? err.message : "Unknown error",
+      toast.error('Failed to create product', {
+        description: err instanceof Error ? err.message : 'Unknown error',
       })
     } finally {
       setSubmitting(false)
@@ -85,10 +76,15 @@ export function CreateProductPage() {
   }
 
   return (
-    <FocusModal open onOpenChange={(open) => { if (!open) goBack() }}>
-      <FocusModal.Content>
-        <FocusModal.Header>
-          <div className="flex items-center justify-end gap-x-2">
+    <RadixDialog.Root open onOpenChange={(open) => { if (!open) goBack() }}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <RadixDialog.Content className="fixed inset-0 z-50 flex flex-col bg-background">
+          <RadixDialog.Title className="sr-only">Create Product</RadixDialog.Title>
+          <RadixDialog.Description className="sr-only">Create a new product</RadixDialog.Description>
+
+          {/* Header */}
+          <div className="flex items-center justify-end gap-x-2 border-b px-6 py-3">
             <Button variant="secondary" onClick={goBack}>
               Cancel
             </Button>
@@ -100,168 +96,171 @@ export function CreateProductPage() {
               Create Product
             </Button>
           </div>
-        </FocusModal.Header>
-        <FocusModal.Body className="flex flex-col items-center overflow-y-auto py-16">
-          <div className="flex w-full max-w-[720px] flex-col gap-y-8">
-            <div>
-              <Heading>Create Product</Heading>
-              <Text size="small" className="text-ui-fg-subtle mt-1">
-                {sku
-                  ? "With SKU — runs the full create-product-pipeline workflow (validation, inventory, catalog, events)"
-                  : "Without SKU — simple draft creation"}
-              </Text>
-            </div>
 
-            <form
-              id="create-product-form"
-              onSubmit={handleSubmit}
-              className="flex flex-col gap-y-6"
-            >
-              {/* General */}
-              <div className="flex flex-col gap-y-4">
-                <Heading level="h2" className="text-ui-fg-base">
-                  General
-                </Heading>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="flex flex-col gap-y-1">
-                    <Label htmlFor="title" size="small" weight="plus">
-                      Title *
-                    </Label>
-                    <Input
-                      id="title"
-                      placeholder="e.g. Premium Leather Jacket"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-y-1">
-                    <Label htmlFor="sku" size="small" weight="plus">
-                      SKU
-                    </Label>
-                    <Input
-                      id="sku"
-                      placeholder="e.g. LEATHER-001"
-                      value={sku}
-                      onChange={(e) => setSku(e.target.value)}
-                    />
-                    <Text size="xsmall" className="text-ui-fg-muted">
-                      With SKU: runs full workflow. Without: simple creation.
-                    </Text>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-y-1">
-                  <Label htmlFor="description" size="small" weight="plus">
-                    Description
-                  </Label>
-                  <Textarea
-                    id="description"
-                    placeholder="Product description..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={3}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="flex flex-col gap-y-1">
-                    <Label htmlFor="price" size="small" weight="plus">
-                      Price * (in dollars)
-                    </Label>
-                    <Input
-                      id="price"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="e.g. 129.99"
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-y-1">
-                    <Label htmlFor="status" size="small" weight="plus">
-                      Status
-                    </Label>
-                    <Select value={status} onValueChange={setStatus}>
-                      <Select.Trigger>
-                        <Select.Value placeholder="Select status" />
-                      </Select.Trigger>
-                      <Select.Content>
-                        <Select.Item value="draft">Draft</Select.Item>
-                        <Select.Item value="published">Published</Select.Item>
-                        <Select.Item value="archived">Archived</Select.Item>
-                      </Select.Content>
-                    </Select>
-                  </div>
-                </div>
+          {/* Body */}
+          <div className="flex flex-1 flex-col items-center overflow-y-auto py-16">
+            <div className="flex w-full max-w-[720px] flex-col gap-y-8">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">Create Product</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {sku
+                    ? 'With SKU — runs the full create-product-pipeline workflow (validation, inventory, catalog, events)'
+                    : 'Without SKU — simple draft creation'}
+                </p>
               </div>
 
-              {/* Inventory — only shown when SKU is set */}
-              {sku && (
+              <form
+                id="create-product-form"
+                onSubmit={handleSubmit}
+                className="flex flex-col gap-y-6"
+              >
+                {/* General */}
                 <div className="flex flex-col gap-y-4">
-                  <Heading level="h2" className="text-ui-fg-base">
-                    Inventory
-                  </Heading>
-                  <Text size="small" className="text-ui-fg-subtle">
-                    Inventory will be initialized via the sub-workflow.
-                  </Text>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    General
+                  </h2>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="flex flex-col gap-y-1">
-                      <Label htmlFor="initialStock" size="small" weight="plus">
-                        Initial Stock
+                      <Label htmlFor="title">
+                        Title *
                       </Label>
                       <Input
-                        id="initialStock"
-                        type="number"
-                        min="0"
-                        value={initialStock}
-                        onChange={(e) => setInitialStock(e.target.value)}
+                        id="title"
+                        placeholder="e.g. Premium Leather Jacket"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        required
                       />
                     </div>
                     <div className="flex flex-col gap-y-1">
-                      <Label htmlFor="reorderPoint" size="small" weight="plus">
-                        Reorder Point
+                      <Label htmlFor="sku">
+                        SKU
                       </Label>
                       <Input
-                        id="reorderPoint"
-                        type="number"
-                        min="0"
-                        value={reorderPoint}
-                        onChange={(e) => setReorderPoint(e.target.value)}
+                        id="sku"
+                        placeholder="e.g. LEATHER-001"
+                        value={sku}
+                        onChange={(e) => setSku(e.target.value)}
                       />
-                      <Text size="xsmall" className="text-ui-fg-muted">
-                        Low stock alert when stock ≤ this value.
-                      </Text>
+                      <span className="text-xs text-muted-foreground">
+                        With SKU: runs full workflow. Without: simple creation.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-y-1">
+                    <Label htmlFor="description">
+                      Description
+                    </Label>
+                    <textarea
+                      id="description"
+                      placeholder="Product description..."
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={3}
+                      className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="flex flex-col gap-y-1">
+                      <Label htmlFor="price">
+                        Price * (in dollars)
+                      </Label>
+                      <Input
+                        id="price"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="e.g. 129.99"
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="flex flex-col gap-y-1">
+                      <Label htmlFor="status">
+                        Status
+                      </Label>
+                      <select
+                        id="status"
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="archived">Archived</option>
+                      </select>
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* Workflow info */}
-              {sku && (
-                <div className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4">
-                  <Text size="small" weight="plus" className="text-ui-fg-base mb-2">
-                    Workflow Pipeline
-                  </Text>
-                  <div className="flex flex-col gap-y-1">
-                    <Text size="xsmall" className="text-ui-fg-muted">1. Validate input & SKU uniqueness</Text>
-                    <Text size="xsmall" className="text-ui-fg-muted">2. Create product (draft)</Text>
-                    <Text size="xsmall" className="text-ui-fg-muted">3. Upload images (if provided)</Text>
-                    <Text size="xsmall" className="text-ui-fg-muted">4. Initialize inventory (sub-workflow)</Text>
-                    <Text size="xsmall" className="text-ui-fg-muted">5. Generate catalog entry</Text>
-                    <Text size="xsmall" className="text-ui-fg-muted">6. Emit events & activate product</Text>
+                {/* Inventory — only shown when SKU is set */}
+                {sku && (
+                  <div className="flex flex-col gap-y-4">
+                    <h2 className="text-lg font-semibold text-foreground">
+                      Inventory
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Inventory will be initialized via the sub-workflow.
+                    </p>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="flex flex-col gap-y-1">
+                        <Label htmlFor="initialStock">
+                          Initial Stock
+                        </Label>
+                        <Input
+                          id="initialStock"
+                          type="number"
+                          min="0"
+                          value={initialStock}
+                          onChange={(e) => setInitialStock(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-y-1">
+                        <Label htmlFor="reorderPoint">
+                          Reorder Point
+                        </Label>
+                        <Input
+                          id="reorderPoint"
+                          type="number"
+                          min="0"
+                          value={reorderPoint}
+                          onChange={(e) => setReorderPoint(e.target.value)}
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          Low stock alert when stock &le; this value.
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <Text size="xsmall" className="text-ui-fg-muted mt-2">
-                    Events: product.created → inventory.stocked → (low-stock alert if stock ≤ reorder point)
-                  </Text>
-                </div>
-              )}
-            </form>
+                )}
+
+                {/* Workflow info */}
+                {sku && (
+                  <div className="rounded-lg border bg-muted p-4">
+                    <span className="mb-2 text-sm font-medium text-foreground">
+                      Workflow Pipeline
+                    </span>
+                    <div className="flex flex-col gap-y-1">
+                      <span className="text-xs text-muted-foreground">1. Validate input & SKU uniqueness</span>
+                      <span className="text-xs text-muted-foreground">2. Create product (draft)</span>
+                      <span className="text-xs text-muted-foreground">3. Upload images (if provided)</span>
+                      <span className="text-xs text-muted-foreground">4. Initialize inventory (sub-workflow)</span>
+                      <span className="text-xs text-muted-foreground">5. Generate catalog entry</span>
+                      <span className="text-xs text-muted-foreground">6. Emit events & activate product</span>
+                    </div>
+                    <span className="mt-2 text-xs text-muted-foreground">
+                      Events: product.created &rarr; inventory.stocked &rarr; (low-stock alert if stock &le; reorder point)
+                    </span>
+                  </div>
+                )}
+              </form>
+            </div>
           </div>
-        </FocusModal.Body>
-      </FocusModal.Content>
-    </FocusModal>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   )
 }

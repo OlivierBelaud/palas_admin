@@ -9,7 +9,9 @@
     "./core-types": "./src/core-types.ts",
     "./pg": "./src/pg.ts"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

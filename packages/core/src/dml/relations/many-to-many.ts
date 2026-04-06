@@ -1,7 +1,6 @@
 // SPEC-057c — manyToMany relation
 
-import type { DmlRelationDefinition } from '../entity'
-import type { DmlEntity } from '../entity'
+import type { DmlEntity, DmlRelationDefinition } from '../entity'
 
 /**
  * Define a manyToMany relation (N:M via pivot table).

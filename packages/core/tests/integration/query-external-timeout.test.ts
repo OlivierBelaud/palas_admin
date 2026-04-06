@@ -1,20 +1,33 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { TestMantaApp } from '@manta/core'
 import {
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
   MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('Query.graph() External Module Timeout', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
+    app = createTestMantaApp({ infra: makeInfra() })
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-011/007: timeout after configured delay on slow external module

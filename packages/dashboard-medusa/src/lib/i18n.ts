@@ -8,13 +8,13 @@
  * The translations are loaded from the Medusa source via the @medusa-i18n
  * Vite alias (configured in demo/medusa-config.ts).
  */
-import i18next from "i18next"
-import LanguageDetector from "i18next-browser-languagedetector"
-import { initReactI18next } from "react-i18next"
 
 // English translations from Medusa source
 // This import resolves via the @medusa-i18n Vite alias
-import en from "@medusa-i18n/en.json"
+import en from '@medusa-i18n/en.json'
+import i18next from 'i18next'
+import LanguageDetector from 'i18next-browser-languagedetector'
+import { initReactI18next } from 'react-i18next'
 
 const resources = {
   en: { translation: en },
@@ -24,19 +24,19 @@ if (!i18next.isInitialized) {
   i18next
     .use(
       new LanguageDetector(null, {
-        lookupCookie: "lng",
-        lookupLocalStorage: "lng",
-      })
+        lookupCookie: 'lng',
+        lookupLocalStorage: 'lng',
+      }),
     )
     .use(initReactI18next)
     .init({
-      fallbackLng: "en",
-      fallbackNS: "translation",
+      fallbackLng: 'en',
+      fallbackNS: 'translation',
       interpolation: {
         escapeValue: false,
       },
       resources,
-      supportedLngs: ["en"],
+      supportedLngs: ['en'],
     })
 }
 

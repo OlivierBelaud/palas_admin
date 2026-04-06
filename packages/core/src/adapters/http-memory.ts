@@ -1,7 +1,7 @@
 // SPEC-039 — InMemoryHttpAdapter implements IHttpPort
 
-import type { IHttpPort } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { IHttpPort } from '../ports'
 
 interface RateLimitConfig {
   max: number
@@ -96,10 +96,10 @@ export class InMemoryHttpAdapter implements IHttpPort {
       }
     }
 
-    return new Response(
-      JSON.stringify({ type: 'NOT_FOUND', message: 'Route not found' }),
-      { status: 404, headers: { 'Content-Type': 'application/json', 'x-request-id': requestId } },
-    )
+    return new Response(JSON.stringify({ type: 'NOT_FOUND', message: 'Route not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+    })
   }
 
   private _checkRateLimit(req: Request, pathname: string): Response | null {
@@ -137,19 +137,16 @@ export class InMemoryHttpAdapter implements IHttpPort {
 
     if (counter.count > matchedConfig.max) {
       const retryAfter = Math.ceil((counter.resetAt - now) / 1000)
-      return new Response(
-        JSON.stringify({ type: 'RESOURCE_EXHAUSTED', message: 'Rate limit exceeded' }),
-        {
-          status: 429,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': String(retryAfter),
-            'X-RateLimit-Limit': String(matchedConfig.max),
-            'X-RateLimit-Remaining': '0',
-            'X-RateLimit-Reset': String(Math.ceil(counter.resetAt / 1000)),
-          },
+      return new Response(JSON.stringify({ type: 'RESOURCE_EXHAUSTED', message: 'Rate limit exceeded' }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(retryAfter),
+          'X-RateLimit-Limit': String(matchedConfig.max),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.ceil(counter.resetAt / 1000)),
         },
-      )
+      })
     }
 
     return null
@@ -165,18 +162,19 @@ export class InMemoryHttpAdapter implements IHttpPort {
       if (error.code) {
         body.code = error.code
       }
-      return new Response(
-        JSON.stringify(body),
-        { status, headers: { 'Content-Type': 'application/json' } },
-      )
+      return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
     }
 
     // Unknown error: 500 with no internal details leaked
-    return new Response(
-      JSON.stringify({ type: 'UNEXPECTED_STATE', message: 'An internal error occurred' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
-    )
+    return new Response(JSON.stringify({ type: 'UNEXPECTED_STATE', message: 'An internal error occurred' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
-  _reset() { this._routes = []; this._rateLimits.clear(); this._rateLimitCounters.clear() }
+  _reset() {
+    this._routes = []
+    this._rateLimits.clear()
+    this._rateLimitCounters.clear()
+  }
 }

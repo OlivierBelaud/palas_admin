@@ -1,4 +1,5 @@
-export { AiProvider, useAi } from "./ai-provider"
-export type { StoredMessage } from "./ai-provider"
-export { AiPanel, SparklesIcon } from "./ai-panel"
-export { AiChat } from "./ai-chat"
+export { AiChat } from './ai-chat'
+export { AIDataTable } from './ai-data-table'
+export { AiPanel, SparklesIcon } from './ai-panel'
+export type { StoredMessage } from './ai-provider'
+export { AiProvider, useAi } from './ai-provider'

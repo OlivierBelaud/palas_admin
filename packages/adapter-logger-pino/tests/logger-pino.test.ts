@@ -1,9 +1,9 @@
 // SPEC-067/082 — PinoLoggerAdapter conformance tests (LG-01 → LG-08)
 
-import { describe, it, expect, beforeEach } from 'vitest'
 import { Writable } from 'node:stream'
-import pino from 'pino'
 import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
+import pino from 'pino'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 /**
  * Creates a PinoLoggerAdapter that writes to a capturable buffer.

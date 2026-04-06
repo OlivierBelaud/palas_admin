@@ -2,10 +2,10 @@
 // Ref: CLI_SPEC §2.4, CLI_TESTS_SPEC §B8
 // Tests: rollback with mocked deps, file validation, stop-on-first-failure
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
-import { validateRollbackFile, rollbackCommand } from '../../../../src/commands/db/rollback'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { rollbackCommand, validateRollbackFile } from '../../../../src/commands/db/rollback'
 import type { RollbackDeps } from '../../../../src/commands/db/types'
 
 const TMP = resolve(__dirname, '__tmp_rollback_test__')
@@ -25,12 +25,14 @@ function createMockDeps(overrides: Partial<RollbackDeps> = {}): RollbackDeps {
     db: {
       execute: vi.fn().mockResolvedValue(undefined),
       query: vi.fn().mockResolvedValue([]),
-      transaction: vi.fn().mockImplementation(async (fn) => fn({
-        execute: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn().mockResolvedValue([]),
-        transaction: vi.fn(),
-        close: vi.fn(),
-      })),
+      transaction: vi.fn().mockImplementation(async (fn) =>
+        fn({
+          execute: vi.fn().mockResolvedValue(undefined),
+          query: vi.fn().mockResolvedValue([]),
+          transaction: vi.fn(),
+          close: vi.fn(),
+        }),
+      ),
       close: vi.fn().mockResolvedValue(undefined),
     },
     tracker: {
@@ -70,10 +72,7 @@ describe('B8 — db:rollback — file validation', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-02 — returns error if file is TODO placeholder', () => {
     mkdirSync(join(TMP, 'drizzle/migrations'), { recursive: true })
-    writeFileSync(
-      join(TMP, 'drizzle/migrations/0001.down.sql'),
-      '-- TODO: Write rollback SQL for this migration',
-    )
+    writeFileSync(join(TMP, 'drizzle/migrations/0001.down.sql'), '-- TODO: Write rollback SQL for this migration')
     const error = validateRollbackFile('drizzle/migrations/0001.down.sql', TMP)
     expect(error).not.toBeNull()
     expect(error).toContain('TODO placeholder')
@@ -108,8 +107,7 @@ describe('B8 — db:rollback — command', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-05 — rollbacks last migration by default', async () => {
     const deps = createMockDeps()
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
     ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue('DROP TABLE t;')
     ;(deps.fs.readRollbackSql as ReturnType<typeof vi.fn>).mockResolvedValue('DROP TABLE t;')
@@ -125,8 +123,7 @@ describe('B8 — db:rollback — command', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-06 — --steps 2 rolls back 2 migrations', async () => {
     const deps = createMockDeps()
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql', '0003.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql', '0003.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
     ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue('DROP TABLE t;')
     ;(deps.fs.readRollbackSql as ReturnType<typeof vi.fn>).mockResolvedValue('DROP TABLE t;')
@@ -144,8 +141,7 @@ describe('B8 — db:rollback — command', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-07 — exit 1 if rollback file not found', async () => {
     const deps = createMockDeps()
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(false)
 
     const result = await rollbackCommand({}, deps)
@@ -159,11 +155,11 @@ describe('B8 — db:rollback — command', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-08 — exit 1 if rollback file is TODO placeholder', async () => {
     const deps = createMockDeps()
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
-    ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>)
-      .mockReturnValue('-- TODO: Write rollback SQL for this migration')
+    ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue(
+      '-- TODO: Write rollback SQL for this migration',
+    )
 
     const result = await rollbackCommand({}, deps)
     expect(result.exitCode).toBe(1)
@@ -180,17 +176,18 @@ describe('B8 — db:rollback — command', () => {
       db: {
         execute: vi.fn(),
         query: vi.fn().mockResolvedValue([]),
-        transaction: vi.fn().mockImplementation(async (fn) => fn({
-          execute: txExecute,
-          query: vi.fn().mockResolvedValue([]),
-          transaction: vi.fn(),
-          close: vi.fn(),
-        })),
+        transaction: vi.fn().mockImplementation(async (fn) =>
+          fn({
+            execute: txExecute,
+            query: vi.fn().mockResolvedValue([]),
+            transaction: vi.fn(),
+            close: vi.fn(),
+          }),
+        ),
         close: vi.fn(),
       },
     })
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
     ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue('DROP TABLE t;')
     ;(deps.fs.readRollbackSql as ReturnType<typeof vi.fn>).mockResolvedValue('DROP TABLE t;')
@@ -207,8 +204,7 @@ describe('B8 — db:rollback — command', () => {
   // -------------------------------------------------------------------
   it('ROLLBACK-10 — tracker.remove called only for successful rollbacks', async () => {
     const deps = createMockDeps()
-    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
     ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue('DROP TABLE t;')
     ;(deps.fs.readRollbackSql as ReturnType<typeof vi.fn>).mockResolvedValue('DROP TABLE t;')

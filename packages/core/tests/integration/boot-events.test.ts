@@ -1,29 +1,57 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { Message, TestMantaApp } from '@manta/core'
 import {
-  createTestContainer,
-  resetAll,
-  spyOnEvents,
-  InMemoryContainer,
+  createTestMantaApp,
+  InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
-  InMemoryMessageAggregator,
-} from '@manta/test-utils'
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  MessageAggregator,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
+
+/** Simple event spy that hooks into the event bus interceptor */
+function spyOnEvents(bus: InMemoryEventBusAdapter) {
+  const captured: Array<{ name: string; payload: Message; timestamp: number }> = []
+  bus.addInterceptor((message: Message) => {
+    captured.push({ name: message.eventName, payload: message, timestamp: Date.now() })
+  })
+  return {
+    received(eventName: string) {
+      return captured.some((e) => e.name === eventName)
+    },
+    count(eventName: string) {
+      return captured.filter((e) => e.name === eventName).length
+    },
+  }
+}
 
 describe('Bootstrap Events Integration', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
   let bus: InMemoryEventBusAdapter
 
   beforeEach(() => {
-    container = createTestContainer()
-    bus = container.resolve<InMemoryEventBusAdapter>('IEventBusPort')
+    const infra = makeInfra()
+    app = createTestMantaApp({ infra })
+    bus = infra.eventBus
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-074: events emitted in onApplicationStart are buffered and released
   it('events emitted in onApplicationStart are buffered and released', async () => {
-    const spy = spyOnEvents(container)
+    const spy = spyOnEvents(bus)
 
     bus.subscribe('test.module.started', () => {})
 
@@ -40,7 +68,7 @@ describe('Bootstrap Events Integration', () => {
     // Not yet delivered
     expect(spy.received('test.module.started')).toBe(false)
 
-    // Boot completes → release
+    // Boot completes -> release
     await bus.releaseGroupedEvents('boot-events')
 
     expect(spy.received('test.module.started')).toBe(true)
@@ -48,7 +76,7 @@ describe('Bootstrap Events Integration', () => {
 
   // SPEC-074/137: hook error does not block other modules
   it('hook error does not block other modules', async () => {
-    const spy = spyOnEvents(container)
+    const spy = spyOnEvents(bus)
 
     bus.subscribe('healthy.started', () => {})
 
@@ -85,19 +113,21 @@ describe('Bootstrap Events Integration', () => {
 
   // SPEC-074: events from throwing hook are cleared
   it('events from throwing hook are cleared', async () => {
-    const spy = spyOnEvents(container)
-    const aggregator = new InMemoryMessageAggregator()
+    const spy = spyOnEvents(bus)
+    const aggregator = new MessageAggregator()
 
     bus.subscribe('should.not.appear', () => {})
 
     // Module saves to aggregator then throws
-    aggregator.save([{
-      eventName: 'should.not.appear',
-      data: {},
-      metadata: { timestamp: Date.now() },
-    }])
+    aggregator.save([
+      {
+        eventName: 'should.not.appear',
+        data: {},
+        metadata: { timestamp: Date.now() },
+      },
+    ])
 
-    // Simulate error → clear messages
+    // Simulate error -> clear messages
     aggregator.clearMessages()
 
     // No events in aggregator

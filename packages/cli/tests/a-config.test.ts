@@ -1,11 +1,11 @@
 // Section A — Configuration Loading & Validation
 // Tests: A-01 → A-16
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { findConfigFile, loadConfig, validateConfigForCommand } from '../src/config/load-config'
 import { loadEnv } from '../src/config/load-env'
-import { findConfigFile, validateConfigForCommand } from '../src/config/load-config'
 import type { LoadedConfig } from '../src/types'
 
 const TMP = resolve(__dirname, '__tmp_config_test__')
@@ -156,5 +156,44 @@ describe('A — Config validation per command', () => {
     const errors = validateConfigForCommand(config, 'db:migrate')
     expect(errors.length).toBeGreaterThan(0)
     expect(errors[0]).toContain('database.url')
+  })
+})
+
+// -------------------------------------------------------------------
+// A-17 → A-20 — Zod schema validation
+// -------------------------------------------------------------------
+describe('A — Zod schema validation', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  it('A-17 — rejects invalid port number', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { http: { port: 99999 } }\n')
+    await expect(loadConfig(TMP)).rejects.toThrow('Invalid configuration')
+  })
+
+  it('A-18 — rejects pool.max < pool.min', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(join(TMP, 'manta.config.mjs'), 'export default { database: { pool: { min: 5, max: 2 } } }\n')
+    await expect(loadConfig(TMP)).rejects.toThrow('pool.max must be >= pool.min')
+  })
+
+  it('A-19 — rejects invalid sameSite value', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(
+      join(TMP, 'manta.config.mjs'),
+      `export default { auth: { session: { cookie: { sameSite: 'bogus' } } } }\n`,
+    )
+    await expect(loadConfig(TMP)).rejects.toThrow('Invalid configuration')
+  })
+
+  it('A-20 — accepts valid config without errors', async () => {
+    writeFileSync(join(TMP, 'package.json'), '{}')
+    writeFileSync(
+      join(TMP, 'manta.config.mjs'),
+      `export default { database: { url: 'postgresql://localhost/db' }, strict: false }\n`,
+    )
+    const config = await loadConfig(TMP)
+    expect(config.database?.url).toBe('postgresql://localhost/db')
   })
 })

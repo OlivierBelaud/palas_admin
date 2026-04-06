@@ -1,8 +1,8 @@
 // SPEC-053 — ConfigManager singleton with validation
 
 import { MantaError } from '../errors/manta-error'
-import type { MantaConfig, EnvProfile } from './types'
 import { defineConfig } from './define-config'
+import type { EnvProfile, MantaConfig } from './types'
 
 /**
  * Prefix for environment variable overrides.
@@ -18,10 +18,7 @@ const FF_ENV_PREFIX = 'MANTA_FF_'
 /**
  * Required secrets in production. Missing secrets throw MantaError in prod, warn in dev.
  */
-const PROD_REQUIRED_SECRETS: ReadonlyArray<string> = [
-  'projectConfig.databaseUrl',
-  'projectConfig.jwtSecret',
-]
+const PROD_REQUIRED_SECRETS: ReadonlyArray<string> = ['projectConfig.databaseUrl', 'projectConfig.jwtSecret']
 
 /**
  * ConfigManager loads, normalizes, and provides access to application configuration.
@@ -186,7 +183,11 @@ export class ConfigManager {
 
       // Convert MANTA_PROJECT_CONFIG_DATABASE_URL → projectConfig.databaseUrl
       const configPath = this.envKeyToConfigPath(envKey.slice(ENV_PREFIX.length))
-      this.setNestedValue(result as unknown as Record<string, unknown>, configPath, this.parseEnvValue(String(envValue)))
+      this.setNestedValue(
+        result as unknown as Record<string, unknown>,
+        configPath,
+        this.parseEnvValue(String(envValue)),
+      )
     }
 
     return result
@@ -200,25 +201,27 @@ export class ConfigManager {
    * @returns Dot-notation config path
    */
   private envKeyToConfigPath(suffix: string): string {
-    return suffix
-      .toLowerCase()
-      .split('_')
-      .reduce((acc: string[], part, index) => {
-        if (index === 0) {
-          acc.push(part)
-        } else {
-          // camelCase joining
-          acc.push(part.charAt(0).toUpperCase() + part.slice(1))
-        }
-        return acc
-      }, [])
-      .join('')
-      .replace(/([A-Z])/g, '.$1')
-      .toLowerCase()
-      // Fix: this simple approach won't produce correct dot notation for nested paths
-      // A more robust approach:
-      .split('.')
-      .join('.')
+    return (
+      suffix
+        .toLowerCase()
+        .split('_')
+        .reduce((acc: string[], part, index) => {
+          if (index === 0) {
+            acc.push(part)
+          } else {
+            // camelCase joining
+            acc.push(part.charAt(0).toUpperCase() + part.slice(1))
+          }
+          return acc
+        }, [])
+        .join('')
+        .replace(/([A-Z])/g, '.$1')
+        .toLowerCase()
+        // Fix: this simple approach won't produce correct dot notation for nested paths
+        // A more robust approach:
+        .split('.')
+        .join('.')
+    )
   }
 
   /**
@@ -269,10 +272,7 @@ export class ConfigManager {
       const value = this.get(secretPath)
       if (value === undefined || value === null || value === '') {
         if (this.envProfile === 'prod') {
-          throw new MantaError(
-            'INVALID_DATA',
-            `Missing required secret "${secretPath}" in production environment.`,
-          )
+          throw new MantaError('INVALID_DATA', `Missing required secret "${secretPath}" in production environment.`)
         } else {
           console.warn(`[manta:config] Missing secret "${secretPath}" — ignored in dev mode.`)
         }

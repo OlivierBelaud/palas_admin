@@ -14,10 +14,18 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:all": "vitest run && vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check packages/",
+    "lint:fix": "biome check --write packages/",
+    "format": "biome format --write packages/",
+    "check": "biome check --write packages/ && tsc --noEmit && vitest run",
     "build": "npm run --workspaces build"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@biomejs/biome": "^2.4.7",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/pg": "^8.18.0",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
     "vitest": "^2.0.0"
   }
 }

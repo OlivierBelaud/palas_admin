@@ -1,17 +1,14 @@
-import { Tooltip } from "@medusajs/ui"
-import { ComponentPropsWithoutRef, PropsWithChildren } from "react"
+import type { TooltipProps } from '@manta/ui'
+import { Tooltip } from '@manta/ui'
+import type { PropsWithChildren } from 'react'
 
 type ConditionalTooltipProps = PropsWithChildren<
-  ComponentPropsWithoutRef<typeof Tooltip> & {
+  TooltipProps & {
     showTooltip?: boolean
   }
 >
 
-export const ConditionalTooltip = ({
-  children,
-  showTooltip = false,
-  ...props
-}: ConditionalTooltipProps) => {
+export const ConditionalTooltip = ({ children, showTooltip = false, ...props }: ConditionalTooltipProps) => {
   if (showTooltip) {
     return <Tooltip {...props}>{children}</Tooltip>
   }

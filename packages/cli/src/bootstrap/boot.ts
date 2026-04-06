@@ -1,16 +1,16 @@
 // SPEC-074 — 18-step bootstrap sequence
-// Real implementation: creates container, registers adapters, validates config
+// Real implementation: creates app, registers adapters, validates config
 
-import type { BootContext } from '../types'
-import type { ModuleExports, IEventBusPort } from '@manta/core'
+import type { IEventBusPort, MantaApp, ModuleExports } from '@manta/core'
 import {
-  MantaContainer,
   ContainerRegistrationKeys,
+  createTestMantaApp,
   InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
   InMemoryLockingAdapter,
   TestLogger,
 } from '@manta/core'
+import type { BootContext } from '../types'
 
 export interface BootResult {
   success: boolean
@@ -140,15 +140,27 @@ async function stepFeatureFlags(ctx: BootContext): Promise<void> {
 }
 
 async function stepCreateContainer(ctx: BootContext): Promise<void> {
-  if (!ctx.container) {
-    ctx.container = new MantaContainer()
+  if (!ctx.app) {
+    ctx.app = createTestMantaApp({
+      infra: {
+        eventBus: new InMemoryEventBusAdapter(),
+        logger: new TestLogger(),
+        cache: new InMemoryCacheAdapter(),
+        locking: new InMemoryLockingAdapter(),
+        file: {} as import('@manta/core').IFilePort,
+        db: {},
+      },
+    })
   }
 }
 
 async function stepInitLogger(ctx: BootContext): Promise<void> {
-  const container = ctx.container!
-  const logger = new TestLogger()
-  container.register(ContainerRegistrationKeys.LOGGER, logger)
+  const app = ctx.app!
+  // Logger is already registered via createTestMantaApp infra
+  // For production boot, the logger would be set via the infra option
+  if ('register' in app) {
+    ;(app as import('@manta/core').TestMantaApp).register(ContainerRegistrationKeys.LOGGER, new TestLogger())
+  }
 }
 
 async function stepConnectDb(ctx: BootContext): Promise<void> {
@@ -158,24 +170,39 @@ async function stepConnectDb(ctx: BootContext): Promise<void> {
 }
 
 async function stepRequiredModules(ctx: BootContext): Promise<void> {
-  const container = ctx.container!
-  if (!containerHas(container, ContainerRegistrationKeys.EVENT_BUS)) {
-    container.register(ContainerRegistrationKeys.EVENT_BUS, new InMemoryEventBusAdapter())
+  const app = ctx.app!
+  // Required infra is already registered via createTestMantaApp
+  // For production, these would come from the preset/adapter resolution
+  // Ensure they are resolvable (TestMantaApp registers them automatically)
+  if (!appHas(app, ContainerRegistrationKeys.EVENT_BUS)) {
+    if ('register' in app) {
+      ;(app as import('@manta/core').TestMantaApp).register(
+        ContainerRegistrationKeys.EVENT_BUS,
+        new InMemoryEventBusAdapter(),
+      )
+    }
   }
-  if (!containerHas(container, ContainerRegistrationKeys.CACHE)) {
-    container.register(ContainerRegistrationKeys.CACHE, new InMemoryCacheAdapter())
+  if (!appHas(app, ContainerRegistrationKeys.CACHE)) {
+    if ('register' in app) {
+      ;(app as import('@manta/core').TestMantaApp).register(ContainerRegistrationKeys.CACHE, new InMemoryCacheAdapter())
+    }
   }
-  if (!containerHas(container, ContainerRegistrationKeys.LOCKING)) {
-    container.register(ContainerRegistrationKeys.LOCKING, new InMemoryLockingAdapter())
+  if (!appHas(app, ContainerRegistrationKeys.LOCKING)) {
+    if ('register' in app) {
+      ;(app as import('@manta/core').TestMantaApp).register(
+        ContainerRegistrationKeys.LOCKING,
+        new InMemoryLockingAdapter(),
+      )
+    }
   }
 }
 
 async function stepEventBuffer(ctx: BootContext): Promise<void> {
   // Activate event buffering: create a group for boot events
-  const container = ctx.container
-  if (!container) return
+  const app = ctx.app
+  if (!app) return
 
-  const groupId = `boot-${container.id}`
+  const groupId = `boot-${app.id}`
   ctx.bootEventGroupId = groupId
   // The group is created lazily when first event is emitted with this groupId
 }
@@ -195,49 +222,55 @@ async function stepLoadModules(ctx: BootContext): Promise<void> {
     return
   }
 
-  const container = ctx.container
+  const app = ctx.app
 
   // If modules were pre-loaded (e.g. in tests), use them directly
   if (ctx.loadedModules && ctx.loadedModules.size > 0) {
-    if (container) {
+    if (app && 'register' in app) {
       for (const [name, mod] of ctx.loadedModules) {
-        container.register(name, new mod.service())
+        ;(app as import('@manta/core').TestMantaApp).register(name, new mod.service())
       }
     }
     return
   }
 
-  // Dynamic import of each discovered module
+  // Dynamic import of each discovered module's entities
   ctx.loadedModules = new Map()
   for (const modInfo of resources.modules) {
-    try {
-      const imported = await import(modInfo.path)
-      const moduleExports: ModuleExports = imported.default ?? imported
-      if (!moduleExports.name || !moduleExports.service) {
-        throw new Error(`Module at ${modInfo.path} does not export valid ModuleExports (missing name or service)`)
-      }
-      ctx.loadedModules.set(moduleExports.name, moduleExports)
+    for (const entity of modInfo.entities) {
+      try {
+        const imported = await import(entity.modelPath)
+        const moduleExports: ModuleExports = imported.default ?? imported
+        if (!moduleExports.name || !moduleExports.service) {
+          // Not a legacy ModuleExports — skip (handled by bootstrap-app.ts for new-style modules)
+          continue
+        }
+        ctx.loadedModules.set(moduleExports.name, moduleExports)
 
-      if (container) {
-        const serviceInstance = new moduleExports.service()
-        container.register(modInfo.name, serviceInstance)
-        container.register(`${modInfo.name}Service`, serviceInstance)
+        if (app && 'register' in app) {
+          const testApp = app as import('@manta/core').TestMantaApp
+          const serviceInstance = new moduleExports.service()
+          testApp.register(modInfo.name, serviceInstance)
+          testApp.register(`${modInfo.name}Service`, serviceInstance)
 
-        if (moduleExports.loaders) {
-          for (const loader of moduleExports.loaders) {
-            await loader(container)
+          if (moduleExports.loaders) {
+            for (const loader of moduleExports.loaders) {
+              await loader(app)
+            }
           }
         }
+      } catch (err) {
+        throw new Error(
+          `Failed to load entity '${modInfo.name}/${entity.name}': ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
-    } catch (err) {
-      throw new Error(`Failed to load module '${modInfo.name}': ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 }
 
 async function stepRegisterQueryLink(ctx: BootContext): Promise<void> {
-  const container = ctx.container
-  if (!container) return
+  const app = ctx.app
+  if (!app) return
 
   const loadedModules = ctx.loadedModules ?? new Map()
   const moduleRegistry: Record<string, unknown> = {}
@@ -245,14 +278,17 @@ async function stepRegisterQueryLink(ctx: BootContext): Promise<void> {
     moduleRegistry[name] = mod
   }
 
-  if (!containerHas(container, 'QUERY')) {
-    container.register('QUERY', { modules: moduleRegistry })
-  }
-  if (!containerHas(container, 'LINK')) {
-    container.register('LINK', { modules: moduleRegistry })
-  }
-  if (!containerHas(container, 'REMOTE_LINK')) {
-    container.register('REMOTE_LINK', { modules: moduleRegistry })
+  if ('register' in app) {
+    const testApp = app as import('@manta/core').TestMantaApp
+    if (!appHas(app, 'QUERY')) {
+      testApp.register('QUERY', { modules: moduleRegistry })
+    }
+    if (!appHas(app, 'LINK')) {
+      testApp.register('LINK', { modules: moduleRegistry })
+    }
+    if (!appHas(app, 'REMOTE_LINK')) {
+      testApp.register('REMOTE_LINK', { modules: moduleRegistry })
+    }
   }
 }
 
@@ -278,20 +314,31 @@ async function stepLoadWorkflows(ctx: BootContext): Promise<void> {
 async function stepLoadSubscribers(ctx: BootContext): Promise<void> {
   const subscribers = ctx.discoveredResources?.subscribers ?? []
   if (subscribers.length === 0) return
-  if (!ctx.container) return
+  if (!ctx.app) return
 
-  const eventBus = ctx.container.resolve<IEventBusPort>(ContainerRegistrationKeys.EVENT_BUS)
+  const eventBus = ctx.app.resolve<IEventBusPort>(ContainerRegistrationKeys.EVENT_BUS)
 
   for (const sub of subscribers) {
     const mod = await import(sub.path)
-    const handler = mod.default ?? mod.handler
-    const event = mod.event ?? mod.eventName
-    const subscriberId = mod.subscriberId ?? sub.id
+    const def = mod.default
 
-    if (typeof handler === 'function' && event) {
-      const events = Array.isArray(event) ? event : [event]
+    // defineSubscriber() returns { event, handler, __type: 'subscriber' }
+    if (def?.event && typeof def.handler === 'function') {
+      const events = Array.isArray(def.event) ? def.event : [def.event]
+      const subscriberId = def.subscriberId ?? sub.id
       for (const eventName of events) {
-        eventBus.subscribe(eventName, handler, { subscriberId })
+        eventBus.subscribe(eventName, def.handler, { subscriberId })
+      }
+    } else {
+      // Legacy: handler as default export, event as named export
+      const handler = def ?? mod.handler
+      const event = mod.event ?? mod.eventName
+      const subscriberId = mod.subscriberId ?? sub.id
+      if (typeof handler === 'function' && event) {
+        const events = Array.isArray(event) ? event : [event]
+        for (const eventName of events) {
+          eventBus.subscribe(eventName, handler, { subscriberId })
+        }
       }
     }
   }
@@ -318,7 +365,9 @@ async function stepOnApplicationStart(ctx: BootContext): Promise<void> {
       try {
         await mod.hooks.onApplicationStart()
       } catch (err) {
-        throw new Error(`Module '${name}' onApplicationStart failed: ${err instanceof Error ? err.message : String(err)}`)
+        throw new Error(
+          `Module '${name}' onApplicationStart failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
     }
   }
@@ -330,17 +379,17 @@ async function stepSyncTranslation(ctx: BootContext): Promise<void> {
 
 async function stepReleaseEventBuffer(ctx: BootContext): Promise<void> {
   const groupId = ctx.bootEventGroupId
-  if (!groupId || !ctx.container) return
+  if (!groupId || !ctx.app) return
 
-  const eventBus = ctx.container.resolve<IEventBusPort>(ContainerRegistrationKeys.EVENT_BUS)
+  const eventBus = ctx.app.resolve<IEventBusPort>(ContainerRegistrationKeys.EVENT_BUS)
   await eventBus.releaseGroupedEvents(groupId)
 }
 
 // --- Helpers ---
 
-function containerHas(container: import('@manta/core').IContainer, key: string): boolean {
+function appHas(app: MantaApp, key: string): boolean {
   try {
-    container.resolve(key)
+    app.resolve(key)
     return true
   } catch {
     return false

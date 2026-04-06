@@ -1,24 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import {
-  type IAuthPort,
-  type AuthContext,
-  createTestAuth,
-  MockAuthPort,
-} from '@manta/test-utils'
+import { type AuthContext, createTestAuth, type IAuthPort, MockAuthPort } from '@manta/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('IAuthPort Conformance', () => {
   let authPort: MockAuthPort
 
   const userContext: AuthContext = {
-    actor_type: 'user',
-    actor_id: 'u1',
+    type: 'user',
+    id: 'u1',
   }
 
   beforeEach(() => {
     const auth = createTestAuth({
       jwt: userContext,
       apiKeys: {
-        sk_valid_key_123: { actor_type: 'user', actor_id: 'api_user_1' },
+        sk_valid_key_123: { type: 'user', id: 'api_user_1' },
       },
     })
     authPort = auth.authPort
@@ -32,8 +27,8 @@ describe('IAuthPort Conformance', () => {
 
     const result = authPort.verifyJwt(token)
     expect(result).not.toBeNull()
-    expect(result!.actor_type).toBe('user')
-    expect(result!.actor_id).toBe('u1')
+    expect(result!.type).toBe('user')
+    expect(result!.id).toBe('u1')
   })
 
   // A-02 — SPEC-049: expired token returns null
@@ -44,7 +39,7 @@ describe('IAuthPort Conformance', () => {
     // Token is valid immediately
     const validResult = authPort.verifyJwt(token)
     expect(validResult).not.toBeNull()
-    expect(validResult!.actor_type).toBe('user')
+    expect(validResult!.type).toBe('user')
 
     // Wait for expiration
     await new Promise((r) => setTimeout(r, 1100))
@@ -60,31 +55,30 @@ describe('IAuthPort Conformance', () => {
     expect(result).toBeNull()
   })
 
-  // A-04 — SPEC-049: modified token returns null
+  // A-04 — SPEC-049: modified token returns null (mock: prefix-based only)
   it('JWT > token modifié retourne null', () => {
+    // NOTE: MockAuthPort uses prefix-based validation, not cryptographic signatures.
+    // Real JWT adapters MUST verify HMAC/RSA signatures — they have their own
+    // conformance suites with real JWT verification.
+    // This test validates the mock contract: tokens not starting with 'jwt_' are rejected.
     const token = authPort.createJwt(userContext)
-    // Modify the token by altering a character
-    const modified = token.slice(0, -1) + (token.slice(-1) === 'a' ? 'b' : 'a')
+
+    // Corrupt the prefix to ensure MockAuthPort rejects the token
+    const modified = `xxx_${token.slice(4)}`
     const result = authPort.verifyJwt(modified)
-    // MockAuthPort uses prefix-based validation: modified token that no longer
-    // starts with 'jwt_' should return null; if it still starts with 'jwt_',
-    // MockAuthPort returns the configured context (mock limitation)
-    if (!modified.startsWith('jwt_')) {
-      expect(result).toBeNull()
-    } else {
-      // Mock accepts it — verify at least the return shape matches AuthContext
-      expect(result).not.toBeNull()
-      expect(result!.actor_type).toBe('user')
-      expect(result!.actor_id).toBe('u1')
-    }
+    expect(result).toBeNull()
+
+    // Also verify that a completely garbage token is rejected
+    expect(authPort.verifyJwt('totally-invalid-token')).toBeNull()
+    expect(authPort.verifyJwt('')).toBeNull()
   })
 
   // A-05 — SPEC-049: valid API key returns AuthContext
   it('API Key > clé valide', () => {
     const result = authPort.verifyApiKey('sk_valid_key_123')
     expect(result).not.toBeNull()
-    expect(result!.actor_type).toBe('user')
-    expect(result!.actor_id).toBe('api_user_1')
+    expect(result!.type).toBe('user')
+    expect(result!.id).toBe('api_user_1')
   })
 
   // A-06 — SPEC-049: invalid API key returns null
@@ -100,7 +94,7 @@ describe('IAuthPort Conformance', () => {
     const standalone = new MockAuthPort({ jwt: userContext })
     const token = standalone.createJwt(userContext)
     expect(standalone.verifyJwt(token)).not.toBeNull()
-    // No container, no cache, no external dependency
+    // No external dependency, no cache
   })
 
   // A-08 — SPEC-049: no method accepts Request/Headers
@@ -122,11 +116,10 @@ describe('IAuthPort Conformance', () => {
   // A-09 — SPEC-049: JWT with custom claims
   it('JWT > custom claims', () => {
     const customContext: AuthContext = {
-      actor_type: 'user',
-      actor_id: 'u1',
+      type: 'user',
+      id: 'u1',
       auth_identity_id: 'aid_1',
-      scope: 'admin',
-      app_metadata: { orgId: 'o1' },
+      metadata: { orgId: 'o1' },
     }
 
     const token = authPort.createJwt(customContext)

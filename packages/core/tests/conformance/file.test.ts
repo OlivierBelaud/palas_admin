@@ -1,23 +1,34 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { IFilePort, TestMantaApp } from '@manta/core'
 import {
-  type IFilePort,
-  MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('IFilePort Conformance', () => {
   let file: IFilePort
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    file = container.resolve<IFilePort>('IFilePort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    file = app.infra.file
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // F-01 — SPEC-065/080: upload/get roundtrip
@@ -51,7 +62,7 @@ describe('IFilePort Conformance', () => {
 
   // F-04 — SPEC-081: presigned upload URL
   it('presigned upload > URL valide', async () => {
-    const url = await file.getPresignedUploadUrl('upload-target.txt')
+    const url = await file.getPresignedUploadUrl!('upload-target.txt')
     expect(typeof url).toBe('string')
     expect(url.length).toBeGreaterThan(0)
     expect(url).toContain('upload-target.txt')

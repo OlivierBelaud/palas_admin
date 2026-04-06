@@ -1,14 +1,14 @@
 // Section D — Database commands (generate, migrate, rollback, diff, create)
 // Tests: D-01 → D-20
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
-import { resolve, join } from 'node:path'
-import { scanDmlModels, detectRenames, isNonInteractive, detectDangerousChanges } from '../src/commands/db/generate'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { extractDbName } from '../src/commands/db/create'
+import { compareSchemas } from '../src/commands/db/diff'
+import { detectDangerousChanges, detectRenames, isNonInteractive, scanDmlModels } from '../src/commands/db/generate'
 import { detectConcurrentIndex, findPendingMigrations } from '../src/commands/db/migrate'
 import { validateRollbackFile } from '../src/commands/db/rollback'
-import { compareSchemas } from '../src/commands/db/diff'
-import { extractDbName } from '../src/commands/db/create'
 
 const TMP = resolve(__dirname, '__tmp_db_test__')
 
@@ -46,12 +46,8 @@ describe('D — db:generate', () => {
   })
 
   it('D-03 — detectRenames finds candidate pairs by same table + type', () => {
-    const dropped = [
-      { table: 'products', column: 'title', type: 'text' },
-    ]
-    const added = [
-      { table: 'products', column: 'name', type: 'text' },
-    ]
+    const dropped = [{ table: 'products', column: 'title', type: 'text' }]
+    const added = [{ table: 'products', column: 'name', type: 'text' }]
 
     const renames = detectRenames(dropped, added)
     expect(renames).toHaveLength(1)
@@ -169,10 +165,7 @@ describe('D — db:rollback', () => {
   it('D-16 — validateRollbackFile returns error if file is just TODO placeholder', () => {
     const filePath = 'drizzle/migrations/0001.down.sql'
     mkdirSync(join(TMP, 'drizzle/migrations'), { recursive: true })
-    writeFileSync(
-      join(TMP, filePath),
-      '-- TODO: Write rollback SQL for this migration',
-    )
+    writeFileSync(join(TMP, filePath), '-- TODO: Write rollback SQL for this migration')
     const error = validateRollbackFile(filePath, TMP)
     expect(error).not.toBeNull()
     expect(error).toContain('TODO placeholder')

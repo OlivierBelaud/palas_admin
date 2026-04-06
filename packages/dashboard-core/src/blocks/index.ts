@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from 'zod'
 
 // WhenCondition — conditional rendering
 
@@ -16,10 +16,9 @@ const BaseConditionSchema = z.object({
 })
 
 export const WhenConditionSchema: z.ZodType<unknown> = z.union([
-  BaseConditionSchema.refine(
-    (data) => data.field !== undefined,
-    { message: "field is required for non-combinator conditions" }
-  ),
+  BaseConditionSchema.refine((data) => data.field !== undefined, {
+    message: 'field is required for non-combinator conditions',
+  }),
   z.object({
     all: z.lazy(() => z.array(WhenConditionSchema).min(1)),
   }),
@@ -72,7 +71,7 @@ const FieldSchema = z.object({
   key: z.string(),
   label: z.string(),
   type: z.string().optional(),
-  display: z.enum(["text", "badge", "date", "currency", "boolean"]).optional(),
+  display: z.enum(['text', 'badge', 'date', 'currency', 'boolean']).optional(),
 })
 
 // Display definition (shared)
@@ -166,7 +165,7 @@ export const ActivityCardSchema = z.object({
 const MetricSchema = z.object({
   label: z.string(),
   key: z.string(),
-  format: z.enum(["number", "currency", "percentage", "duration"]).optional(),
+  format: z.enum(['number', 'currency', 'percentage', 'duration']).optional(),
 })
 
 export const StatsCardSchema = z.object({

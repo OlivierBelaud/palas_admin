@@ -20,10 +20,7 @@ const TODO_PLACEHOLDER = '-- TODO: Write rollback SQL for this migration'
  * Validate a rollback SQL file.
  * Returns null if valid, error message if invalid.
  */
-export function validateRollbackFile(
-  filePath: string,
-  cwd: string = process.cwd(),
-): string | null {
+export function validateRollbackFile(filePath: string, cwd: string = process.cwd()): string | null {
   const fullPath = resolve(cwd, filePath)
 
   if (!existsSync(fullPath)) {
@@ -73,7 +70,9 @@ export async function rollbackCommand(
     const content = deps.fs.readRollbackContent(name)
     if (!content || content.trim() === '' || content.trim() === TODO_PLACEHOLDER) {
       result.exitCode = 1
-      result.errors.push(`Rollback file contains only the TODO placeholder: ${name}\nWrite the rollback SQL and try again.`)
+      result.errors.push(
+        `Rollback file contains only the TODO placeholder: ${name}\nWrite the rollback SQL and try again.`,
+      )
       break
     }
 

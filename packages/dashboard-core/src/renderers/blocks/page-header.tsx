@@ -1,0 +1,63 @@
+import { Button, StatusBadge } from '@manta/ui'
+import React from 'react'
+import { Link } from 'react-router-dom'
+import type { BlockRendererProps } from './shared'
+import { Heading, statusColors, Text } from './shared'
+
+export function PageHeaderRenderer({ component, data }: BlockRendererProps) {
+  const props = component.props as {
+    title?: string
+    titleField?: string
+    descriptionField?: string
+    subtitle?: string
+    statusField?: string
+    actions?: Array<{ label: string; to?: string; variant?: string }>
+  }
+
+  // Support comma-separated titleField (e.g., 'first_name,last_name' → 'Bob Dupont')
+  const title =
+    props.titleField && data
+      ? props.titleField
+          .split(',')
+          .map((f) => String(data[f.trim()] || ''))
+          .filter(Boolean)
+          .join(' ')
+      : props.title || ''
+  const description = props.descriptionField && data ? String(data[props.descriptionField] || '') : props.subtitle || ''
+  const status = props.statusField && data ? String(data[props.statusField] || '') : null
+  const statusColor = status ? statusColors[status] || 'grey' : null
+
+  const actionButtons = props.actions?.map((action, i) =>
+    React.createElement(
+      Button,
+      {
+        key: i,
+        variant: (action.variant as any) || 'default',
+        size: 'small',
+        asChild: !!action.to,
+      },
+      action.to ? React.createElement(Link, { to: action.to }, action.label) : action.label,
+    ),
+  )
+
+  return React.createElement(
+    'div',
+    { className: 'flex items-center justify-between pb-8' },
+    React.createElement(
+      'div',
+      { className: 'flex flex-col gap-y-1' },
+      React.createElement(
+        'div',
+        { className: 'flex items-center gap-x-3' },
+        React.createElement(Heading, { level: 'h1' }, title),
+        status && statusColor ? React.createElement(StatusBadge, { color: statusColor }, status) : null,
+      ),
+      description
+        ? React.createElement(Text, { size: 'small', className: 'text-muted-foreground' }, description)
+        : null,
+    ),
+    actionButtons && actionButtons.length > 0
+      ? React.createElement('div', { className: 'flex items-center gap-x-2' }, ...actionButtons)
+      : null,
+  )
+}

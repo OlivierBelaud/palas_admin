@@ -1,24 +1,36 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { TestMantaApp } from '@manta/core'
 import {
-  type INotificationPort,
-  MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
   InMemoryNotificationAdapter,
-} from '@manta/test-utils'
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('INotificationPort Conformance', () => {
   let notification: InMemoryNotificationAdapter
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
-    notification = container.resolve<InMemoryNotificationAdapter>('INotificationPort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    notification = new InMemoryNotificationAdapter()
+    app.register('INotificationPort', notification)
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // N-01 — SPEC-097: send returns status lifecycle
@@ -91,9 +103,7 @@ describe('INotificationPort Conformance', () => {
     expect(emailResult.status).toBe('SUCCESS')
 
     // Unconfigured 'push' channel should throw
-    await expect(
-      notification.send({ to: 'b@test.com', channel: 'push' }),
-    ).rejects.toThrow(/not configured/)
+    await expect(notification.send({ to: 'b@test.com', channel: 'push' })).rejects.toThrow(/not configured/)
   })
 
   // N-05 — SPEC-097: batch send returns array of results
@@ -135,7 +145,7 @@ describe('INotificationPort Conformance', () => {
   // N-07 — SPEC-097: provider failure returns FAILURE status (no exception)
   it('send > provider failure', async () => {
     // InMemoryNotificationAdapter always succeeds
-    // Real adapter test: provider throws → status FAILURE, no propagated exception
+    // Real adapter test: provider throws -> status FAILURE, no propagated exception
     const result = await notification.send({
       to: 'user@test.com',
       channel: 'email',

@@ -1,135 +1,301 @@
-// @manta/core — Public API re-exports
+// @manta/core — Public API
+//
+// Everything is a define*():
+//   import { defineModel, defineService, defineCommand, ... } from '@manta/core'
+//
+// Helpers used inside define*():
+//   field.text(), field.number(), defineService()
+//
+// Step (workflow unit):
+//   step.MODULE.create(), step.action(), step.emit()
 
-// Errors
-export { MantaError, PermanentSubscriberError, permanentSubscriberFailure } from './errors/manta-error'
-export type { MantaErrorType, MantaErrorResponse } from './errors/manta-error'
-
-// Container
-export { MantaContainer, containerALS, withScope, ContainerRegistrationKeys } from './container'
-export type { IContainer, ServiceLifetime } from './container'
-
-// Events
-export { MessageAggregator } from './events'
-export type { Message, IMessageAggregator } from './events'
-
-// Config
-export { defineConfig, ConfigManager, FlagRouter } from './config'
-export type { MantaConfig, ProjectConfig, EnvProfile } from './config'
-
-// Ports
-export type {
-  ICachePort,
-  IEventBusPort,
-  ILockingPort,
-  IDatabasePort,
-  IRepository,
-  IWorkflowEnginePort,
-  IWorkflowStoragePort,
-  IFilePort,
-  ILoggerPort,
-  IJobSchedulerPort,
-  INotificationPort,
-  ISearchProvider,
-  IAnalyticsProvider,
-  ITranslationPort,
-  IHttpPort,
-  IAuthPort,
-  IAuthModuleService,
-  IAuthGateway,
-  Context,
-  JobResult,
-  JobExecution,
-  WorkflowLifecycleEvent,
-  TransactionOptions,
-  DatabaseConfig,
-  CursorPagination,
-  GroupStatus,
-  AuthContext,
-  AuthCredentials,
-  SessionOptions,
-} from './ports'
-
-// In-memory adapters (dev + test defaults)
+// ── Framework internals ──────────────────────────
+// Used by CLI bootstrap, adapters, plugins. Not for application code.
+export type { LogEntry, TestAuthConfig } from './adapters'
 export {
   InMemoryCacheAdapter,
-  InMemoryEventBusAdapter,
-  InMemoryLockingAdapter,
-  TestLogger,
-  InMemoryFileAdapter,
-  InMemoryNotificationAdapter,
-  NoOpTranslationAdapter,
-  InMemoryWorkflowStorage,
-  InMemoryWorkflowEngine,
-  InMemoryJobScheduler,
-  InMemoryHttpAdapter,
-  InMemoryRepository,
   InMemoryDatabaseAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryHttpAdapter,
+  InMemoryJobScheduler,
+  InMemoryLockingAdapter,
+  InMemoryNotificationAdapter,
+  InMemoryRelationalQuery,
+  InMemoryRepository,
+  InMemoryRepositoryFactory,
   InMemoryTransaction,
-  InMemoryContainer,
-  InMemoryMessageAggregator,
-  MockAuthPort,
-  MockAuthModuleService,
   MockAuthGateway,
+  MockAuthModuleService,
+  MockAuthPort,
+  TestLogger,
 } from './adapters'
-export type { LogEntry, TestAuthConfig } from './adapters'
-
-// DML
-export { model } from './dml/model'
-export { DmlEntity } from './dml/entity'
-export { DmlProperty } from './dml/property'
-export type { DmlPropertyDefinition, DmlRelationDefinition, DmlEntityOptions } from './dml/entity'
-export { parseDmlEntity, generateDrizzleSchema } from './dml/generator'
-export type { GeneratedSchema, ParsedDmlEntity } from './dml/generator'
-
-// Workflows
-export { createWorkflow, step, WorkflowManager } from './workflows'
+export type { AgentDefinition } from './ai'
+// ── Agent (AI step) ──────────────────────────────
+export { defineAgent } from './ai'
+// ── App ──────────────────────────────────────────
+export type { MantaApp, MantaAppModules, MantaInfra, MantaInfraInternal, RequestContext, TestMantaApp } from './app'
+export { createApp, createTestMantaApp, getRequestContext, MantaAppBuilder, runInRequestContext } from './app'
 export type {
-  WorkflowDefinition,
-  WorkflowResult,
-  StepDefinition,
-  StepHandlerContext,
-  StepResolveContext,
-  WorkflowRunOptions,
-} from './workflows'
-
-// Module system
-export { Module, defineModule } from './module'
-export type { ModuleExports, ModuleOptions, ModuleLifecycleHooks } from './module'
-
-// Module versioning
-export { ModuleVersionChecker } from './module/versioning'
-export type { ModuleVersionStore, VersionCheckResult, VersionMismatch, VersionUpgrade } from './module/versioning'
-
-// Service base
-export { createService, buildEventNamesFromModelName } from './service'
-export type { ServiceConfig } from './service'
-
-// Service decorators
-export { InjectManager, InjectTransactionManager, EmitEvents } from './service/decorators'
-
-// Link system
-export { defineLink, getRegisteredLinks, clearLinkRegistry, REMOTE_LINK } from './link'
-export type { LinkDefinition, ResolvedLink } from './link'
-
-// Middleware system
-export { defineMiddlewares, mapErrorToStatus, ERROR_STATUS_MAP } from './middleware'
-export type { MiddlewareConfig } from './middleware'
-
-// Subscriber system
-export { registerSubscriber, makeIdempotent } from './subscriber'
-export type { SubscriberHandler, SubscriberConfig, SubscriberExport } from './subscriber'
-
-// Query system
-export { QueryService } from './query'
-export type { GraphQueryConfig, IndexQueryConfig, RelationPagination, EntityResolver } from './query'
-
-// Strict mode
+  CommandAccessMap,
+  CommandAccessRule,
+  CommandDefinition,
+  CommandGraphDefinition,
+  CommandToolSchema,
+  EntityCommand,
+  EntityCommandOperation,
+  EntityZodSchemas,
+  MantaCommands,
+  MantaEntities,
+  TypedCommandConfig,
+  TypedStep,
+} from './command'
+// ── Commands (CQRS tool-first) ───────────────────
 export {
+  CommandRegistry,
+  defineCommand,
+  defineCommandGraph,
+  dmlToZod,
+  generateEntityCommands,
+  generateLinkCommands,
+  generateModuleCommands,
+  getCommandScope,
+  isCommandAllowed,
+  isModuleAllowed,
+  QUERY_TOOL_SCHEMA,
+  zodToJsonSchema,
+} from './command'
+export type { EnvProfile, MantaConfig, PresetAdapterEntry, PresetDefinition, ProjectConfig, SpaConfig } from './config'
+// ── Config ───────────────────────────────────────
+export {
+  AuthConfigSchema,
+  AuthSessionConfigSchema,
+  BootConfigSchema,
+  BUILT_IN_PRESETS,
+  ConfigManager,
+  DatabaseConfigSchema,
+  defineConfig,
+  definePreset,
+  devPreset,
+  EventsConfigSchema,
+  FlagRouter,
+  HttpConfigSchema,
+  LoadedConfigSchema,
+  QueryConfigSchema,
+  RateLimitConfigSchema,
+  SessionCookieConfigSchema,
+  SPA_DEFAULTS,
+  vercelPreset,
+} from './config'
+// ── Context (internal — V2 is filesystem-derived, no public defineContext) ──
+export type {
+  ActorType,
+  AiContextConfig,
+  CommandName,
+  ContextDefinition,
+  MantaRegistry,
+  ModuleExposeConfig,
+  ModuleName,
+  ResolvedContext,
+} from './context'
+export { ContextRegistry } from './context'
+export {
+  ArrayProperty,
+  AutoIncrementProperty,
+  BaseProperty,
+  BaseProperty as DmlProperty,
+  BigNumberProperty,
+  BooleanProperty,
+  ComputedProperty,
+  DateTimeProperty,
+  EnumProperty,
+  FloatProperty,
+  JSONProperty,
+  NullableModifier,
+  NumberProperty,
+  PrimaryKeyModifier,
+  type PropertyMetadata,
+  TextProperty,
+} from './dml'
+export type { DmlEntityOptions, DmlPropertyDefinition, DmlRelationDefinition } from './dml/entity'
+export { DmlEntity } from './dml/entity'
+export type {
+  GeneratedSchema,
+  ParsedDmlEntity,
+  ParsedDmlIndex,
+  ParsedDmlProperty,
+  ParsedDmlRelation,
+} from './dml/generator'
+export { generateDrizzleSchema, parseDmlEntity } from './dml/generator'
+export type { InferEntity } from './dml/infer'
+// ── DML (Data Modeling Language) ─────────────────
+export { defineModel, field, model } from './dml/model'
+export { fromZodSchema } from './dml/from-zod'
+export { belongsTo } from './dml/relations/belongs-to'
+export { hasMany } from './dml/relations/has-many'
+export { hasOne, hasOneWithFK } from './dml/relations/has-one'
+export type { MantaErrorResponse, MantaErrorType } from './errors/manta-error'
+// ── Errors ───────────────────────────────────────
+export { MantaError, PermanentSubscriberError, permanentSubscriberFailure } from './errors/manta-error'
+// ── Events ───────────────────────────────────────
+export type { IMessageAggregator, MantaEventMap, Message } from './events'
+export { MessageAggregator } from './events'
+export type { JobDefinition, JobScope } from './job'
+// ── Job ──────────────────────────────────────────
+export { defineJob } from './job'
+export type { ManyRef, ModelProxy, ModelRef, ResolvedLink } from './link'
+// ── Link ─────────────────────────────────────────
+export {
+  clearLinkRegistry,
+  createModelProxy,
+  defineLink,
+  getRegisteredLinks,
+  many,
+  REMOTE_LINK,
+  registerLink,
+} from './link'
+export type { MiddlewareConfig, MiddlewareDefinition, MiddlewareRequest } from './middleware'
+export { defineMiddleware, defineMiddlewares, ERROR_STATUS_MAP, mapErrorToStatus } from './middleware'
+// ── Module (internal — no public defineModule, the filesystem IS the module) ──
+export type { ModuleExports, ModuleLifecycleHooks } from './module'
+export { Module } from './module' // internal — used by plugin-medusa shim
+export type { ModuleVersionStore, VersionCheckResult, VersionMismatch, VersionUpgrade } from './module/versioning'
+export { ModuleVersionChecker } from './module/versioning'
+// ── Naming conventions ──────────────────────────
+export {
+  pluralize,
+  toCamel,
+  toKebab,
+  toPascal,
+  toSnake,
+  toTableKey,
+  validateCamelCase,
+  validatePascalCase,
+} from './naming'
+// ── Port interfaces (type-only) ──────────────────
+export type {
+  AuthContext,
+  AuthCredentials,
+  AuthenticationInput,
+  AuthenticationResponse,
+  Context,
+  CursorPagination,
+  DatabaseConfig,
+  GroupStatus,
+  IAnalyticsProvider,
+  IAuthGateway,
+  IAuthModuleService,
+  IAuthPort,
+  ICachePort,
+  IDatabasePort,
+  IEventBusPort,
+  IFilePort,
+  IHttpPort,
+  IJobSchedulerPort,
+  ILockingPort,
+  ILoggerPort,
+  INotificationPort,
+  IRelationalQueryPort,
+  IRepository,
+  IRepositoryFactory,
+  ISchemaGenerator,
+  ISearchProvider,
+  JobExecution,
+  JobResult,
+  RelationalQueryConfig,
+  SessionOptions,
+  TransactionOptions,
+  WorkflowLifecycleEvent,
+} from './ports'
+export { ContainerRegistrationKeys } from './ports'
+export type {
+  EntityAccessMap,
+  EntityAccessRule,
+  EntityName,
+  EntityRegistry,
+  EntityResolver,
+  GraphQueryConfig,
+  IndexQueryConfig,
+  QueryConfig,
+  QueryDefinition,
+  QueryGraphDefinition,
+  QueryGraphExtensionContext,
+  QueryGraphExtensionDefinition,
+  QueryGraphExtensionResolver,
+  QueryHandlerContext,
+  RelationPagination,
+} from './query'
+// ── Query ────────────────────────────────────────
+export {
+  defineQuery,
+  defineQueryGraph,
+  extendQueryGraph,
+  getEntityFilter,
+  isEntityAllowed,
+  QueryRegistry,
+  QueryService,
+} from './query'
+export type { ServiceConfig, ServiceDescriptor, ServiceFactoryContext, TypedRepository } from './service'
+// ── Service ──────────────────────────────────────
+export {
+  buildEventNamesFromModelName,
+  createService,
+  defineService,
+  instantiateServiceDescriptor,
+  isServiceDescriptor,
+} from './service'
+export type { LinkLocation, RouteConflictInfo, StrictModeContext } from './strict-mode'
+export {
+  checkAutoDiscovery,
+  checkEventNameAutoGeneration,
+  checkLinkLocations,
   checkRouteConflicts,
   checkUnboundedRelations,
   getEntityThreshold,
-  checkLinkLocations,
-  checkAutoDiscovery,
-  checkEventNameAutoGeneration,
 } from './strict-mode'
-export type { StrictModeContext, RouteConflictInfo, LinkLocation } from './strict-mode'
+export type {
+  SubscriberConfig,
+  SubscriberContext,
+  SubscriberDefinition,
+  SubscriberExport,
+  SubscriberHandler,
+  SubscriberScope,
+} from './subscriber'
+// ── Subscriber ───────────────────────────────────
+export { defineSubscriber, makeIdempotent, registerSubscriber } from './subscriber'
+export type { UserDefinition } from './user'
+// ── User ────────────────────────────────────────
+export { defineUserModel } from './user'
+export type { AutoRouteDeps, RouteEntry } from './user/auto-routes'
+export { generateAllUserRoutes, getPublicPaths } from './user/auto-routes'
+export type {
+  ActionStepConfig,
+  CrudStepConfig,
+  EmitEventStepInput,
+  StepDefinition,
+  StepExecutionContext,
+  StepHandlerContext,
+  StepResolveContext,
+  WorkflowDefinition,
+  WorkflowResult,
+  WorkflowRunOptions,
+  WorkflowRunResult,
+  WorkflowStorage,
+} from './workflows'
+// ── Step (workflow unit — fundamental primitive) ──
+// step.MODULE.create/update/delete — CRUD auto-compensé
+// step.MODULE.METHOD — service method compensé
+// step.MODULE.link.OTHER — link auto-résolu
+// step.action() — action externe avec compensation obligatoire
+// step.emit() — événement fire-and-forget bufferisé
+export {
+  createStep,
+  createWorkflow,
+  defineWorkflow,
+  ENTITY_TAG,
+  emitEventStep,
+  StepResponse,
+  step,
+  WorkflowManager,
+  WorkflowResponse,
+} from './workflows'

@@ -1,0 +1,34 @@
+{
+  "name": "commerce",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "manta dev",
+    "build": "manta build --preset vercel",
+    "start": "manta start",
+    "generate": "manta generate",
+    "db:generate": "manta db:generate",
+    "db:migrate": "manta db:migrate"
+  },
+  "dependencies": {
+    "@manta/core": "workspace:*",
+    "@manta/cli": "workspace:*",
+    "@manta/host-nitro": "workspace:*",
+    "@manta/adapter-h3": "workspace:*",
+    "@manta/adapter-database-pg": "workspace:*",
+    "@manta/adapter-logger-pino": "workspace:*",
+    "@manta/plugin-posthog-proxy": "workspace:*",
+    "@manta/dashboard": "workspace:*",
+    "@manta/dashboard-core": "workspace:*",
+    "@manta/ui": "workspace:*",
+    "@manta/sdk": "workspace:*",
+    "zod": "^3.23.0",
+    "jiti": "^2.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "^4.0.0",
+    "vite": "^8.0.1"
+  }
+}

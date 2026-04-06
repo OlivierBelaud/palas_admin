@@ -5,16 +5,12 @@
 //
 // Requires PG running locally. Uses an isolated test database.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { resolve, join } from 'node:path'
-import {
-  mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync,
-  existsSync, readFileSync, symlinkSync,
-} from 'node:fs'
+import { type ChildProcess, execFile, spawn } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { execFile } from 'node:child_process'
+import { join, resolve } from 'node:path'
 import postgres from 'postgres'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..')
 const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
@@ -55,11 +51,7 @@ function runCli(
   })
 }
 
-function waitForOutput(
-  proc: ChildProcess,
-  needle: string,
-  timeoutMs = 15_000,
-): Promise<string> {
+function waitForOutput(proc: ChildProcess, needle: string, timeoutMs = 15_000): Promise<string> {
   return new Promise((resolve, reject) => {
     let output = ''
     const timer = setTimeout(() => {
@@ -78,7 +70,10 @@ function waitForOutput(
 
     proc.stdout?.on('data', onData)
     proc.stderr?.on('data', onData)
-    proc.on('error', (err) => { clearTimeout(timer); reject(err) })
+    proc.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
     proc.on('exit', (code) => {
       clearTimeout(timer)
       if (!output.includes(needle)) {
@@ -163,7 +158,9 @@ afterAll(async () => {
       `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${TEST_DB}' AND pid <> pg_backend_pid()`,
     )
     await adminSql.unsafe(`DROP DATABASE IF EXISTS "${TEST_DB}"`)
-  } catch { /* best effort */ } finally {
+  } catch {
+    /* best effort */
+  } finally {
     await adminSql.end()
   }
   if (projectDir) rmSync(projectDir, { recursive: true, force: true })
@@ -210,9 +207,7 @@ describe('manta build', () => {
     expect(result2.exitCode).toBe(0)
 
     // Manifest still valid
-    const routesManifest = JSON.parse(
-      readFileSync(join(projectDir, '.manta', 'manifest', 'routes.json'), 'utf-8'),
-    )
+    const routesManifest = JSON.parse(readFileSync(join(projectDir, '.manta', 'manifest', 'routes.json'), 'utf-8'))
     expect(routesManifest.routes.length).toBeGreaterThan(0)
   })
 
@@ -306,20 +301,26 @@ describe('manta start', () => {
         body: JSON.stringify({ title: 'Prod Widget', price: 5000, status: 'published' }),
       })
       expect(createRes.status).toBe(201)
-      const created = await createRes.json() as { product: { id: string; title: string } }
+      const created = (await createRes.json()) as { product: { id: string; title: string } }
       expect(created.product.title).toBe('Prod Widget')
 
       // List products
       const listRes = await fetchRetry(`${BASE}/admin/products`)
       expect(listRes.status).toBe(200)
-      const listed = await listRes.json() as { products: Array<{ id: string }> }
+      const listed = (await listRes.json()) as { products: Array<{ id: string }> }
       expect(listed.products.some((p) => p.id === created.product.id)).toBe(true)
 
       // Shutdown
       proc.kill('SIGTERM')
       const exitCode = await new Promise<number | null>((resolve) => {
-        const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve(null) }, 5_000)
-        proc.on('exit', (code) => { clearTimeout(timer); resolve(code) })
+        const timer = setTimeout(() => {
+          proc.kill('SIGKILL')
+          resolve(null)
+        }, 5_000)
+        proc.on('exit', (code) => {
+          clearTimeout(timer)
+          resolve(code)
+        })
       })
       expect(exitCode).toBe(0)
     } finally {
@@ -400,8 +401,14 @@ describe('manta start', () => {
     })
 
     const exitCode = await new Promise<number | null>((resolve) => {
-      const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve(null) }, 15_000)
-      proc.on('exit', (code) => { clearTimeout(timer); resolve(code) })
+      const timer = setTimeout(() => {
+        proc.kill('SIGKILL')
+        resolve(null)
+      }, 15_000)
+      proc.on('exit', (code) => {
+        clearTimeout(timer)
+        resolve(code)
+      })
     })
 
     expect(exitCode).toBe(1)
@@ -467,7 +474,9 @@ describe('manta start', () => {
           `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${noProdTableDb}' AND pid <> pg_backend_pid()`,
         )
         await cleanSql.unsafe(`DROP DATABASE IF EXISTS "${noProdTableDb}"`)
-      } catch { /* best effort */ } finally {
+      } catch {
+        /* best effort */
+      } finally {
         await cleanSql.end()
       }
     }

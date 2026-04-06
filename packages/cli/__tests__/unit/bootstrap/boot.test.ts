@@ -1,19 +1,16 @@
 // Section C1 — Bootstrap sequence
 // Ref: CLI_SPEC §2.1 flow step 6, CLI_TESTS_SPEC §C1
 // These tests verify that boot() actually DOES things:
-// - Creates and configures a DI container
-// - Registers adapters in the container
+// - Creates and configures an app
+// - Registers adapters in the app
 // - Validates feature flags
 // - Records timings
 // - Handles errors per step severity
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ContainerRegistrationKeys } from '@manta/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, lazyBoot } from '../../../src/bootstrap/boot'
 import type { BootContext } from '../../../src/types'
-import {
-  MantaContainer,
-  ContainerRegistrationKeys,
-} from '@manta/core'
 
 function makeContext(overrides: Partial<BootContext> = {}): BootContext {
   return {
@@ -28,27 +25,27 @@ function makeContext(overrides: Partial<BootContext> = {}): BootContext {
 
 describe('C1 — Bootstrap sequence', () => {
   // -------------------------------------------------------------------
-  // BOOT-01 — Core boot executes 8 steps, creates container
+  // BOOT-01 — Core boot executes 8 steps, creates app
   // -------------------------------------------------------------------
-  it('BOOT-01 — core boot creates a container and completes 8 steps', async () => {
+  it('BOOT-01 — core boot creates an app and completes 8 steps', async () => {
     const ctx = makeContext()
     const result = await boot(ctx)
     expect(result.success).toBe(true)
     expect(result.stepsCompleted).toBe(8)
     expect(result.errors).toHaveLength(0)
-    // After boot, context should have a container
-    expect(ctx.container).toBeDefined()
-    expect(ctx.container!.id).toBeDefined()
+    // After boot, context should have an app
+    expect(ctx.app).toBeDefined()
+    expect(ctx.app!.id).toBeDefined()
   })
 
   // -------------------------------------------------------------------
-  // BOOT-02 — Core boot registers logger in container (step 4)
+  // BOOT-02 — Core boot registers logger in app (step 4)
   // -------------------------------------------------------------------
-  it('BOOT-02 — step 4 registers ILoggerPort in the container', async () => {
+  it('BOOT-02 — step 4 registers ILoggerPort in the app', async () => {
     const ctx = makeContext()
     await boot(ctx)
-    // Logger should be resolvable from the container
-    const logger = ctx.container!.resolve<unknown>(ContainerRegistrationKeys.LOGGER)
+    // Logger should be resolvable from the app
+    const logger = ctx.app!.resolve<unknown>(ContainerRegistrationKeys.LOGGER)
     expect(logger).toBeDefined()
   })
 
@@ -129,7 +126,7 @@ describe('C1 — Bootstrap sequence', () => {
   // -------------------------------------------------------------------
   it('BOOT-08 — lazy boot completes steps 9-18', async () => {
     const ctx = makeContext()
-    // First do core boot to set up container
+    // First do core boot to set up app
     await boot(ctx)
     const result = await lazyBoot(ctx)
     expect(result.success).toBe(true)
@@ -210,17 +207,17 @@ describe('C1 — Bootstrap sequence', () => {
   // -------------------------------------------------------------------
   // BOOT-14 — Container has registrations after boot
   // -------------------------------------------------------------------
-  it('BOOT-14 — container has logger and event bus after boot', async () => {
+  it('BOOT-14 — app has logger and event bus after boot', async () => {
     const ctx = makeContext()
     const result = await boot(ctx)
     expect(result.success).toBe(true)
 
-    const container = ctx.container!
+    const app = ctx.app!
     // Logger must be registered
-    expect(() => container.resolve(ContainerRegistrationKeys.LOGGER)).not.toThrow()
+    expect(() => app.resolve(ContainerRegistrationKeys.LOGGER)).not.toThrow()
     // Event bus must be registered (step 6 — required modules)
-    expect(() => container.resolve(ContainerRegistrationKeys.EVENT_BUS)).not.toThrow()
+    expect(() => app.resolve(ContainerRegistrationKeys.EVENT_BUS)).not.toThrow()
     // Cache must be registered (step 6 — required modules)
-    expect(() => container.resolve(ContainerRegistrationKeys.CACHE)).not.toThrow()
+    expect(() => app.resolve(ContainerRegistrationKeys.CACHE)).not.toThrow()
   })
 })

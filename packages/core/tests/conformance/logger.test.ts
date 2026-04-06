@@ -1,9 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import {
-  type ILoggerPort,
-  createTestLogger,
-  TestLogger,
-} from '@manta/test-utils'
+import { createTestLogger, type ILoggerPort, type TestLogger } from '@manta/test-utils'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 describe('ILoggerPort Conformance', () => {
   let logger: TestLogger
@@ -31,7 +27,14 @@ describe('ILoggerPort Conformance', () => {
 
     expect(logger.logs).toHaveLength(8)
     expect(logger.logs.map((l) => l.level)).toEqual([
-      'error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly', 'panic',
+      'error',
+      'warn',
+      'info',
+      'http',
+      'verbose',
+      'debug',
+      'silly',
+      'panic',
     ])
   })
 

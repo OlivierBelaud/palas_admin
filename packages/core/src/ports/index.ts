@@ -1,35 +1,37 @@
 // Port interfaces — re-exports all port contracts
 // Each port is defined in its own file with SPEC references.
 
+export type { AuthenticationInput, AuthenticationResponse } from '../auth/providers/types'
+// Auth types
+export type { AuthContext, AuthCredentials, SessionOptions } from '../auth/types'
+// Event types (re-exported for convenience)
+export type { GetMessagesOptions, IMessageAggregator, Message } from '../events/types'
+export type { IAnalyticsProvider } from './analytics'
+export type { IAuthGateway, IAuthModuleService, IAuthPort } from './auth'
+// Port interfaces
+export type { ICachePort } from './cache'
+export type { IDatabasePort } from './database'
+export type { IEventBusPort } from './event-bus'
+export type { IFilePort } from './file'
+export type { IHttpPort } from './http'
+export type { IJobSchedulerPort } from './job-scheduler'
+export type { ILockingPort } from './locking'
+export type { ILoggerPort } from './logger'
+export type { INotificationPort } from './notification'
+export type { IRelationalQueryPort, RelationalQueryConfig } from './relational-query'
+export type { IRepository } from './repository'
+export type { IRepositoryFactory } from './repository-factory'
+export type { ISchemaGenerator } from './schema-generator'
+export type { ISearchProvider } from './search'
 // Shared types used across ports
 export type {
   Context,
-  JobResult,
-  JobExecution,
-  WorkflowLifecycleEvent,
-  TransactionOptions,
-  DatabaseConfig,
   CursorPagination,
+  DatabaseConfig,
   GroupStatus,
+  JobExecution,
+  JobResult,
+  TransactionOptions,
+  WorkflowLifecycleEvent,
 } from './types'
-
-// Auth types
-export type { AuthContext, AuthCredentials, SessionOptions } from '../auth/types'
-
-// Port interfaces
-export type { ICachePort } from './cache'
-export type { IEventBusPort } from './event-bus'
-export type { ILockingPort } from './locking'
-export type { IDatabasePort } from './database'
-export type { IRepository } from './repository'
-export type { IWorkflowEnginePort } from './workflow-engine'
-export type { IWorkflowStoragePort } from './workflow-storage'
-export type { IFilePort } from './file'
-export type { ILoggerPort } from './logger'
-export type { IJobSchedulerPort } from './job-scheduler'
-export type { INotificationPort } from './notification'
-export type { ISearchProvider } from './search'
-export type { IAnalyticsProvider } from './analytics'
-export type { ITranslationPort } from './translation'
-export type { IHttpPort } from './http'
-export type { IAuthPort, IAuthModuleService, IAuthGateway } from './auth'
+export { ContainerRegistrationKeys } from './types'

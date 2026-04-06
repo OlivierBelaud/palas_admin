@@ -1,4 +1,4 @@
-import { createContext, PropsWithChildren, useContext, ComponentType } from "react"
+import { type ComponentType, createContext, type PropsWithChildren, useContext } from 'react'
 
 export type MenuItem = {
   label: string
@@ -30,13 +30,6 @@ type ExtensionProviderProps = PropsWithChildren<{
   api: ExtensionAPI
 }>
 
-export const ExtensionProvider = ({
-  api,
-  children,
-}: ExtensionProviderProps) => {
-  return (
-    <ExtensionContext.Provider value={api}>
-      {children}
-    </ExtensionContext.Provider>
-  )
+export const ExtensionProvider = ({ api, children }: ExtensionProviderProps) => {
+  return <ExtensionContext.Provider value={api}>{children}</ExtensionContext.Provider>
 }

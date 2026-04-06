@@ -1,9 +1,9 @@
 // Section B3 — manta start command
 // Ref: CLI_SPEC §2.7, CLI_TESTS_SPEC §B3
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { startCommand } from '../../../src/commands/start'
 
 const TMP = resolve(__dirname, '__tmp_start_test__')
@@ -40,9 +40,7 @@ describe('B3 — manta start', () => {
     // Should fail on missing config or missing JWT_SECRET
     expect(result.errors.length).toBeGreaterThan(0)
     const allErrors = result.errors.join(' ')
-    expect(
-      allErrors.includes('JWT_SECRET') || allErrors.includes('config'),
-    ).toBe(true)
+    expect(allErrors.includes('JWT_SECRET') || allErrors.includes('config')).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -56,7 +54,7 @@ describe('B3 — manta start', () => {
     )
     const result = await startCommand({}, TMP)
     expect(result.exitCode).toBe(1)
-    expect(result.errors.some(e => e.includes('JWT_SECRET'))).toBe(true)
+    expect(result.errors.some((e) => e.includes('JWT_SECRET'))).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -74,7 +72,7 @@ describe('B3 — manta start', () => {
     )
     const result = await startCommand({}, TMP)
     expect(result.exitCode).toBe(1)
-    expect(result.errors.some(e => e.includes('COOKIE_SECRET'))).toBe(true)
+    expect(result.errors.some((e) => e.includes('COOKIE_SECRET'))).toBe(true)
   })
 
   // -------------------------------------------------------------------
@@ -92,7 +90,7 @@ describe('B3 — manta start', () => {
     )
     const result = await startCommand({}, TMP)
     // Should NOT fail on COOKIE_SECRET
-    const cookieErrors = result.errors.filter(e => e.includes('COOKIE_SECRET'))
+    const cookieErrors = result.errors.filter((e) => e.includes('COOKIE_SECRET'))
     expect(cookieErrors).toHaveLength(0)
   })
 

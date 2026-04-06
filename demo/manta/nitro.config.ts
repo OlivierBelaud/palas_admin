@@ -1,26 +1,37 @@
-import { defineNitroConfig } from "nitropack/config"
-import { resolve } from "path"
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+// @ts-ignore — nitro/config resolved at runtime by nitro
+import { defineNitroConfig } from 'nitro/config'
+
+const adminBuildExists = existsSync(resolve('public/admin'))
 
 export default defineNitroConfig({
-  compatibilityDate: "2025-07-15",
-
-  // Server directory with h3 route handlers
-  srcDir: "server",
-
-  // Static files — public/ is served as static assets
-  publicAssets: [
-    { dir: resolve(__dirname, "public"), baseURL: "/" },
-  ],
-
-  // Aliases so server code can import from src/ and workspace packages
-  alias: {
-    "~src": resolve(__dirname, "src"),
-    "@manta/core/db": resolve(__dirname, "../../packages/core/src/db/index.ts"),
-    "@manta/core/ports": resolve(__dirname, "../../packages/core/src/ports/index.ts"),
-    "@manta/core/errors": resolve(__dirname, "../../packages/core/src/errors/manta-error.ts"),
-    "@manta/core": resolve(__dirname, "../../packages/core/src/index.ts"),
-    "@manta/adapter-logger-pino": resolve(__dirname, "../../packages/adapter-logger-pino/src/index.ts"),
-    "@manta/adapter-drizzle-pg": resolve(__dirname, "../../packages/adapter-drizzle-pg/src/index.ts"),
-    "@manta/adapter-neon": resolve(__dirname, "../../packages/adapter-neon/src/index.ts"),
+  compatibilityDate: '2026-03-18',
+  scanDirs: ['.manta/server'],
+  devServer: {
+    port: 3000,
+  },
+  // Admin dashboard — dev: proxy to Vite, prod: static from public/admin/
+  devProxy: {
+    '/admin/**': 'http://localhost:5199',
+    '/admin/': 'http://localhost:5199',
+    '/@vite/**': 'http://localhost:5199',
+    '/@fs/**': 'http://localhost:5199',
+    '/node_modules/.vite/**': 'http://localhost:5199',
+  },
+  // Only add publicAssets if the build output exists (after manta build)
+  publicAssets: adminBuildExists
+    ? [{ dir: 'public/admin', baseURL: '/admin' }]
+    : [],
+  externals: {
+    inline: [],
+    external: [
+      '@manta/core', '@manta/cli',
+      '@manta/adapter-database-pg', '@manta/adapter-logger-pino',
+      '@manta/adapter-h3', '@manta/host-nitro',
+      'postgres', 'drizzle-orm', 'drizzle-orm/postgres-js',
+      'awilix', 'pino', 'pino-pretty', 'jiti',
+      'ai', '@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/google', '@ai-sdk/mistral',
+    ],
   },
 })

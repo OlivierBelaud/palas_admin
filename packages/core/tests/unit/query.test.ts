@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { QueryService, MantaError } from '@manta/core'
+import type { EntityName, EntityRegistry } from '@manta/core'
+import { MantaError, QueryService } from '@manta/core'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 describe('QueryService', () => {
   let query: QueryService
@@ -28,8 +29,7 @@ describe('QueryService', () => {
 
   // QG-03 — graph() throws for unknown entity
   it('graph() throws UNKNOWN_MODULES for unregistered entity', async () => {
-    await expect(query.graph({ entity: 'nonexistent' }))
-      .rejects.toThrow('No resolver registered')
+    await expect(query.graph({ entity: 'nonexistent' })).rejects.toThrow('No resolver registered')
   })
 
   // QG-04 — graph() passes filters to resolver
@@ -80,8 +80,7 @@ describe('QueryService', () => {
       return Array.from({ length: 10 }, (_, i) => ({ id: String(i) }))
     })
 
-    await expect(qs.graph({ entity: 'big' }))
-      .rejects.toThrow('exceeding maximum of 5')
+    await expect(qs.graph({ entity: 'big' })).rejects.toThrow('exceeding maximum of 5')
   })
 
   // QG-07 — dangerouslyUnboundedRelations disables limit
@@ -102,8 +101,7 @@ describe('QueryService', () => {
 
   // QG-08 — index() throws without Index module
   it('index() throws UNKNOWN_MODULES without Index module', async () => {
-    await expect(query.index({ entity: 'product' }))
-      .rejects.toThrow('Index module is not loaded')
+    await expect(query.index({ entity: 'product' })).rejects.toThrow('Index module is not loaded')
   })
 
   // QG-09 — index() works with registered Index module
@@ -151,6 +149,89 @@ describe('QueryService', () => {
     query.registerResolver('Product', async () => [{ id: '1' }])
 
     const result = await query.graph({ entity: 'product' })
+    expect(result).toHaveLength(1)
+  })
+
+  // QG-13 — graphAndCount() returns [results, count]
+  it('graphAndCount() returns [results, count] via resolver', async () => {
+    const products = [
+      { id: '1', title: 'Widget' },
+      { id: '2', title: 'Gadget' },
+    ]
+
+    query.registerResolver('product', async () => products)
+
+    const [results, count] = await query.graphAndCount({ entity: 'product' })
+    expect(results).toEqual(products)
+    expect(count).toBe(2)
+  })
+
+  // QG-14 — graphAndCount() throws for unknown entity
+  it('graphAndCount() throws UNKNOWN_MODULES for unregistered entity', async () => {
+    await expect(query.graphAndCount({ entity: 'nonexistent' })).rejects.toThrow('No resolver registered')
+  })
+
+  // QG-15 — graphAndCount() with relational query port
+  it('graphAndCount() delegates to relational query port', async () => {
+    const products = [{ id: '1', title: 'Widget' }]
+
+    query.registerRelationalQuery({
+      findWithRelations: async () => products,
+      findAndCountWithRelations: async () => [products, 42],
+    })
+
+    const [results, count] = await query.graphAndCount({
+      entity: 'product',
+      fields: ['id', 'variants.id'],
+    })
+
+    expect(results).toEqual(products)
+    expect(count).toBe(42)
+  })
+
+  // QG-16 — graphAndCount() entity count protection
+  it('graphAndCount() throws when exceeding maxTotalEntities', async () => {
+    const qs = new QueryService({ maxTotalEntities: 5 })
+
+    qs.registerResolver('big', async () => {
+      return Array.from({ length: 10 }, (_, i) => ({ id: String(i) }))
+    })
+
+    await expect(qs.graphAndCount({ entity: 'big' })).rejects.toThrow('exceeding maximum of 5')
+  })
+
+  // QG-17 — graphAndCount() with beforeFetch hook
+  it('graphAndCount() beforeFetch hook returns [cached, length]', async () => {
+    query.registerResolver('cached', async () => [{ id: 'from-db' }])
+
+    query.beforeFetch = async () => [{ id: 'from-cache' }]
+
+    const [results, count] = await query.graphAndCount({ entity: 'cached' })
+    expect(results).toEqual([{ id: 'from-cache' }])
+    expect(count).toBe(1)
+  })
+
+  // QG-18 — EntityName falls back to string without codegen
+  it('EntityName is string when EntityRegistry is empty', () => {
+    // Without codegen augmentation, EntityRegistry is empty
+    // so EntityName should fall back to string
+    const entity: EntityName = 'anything-goes'
+    expect(typeof entity).toBe('string')
+  })
+
+  // QG-19 — EntityRegistry is augmentable
+  it('EntityRegistry is an empty interface ready for augmentation', () => {
+    // Verify the type exists and is usable
+    const _registry: EntityRegistry = {}
+    expect(_registry).toBeDefined()
+  })
+
+  // QG-20 — graph() accepts EntityName
+  it('graph() accepts EntityName typed values', async () => {
+    query.registerResolver('product', async () => [{ id: '1' }])
+
+    const entityName: EntityName = 'product'
+    const result = await query.graph({ entity: entityName })
     expect(result).toHaveLength(1)
   })
 })

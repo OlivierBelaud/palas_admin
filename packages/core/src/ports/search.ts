@@ -5,6 +5,4 @@
  * Multiple simultaneous implementations possible.
  * TODO: Define full interface when implementing search features.
  */
-export interface ISearchProvider {
-  // Placeholder — to be defined
-}
+export type ISearchProvider = {}

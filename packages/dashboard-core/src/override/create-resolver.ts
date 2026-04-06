@@ -1,6 +1,6 @@
-import type { DataComponent, PageSpec } from "../pages/types"
-import type { OverrideStore } from "../interfaces/override-store"
-import type { DashboardConfig, NavItem } from "./define-config"
+import type { OverrideStore } from '../interfaces/override-store'
+import type { DataComponent, PageSpec } from '../pages/types'
+import type { DashboardConfig, NavItem } from './define-config'
 
 export interface Resolver {
   resolveComponent(id: string): DataComponent | undefined
@@ -12,7 +12,7 @@ export interface Resolver {
 export function createResolver(
   config: DashboardConfig,
   defaults: { pages: Record<string, PageSpec>; components: Record<string, DataComponent> },
-  overrideStore: OverrideStore
+  overrideStore: OverrideStore,
 ): Resolver {
   return {
     resolveComponent(id: string): DataComponent | undefined {

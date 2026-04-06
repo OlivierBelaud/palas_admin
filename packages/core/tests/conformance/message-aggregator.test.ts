@@ -1,17 +1,27 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { Message, TestMantaApp } from '@manta/core'
 import {
-  type IMessageAggregator,
-  type Message,
-  createTestContainer,
-  resetAll,
-  withScope,
-  InMemoryContainer,
-  InMemoryMessageAggregator,
-} from '@manta/test-utils'
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  MessageAggregator,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('IMessageAggregator Conformance', () => {
-  let aggregator: InMemoryMessageAggregator
-  let container: InMemoryContainer
+  let aggregator: MessageAggregator
+  let app: TestMantaApp
 
   const createMessage = (eventName: string, data: unknown = {}, timestamp?: number): Message => ({
     eventName,
@@ -22,12 +32,12 @@ describe('IMessageAggregator Conformance', () => {
   })
 
   beforeEach(() => {
-    container = createTestContainer()
-    aggregator = new InMemoryMessageAggregator()
+    app = createTestMantaApp({ infra: makeInfra() })
+    aggregator = new MessageAggregator()
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // MA-01 — SPEC-018: save/getMessages roundtrip
@@ -97,21 +107,16 @@ describe('IMessageAggregator Conformance', () => {
   })
 
   // MA-06 — SPEC-018: SCOPED isolation between scopes
-  it('SCOPED > isolation entre scopes', async () => {
-    const scopeAMessages: Message[] = []
-    const scopeBMessages: Message[] = []
+  it('SCOPED > isolation entre scopes', () => {
+    // Each scope gets its own MessageAggregator instance — verify isolation
+    const aggA = new MessageAggregator()
+    const aggB = new MessageAggregator()
 
-    await withScope(container, async () => {
-      const aggA = new InMemoryMessageAggregator()
-      aggA.save([createMessage('scope.a.event')])
-      scopeAMessages.push(...aggA.getMessages())
-    })
+    aggA.save([createMessage('scope.a.event')])
+    aggB.save([createMessage('scope.b.event')])
 
-    await withScope(container, async () => {
-      const aggB = new InMemoryMessageAggregator()
-      aggB.save([createMessage('scope.b.event')])
-      scopeBMessages.push(...aggB.getMessages())
-    })
+    const scopeAMessages = aggA.getMessages()
+    const scopeBMessages = aggB.getMessages()
 
     // Each scope only sees its own messages
     expect(scopeAMessages).toHaveLength(1)
@@ -121,9 +126,9 @@ describe('IMessageAggregator Conformance', () => {
     expect(scopeBMessages[0].eventName).toBe('scope.b.event')
   })
 
-  // MA-07 — SPEC-018/059c: @EmitEvents interaction — save after mutation
-  it('interaction @EmitEvents > save après mutation', () => {
-    // Simulates @EmitEvents behavior: service method saves events
+  // MA-07 — SPEC-018/059c: save after mutation
+  it('save after mutation emits events', () => {
+    // Simulates service method saving events after a mutation
     const emittedEvent = createMessage('product.created', { productId: 'p1' })
     aggregator.save([emittedEvent])
 
@@ -133,13 +138,13 @@ describe('IMessageAggregator Conformance', () => {
     expect(messages[0].data).toEqual({ productId: 'p1' })
   })
 
-  // MA-08 — SPEC-018/059c: @EmitEvents interaction — clear on error
-  it('interaction @EmitEvents > clear sur erreur', () => {
-    // Simulates @EmitEvents error path: clearMessages called on throw
+  // MA-08 — SPEC-018/059c: clear on error
+  it('clear on error removes accumulated messages', () => {
+    // Simulates error path: clearMessages called on throw
     aggregator.save([createMessage('product.created')])
     expect(aggregator.getMessages()).toHaveLength(1)
 
-    // Error occurs → clearMessages is called
+    // Error occurs -> clearMessages is called
     aggregator.clearMessages()
 
     expect(aggregator.getMessages()).toHaveLength(0)

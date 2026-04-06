@@ -3,12 +3,8 @@
 // Tests: lock acquisition, pending detection, dry-run, all-or-nothing,
 //        concurrent index, tracking, lock release
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import {
-  migrateCommand,
-  detectConcurrentIndex,
-  findPendingMigrations,
-} from '../../../../src/commands/db/migrate'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { detectConcurrentIndex, findPendingMigrations, migrateCommand } from '../../../../src/commands/db/migrate'
 import type { MigrateDeps } from '../../../../src/commands/db/types'
 
 // ── Mock factories ──────────────────────────────────────────────────
@@ -18,12 +14,14 @@ function createMockDeps(overrides: Partial<MigrateDeps> = {}): MigrateDeps {
     db: {
       execute: vi.fn().mockResolvedValue(undefined),
       query: vi.fn().mockResolvedValue([]),
-      transaction: vi.fn().mockImplementation(async (fn) => fn({
-        execute: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn().mockResolvedValue([]),
-        transaction: vi.fn(),
-        close: vi.fn(),
-      })),
+      transaction: vi.fn().mockImplementation(async (fn) =>
+        fn({
+          execute: vi.fn().mockResolvedValue(undefined),
+          query: vi.fn().mockResolvedValue([]),
+          transaction: vi.fn(),
+          close: vi.fn(),
+        }),
+      ),
       close: vi.fn().mockResolvedValue(undefined),
     },
     lock: {
@@ -64,10 +62,7 @@ describe('B7 — db:migrate — pure functions', () => {
   })
 
   it('findPendingMigrations returns unapplied migrations', () => {
-    const pending = findPendingMigrations(
-      ['0001.sql', '0002.sql', '0003.sql'],
-      ['0001.sql'],
-    )
+    const pending = findPendingMigrations(['0001.sql', '0002.sql', '0003.sql'], ['0001.sql'])
     expect(pending).toEqual(['0002.sql', '0003.sql'])
   })
 
@@ -157,11 +152,9 @@ describe('B7 — db:migrate — command', () => {
   // -------------------------------------------------------------------
   it('MIGRATE-07 — applies pending migrations and records them', async () => {
     const deps = createMockDeps()
-    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>)
-      .mockResolvedValue('CREATE TABLE test (id serial);')
+    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>).mockResolvedValue('CREATE TABLE test (id serial);')
 
     const result = await migrateCommand({}, deps)
     expect(result.exitCode).toBe(0)
@@ -176,8 +169,7 @@ describe('B7 — db:migrate — command', () => {
     const deps = createMockDeps()
     ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql'])
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>)
-      .mockResolvedValue('CREATE TABLE products (id serial);')
+    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>).mockResolvedValue('CREATE TABLE products (id serial);')
 
     const result = await migrateCommand({ dryRun: true }, deps)
     expect(result.exitCode).toBe(0)
@@ -194,8 +186,7 @@ describe('B7 — db:migrate — command', () => {
     const deps = createMockDeps()
     ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql'])
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>)
-      .mockResolvedValue('CREATE INDEX CONCURRENTLY idx ON t(x);')
+    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>).mockResolvedValue('CREATE INDEX CONCURRENTLY idx ON t(x);')
 
     const result = await migrateCommand({ allOrNothing: true }, deps)
     expect(result.exitCode).toBe(1)
@@ -207,7 +198,8 @@ describe('B7 — db:migrate — command', () => {
   // MIGRATE-10 — partial failure records only successful migrations
   // -------------------------------------------------------------------
   it('MIGRATE-10 — on failure, records only successful migrations', async () => {
-    const executeFn = vi.fn()
+    const executeFn = vi
+      .fn()
       .mockResolvedValueOnce(undefined) // 0001 succeeds
       .mockRejectedValueOnce(new Error('syntax error')) // 0002 fails
 
@@ -219,11 +211,9 @@ describe('B7 — db:migrate — command', () => {
         close: vi.fn(),
       },
     })
-    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>)
-      .mockResolvedValue('CREATE TABLE test (id serial);')
+    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>).mockResolvedValue('CREATE TABLE test (id serial);')
 
     const result = await migrateCommand({}, deps)
     expect(result.exitCode).toBe(1)
@@ -236,7 +226,8 @@ describe('B7 — db:migrate — command', () => {
   // MIGRATE-11 — --all-or-nothing rolls back all on failure
   // -------------------------------------------------------------------
   it('MIGRATE-11 — --all-or-nothing rolls back all on failure', async () => {
-    const txExecute = vi.fn()
+    const txExecute = vi
+      .fn()
       .mockResolvedValueOnce(undefined) // 0001 succeeds in tx
       .mockRejectedValueOnce(new Error('syntax error')) // 0002 fails in tx
 
@@ -255,11 +246,9 @@ describe('B7 — db:migrate — command', () => {
         close: vi.fn(),
       },
     })
-    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>)
-      .mockResolvedValue(['0001.sql', '0002.sql'])
+    ;(deps.fs.listMigrationFiles as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql', '0002.sql'])
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>)
-      .mockResolvedValue('CREATE TABLE test (id serial);')
+    ;(deps.fs.readMigrationSql as ReturnType<typeof vi.fn>).mockResolvedValue('CREATE TABLE test (id serial);')
 
     const result = await migrateCommand({ allOrNothing: true }, deps)
     expect(result.exitCode).toBe(1)

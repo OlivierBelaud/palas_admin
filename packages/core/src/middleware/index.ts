@@ -1,6 +1,10 @@
 // SPEC-039 — defineMiddlewares() for HTTP pipeline configuration
+// SPEC-V2 — defineMiddleware() (singular) for per-context overrides
 
 import type { MantaErrorType } from '../errors/manta-error'
+
+export type { MiddlewareDefinition, MiddlewareRequest } from './define-middleware'
+export { defineMiddleware } from './define-middleware'
 
 /**
  * A single middleware configuration entry.

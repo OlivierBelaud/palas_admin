@@ -1,11 +1,5 @@
-import {
-  createContext,
-  PropsWithChildren,
-  useContext,
-  useEffect,
-  useState,
-} from "react"
-import { useSidebar } from "./sidebar-provider"
+import { createContext, type PropsWithChildren, useContext, useEffect, useState } from 'react'
+import { useSidebar } from './sidebar-provider'
 
 type SearchContextValue = {
   open: boolean
@@ -18,7 +12,7 @@ const SearchContext = createContext<SearchContextValue | null>(null)
 export const useSearch = () => {
   const context = useContext(SearchContext)
   if (!context) {
-    throw new Error("useSearch must be used within a SearchProvider")
+    throw new Error('useSearch must be used within a SearchProvider')
   }
   return context
 }
@@ -30,22 +24,22 @@ export const SearchProvider = ({ children }: PropsWithChildren) => {
   const toggleSearch = () => {
     const update = !open
     if (update && mobile) {
-      toggle("mobile")
+      toggle('mobile')
     }
     setOpen(update)
   }
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setOpen((prev) => !prev)
       }
     }
 
-    document.addEventListener("keydown", onKeyDown)
+    document.addEventListener('keydown', onKeyDown)
     return () => {
-      document.removeEventListener("keydown", onKeyDown)
+      document.removeEventListener('keydown', onKeyDown)
     }
   }, [])
 

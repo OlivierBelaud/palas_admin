@@ -1,0 +1,17 @@
+{
+  "name": "@manta/adapter-h3",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "h3": "^2.0.1-rc.16",
+    "jiti": "^2.6.1"
+  },
+  "peerDependencies": {
+    "@manta/core": "workspace:*"
+  }
+}

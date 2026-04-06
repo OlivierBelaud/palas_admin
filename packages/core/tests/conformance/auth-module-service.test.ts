@@ -1,17 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import {
-  type IAuthModuleService,
-  type AuthContext,
-  createTestAuth,
-  MockAuthModuleService,
-} from '@manta/test-utils'
+import { type AuthContext, createTestAuth, type IAuthModuleService, MockAuthModuleService } from '@manta/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('IAuthModuleService Session Conformance', () => {
   let authModuleService: MockAuthModuleService
 
   const userContext: AuthContext = {
-    actor_type: 'user',
-    actor_id: 'u1',
+    type: 'user',
+    id: 'u1',
   }
 
   beforeEach(() => {
@@ -38,8 +33,8 @@ describe('IAuthModuleService Session Conformance', () => {
     // verifySession returns original AuthContext
     const result = await authModuleService.verifySession(sessionId)
     expect(result).not.toBeNull()
-    expect(result!.actor_type).toBe('user')
-    expect(result!.actor_id).toBe('u1')
+    expect(result!.type).toBe('user')
+    expect(result!.id).toBe('u1')
   })
 
   // AS-02 — SPEC-050: destroySession removes session
@@ -89,7 +84,7 @@ describe('IAuthModuleService Session Conformance', () => {
     const { sessionId } = await standalone.createSession(userContext)
     const verified = await standalone.verifySession(sessionId)
     expect(verified).not.toBeNull()
-    expect(verified!.actor_id).toBe('u1')
+    expect(verified!.id).toBe('u1')
 
     await standalone.destroySession(sessionId)
     expect(await standalone.verifySession(sessionId)).toBeNull()

@@ -1,7 +1,7 @@
 // SPEC-066 — InMemoryLockingAdapter implements ILockingPort
 
-import type { ILockingPort } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { ILockingPort } from '../ports'
 
 export class InMemoryLockingAdapter implements ILockingPort {
   private _locks = new Map<string, { ownerId: string; expiresAt: number | null }>()
@@ -27,7 +27,10 @@ export class InMemoryLockingAdapter implements ILockingPort {
         }
       })
 
-      await this.acquire(keys, { ownerId })
+      const retryAcquired = await this.acquire(keys, { ownerId, expire: options?.timeout })
+      if (!retryAcquired) {
+        throw new MantaError('CONFLICT', `Failed to acquire lock after waiting: ${keys.join(', ')}`)
+      }
     }
 
     try {
@@ -82,5 +85,8 @@ export class InMemoryLockingAdapter implements ILockingPort {
     }
   }
 
-  _reset() { this._locks.clear(); this._waitQueues.clear() }
+  _reset() {
+    this._locks.clear()
+    this._waitQueues.clear()
+  }
 }

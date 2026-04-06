@@ -3,7 +3,7 @@
  * - Medusa: localStorage (LocalStorageOverrideStore)
  * - Manta: API-backed with local cache (ApiOverrideStore)
  */
-import type { DataComponent, PageSpec } from "../pages/types"
+import type { DataComponent, PageSpec } from '../pages/types'
 
 export interface CustomNavItem {
   key: string

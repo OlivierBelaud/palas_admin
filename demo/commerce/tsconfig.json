@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "paths": {
+      "@manta/core": ["../../packages/core/src/index.ts"],
+      "@manta/core/*": ["../../packages/core/src/*"],
+      "@manta/sdk": ["../../packages/sdk/src/index.ts"],
+      "@manta/ui": ["../../packages/ui/src/index.ts"],
+      "@manta/dashboard-core": ["../../packages/dashboard-core/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    ".manta/generated.d.ts",
+    "manta.config.ts",
+    "../../packages/core/src/globals.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests"
+  ]
+}

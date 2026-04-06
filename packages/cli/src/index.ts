@@ -1,30 +1,31 @@
 // @manta/cli — Main entry point
 // Parses argv and dispatches to the appropriate command
 
+export { boot } from './bootstrap/boot'
+export { type BootstrapOptions, type BootstrappedApp, bootstrapApp } from './bootstrap/bootstrap-app'
 export { createProgram } from './cli'
-export { loadEnv } from './config/load-env'
-export { loadConfig } from './config/load-config'
-export { resolveAdapters } from './config/resolve-adapters'
-export { devCommand, type MantaRequest } from './commands/dev'
-export { startCommand } from './commands/start'
 export { buildCommand } from './commands/build'
-export { initCommand } from './commands/init'
-export { execCommand } from './commands/exec'
+export { createCommand } from './commands/db/create'
+export { diffCommand } from './commands/db/diff'
 export { generateCommand } from './commands/db/generate'
 export { migrateCommand } from './commands/db/migrate'
 export { rollbackCommand } from './commands/db/rollback'
-export { diffCommand } from './commands/db/diff'
-export { createCommand } from './commands/db/create'
-export { boot } from './bootstrap/boot'
+export { devCommand, type MantaRequest } from './commands/dev'
+export { execCommand } from './commands/exec'
+export { initCommand } from './commands/init'
+export { startCommand } from './commands/start'
+export { loadConfig } from './config/load-config'
+export { loadEnv } from './config/load-env'
+export { resolveAdapters } from './config/resolve-adapters'
 
 export type {
-  DevOptions,
-  StartOptions,
   BuildOptions,
-  InitOptions,
+  DevOptions,
+  DiffOptions,
   ExecOptions,
   GenerateOptions,
+  InitOptions,
   MigrateOptions,
   RollbackOptions,
-  DiffOptions,
+  StartOptions,
 } from './types'

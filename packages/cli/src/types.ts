@@ -14,8 +14,11 @@ export interface BuildOptions {
   preset?: string
 }
 
+export type InitPreset = 'nitro' | 'next'
+
 export interface InitOptions {
   dir?: string
+  preset?: InitPreset
 }
 
 export interface ExecOptions {
@@ -68,7 +71,7 @@ export interface LoadedConfig {
     }
   }
   modules?: unknown[]
-  plugins?: unknown[]
+  plugins?: Array<string | { resolve: string; options?: Record<string, unknown> }>
   featureFlags?: Record<string, boolean>
   query?: { maxTotalEntities?: number }
   strict?: boolean
@@ -79,14 +82,18 @@ export interface LoadedConfig {
   events?: { maxPayloadSize?: number }
   appEnv?: string
   adapters?: Record<string, { adapter: string; options?: Record<string, unknown> }>
+  /** Preset name ('dev', 'vercel') or inline PresetDefinition */
+  preset?: string | import('@manta/core').PresetDefinition
+  /** SPA declarations — each key is a context name (e.g. 'admin', 'vendor') */
+  spa?: Record<string, { dashboard?: string; preset?: string }>
 }
 
 export interface BootContext {
   config: LoadedConfig
   profile: 'dev' | 'prod'
   verbose?: boolean
-  /** DI container — created at step 3, used by all subsequent steps */
-  container?: import('@manta/core').IContainer
+  /** App object — created at step 3, used by all subsequent steps */
+  app?: import('@manta/core').MantaApp
   /** Resolved adapters to register — injected by the CLI before boot */
   adapters?: Record<string, unknown>
   /** Working directory (defaults to process.cwd()) */

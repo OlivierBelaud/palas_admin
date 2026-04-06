@@ -3,7 +3,7 @@
 // Existing process.env values are NOT overwritten
 
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 interface EnvLoadResult {
   loaded: string[]
@@ -16,12 +16,7 @@ interface EnvLoadResult {
  */
 export function loadEnv(cwd: string = process.cwd()): EnvLoadResult {
   const nodeEnv = process.env['NODE_ENV'] ?? 'development'
-  const filesToLoad = [
-    '.env',
-    '.env.local',
-    `.env.${nodeEnv}`,
-    `.env.${nodeEnv}.local`,
-  ]
+  const filesToLoad = ['.env', '.env.local', `.env.${nodeEnv}`, `.env.${nodeEnv}.local`]
 
   const loaded: string[] = []
   const warnings: string[] = []
@@ -67,8 +62,7 @@ function parseEnvFile(content: string): Record<string, string> {
     const key = trimmed.slice(0, eqIndex).trim()
     let value = trimmed.slice(eqIndex + 1).trim()
     // Remove surrounding quotes
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1)
     }
     result[key] = value

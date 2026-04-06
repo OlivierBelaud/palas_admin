@@ -1,33 +1,13 @@
-// SPEC-057f — DML→Drizzle schema generator
+// SPEC-057f — DML parser (ORM-neutral)
+// The Drizzle-specific schema generator has moved to @manta/adapter-database-pg.
 
 import { MantaError } from '../../errors/manta-error'
 
-export interface GeneratedSchema {
-  columns: Record<string, { type: string; notNull?: boolean; default?: unknown }>
-  relations: Record<string, { type: string; target: string }>
-  indexes: Array<{ name: string; columns: string[]; unique?: boolean; where?: string; using?: string }>
-  checks: Array<{ name: string; expression: string }>
-}
+// ---------------------------------------------------------------------------
+// Neutral parsed types (no ORM dependency)
+// ---------------------------------------------------------------------------
 
-/** DML property type → Drizzle/PG column type mapping */
-const DML_TYPE_MAP: Record<string, string> = {
-  id: 'TEXT',
-  text: 'TEXT',
-  number: 'INTEGER',
-  integer: 'INTEGER',
-  boolean: 'BOOLEAN',
-  bigNumber: 'NUMERIC',
-  float: 'REAL',
-  serial: 'SERIAL',
-  dateTime: 'TIMESTAMPTZ',
-  json: 'JSONB',
-  enum: 'TEXT',
-  array: 'JSONB',
-}
-
-const IMPLICIT_COLUMNS = ['id', 'created_at', 'updated_at', 'deleted_at']
-
-interface ParsedDmlProperty {
+export interface ParsedDmlProperty {
   name: string
   type: string
   nullable?: boolean
@@ -36,7 +16,7 @@ interface ParsedDmlProperty {
   values?: unknown
 }
 
-interface ParsedDmlRelation {
+export interface ParsedDmlRelation {
   name: string
   type: string
   target: string
@@ -44,7 +24,7 @@ interface ParsedDmlRelation {
   pivotEntity?: string
 }
 
-interface ParsedDmlIndex {
+export interface ParsedDmlIndex {
   on: string[]
   where?: string | Record<string, unknown>
   type?: string
@@ -75,9 +55,9 @@ export function parseDmlEntity(input: unknown): ParsedDmlEntity {
     properties: (raw.properties ?? []).map((p) => ({
       name: p.name as string,
       type: p.type as string,
-      nullable: p.nullable as boolean | undefined,
-      computed: p.computed as boolean | undefined,
-      default: p.default,
+      nullable: (p.is_nullable ?? p.nullable) as boolean | undefined,
+      computed: (p.is_computed ?? p.computed) as boolean | undefined,
+      default: p.default_value ?? p.default,
       values: p.values,
     })),
     relations: raw.relations?.map((r) => ({
@@ -97,10 +77,35 @@ export function parseDmlEntity(input: unknown): ParsedDmlEntity {
   }
 }
 
-/**
- * Serialize a QueryCondition object to a SQL WHERE clause string.
- * Supports $gt, $gte, $lt, $lte, $eq, $ne, $in, $nin operators.
- */
+// ---------------------------------------------------------------------------
+// Deprecated re-exports — use @manta/adapter-database-pg instead
+// ---------------------------------------------------------------------------
+
+/** @deprecated Import from '@manta/adapter-database-pg' instead */
+export interface GeneratedSchema {
+  columns: Record<string, { type: string; notNull?: boolean; default?: unknown }>
+  relations: Record<string, { type: string; target: string }>
+  indexes: Array<{ name: string; columns: string[]; unique?: boolean; where?: string; using?: string }>
+  checks: Array<{ name: string; expression: string }>
+}
+
+const DML_TYPE_MAP: Record<string, string> = {
+  id: 'TEXT',
+  text: 'TEXT',
+  number: 'INTEGER',
+  integer: 'INTEGER',
+  boolean: 'BOOLEAN',
+  bigNumber: 'NUMERIC',
+  float: 'REAL',
+  serial: 'SERIAL',
+  dateTime: 'TIMESTAMPTZ',
+  json: 'JSONB',
+  enum: 'TEXT',
+  array: 'JSONB',
+}
+
+const IMPLICIT_COLUMNS = ['id', 'created_at', 'updated_at', 'deleted_at']
+
 function serializeQueryCondition(condition: Record<string, unknown>): string {
   const parts: string[] = []
   for (const [column, value] of Object.entries(condition)) {
@@ -108,10 +113,18 @@ function serializeQueryCondition(condition: Record<string, unknown>): string {
       const ops = value as Record<string, unknown>
       for (const [op, val] of Object.entries(ops)) {
         switch (op) {
-          case '$gt': parts.push(`${column} > ${val}`); break
-          case '$gte': parts.push(`${column} >= ${val}`); break
-          case '$lt': parts.push(`${column} < ${val}`); break
-          case '$lte': parts.push(`${column} <= ${val}`); break
+          case '$gt':
+            parts.push(`${column} > ${val}`)
+            break
+          case '$gte':
+            parts.push(`${column} >= ${val}`)
+            break
+          case '$lt':
+            parts.push(`${column} < ${val}`)
+            break
+          case '$lte':
+            parts.push(`${column} <= ${val}`)
+            break
           case '$eq':
             if (val === null) parts.push(`${column} IS NULL`)
             else parts.push(`${column} = ${typeof val === 'string' ? `'${val}'` : val}`)
@@ -122,13 +135,13 @@ function serializeQueryCondition(condition: Record<string, unknown>): string {
             break
           case '$in':
             if (Array.isArray(val)) {
-              const formatted = val.map((v: unknown) => typeof v === 'string' ? `'${v}'` : v).join(', ')
+              const formatted = val.map((v: unknown) => (typeof v === 'string' ? `'${v}'` : v)).join(', ')
               parts.push(`${column} IN (${formatted})`)
             }
             break
           case '$nin':
             if (Array.isArray(val)) {
-              const formatted = val.map((v: unknown) => typeof v === 'string' ? `'${v}'` : v).join(', ')
+              const formatted = val.map((v: unknown) => (typeof v === 'string' ? `'${v}'` : v)).join(', ')
               parts.push(`${column} NOT IN (${formatted})`)
             }
             break
@@ -143,8 +156,8 @@ function serializeQueryCondition(condition: Record<string, unknown>): string {
 }
 
 /**
- * Generate a Drizzle-compatible schema from a parsed DML entity.
- * SPEC-057f steps 2-6.
+ * @deprecated Import from '@manta/adapter-database-pg' instead.
+ * This function will be removed in a future version.
  */
 export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema {
   const columns: GeneratedSchema['columns'] = {}
@@ -152,21 +165,30 @@ export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema 
   const indexes: GeneratedSchema['indexes'] = []
   const checks: GeneratedSchema['checks'] = []
 
-  const propertyNames = new Set(entity.properties.map((p) => p.name))
-
-  // Check for implicit column redeclaration (SPEC-057f)
-  for (const name of IMPLICIT_COLUMNS) {
-    if (propertyNames.has(name)) {
-      throw new MantaError('INVALID_DATA', `Property "${name}" is implicit and cannot be redefined in entity "${entity.name}"`)
+  // Validate no properties use reserved 'raw_' prefix (reserved for bigNumber shadow columns)
+  for (const prop of entity.properties) {
+    if (prop.name.startsWith('raw_')) {
+      throw new MantaError(
+        'INVALID_DATA',
+        `Property "${prop.name}" uses reserved "raw_" prefix (reserved for bigNumber shadow columns) in entity "${entity.name}"`,
+      )
     }
   }
 
-  // Track shadow columns needed for bigNumber
+  const propertyNames = new Set(entity.properties.map((p) => p.name))
+
+  for (const name of IMPLICIT_COLUMNS) {
+    if (propertyNames.has(name)) {
+      throw new MantaError(
+        'INVALID_DATA',
+        `Property "${name}" is implicit and cannot be redefined in entity "${entity.name}"`,
+      )
+    }
+  }
+
   const shadowColumns = new Set<string>()
 
-  // Step 2: Generate columns from properties
   for (const prop of entity.properties) {
-    // Skip computed properties — no column generated
     if (prop.computed) continue
 
     const pgType = DML_TYPE_MAP[prop.type] ?? 'TEXT'
@@ -175,7 +197,6 @@ export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema 
       notNull: !prop.nullable ? true : undefined,
     }
 
-    // Handle defaults
     if (prop.default !== undefined) {
       if (prop.type === 'json' && typeof prop.default === 'object') {
         col.default = JSON.stringify(prop.default)
@@ -186,10 +207,8 @@ export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema 
 
     columns[prop.name] = col
 
-    // bigNumber shadow column (raw_{name} JSONB)
     if (prop.type === 'bigNumber') {
       const shadowName = `raw_${prop.name}`
-      // Check for conflict
       if (propertyNames.has(shadowName)) {
         throw new MantaError(
           'INVALID_DATA',
@@ -203,15 +222,14 @@ export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema 
       columns[shadowName] = { type: 'JSONB' }
     }
 
-    // Enum check constraint
     if (prop.type === 'enum' && prop.values) {
       let enumValues: string[]
       if (Array.isArray(prop.values)) {
         enumValues = prop.values as string[]
       } else {
-        // Object — extract string values (filter out numeric reverse mappings)
-        enumValues = Object.values(prop.values as Record<string, unknown>)
-          .filter((v): v is string => typeof v === 'string')
+        enumValues = Object.values(prop.values as Record<string, unknown>).filter(
+          (v): v is string => typeof v === 'string',
+        )
       }
       const valuesStr = enumValues.map((v) => `'${v}'`).join(', ')
       checks.push({
@@ -221,42 +239,32 @@ export function generateDrizzleSchema(entity: ParsedDmlEntity): GeneratedSchema 
     }
   }
 
-  // Step 3: Add implicit columns
   columns.id = { type: 'TEXT', notNull: true }
   columns.created_at = { type: 'TIMESTAMPTZ', notNull: true }
   columns.updated_at = { type: 'TIMESTAMPTZ', notNull: true }
   columns.deleted_at = { type: 'TIMESTAMPTZ' }
 
-  // Step 4: Generate relations
   if (entity.relations) {
     for (const rel of entity.relations) {
       relations[rel.name] = { type: rel.type, target: rel.target }
-
-      // hasOne with foreignKey generates FK column on this table
       if ((rel.type === 'hasOne' || rel.type === 'hasOneWithFK') && rel.foreignKey) {
         columns[`${rel.name}_id`] = { type: 'TEXT' }
       }
     }
   }
 
-  // Step 5: Generate indexes
   if (entity.indexes) {
     for (const idx of entity.indexes) {
       let whereClause: string | undefined
-
       if (idx.where) {
         if (typeof idx.where === 'string') {
-          // Explicit string — use as-is, NO implicit soft-delete filter
           whereClause = idx.where
         } else {
-          // QueryCondition object — serialize to SQL
           whereClause = serializeQueryCondition(idx.where)
         }
       } else {
-        // No explicit where → add implicit soft-delete filter (DG-21, DG-22)
         whereClause = 'deleted_at IS NULL'
       }
-
       indexes.push({
         name: idx.name ?? `idx_${entity.name.toLowerCase()}_${idx.on.join('_')}`,
         columns: idx.on,

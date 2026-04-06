@@ -1,6 +1,6 @@
 // SPEC-126 — IRepository interface
 
-import type { CursorPagination, TransactionOptions } from './types'
+import type { CursorPagination } from './types'
 
 /**
  * Repository port contract.
@@ -79,20 +79,5 @@ export interface IRepository<T = unknown> {
    * @param conflictTarget - Columns to detect conflict on
    * @returns The upserted entities
    */
-  upsertWithReplace(
-    data: Record<string, unknown>[],
-    replaceFields?: string[],
-    conflictTarget?: string[]
-  ): Promise<T[]>
-
-  /**
-   * Execute a function within a transaction.
-   * @param task - The function receiving a transaction manager
-   * @param options - Transaction options
-   * @returns The result of the function
-   */
-  transaction<TManager = unknown>(
-    task: (transactionManager: TManager) => Promise<unknown>,
-    options?: TransactionOptions
-  ): Promise<unknown>
+  upsertWithReplace(data: Record<string, unknown>[], replaceFields?: string[], conflictTarget?: string[]): Promise<T[]>
 }

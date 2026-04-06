@@ -49,10 +49,7 @@ function buildMaintenanceUrl(originalUrl: string): string {
  * manta db:create — Create the database if it doesn't exist.
  * Accepts injectable deps for testability (hexagonal architecture).
  */
-export async function createCommand(
-  databaseUrl: string,
-  deps: CreateDeps,
-): Promise<CreateCommandResult> {
+export async function createCommand(databaseUrl: string, deps: CreateDeps): Promise<CreateCommandResult> {
   const dbName = extractDbName(databaseUrl)
   const result: CreateCommandResult = {
     exitCode: 0,
@@ -67,16 +64,22 @@ export async function createCommand(
     return result
   }
 
-  let client
+  // Validate database name against strict pattern to prevent SQL injection
+  // (database names cannot be parameterized in DDL statements)
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(dbName)) {
+    result.exitCode = 1
+    result.errors.push(`Invalid database name: "${dbName}". Must match /^[a-zA-Z_][a-zA-Z0-9_]*$/`)
+    return result
+  }
+
+  let client: Awaited<ReturnType<typeof deps.connectMaintenance>> | undefined
   try {
     // Connect to maintenance DB (postgres)
     const maintenanceUrl = buildMaintenanceUrl(databaseUrl)
     client = await deps.connectMaintenance(maintenanceUrl)
 
-    // Check if DB exists
-    const rows = await client.query<{ datname: string }>(
-      `SELECT datname FROM pg_database WHERE datname = '${dbName}'`,
-    )
+    // Check if DB exists — dbName is validated above
+    const rows = await client.query<{ datname: string }>(`SELECT datname FROM pg_database WHERE datname = '${dbName}'`)
 
     if (rows.length > 0) {
       // Already exists

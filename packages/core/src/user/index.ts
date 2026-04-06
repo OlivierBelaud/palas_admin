@@ -1,0 +1,6 @@
+export type { AutoRouteDeps, RouteEntry } from './auto-routes'
+export { generateAllUserRoutes, getPublicPaths } from './auto-routes'
+export type { UserDefinition } from './define-user'
+export { defineUserModel } from './define-user'
+export { Invite, User } from './models/user'
+export { UserModuleService, type UserModuleServiceDeps } from './user-module-service'

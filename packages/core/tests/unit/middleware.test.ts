@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { defineMiddlewares, mapErrorToStatus, ERROR_STATUS_MAP } from '@manta/core'
+import { defineMiddlewares, ERROR_STATUS_MAP, mapErrorToStatus } from '@manta/core'
+import { describe, expect, it } from 'vitest'
 
 describe('defineMiddlewares', () => {
   // MW-01 — Returns middleware configs as-is
@@ -24,9 +24,7 @@ describe('defineMiddlewares', () => {
 
   // MW-02 — RegExp matcher
   it('supports RegExp matcher', () => {
-    const configs = defineMiddlewares([
-      { matcher: /\/api\/v\d+\/.*/ },
-    ])
+    const configs = defineMiddlewares([{ matcher: /\/api\/v\d+\/.*/ }])
 
     expect(configs[0].matcher).toBeInstanceOf(RegExp)
   })
@@ -34,18 +32,14 @@ describe('defineMiddlewares', () => {
   // MW-03 — Function matcher
   it('supports function matcher', () => {
     const fn = () => true
-    const configs = defineMiddlewares([
-      { matcher: fn },
-    ])
+    const configs = defineMiddlewares([{ matcher: fn }])
 
     expect(typeof configs[0].matcher).toBe('function')
   })
 
   // MW-04 — AUTHENTICATE: false
   it('supports AUTHENTICATE: false', () => {
-    const configs = defineMiddlewares([
-      { matcher: '/public', AUTHENTICATE: false },
-    ])
+    const configs = defineMiddlewares([{ matcher: '/public', AUTHENTICATE: false }])
 
     expect(configs[0].AUTHENTICATE).toBe(false)
   })

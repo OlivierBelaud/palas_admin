@@ -1,9 +1,9 @@
 // Section E — manta build command
 // Tests: E-01 → E-10
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildCommand } from '../src/commands/build'
 
 const TMP = resolve(__dirname, '__tmp_build_test__')
@@ -47,9 +47,7 @@ describe('E — manta build', () => {
 
     await buildCommand({}, TMP)
 
-    const routesJson = JSON.parse(
-      readFileSync(join(TMP, '.manta/manifest/routes.json'), 'utf-8'),
-    )
+    const routesJson = JSON.parse(readFileSync(join(TMP, '.manta/manifest/routes.json'), 'utf-8'))
     expect(routesJson.routes).toBeDefined()
     expect(Array.isArray(routesJson.routes)).toBe(true)
     expect(routesJson.routes.length).toBeGreaterThan(0)
@@ -63,9 +61,7 @@ describe('E — manta build', () => {
 
     const files = ['routes.json', 'subscribers.json', 'workflows.json', 'jobs.json', 'links.json', 'modules.json']
     for (const file of files) {
-      const content = JSON.parse(
-        readFileSync(join(TMP, '.manta/manifest', file), 'utf-8'),
-      )
+      const content = JSON.parse(readFileSync(join(TMP, '.manta/manifest', file), 'utf-8'))
       const key = Object.keys(content)[0]!
       expect(Array.isArray(content[key])).toBe(true)
     }
@@ -77,9 +73,7 @@ describe('E — manta build', () => {
 
     await buildCommand({}, TMP)
 
-    const subs = JSON.parse(
-      readFileSync(join(TMP, '.manta/manifest/subscribers.json'), 'utf-8'),
-    )
+    const subs = JSON.parse(readFileSync(join(TMP, '.manta/manifest/subscribers.json'), 'utf-8'))
     expect(subs.subscribers).toHaveLength(1)
     expect(subs.subscribers[0].id).toBe('product-created')
     expect(subs.subscribers[0].file).toContain('subscribers/product-created.ts')
@@ -91,9 +85,7 @@ describe('E — manta build', () => {
 
     await buildCommand({}, TMP)
 
-    const wf = JSON.parse(
-      readFileSync(join(TMP, '.manta/manifest/workflows.json'), 'utf-8'),
-    )
+    const wf = JSON.parse(readFileSync(join(TMP, '.manta/manifest/workflows.json'), 'utf-8'))
     expect(wf.workflows).toHaveLength(1)
     expect(wf.workflows[0].id).toBe('create-product')
   })
@@ -104,9 +96,7 @@ describe('E — manta build', () => {
 
     await buildCommand({}, TMP)
 
-    const jobs = JSON.parse(
-      readFileSync(join(TMP, '.manta/manifest/jobs.json'), 'utf-8'),
-    )
+    const jobs = JSON.parse(readFileSync(join(TMP, '.manta/manifest/jobs.json'), 'utf-8'))
     expect(jobs.jobs).toHaveLength(1)
     expect(jobs.jobs[0].id).toBe('cleanup-carts')
   })
@@ -117,9 +107,7 @@ describe('E — manta build', () => {
 
     await buildCommand({}, TMP)
 
-    const mods = JSON.parse(
-      readFileSync(join(TMP, '.manta/manifest/modules.json'), 'utf-8'),
-    )
+    const mods = JSON.parse(readFileSync(join(TMP, '.manta/manifest/modules.json'), 'utf-8'))
     expect(mods.modules).toHaveLength(1)
     expect(mods.modules[0].name).toBe('product')
     expect(mods.modules[0].file).toBe('src/modules/product/index.ts')

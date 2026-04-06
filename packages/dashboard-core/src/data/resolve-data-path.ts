@@ -5,7 +5,7 @@ export function resolveDataPath(data: unknown, path: string): unknown {
     return undefined
   }
 
-  const segments = path.split(".")
+  const segments = path.split('.')
   let current: unknown = data
 
   for (let i = 0; i < segments.length; i++) {
@@ -13,20 +13,19 @@ export function resolveDataPath(data: unknown, path: string): unknown {
 
     if (current === null || current === undefined) return undefined
 
-    if (segment === "$count" && Array.isArray(current)) {
+    if (segment === '$count' && Array.isArray(current)) {
       return current.length
     }
 
-    if (segment === "length" && Array.isArray(current)) {
+    if (segment === 'length' && Array.isArray(current)) {
       return current.length
     }
 
-    if (segment.startsWith("$sum:") && Array.isArray(current)) {
+    if (segment.startsWith('$sum:') && Array.isArray(current)) {
       const field = segment.slice(5)
       return current.reduce(
-        (sum: number, item: Record<string, unknown>) =>
-          sum + (typeof item[field] === "number" ? item[field] : 0),
-        0
+        (sum: number, item: Record<string, unknown>) => sum + (typeof item[field] === 'number' ? item[field] : 0),
+        0,
       )
     }
 
@@ -35,7 +34,7 @@ export function resolveDataPath(data: unknown, path: string): unknown {
       continue
     }
 
-    if (typeof current === "object" && current !== null) {
+    if (typeof current === 'object' && current !== null) {
       current = (current as Record<string, unknown>)[segment]
       continue
     }

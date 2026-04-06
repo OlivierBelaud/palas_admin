@@ -1,13 +1,11 @@
-import { z } from "zod"
-import { PageElementSchema } from "../blocks/index"
+import { z } from 'zod'
+import { PageElementSchema } from '../blocks/index'
 
 // QueryDef — declarative data query
 
 export const QueryDefSchema = z.object({
   entity: z.string(),
-  id: z
-    .object({ $state: z.string() })
-    .optional(),
+  id: z.object({ $state: z.string() }).optional(),
   list: z.boolean().optional(),
   expand: z.record(z.string(), z.unknown()).optional(),
   fields: z.string().optional(),
@@ -39,8 +37,8 @@ export type BreadcrumbDef = z.infer<typeof BreadcrumbDefSchema>
 
 export const PageSpecSchema = z.object({
   id: z.string(),
-  type: z.enum(["list", "detail"]),
-  layout: z.enum(["single-column", "two-column"]),
+  type: z.enum(['list', 'detail']),
+  layout: z.enum(['single-column', 'two-column']),
   route: z.string().optional(),
   query: QueryDefSchema,
   breadcrumb: BreadcrumbDefSchema.optional(),

@@ -1,10 +1,13 @@
 // SPEC-097 — InMemoryNotificationAdapter implements INotificationPort
 
-import type { INotificationPort } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { INotificationPort } from '../ports'
 
 export class InMemoryNotificationAdapter implements INotificationPort {
-  private _sent: Array<{ notification: Parameters<INotificationPort['send']>[0]; result: Awaited<ReturnType<INotificationPort['send']>> }> = []
+  private _sent: Array<{
+    notification: Parameters<INotificationPort['send']>[0]
+    result: Awaited<ReturnType<INotificationPort['send']>>
+  }> = []
   private _idempotencyKeys = new Set<string>()
   private _configuredChannels: Set<string> | null = null
   private _failRecipients = new Set<string>()
@@ -56,11 +59,20 @@ export class InMemoryNotificationAdapter implements INotificationPort {
     return result
   }
 
-  async sendBatch(notifications: Array<Parameters<INotificationPort['send']>[0]>): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>> {
+  async sendBatch(
+    notifications: Array<Parameters<INotificationPort['send']>[0]>,
+  ): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>> {
     return Promise.all(notifications.map((n) => this.send(n)))
   }
 
   /** Test helper: inspect sent notifications */
-  getSent() { return [...this._sent] }
-  _reset() { this._sent = []; this._idempotencyKeys.clear(); this._configuredChannels = null; this._failRecipients.clear() }
+  getSent() {
+    return [...this._sent]
+  }
+  _reset() {
+    this._sent = []
+    this._idempotencyKeys.clear()
+    this._configuredChannels = null
+    this._failRecipients.clear()
+  }
 }

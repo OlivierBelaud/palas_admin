@@ -3,19 +3,34 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "manta": "./bin/manta.ts"
+    "manta": "./bin/manta.mjs"
   },
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./resource-loader": "./src/resource-loader.ts",
+    "./bootstrap": "./src/bootstrap/bootstrap-app.ts",
+    "./config": "./src/config/load-config.ts",
+    "./env": "./src/config/load-env.ts",
+    "./package.json": "./package.json"
+  },
   "dependencies": {
-    "@manta/core": "workspace:*",
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/google": "^3.0.43",
+    "@ai-sdk/mistral": "^3.0.24",
+    "@ai-sdk/openai": "^3.0.41",
+    "@manta/adapter-database-pg": "workspace:*",
+    "ai": "^4.0.0",
+    "@manta/adapter-h3": "workspace:*",
     "@manta/adapter-logger-pino": "workspace:*",
-    "@manta/adapter-drizzle-pg": "workspace:*",
-    "@manta/adapter-nitro": "workspace:*",
-    "dotenv": "^16.4.0",
-    "commander": "^12.0.0",
+    "@manta/core": "workspace:*",
+    "@manta/host-nitro": "workspace:*",
     "chokidar": "^4.0.0",
-    "postgres": "^3.4.0",
-    "drizzle-orm": "^0.35.0"
+    "commander": "^12.0.0",
+    "dotenv": "^16.4.0",
+    "jiti": "^2.6.0",
+    "drizzle-orm": "^0.35.0",
+    "postgres": "^3.4.0"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

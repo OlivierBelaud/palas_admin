@@ -1,7 +1,7 @@
 // SPEC-067/082 — PinoLoggerAdapter implements ILoggerPort
 
-import pino from 'pino'
 import type { ILoggerPort } from '@manta/core/ports'
+import pino from 'pino'
 
 /**
  * Maps Manta log levels to Pino log levels.
@@ -163,12 +163,14 @@ export class PinoLoggerAdapter implements ILoggerPort {
   }
 
   private logWithData(pinoLevel: string, msg: string, args: unknown[]): void {
+    const logFn = this.logger[pinoLevel as keyof pino.Logger] as pino.LogFn | undefined
+    if (!logFn) return
     if (args.length === 0) {
-      this.logger[pinoLevel as keyof pino.Logger](msg)
+      logFn.call(this.logger, msg)
     } else if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
-      this.logger[pinoLevel as keyof pino.Logger](args[0], msg)
+      logFn.call(this.logger, args[0] as object, msg)
     } else {
-      this.logger[pinoLevel as keyof pino.Logger]({ data: args.length === 1 ? args[0] : args }, msg)
+      logFn.call(this.logger, { data: args.length === 1 ? args[0] : args }, msg)
     }
   }
 }

@@ -1,8 +1,8 @@
 // SPEC-039 — File-system route discovery
 // Scans src/api/ and maps file paths to HTTP routes
 
-import { resolve, relative, dirname, basename } from 'node:path'
 import { existsSync, readdirSync, statSync } from 'node:fs'
+import { basename, dirname, relative, resolve } from 'node:path'
 
 export interface DiscoveredRoute {
   /** HTTP method (GET, POST, PUT, DELETE, PATCH) */
@@ -13,6 +13,8 @@ export interface DiscoveredRoute {
   file: string
   /** Export name in the module (e.g. 'GET', 'POST') */
   exportName: string
+  /** Optional Zod schema for body validation (from VALIDATION export) */
+  bodySchema?: unknown
 }
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
@@ -39,19 +41,28 @@ export async function discoverRoutes(cwd: string): Promise<DiscoveredRoute[]> {
   for (const file of routeFiles) {
     // Derive URL path from file path
     const relPath = relative(apiDir, dirname(file))
-    const urlPath = '/api/' + relPath
-      .split('/')
-      .map((segment) => {
-        // [id] → :id
-        if (segment.startsWith('[') && segment.endsWith(']')) {
-          return ':' + segment.slice(1, -1)
-        }
-        return segment
-      })
-      .join('/')
+    const urlPath =
+      '/api/' +
+      relPath
+        .split('/')
+        .map((segment) => {
+          // [...path] → ** (H3/Nitro catch-all syntax)
+          if (segment.startsWith('[...') && segment.endsWith(']')) {
+            return '**'
+          }
+          // [id] → :id
+          if (segment.startsWith('[') && segment.endsWith(']')) {
+            return ':' + segment.slice(1, -1)
+          }
+          return segment
+        })
+        .join('/')
 
     // Import the module to discover exported methods
     const mod = await import(`${file}?t=${Date.now()}`)
+
+    // Check for VALIDATION export: { POST: zodSchema, PUT: zodSchema, ... }
+    const validation = mod.VALIDATION as Record<string, unknown> | undefined
 
     for (const exportName of Object.keys(mod)) {
       if (HTTP_METHODS.has(exportName) && typeof mod[exportName] === 'function') {
@@ -60,6 +71,7 @@ export async function discoverRoutes(cwd: string): Promise<DiscoveredRoute[]> {
           path: urlPath,
           file,
           exportName,
+          bodySchema: validation?.[exportName],
         })
       }
     }

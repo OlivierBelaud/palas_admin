@@ -1,7 +1,7 @@
-import { useMemo } from "react"
-import { useLocation } from "react-router-dom"
-import { useDashboardContext } from "../context"
-import type { PageSpec, DataComponent } from "../pages/types"
+import { useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
+import { useDashboardContext } from '../context'
+import type { DataComponent, PageSpec } from '../pages/types'
 
 export interface PageContext {
   pageId: string
@@ -16,15 +16,18 @@ export interface PageContext {
  */
 export function usePageContext(
   allPages?: Record<string, PageSpec> | null,
-  allComponents?: Record<string, DataComponent> | null
+  allComponents?: Record<string, DataComponent> | null,
 ): PageContext | null {
   const location = useLocation()
   const { overrideStore } = useDashboardContext()
 
   return useMemo(() => {
     const pathname = location.pathname
-    const pages = allPages || {}
-    const components = allComponents || {}
+    // Merge provided pages/components with custom pages/components from overrideStore
+    const customPages = overrideStore.getCustomPages()
+    const customComponents = overrideStore.getCustomComponents()
+    const pages = { ...(allPages || {}), ...customPages }
+    const components = { ...(allComponents || {}), ...customComponents }
 
     // Find the matching page spec by route pattern
     let matchedSpec: PageSpec | null = null
@@ -41,9 +44,7 @@ export function usePageContext(
     // Check for runtime overrides on this page
     const runtime = overrideStore.getOverrides()
     const pageOverride = runtime.pages[matchedSpec.id]
-    const effectiveSpec = pageOverride
-      ? { ...matchedSpec, ...pageOverride }
-      : matchedSpec
+    const effectiveSpec = pageOverride ? { ...matchedSpec, ...pageOverride } : matchedSpec
 
     // Collect all component IDs referenced by this page
     const mainRefs = asStringArray(effectiveSpec.main)
@@ -75,20 +76,20 @@ export function usePageContext(
 }
 
 function asStringArray(arr: Array<string | { ref: string }>): string[] {
-  return arr.map((el) => (typeof el === "string" ? el : el.ref))
+  return arr.map((el) => (typeof el === 'string' ? el : el.ref))
 }
 
 /**
  * Simple route pattern matcher: /products/:id matches /products/prod_123
  */
 function matchRoute(pattern: string, pathname: string): boolean {
-  const patternParts = pattern.split("/").filter(Boolean)
-  const pathParts = pathname.split("/").filter(Boolean)
+  const patternParts = pattern.split('/').filter(Boolean)
+  const pathParts = pathname.split('/').filter(Boolean)
 
   if (patternParts.length !== pathParts.length) return false
 
   for (let i = 0; i < patternParts.length; i++) {
-    if (patternParts[i].startsWith(":")) continue
+    if (patternParts[i].startsWith(':')) continue
     if (patternParts[i] !== pathParts[i]) return false
   }
 

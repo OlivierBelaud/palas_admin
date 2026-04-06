@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "outDir": ".medusa/server",
-    "rootDir": "src",
+    "rootDir": ".",
     "declaration": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "medusa-config.ts"]

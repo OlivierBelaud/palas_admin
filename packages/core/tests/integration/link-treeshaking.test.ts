@@ -1,20 +1,33 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import type { TestMantaApp } from '@manta/core'
 import {
+  createTestMantaApp,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
   MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
-} from '@manta/test-utils'
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('defineLink Tree-Shaking Integration', () => {
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   beforeEach(() => {
-    container = createTestContainer()
+    app = createTestMantaApp({ infra: makeInfra() })
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // SPEC-012: links in src/links/ are discovered after build
@@ -40,10 +53,7 @@ describe('defineLink Tree-Shaking Integration', () => {
 
     // In strict mode, this would throw MantaError
     if (!isValidLinkPath(linkPath)) {
-      const error = new MantaError(
-        'INVALID_STATE',
-        `Link "${linkPath}" must be in src/links/ directory (strict mode)`,
-      )
+      const error = new MantaError('INVALID_STATE', `Link "${linkPath}" must be in src/links/ directory (strict mode)`)
       expect(error.type).toBe('INVALID_STATE')
     }
   })
@@ -65,10 +75,7 @@ describe('defineLink Tree-Shaking Integration', () => {
   // SPEC-068: undeclared plugin link is ignored in production
   it('plugin link present but NOT declared is ignored', () => {
     const declaredLinks = ['test-plugin/src/links/declared.ts']
-    const filesOnDisk = [
-      'test-plugin/src/links/declared.ts',
-      'test-plugin/src/links/undeclared.ts',
-    ]
+    const filesOnDisk = ['test-plugin/src/links/declared.ts', 'test-plugin/src/links/undeclared.ts']
 
     // Manifest only includes declared links
     const manifest = { links: declaredLinks }

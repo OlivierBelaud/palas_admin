@@ -1,10 +1,10 @@
-import { Toaster, TooltipProvider } from "@medusajs/ui"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PropsWithChildren } from "react"
-import { HelmetProvider } from "react-helmet-async"
-import { ExtensionAPI, ExtensionProvider } from "./extension-provider"
-import { ThemeProvider } from "./theme-provider"
-import { AiProvider } from "../ai"
+import { Toaster, TooltipProvider } from '@manta/ui'
+import { type QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { PropsWithChildren } from 'react'
+import { HelmetProvider } from 'react-helmet-async'
+import { AiProvider } from '../ai'
+import { type ExtensionAPI, ExtensionProvider } from './extension-provider'
+import { ThemeProvider } from './theme-provider'
 
 type ProvidersProps = PropsWithChildren<{
   api: ExtensionAPI

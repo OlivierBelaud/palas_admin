@@ -1,10 +1,9 @@
 // SPEC-070 — manta dev command
-// Bootstraps the app with real adapters and starts the dev server
+// Starts the Nitro dev server.
 
-import type { DevOptions, LoadedConfig } from '../types'
-import { loadEnv } from '../config/load-env'
 import { loadConfig, validateConfigForCommand } from '../config/load-config'
-import { bootstrapAndStart } from '../server-bootstrap'
+import { loadEnv } from '../config/load-env'
+import type { DevOptions, LoadedConfig } from '../types'
 
 export type { MantaRequest } from '../server-bootstrap'
 
@@ -15,14 +14,9 @@ export interface DevCommandResult {
 }
 
 /**
- * manta dev — Start the development server.
- * Profile is always 'dev'.
- * Pretty logs, auto-migration, HMR (future).
+ * manta dev — Start Nitro dev server.
  */
-export async function devCommand(
-  options: DevOptions = {},
-  cwd: string = process.cwd(),
-): Promise<DevCommandResult> {
+export async function devCommand(options: DevOptions = {}, cwd: string = process.cwd()): Promise<DevCommandResult> {
   const result: DevCommandResult = { exitCode: 0, errors: [], warnings: [] }
 
   // [1] Load .env
@@ -39,7 +33,7 @@ export async function devCommand(
     return result
   }
 
-  // [3] Validate required fields for dev
+  // [3] Validate
   const validationErrors = validateConfigForCommand(config, 'dev')
   if (validationErrors.length > 0) {
     result.exitCode = 1
@@ -47,22 +41,63 @@ export async function devCommand(
     return result
   }
 
-  // [4] Resolve port
-  const port = options.port ?? config.http?.port ?? 9000
+  const port = options.port ?? (Number(process.env.PORT) || undefined) ?? config.http?.port ?? 3000
 
-  // [5] Bootstrap and start (never returns — blocks on HTTP server)
+  // [4] Legacy src/admin/ removed — V2 uses src/spa/{name}/ exclusively
+  const viteConfigPath: string | undefined = undefined
+
+  // [5] Generate .manta/generated.d.ts (codegen for typed step proxy)
   try {
-    await bootstrapAndStart({
-      config,
-      port,
-      cwd,
-      mode: 'dev',
-      verbose: options.verbose,
-    })
+    const { generateTypesFromModules } = await import('../bootstrap/generate-types')
+    await generateTypesFromModules(cwd)
   } catch (err) {
-    result.exitCode = 1
-    result.errors.push(err instanceof Error ? err.message : String(err))
+    result.warnings.push(`Types generation failed: ${err instanceof Error ? err.message : String(err)}`)
   }
+
+  // [5b] Auto-detect SPAs from src/spa/{name}/ + merge defaults with config overrides
+  const spaEntries: Array<{ name: string; viteConfigPath: string; vitePort: number }> = []
+  {
+    const { discoverResources } = await import('../resource-loader')
+    const resources = await discoverResources(cwd)
+
+    if (resources.spas.length > 0) {
+      const { generateSpaArtifacts } = await import('../spa/generate-spa')
+      const { SPA_DEFAULTS } = await import('@manta/core')
+      const configOverrides = config.spa ?? {}
+      let nextPort = 5200
+
+      for (const spa of resources.spas) {
+        const override = configOverrides[spa.name] ?? {}
+        const dashboard = override.dashboard === null ? undefined : (override.dashboard ?? SPA_DEFAULTS.dashboard)
+        const preset = override.preset === null ? undefined : (override.preset ?? SPA_DEFAULTS.preset)
+
+        const viteConfig = generateSpaArtifacts({ cwd, spa, dashboard, preset, port })
+        spaEntries.push({ name: spa.name, viteConfigPath: viteConfig, vitePort: nextPort++ })
+        console.log(
+          `  SPA: /${spa.name} (${spa.pages.length} pages${dashboard ? `, ${dashboard}` : ', custom'}${preset ? ` + ${preset}` : ''})`,
+        )
+      }
+    }
+  }
+
+  // [6] Launch dev server via @manta/host-nitro
+  console.log(`\n  Starting Manta dev server on port ${port}...`)
+  console.log(`  Nitro\n`)
+
+  const { startDevServer } = await import('@manta/host-nitro')
+  const server = await startDevServer({ cwd, port, viteConfigPath, spas: spaEntries })
+
+  // Block until process exits (or server is closed)
+  await new Promise<void>((resolve) => {
+    process.on('SIGINT', async () => {
+      await server.close()
+      resolve()
+    })
+    process.on('SIGTERM', async () => {
+      await server.close()
+      resolve()
+    })
+  })
 
   return result
 }

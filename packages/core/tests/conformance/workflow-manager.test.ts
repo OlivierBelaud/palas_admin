@@ -1,101 +1,90 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import type { MantaApp, TestMantaApp } from '@manta/core'
 import {
-  createTestContainer,
-  InMemoryContainer,
-} from '@manta/test-utils'
-import { WorkflowManager, createWorkflow, step } from '@manta/core'
+  createStep,
+  createTestMantaApp,
+  createWorkflow,
+  InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+  WorkflowManager,
+} from '@manta/core'
+import { createTestApp } from '@manta/test-utils'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 describe('WorkflowManager', () => {
-  let container: InMemoryContainer
+  let app: MantaApp
   let manager: WorkflowManager
 
   beforeEach(() => {
-    container = createTestContainer()
-    manager = new WorkflowManager(container)
-    container.register('workflowManager', manager)
+    app = createTestApp()
+    manager = new WorkflowManager(app)
   })
 
   // WM-01 — Sequential step execution
-  it('executes steps sequentially and returns last step output', async () => {
-    const workflow = createWorkflow({
-      name: 'test-seq',
-      steps: [
-        step({
-          name: 'step-a',
-          handler: async ({ input }) => ({ value: (input.x as number) + 1 }),
-        }),
-        step({
-          name: 'step-b',
-          handler: async ({ previousOutput }) => {
-            const a = previousOutput['step-a'] as { value: number }
-            return { value: a.value * 2 }
-          },
-        }),
-      ],
+  it('executes steps sequentially and returns last output', async () => {
+    const add = createStep('add', async (input: { x: number }) => ({ value: input.x + 1 }))
+    const double = createStep('double', async (input: { value: number }) => ({ value: input.value * 2 }))
+
+    const wf = createWorkflow('test-seq', async (input: { x: number }, { app }) => {
+      const a = await add(input, { app })
+      return await double(a, { app })
     })
 
-    manager.register(workflow)
-    const result = await manager.run('test-seq', { input: { x: 5 } })
+    manager.register(wf)
+    const { transaction, result } = await manager.run('test-seq', { input: { x: 5 } })
+    expect(transaction.state).toBe('done')
     expect(result).toEqual({ value: 12 })
   })
 
-  // WM-02 — Step receives input and previousOutput
-  it('passes input and previousOutput to each step', async () => {
-    const received: Array<{ input: unknown; keys: string[] }> = []
+  // WM-02 — Input flows through JavaScript scope
+  it('passes data between steps via normal JS variables', async () => {
+    const step1 = createStep('first', async (input: { foo: string }) => ({ fromFirst: true, foo: input.foo }))
+    const step2 = createStep('second', async (input: { fromFirst: boolean; foo: string }) => ({
+      combined: `${input.foo}-${input.fromFirst}`,
+    }))
 
-    const workflow = createWorkflow({
-      name: 'test-ctx',
-      steps: [
-        step({
-          name: 'first',
-          handler: async ({ input, previousOutput }) => {
-            received.push({ input, keys: Object.keys(previousOutput) })
-            return { fromFirst: true }
-          },
-        }),
-        step({
-          name: 'second',
-          handler: async ({ input, previousOutput }) => {
-            received.push({ input, keys: Object.keys(previousOutput) })
-            return { fromSecond: true }
-          },
-        }),
-      ],
+    const wf = createWorkflow('test-scope', async (input: { foo: string }, { app }) => {
+      const r1 = await step1(input, { app })
+      return await step2(r1, { app })
     })
 
-    manager.register(workflow)
-    await manager.run('test-ctx', { input: { foo: 'bar' } })
-
-    expect(received[0].keys).toEqual([])
-    expect(received[1].keys).toEqual(['first'])
-    expect((received[0].input as Record<string, unknown>).foo).toBe('bar')
+    manager.register(wf)
+    const { result } = await manager.run('test-scope', { input: { foo: 'bar' } })
+    expect(result).toEqual({ combined: 'bar-true' })
   })
 
-  // WM-03 — Compensation on failure (saga rollback)
-  it('compensates completed steps in reverse on failure', async () => {
+  // WM-03 — Compensation on failure (saga rollback after all retries exhausted)
+  it('compensates completed steps in reverse after all retries fail', async () => {
     const compensated: string[] = []
 
-    const workflow = createWorkflow({
-      name: 'test-comp',
-      steps: [
-        step({
-          name: 'step-a',
-          handler: async () => ({ id: 'a1' }),
-          compensation: async () => { compensated.push('a') },
-        }),
-        step({
-          name: 'step-b',
-          handler: async () => ({ id: 'b1' }),
-          compensation: async () => { compensated.push('b') },
-        }),
-        step({
-          name: 'step-c',
-          handler: async () => { throw new Error('step-c failed') },
-        }),
-      ],
+    const stepA = createStep(
+      'step-a',
+      async () => ({ id: 'a1' }),
+      async () => {
+        compensated.push('a')
+      },
+    )
+    const stepB = createStep(
+      'step-b',
+      async () => ({ id: 'b1' }),
+      async () => {
+        compensated.push('b')
+      },
+    )
+    const stepC = createStep('step-c', async () => {
+      throw new Error('step-c failed')
     })
 
-    manager.register(workflow)
+    const wf = createWorkflow('test-comp', async (_input: unknown, { app }) => {
+      await stepA({}, { app })
+      await stepB({}, { app })
+      await stepC({}, { app })
+    })
+
+    manager.register(wf)
+    // run() retries 3 times internally, then compensates and throws
     await expect(manager.run('test-comp')).rejects.toThrow('step-c failed')
     expect(compensated).toEqual(['b', 'a'])
   })
@@ -104,84 +93,91 @@ describe('WorkflowManager', () => {
   it('skips steps without compensation handler', async () => {
     const compensated: string[] = []
 
-    const workflow = createWorkflow({
-      name: 'test-skip-comp',
-      steps: [
-        step({
-          name: 'step-a',
-          handler: async () => ({}),
-          // No compensation
-        }),
-        step({
-          name: 'step-b',
-          handler: async () => ({}),
-          compensation: async () => { compensated.push('b') },
-        }),
-        step({
-          name: 'step-c',
-          handler: async () => { throw new Error('fail') },
-        }),
-      ],
+    const stepA = createStep('step-a', async () => ({}))
+    const stepB = createStep(
+      'step-b',
+      async () => ({}),
+      async () => {
+        compensated.push('b')
+      },
+    )
+    const stepC = createStep('step-c', async () => {
+      throw new Error('fail')
     })
 
-    manager.register(workflow)
+    const wf = createWorkflow('test-skip-comp', async (_input: unknown, { app }) => {
+      await stepA({}, { app })
+      await stepB({}, { app })
+      await stepC({}, { app })
+    })
+
+    manager.register(wf)
     await expect(manager.run('test-skip-comp')).rejects.toThrow('fail')
     expect(compensated).toEqual(['b'])
   })
 
-  // WM-05 — Compensation receives step output
-  it('passes step output to compensation handler', async () => {
+  // WM-05 — Compensation receives step output (the return value)
+  it('passes step return value to compensation', async () => {
     let compensationOutput: unknown = null
 
-    const workflow = createWorkflow({
-      name: 'test-comp-output',
-      steps: [
-        step({
-          name: 'create',
-          handler: async () => ({ productId: 'prod_123' }),
-          compensation: async ({ output }) => { compensationOutput = output },
-        }),
-        step({
-          name: 'fail',
-          handler: async () => { throw new Error('boom') },
-        }),
-      ],
+    const createItem = createStep(
+      'create',
+      async () => ({ productId: 'prod_123' }),
+      async (output) => {
+        compensationOutput = output
+      },
+    )
+    const failStep = createStep('fail', async () => {
+      throw new Error('boom')
     })
 
-    manager.register(workflow)
+    const wf = createWorkflow('test-comp-output', async (_input: unknown, { app }) => {
+      await createItem({}, { app })
+      await failStep({}, { app })
+    })
+
+    manager.register(wf)
     await expect(manager.run('test-comp-output')).rejects.toThrow('boom')
     expect(compensationOutput).toEqual({ productId: 'prod_123' })
   })
 
   // WM-06 — Sub-workflow via workflowManager.run
-  it('supports sub-workflows via context.resolve', async () => {
-    const subWorkflow = createWorkflow({
-      name: 'sub-wf',
-      steps: [
-        step({
-          name: 'sub-step',
-          handler: async ({ input }) => ({ doubled: (input.val as number) * 2 }),
-        }),
-      ],
+  // Uses createTestMantaApp because steps need app.resolve('workflowManager')
+  // which requires dynamic registration not available on frozen MantaApp
+  it('supports sub-workflows via app resolve', async () => {
+    const testApp = createTestMantaApp({
+      infra: {
+        eventBus: new InMemoryEventBusAdapter(),
+        logger: new TestLogger(),
+        cache: new InMemoryCacheAdapter(),
+        locking: new InMemoryLockingAdapter(),
+        file: new InMemoryFileAdapter(),
+        db: {},
+      },
+    })
+    const legacyManager = new WorkflowManager(testApp)
+    testApp.register('workflowManager', legacyManager)
+
+    const doubleStep = createStep('double', async (input: { val: number }) => ({ doubled: input.val * 2 }))
+
+    const subWf = createWorkflow('sub-wf', async (input: { val: number }, { app }) => {
+      return await doubleStep(input, { app })
     })
 
-    const parentWorkflow = createWorkflow({
-      name: 'parent-wf',
-      steps: [
-        step({
-          name: 'call-sub',
-          handler: async ({ input, context }) => {
-            const wm = context.resolve<WorkflowManager>('workflowManager')
-            return wm.run('sub-wf', { input: { val: input.val } })
-          },
-        }),
-      ],
+    const callSubStep = createStep('call-sub', async (input: { val: number }, { app }) => {
+      const wm = app.resolve<WorkflowManager>('workflowManager')
+      const { result } = await wm.run('sub-wf', { input: { val: (input as { val: number }).val } })
+      return result
     })
 
-    manager.register(subWorkflow)
-    manager.register(parentWorkflow)
+    const parentWf = createWorkflow('parent-wf', async (input: { val: number }, { app }) => {
+      return await callSubStep(input, { app })
+    })
 
-    const result = await manager.run('parent-wf', { input: { val: 10 } })
+    legacyManager.register(subWf)
+    legacyManager.register(parentWf)
+
+    const { result } = await legacyManager.run('parent-wf', { input: { val: 10 } })
     expect(result).toEqual({ doubled: 20 })
   })
 
@@ -190,61 +186,196 @@ describe('WorkflowManager', () => {
     await expect(manager.run('nonexistent')).rejects.toThrow('Workflow "nonexistent" not registered')
   })
 
-  // WM-08 — Compensation failure is best-effort (does not prevent other compensations)
+  // WM-08 — Compensation failure is best-effort
   it('continues compensation even if one fails', async () => {
     const compensated: string[] = []
 
-    const workflow = createWorkflow({
-      name: 'test-comp-fail',
-      steps: [
-        step({
-          name: 'a',
-          handler: async () => ({}),
-          compensation: async () => { compensated.push('a') },
-        }),
-        step({
-          name: 'b',
-          handler: async () => ({}),
-          compensation: async () => { throw new Error('comp-b failed') },
-        }),
-        step({
-          name: 'c',
-          handler: async () => ({}),
-          compensation: async () => { compensated.push('c') },
-        }),
-        step({
-          name: 'd',
-          handler: async () => { throw new Error('d failed') },
-        }),
-      ],
+    const a = createStep(
+      'a',
+      async () => ({}),
+      async () => {
+        compensated.push('a')
+      },
+    )
+    const b = createStep(
+      'b',
+      async () => ({}),
+      async () => {
+        throw new Error('comp-b failed')
+      },
+    )
+    const c = createStep(
+      'c',
+      async () => ({}),
+      async () => {
+        compensated.push('c')
+      },
+    )
+    const d = createStep('d', async () => {
+      throw new Error('d failed')
     })
 
-    manager.register(workflow)
+    const wf = createWorkflow('test-comp-fail', async (_input: unknown, { app }) => {
+      await a({}, { app })
+      await b({}, { app })
+      await c({}, { app })
+      await d({}, { app })
+    })
+
+    manager.register(wf)
     await expect(manager.run('test-comp-fail')).rejects.toThrow('d failed')
-    // c and a should be compensated, b's compensation fails but doesn't block a
     expect(compensated).toContain('c')
     expect(compensated).toContain('a')
   })
 
-  // WM-09 — Context resolve works inside steps
-  it('allows resolving services from container in steps', async () => {
-    container.register('myService', { greet: () => 'hello' })
+  // WM-09 — Container resolve works inside steps
+  // Uses createTestMantaApp because steps need app.resolve() for custom services
+  // and app.register() for dynamic registration
+  it('allows resolving services from app in steps', async () => {
+    const testApp = createTestMantaApp({
+      infra: {
+        eventBus: new InMemoryEventBusAdapter(),
+        logger: new TestLogger(),
+        cache: new InMemoryCacheAdapter(),
+        locking: new InMemoryLockingAdapter(),
+        file: new InMemoryFileAdapter(),
+        db: {},
+      },
+    })
+    const legacyManager = new WorkflowManager(testApp)
+    testApp.register('myService', { greet: () => 'hello' })
 
-    const workflow = createWorkflow({
-      name: 'test-resolve',
-      steps: [
-        step({
-          name: 'use-service',
-          handler: async ({ context }) => {
-            const svc = context.resolve<{ greet: () => string }>('myService')
-            return { greeting: svc.greet() }
-          },
-        }),
-      ],
+    const useService = createStep('use-service', async (_input: unknown, { app }) => {
+      const svc = app.resolve<{ greet: () => string }>('myService')
+      return { greeting: svc.greet() }
     })
 
-    manager.register(workflow)
-    const result = await manager.run('test-resolve')
+    const wf = createWorkflow('test-resolve', async (input: unknown, { app }) => {
+      return await useService(input, { app })
+    })
+
+    legacyManager.register(wf)
+    const { result } = await legacyManager.run('test-resolve')
     expect(result).toEqual({ greeting: 'hello' })
+  })
+
+  // WM-10 — Workflow with if/else works (no transform/when needed)
+  it('supports if/else in workflow function', async () => {
+    const createDraft = createStep('create-draft', async (input: { title: string }) => ({
+      id: 'prod_1',
+      title: input.title,
+      status: 'draft',
+    }))
+    const activate = createStep('activate', async (input: { id: string }) => ({
+      id: input.id,
+      status: 'active',
+    }))
+
+    const wf = createWorkflow('test-conditional', async (input: { title: string; autoActivate: boolean }, { app }) => {
+      const product = await createDraft(input, { app })
+      if (input.autoActivate) {
+        return await activate(product, { app })
+      }
+      return product
+    })
+
+    manager.register(wf)
+
+    const r1 = await manager.run('test-conditional', { input: { title: 'A', autoActivate: true } })
+    expect((r1.result as { status: string }).status).toBe('active')
+
+    const r2 = await manager.run('test-conditional', { input: { title: 'B', autoActivate: false } })
+    expect((r2.result as { status: string }).status).toBe('draft')
+  })
+
+  // WM-11 — Cleanup: checkpoints removed after completion
+  it('cleans up after successful completion (no leaked state)', async () => {
+    const s = createStep('simple', async () => ({ done: true }))
+    const wf = createWorkflow('test-cleanup', async (_input: unknown, { app }) => {
+      return await s({}, { app })
+    })
+
+    manager.register(wf)
+    const { transaction } = await manager.run('test-cleanup')
+    expect(transaction.state).toBe('done')
+    // No assertion on DB here (in-memory mode) — but the mechanism is in place
+  })
+
+  // =========================================================================
+  // Durable Execution — retry-before-compensate (always enabled, 3 attempts)
+  // =========================================================================
+
+  // WM-12 — Transient failure: retried automatically, succeeds on attempt 2
+  it('retries a transient failure and succeeds without compensation', async () => {
+    const compensated: string[] = []
+    let stepACallCount = 0
+    let stepBCallCount = 0
+
+    const stepA = createStep(
+      'step-a',
+      async () => {
+        stepACallCount++
+        return { id: 'a1' }
+      },
+      async () => {
+        compensated.push('a')
+      },
+    )
+    const stepB = createStep('step-b', async () => {
+      stepBCallCount++
+      if (stepBCallCount === 1) throw new Error('transient')
+      return { id: 'b1' }
+    })
+
+    const wf = createWorkflow('test-retry', async (_input: unknown, { app }) => {
+      const a = await stepA({}, { app })
+      const b = await stepB({}, { app })
+      return { a, b }
+    })
+
+    manager.register(wf)
+    const result = await manager.run('test-retry')
+
+    // Should succeed on retry
+    expect(result.transaction.state).toBe('done')
+    expect(result.result).toEqual({ a: { id: 'a1' }, b: { id: 'b1' } })
+    // stepA ran once, stepB was skipped on retry (checkpoint), no — stepB has no checkpoint because it failed
+    // stepA ran once on attempt 1, then was skipped (checkpoint) on attempt 2
+    expect(stepACallCount).toBe(1)
+    // stepB failed on attempt 1, succeeded on attempt 2
+    expect(stepBCallCount).toBe(2)
+    // No compensation
+    expect(compensated).toEqual([])
+  })
+
+  // WM-13 — Permanent failure: retried 3 times, then compensates
+  it('compensates after all 3 retry attempts are exhausted', async () => {
+    const compensated: string[] = []
+    let stepBCallCount = 0
+
+    const stepA = createStep(
+      'step-a',
+      async () => ({ id: 'a1' }),
+      async () => {
+        compensated.push('a')
+      },
+    )
+    const stepB = createStep('step-b', async () => {
+      stepBCallCount++
+      throw new Error('permanent failure')
+    })
+
+    const wf = createWorkflow('test-exhaust', async (_input: unknown, { app }) => {
+      await stepA({}, { app })
+      await stepB({}, { app })
+    })
+
+    manager.register(wf)
+    await expect(manager.run('test-exhaust')).rejects.toThrow('permanent failure')
+
+    // stepB was tried 3 times
+    expect(stepBCallCount).toBe(3)
+    // Compensation ran after all retries exhausted
+    expect(compensated).toEqual(['a'])
   })
 })

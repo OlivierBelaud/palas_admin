@@ -84,7 +84,7 @@ module.exports = defineConfig({
               find: "@medusajs/dashboard",
               replacement: path.resolve(
                 __dirname,
-                "../../packages/dashboard-medusa/src/index.ts"
+                "../../packages/dashboard-medusa/src/index.tsx"
               ),
             },
             // Stub unresolvable Medusa plugin imports

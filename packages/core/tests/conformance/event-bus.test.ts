@@ -1,17 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { Message, TestMantaApp } from '@manta/core'
 import {
-  type IEventBusPort,
-  type Message,
-  MantaError,
-  createTestContainer,
-  resetAll,
-  InMemoryContainer,
+  createTestMantaApp,
+  InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
-} from '@manta/test-utils'
+  InMemoryFileAdapter,
+  InMemoryLockingAdapter,
+  TestLogger,
+} from '@manta/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const makeInfra = () => ({
+  eventBus: new InMemoryEventBusAdapter(),
+  logger: new TestLogger(),
+  cache: new InMemoryCacheAdapter(),
+  locking: new InMemoryLockingAdapter(),
+  file: new InMemoryFileAdapter(),
+  db: {},
+})
 
 describe('IEventBusPort Conformance', () => {
   let bus: InMemoryEventBusAdapter
-  let container: InMemoryContainer
+  let app: TestMantaApp
 
   const createMessage = (eventName: string, data: unknown = {}): Message => ({
     eventName,
@@ -22,12 +31,12 @@ describe('IEventBusPort Conformance', () => {
   })
 
   beforeEach(() => {
-    container = createTestContainer()
-    bus = container.resolve<InMemoryEventBusAdapter>('IEventBusPort')
+    app = createTestMantaApp({ infra: makeInfra() })
+    bus = app.infra.eventBus as InMemoryEventBusAdapter
   })
 
   afterEach(async () => {
-    await resetAll(container)
+    await app.dispose()
   })
 
   // E-01 — SPEC-034: emit/subscribe basic delivery
@@ -48,9 +57,7 @@ describe('IEventBusPort Conformance', () => {
   // E-02 — SPEC-034: emit without subscriber is silent
   it('emit > sans subscriber', async () => {
     // Should not throw
-    await expect(
-      bus.emit(createMessage('unknown.event', { data: 'test' })),
-    ).resolves.toBeUndefined()
+    await expect(bus.emit(createMessage('unknown.event', { data: 'test' }))).resolves.toBeUndefined()
   })
 
   // E-03 — SPEC-034/036: grouped events are held
@@ -71,9 +78,15 @@ describe('IEventBusPort Conformance', () => {
   it('grouped > release délivre tout en FIFO', async () => {
     const received: string[] = []
 
-    bus.subscribe('eventA', () => { received.push('A') })
-    bus.subscribe('eventB', () => { received.push('B') })
-    bus.subscribe('eventC', () => { received.push('C') })
+    bus.subscribe('eventA', () => {
+      received.push('A')
+    })
+    bus.subscribe('eventB', () => {
+      received.push('B')
+    })
+    bus.subscribe('eventC', () => {
+      received.push('C')
+    })
 
     await bus.emit(createMessage('eventA'), { groupId: 'tx-1' })
     await bus.emit(createMessage('eventB'), { groupId: 'tx-1' })
@@ -116,7 +129,9 @@ describe('IEventBusPort Conformance', () => {
     vi.useFakeTimers()
 
     const received: Message[] = []
-    bus.subscribe('order.created', (event) => { received.push(event) })
+    bus.subscribe('order.created', (event) => {
+      received.push(event)
+    })
 
     await bus.emit(createMessage('order.created'), { groupId: 'tx-1' })
 
@@ -134,8 +149,20 @@ describe('IEventBusPort Conformance', () => {
   it('subscriber > déduplication par subscriberId', async () => {
     let callCount = 0
 
-    bus.subscribe('order.created', () => { callCount++ }, { subscriberId: 'sub-1' })
-    bus.subscribe('order.created', () => { callCount++ }, { subscriberId: 'sub-1' })
+    bus.subscribe(
+      'order.created',
+      () => {
+        callCount++
+      },
+      { subscriberId: 'sub-1' },
+    )
+    bus.subscribe(
+      'order.created',
+      () => {
+        callCount++
+      },
+      { subscriberId: 'sub-1' },
+    )
 
     await bus.emit(createMessage('order.created'))
 
@@ -165,25 +192,29 @@ describe('IEventBusPort Conformance', () => {
     expect(subscriberCalled).toBe(true)
   })
 
-  // E-09 — SPEC-034: interceptors are read-only (don't modify payload)
-  it('interceptors > lecture seule', async () => {
+  // E-09 — SPEC-034: interceptors are fire-and-forget (mutation not guaranteed to be blocked in memory)
+  it('interceptors > lecture seule (mutation non bloquée en mémoire)', async () => {
+    // NOTE: InMemoryEventBusAdapter passes the same object reference to interceptors
+    // and subscribers, so interceptor mutations ARE visible in-memory.
+    // Production adapters (e.g. Upstash) serialize/deserialize messages,
+    // enforcing immutability naturally. This test verifies:
+    // 1. Delivery still works regardless of interceptor mutations
+    // 2. The eventName is correct (structural integrity)
     bus.addInterceptor((msg) => {
-      // Attempt to modify payload — interceptor mutates msg.data
       ;(msg as any).data = { modified: true }
     })
 
     const received: Message[] = []
-    bus.subscribe('test.event', (event) => { received.push(event) })
+    bus.subscribe('test.event', (event) => {
+      received.push(event)
+    })
 
-    const originalData = { original: true }
-    await bus.emit(createMessage('test.event', originalData))
+    await bus.emit(createMessage('test.event', { original: true }))
 
-    // Subscriber must receive the event (interceptor should not block delivery)
     expect(received).toHaveLength(1)
     expect(received[0].eventName).toBe('test.event')
-    // Note: InMemoryEventBusAdapter passes the same object reference to interceptors
-    // and subscribers, so interceptor mutations are visible. Real adapters should
-    // clone the message before passing to interceptors. We verify delivery still works.
+    // Don't assert data immutability — adapter-specific behavior.
+    // In-memory: mutation visible. Production: mutation discarded (serialization boundary).
   })
 
   // E-10 — SPEC-034: makeIdempotent skips duplicates
@@ -242,9 +273,27 @@ describe('IEventBusPort Conformance', () => {
     let count2 = 0
     let count3 = 0
 
-    bus.subscribe('order.created', () => { count1++ }, { subscriberId: 'sub-1' })
-    bus.subscribe('order.created', () => { count2++ }, { subscriberId: 'sub-2' })
-    bus.subscribe('order.created', () => { count3++ }, { subscriberId: 'sub-3' })
+    bus.subscribe(
+      'order.created',
+      () => {
+        count1++
+      },
+      { subscriberId: 'sub-1' },
+    )
+    bus.subscribe(
+      'order.created',
+      () => {
+        count2++
+      },
+      { subscriberId: 'sub-2' },
+    )
+    bus.subscribe(
+      'order.created',
+      () => {
+        count3++
+      },
+      { subscriberId: 'sub-3' },
+    )
 
     await bus.emit(createMessage('order.created'))
 
@@ -263,9 +312,7 @@ describe('IEventBusPort Conformance', () => {
     }
 
     // 6th group should throw
-    await expect(
-      bus.emit(createMessage('test.event'), { groupId: 'group-6th' }),
-    ).rejects.toThrow()
+    await expect(bus.emit(createMessage('test.event'), { groupId: 'group-6th' })).rejects.toThrow()
   })
 
   // E-14 — SPEC-034: non-serializable payload throws INVALID_DATA
@@ -273,8 +320,6 @@ describe('IEventBusPort Conformance', () => {
     const circular: any = { a: 1 }
     circular.self = circular
 
-    await expect(
-      bus.emit(createMessage('test.event', circular)),
-    ).rejects.toThrow()
+    await expect(bus.emit(createMessage('test.event', circular))).rejects.toThrow()
   })
 })

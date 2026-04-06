@@ -2,8 +2,8 @@
 // Ref: CLI_SPEC §2.6, CLI_TESTS_SPEC §B10
 // Tests: URL parsing + command with mocked deps
 
-import { describe, it, expect, vi } from 'vitest'
-import { extractDbName, createCommand } from '../../../../src/commands/db/create'
+import { describe, expect, it, vi } from 'vitest'
+import { createCommand, extractDbName } from '../../../../src/commands/db/create'
 import type { CreateDeps } from '../../../../src/commands/db/types'
 
 // ── Mock factories ──────────────────────────────────────────────────

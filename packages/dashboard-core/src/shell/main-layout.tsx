@@ -1,22 +1,15 @@
-import {
-  CogSixTooth,
-  EllipsisHorizontal,
-  MagnifyingGlass,
-  OpenRectArrowOut,
-  SquaresPlus,
-  Sparkles,
-} from "@medusajs/icons"
-import { Avatar, Divider, DropdownMenu, Text, clx } from "@medusajs/ui"
-import { ReactNode, useSyncExternalStore } from "react"
-import { Link, useLocation, useNavigate } from "react-router-dom"
-import { getOverrideStore, subscribe, getOverridesVersion } from "../globals"
-import { useExtension } from "../providers/extension-provider"
-import { useSearch } from "../providers/search-provider"
-import { useDocumentDirection } from "../hooks/use-document-direction"
-import { Skeleton } from "../components/common/skeleton"
-import { NavItem, INavItem } from "./nav-item"
-import { Shell } from "./shell"
-import type { NavigationItem as NavOverrideItem } from "../interfaces/override-store"
+import { Avatar, cn, Divider, DropdownMenu } from '@manta/ui'
+import { ExternalLink, LayoutGrid, MoreHorizontal, Search, Settings, Sparkles } from 'lucide-react'
+import { type ReactNode, useEffect, useMemo } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Skeleton } from '../components/common/skeleton'
+import { useDashboardContext } from '../context'
+import { useDocumentDirection } from '../hooks/use-document-direction'
+import type { NavigationItem as NavOverrideItem } from '../interfaces/override-store'
+import { useExtension } from '../providers/extension-provider'
+import { useSearch } from '../providers/search-provider'
+import { type INavItem, NavItem } from './nav-item'
+import { Shell } from './shell'
 
 // ──────────────────────────────────────────────
 // Props — navigation, header, user are injected by distribution
@@ -24,7 +17,7 @@ import type { NavigationItem as NavOverrideItem } from "../interfaces/override-s
 
 export interface MainLayoutProps {
   /** Static navigation items (from distribution) */
-  navigation: Omit<INavItem, "pathname">[]
+  navigation: Omit<INavItem, 'pathname'>[]
   /** Header component (store selector + logout) */
   headerSlot?: ReactNode
   /** User menu component */
@@ -34,14 +27,33 @@ export interface MainLayoutProps {
 }
 
 export const MainLayout = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayoutProps) => {
+  const { setDefaultNavigation } = useDashboardContext()
+
+  // Memoize the serialized navigation so the effect doesn't fire on every render
+  const serializedNav = useMemo(
+    () =>
+      navigation.map((item) => ({
+        key: item.to,
+        label: item.label,
+        icon: (item.icon as React.ReactElement)?.type?.name || 'LayoutGrid',
+        path: item.to,
+        items: item.items?.map((child: { label: string; to: string }) => ({
+          key: child.to,
+          label: child.label,
+          path: child.to,
+        })),
+      })),
+    [navigation],
+  )
+
+  // Store default navigation so the AI chat can read it
+  useEffect(() => {
+    setDefaultNavigation(serializedNav)
+  }, [serializedNav, setDefaultNavigation])
+
   return (
     <Shell>
-      <MainSidebar
-        navigation={navigation}
-        headerSlot={headerSlot}
-        userMenuSlot={userMenuSlot}
-        iconMap={iconMap}
-      />
+      <MainSidebar navigation={navigation} headerSlot={headerSlot} userMenuSlot={userMenuSlot} iconMap={iconMap} />
     </Shell>
   )
 }
@@ -50,11 +62,8 @@ const MainSidebar = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayo
   return (
     <aside className="flex flex-1 flex-col justify-between overflow-y-auto">
       <div className="flex flex-1 flex-col">
-        <div className="bg-ui-bg-subtle sticky top-0">
+        <div className="sticky top-0 border-b border-border" style={{ height: 49 }}>
           {headerSlot}
-          <div className="px-3">
-            <Divider variant="dashed" />
-          </div>
         </div>
         <div className="flex flex-1 flex-col justify-between">
           <div className="flex flex-1 flex-col">
@@ -64,25 +73,18 @@ const MainSidebar = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayo
           </div>
           <UtilitySection />
         </div>
-        <div className="bg-ui-bg-subtle sticky bottom-0">
-          {userMenuSlot ? (
-            <div>
-              <div className="px-3">
-                <Divider variant="dashed" />
-              </div>
-              {userMenuSlot}
-            </div>
-          ) : null}
-        </div>
+        <div className="sticky bottom-0">{userMenuSlot ?? null}</div>
       </div>
     </aside>
   )
 }
 
 const DEFAULT_ICON_MAP: Record<string, React.ReactElement> = {
-  SquaresPlus: <SquaresPlus />,
-  CogSixTooth: <CogSixTooth />,
-  Sparkles: <Sparkles />,
+  LayoutGrid: <LayoutGrid className="h-4 w-4" />,
+  SquaresPlus: <LayoutGrid className="h-4 w-4" />,
+  Settings: <Settings className="h-4 w-4" />,
+  CogSixTooth: <Settings className="h-4 w-4" />,
+  Sparkles: <Sparkles className="h-4 w-4" />,
 }
 
 const Searchbar = () => {
@@ -92,21 +94,17 @@ const Searchbar = () => {
     <div className="px-3">
       <button
         onClick={toggleSearch}
-        className={clx(
-          "bg-ui-bg-subtle text-ui-fg-subtle flex w-full items-center gap-x-2.5 rounded-md px-2 py-1 outline-none",
-          "hover:bg-ui-bg-subtle-hover",
-          "focus-visible:shadow-borders-focus"
+        className={cn(
+          'flex w-full items-center gap-x-2.5 rounded-md px-2 py-1 outline-none bg-muted text-muted-foreground',
+          'hover:bg-accent',
+          'focus-visible:ring-2 focus-visible:ring-ring',
         )}
       >
-        <MagnifyingGlass />
+        <Search className="h-4 w-4" />
         <div className="flex-1 text-start">
-          <Text size="small" leading="compact" weight="plus">
-            Search
-          </Text>
+          <span className="text-sm font-medium">Search</span>
         </div>
-        <Text size="small" leading="compact" className="text-ui-fg-muted">
-          ⌘K
-        </Text>
+        <span className="text-sm text-muted-foreground">⌘K</span>
       </button>
     </div>
   )
@@ -116,15 +114,14 @@ const CoreRouteSection = ({
   navigation,
   iconMap,
 }: {
-  navigation: Omit<INavItem, "pathname">[]
+  navigation: Omit<INavItem, 'pathname'>[]
   iconMap?: Record<string, React.ReactElement>
 }) => {
-  const overrideStore = getOverrideStore()
-  const _v = useSyncExternalStore(subscribe, getOverridesVersion)
+  const { overrideStore, overridesVersion: _v } = useDashboardContext()
   const navigationOverride = overrideStore.getNavigationOverride()
 
   const { getMenu } = useExtension()
-  const menuItems = getMenu("coreExtensions")
+  const menuItems = getMenu('coreExtensions')
 
   const mergedIconMap = { ...DEFAULT_ICON_MAP, ...iconMap }
 
@@ -138,7 +135,7 @@ const CoreRouteSection = ({
             key={item.key}
             to={item.path}
             label={item.label}
-            icon={mergedIconMap[item.icon] || <SquaresPlus />}
+            icon={mergedIconMap[item.icon] || <LayoutGrid className="h-4 w-4" />}
             items={item.children?.map((child) => ({
               label: child.label,
               to: child.path,
@@ -160,27 +157,25 @@ const CoreRouteSection = ({
   })
 
   return (
-    <nav className="flex flex-col gap-y-1 py-3">
-      <Searchbar />
-      {coreRoutes.map((route) => {
-        return <NavItem key={route.to} {...route} />
-      })}
+    <nav className="flex flex-col gap-y-1 py-4">
+      <div className="flex flex-col gap-y-1">
+        {coreRoutes.map((route) => {
+          return <NavItem key={route.to} {...route} />
+        })}
+      </div>
     </nav>
   )
 }
 
 const CustomPagesSection = () => {
-  const overrideStore = getOverrideStore()
-  const _v = useSyncExternalStore(subscribe, getOverridesVersion)
+  const { overrideStore, overridesVersion: _v } = useDashboardContext()
   const customNavItems = overrideStore.getCustomNavItems()
   const navigationOverride = overrideStore.getNavigationOverride()
 
   const visibleItems = navigationOverride
     ? customNavItems.filter((item) => {
         const inTopLevel = navigationOverride.some((nav) => nav.key === item.key)
-        const inChildren = navigationOverride.some(
-          (nav) => nav.children?.some((child) => child.key === item.key)
-        )
+        const inChildren = navigationOverride.some((nav) => nav.children?.some((child) => child.key === item.key))
         return !inTopLevel && !inChildren
       })
     : customNavItems
@@ -196,18 +191,11 @@ const CustomPagesSection = () => {
       </div>
       <div className="flex flex-col gap-y-1 py-3">
         <div className="px-3 pb-1">
-          <Text size="xsmall" leading="compact" weight="plus" className="text-ui-fg-muted uppercase tracking-wider">
-            Custom
-          </Text>
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Custom</span>
         </div>
         <nav className="flex flex-col gap-y-0.5">
           {visibleItems.map((item) => (
-            <NavItem
-              key={item.key}
-              to={item.path}
-              label={item.label}
-              icon={<Sparkles />}
-            />
+            <NavItem key={item.key} to={item.path} label={item.label} icon={<Sparkles className="h-4 w-4" />} />
           ))}
         </nav>
       </div>
@@ -218,7 +206,7 @@ const CustomPagesSection = () => {
 const ExtensionRouteSection = () => {
   const { getMenu } = useExtension()
 
-  const menuItems = getMenu("coreExtensions").filter((item) => !item.nested)
+  const menuItems = getMenu('coreExtensions').filter((item) => !item.nested)
 
   if (!menuItems.length) {
     return null
@@ -237,7 +225,7 @@ const ExtensionRouteSection = () => {
                 key={i}
                 to={item.to}
                 label={item.label}
-                icon={item.icon ? <item.icon /> : <SquaresPlus />}
+                icon={item.icon ? <item.icon /> : <LayoutGrid className="h-4 w-4" />}
                 items={item.items}
                 type="extension"
               />
@@ -254,12 +242,7 @@ const UtilitySection = () => {
 
   return (
     <div className="flex flex-col gap-y-0.5 py-3">
-      <NavItem
-        label="Settings"
-        to="/settings"
-        from={location.pathname}
-        icon={<CogSixTooth />}
-      />
+      <NavItem label="Settings" to="/settings" from={location.pathname} icon={<Settings className="h-4 w-4" />} />
     </div>
   )
 }

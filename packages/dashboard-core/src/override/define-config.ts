@@ -1,4 +1,4 @@
-import type { DataComponent, PageSpec } from "../pages/types"
+import type { DataComponent, PageSpec } from '../pages/types'
 
 // Navigation types
 
@@ -13,7 +13,7 @@ export interface NavigationConfig {
   hide?: string[]
   order?: string[]
   add?: NavItem[]
-  modify?: Record<string, Partial<Pick<NavItem, "label" | "path" | "position">>>
+  modify?: Record<string, Partial<Pick<NavItem, 'label' | 'path' | 'position'>>>
 }
 
 // DashboardConfig
@@ -25,7 +25,7 @@ export interface DashboardConfig {
   customPages?: Record<string, PageSpec>
   navigation?: NavigationConfig
   theme?: { primaryColor?: string; logo?: string; title?: string }
-  ai?: { enabled?: boolean; provider?: "openai" | "anthropic"; proxyUrl?: string }
+  ai?: { enabled?: boolean; provider?: 'openai' | 'anthropic'; proxyUrl?: string }
   schema?: Record<string, unknown>
 }
 

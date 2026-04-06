@@ -1,19 +1,12 @@
-import { describe, it, expect } from 'vitest'
-import {
-  MantaError,
-  generateDrizzleSchema,
-  parseDmlEntity,
-  type GeneratedSchema,
-} from '@manta/test-utils'
+import { type GeneratedSchema, generateDrizzleSchema, MantaError, parseDmlEntity } from '@manta/test-utils'
+import { describe, expect, it } from 'vitest'
 
 describe('DML Generator Conformance', () => {
   // DG-01 — SPEC-057f: bigNumber generates shadow column
   it('bigNumber > shadow column', () => {
     const entity = parseDmlEntity({
       name: 'Product',
-      properties: [
-        { name: 'price', type: 'bigNumber' },
-      ],
+      properties: [{ name: 'price', type: 'bigNumber' }],
     })
 
     const schema = generateDrizzleSchema(entity)
@@ -43,9 +36,7 @@ describe('DML Generator Conformance', () => {
   it('enum > array literal', () => {
     const entity = parseDmlEntity({
       name: 'Article',
-      properties: [
-        { name: 'status', type: 'enum', values: ['draft', 'published'] },
-      ],
+      properties: [{ name: 'status', type: 'enum', values: ['draft', 'published'] }],
     })
 
     const schema = generateDrizzleSchema(entity)
@@ -61,9 +52,7 @@ describe('DML Generator Conformance', () => {
 
     const entity = parseDmlEntity({
       name: 'Article',
-      properties: [
-        { name: 'status', type: 'enum', values: StatusEnum },
-      ],
+      properties: [{ name: 'status', type: 'enum', values: StatusEnum }],
     })
 
     const schema = generateDrizzleSchema(entity)
@@ -79,9 +68,7 @@ describe('DML Generator Conformance', () => {
 
     const entity = parseDmlEntity({
       name: 'Feature',
-      properties: [
-        { name: 'flag', type: 'enum', values: Flags },
-      ],
+      properties: [{ name: 'flag', type: 'enum', values: Flags }],
     })
 
     const schema = generateDrizzleSchema(entity)
@@ -276,9 +263,7 @@ describe('DML Generator Conformance', () => {
   it('default > json auto-stringifié', () => {
     const entity = parseDmlEntity({
       name: 'Settings',
-      properties: [
-        { name: 'config', type: 'json', default: { theme: 'dark' } },
-      ],
+      properties: [{ name: 'config', type: 'json', default: { theme: 'dark' } }],
     })
 
     const schema = generateDrizzleSchema(entity)
@@ -320,16 +305,12 @@ describe('DML Generator Conformance', () => {
   it('index composite > implicit soft-delete filter', () => {
     const entity = parseDmlEntity({
       name: 'Order',
-      properties: [
-        { name: 'status', type: 'text' },
-      ],
+      properties: [{ name: 'status', type: 'text' }],
       indexes: [{ on: ['status', 'created_at'] }],
     })
 
     const schema = generateDrizzleSchema(entity)
-    const idx = schema.indexes.find((i) =>
-      i.columns.includes('status') && i.columns.includes('created_at'),
-    )
+    const idx = schema.indexes.find((i) => i.columns.includes('status') && i.columns.includes('created_at'))
     expect(idx).toBeDefined()
     expect(idx!.where).toContain('deleted_at IS NULL')
   })

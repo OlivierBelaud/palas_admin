@@ -1,5 +1,7 @@
-// SPEC-070 — Resolve adapters based on profile (dev/prod) + overrides
+// SPEC-070 — Resolve adapters via presets + overrides
 
+import type { PresetDefinition } from '@manta/core'
+import { BUILT_IN_PRESETS, devPreset } from '@manta/core'
 import type { LoadedConfig } from '../types'
 
 export interface ResolvedAdapter {
@@ -8,51 +10,48 @@ export interface ResolvedAdapter {
   options: Record<string, unknown>
 }
 
-const DEV_DEFAULTS: Record<string, string> = {
-  ILoggerPort: '@manta/adapter-logger-pino',
-  IDatabasePort: '@manta/adapter-drizzle-pg',
-  ICachePort: '@manta/core/InMemoryCacheAdapter',
-  IEventBusPort: '@manta/core/InMemoryEventBusAdapter',
-  ILockingPort: '@manta/core/InMemoryLockingAdapter',
-  IFilePort: '@manta/core/LocalFilesystemAdapter',
-  IJobSchedulerPort: '@manta/core/InMemoryJobScheduler',
-  IWorkflowStoragePort: '@manta/adapter-drizzle-pg',
-  IHttpPort: '@manta/adapter-nitro',
-}
+/**
+ * Resolve the preset from config or auto-detect from environment.
+ * Priority: explicit config.preset > VERCEL env → vercelPreset > devPreset.
+ */
+export function resolvePreset(config: LoadedConfig): PresetDefinition {
+  const presetValue = config.preset
 
-const PROD_DEFAULTS: Record<string, string> = {
-  ILoggerPort: '@manta/adapter-logger-pino',
-  IDatabasePort: '@manta/adapter-drizzle-pg',
-  ICachePort: '@manta/adapter-cache-upstash',
-  IEventBusPort: '@manta/adapter-eventbus-vercel-queues',
-  ILockingPort: '@manta/adapter-locking-neon',
-  IFilePort: '@manta/adapter-file-vercel-blob',
-  IJobSchedulerPort: '@manta/adapter-jobs-vercel-cron',
-  IWorkflowStoragePort: '@manta/adapter-drizzle-pg',
-  IHttpPort: '@manta/adapter-nitro',
-}
+  // Explicit preset object
+  if (presetValue && typeof presetValue === 'object') {
+    return presetValue as PresetDefinition
+  }
 
-// Adapters always available (bundled with @manta/cli)
-const ALWAYS_AVAILABLE = new Set([
-  '@manta/adapter-logger-pino',
-  '@manta/adapter-drizzle-pg',
-  '@manta/adapter-nitro',
-])
+  // Explicit preset name
+  if (presetValue && typeof presetValue === 'string') {
+    const found = BUILT_IN_PRESETS[presetValue]
+    if (!found) {
+      throw new Error(`Unknown preset "${presetValue}". Available: ${Object.keys(BUILT_IN_PRESETS).join(', ')}`)
+    }
+    return found
+  }
+
+  // Auto-detect from environment
+  if (process.env.VERCEL) {
+    return BUILT_IN_PRESETS.vercel!
+  }
+
+  return devPreset
+}
 
 /**
- * Resolve adapters for each port based on profile and config overrides.
+ * Resolve adapters for each port by merging preset defaults with config overrides.
+ * Config adapters take precedence over preset adapters.
  */
-export function resolveAdapters(
-  config: LoadedConfig,
-  profile: 'dev' | 'prod',
-): ResolvedAdapter[] {
-  const defaults = profile === 'dev' ? DEV_DEFAULTS : PROD_DEFAULTS
+export function resolveAdapters(config: LoadedConfig, preset: PresetDefinition): ResolvedAdapter[] {
   const overrides = config.adapters ?? {}
   const resolved: ResolvedAdapter[] = []
 
-  for (const [port, defaultAdapter] of Object.entries(defaults)) {
-    const portKey = port.replace(/^I/, '').replace(/Port$/, '').toLowerCase()
-    const override = overrides[portKey]
+  // Start with all preset adapters
+  const mergedPorts = new Set([...Object.keys(preset.adapters), ...Object.keys(overrides)])
+
+  for (const port of mergedPorts) {
+    const override = overrides[port]
 
     if (override) {
       resolved.push({
@@ -61,29 +60,38 @@ export function resolveAdapters(
         options: override.options ?? {},
       })
     } else {
-      const options: Record<string, unknown> = {}
-      if (port === 'ILoggerPort') {
-        options.pretty = profile === 'dev'
+      const presetEntry = preset.adapters[port]
+      if (presetEntry) {
+        resolved.push({
+          port,
+          adapter: presetEntry.adapter,
+          options: presetEntry.options ? { ...presetEntry.options } : {},
+        })
       }
-      resolved.push({
-        port,
-        adapter: defaultAdapter,
-        options,
-      })
     }
   }
 
   return resolved
 }
 
+// Adapters always available (bundled with @manta/cli)
+const ALWAYS_AVAILABLE = new Set([
+  '@manta/adapter-logger-pino',
+  '@manta/adapter-database-pg',
+  '@manta/adapter-database-neon',
+  '@manta/adapter-h3',
+  '@manta/adapter-cache-upstash',
+  '@manta/adapter-locking-neon',
+  '@manta/adapter-file-vercel-blob',
+  '@manta/adapter-jobs-vercel-cron',
+  '@manta/adapter-eventbus-upstash',
+])
+
 /**
  * Check that all resolved adapters are available (installed).
  * Returns list of missing adapter package names.
  */
-export function checkAdapterAvailability(
-  adapters: ResolvedAdapter[],
-  profile: 'dev' | 'prod',
-): string[] {
+export function checkAdapterAvailability(adapters: ResolvedAdapter[]): string[] {
   const missing: string[] = []
 
   for (const adapter of adapters) {
@@ -91,16 +99,8 @@ export function checkAdapterAvailability(
     if (adapter.adapter.startsWith('@manta/core/')) continue
     // Bundled adapters are always available
     if (ALWAYS_AVAILABLE.has(adapter.adapter)) continue
-
-    // For prod defaults that aren't installed, check if they exist
-    if (profile === 'prod') {
-      try {
-        // In real implementation, use require.resolve
-        // For stub, we just mark it as potentially missing
-      } catch {
-        missing.push(adapter.adapter)
-      }
-    }
+    // Sub-path adapters from bundled packages
+    if (ALWAYS_AVAILABLE.has(adapter.adapter.split('/').slice(0, 2).join('/'))) continue
   }
 
   return missing

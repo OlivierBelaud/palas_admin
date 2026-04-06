@@ -1,0 +1,23 @@
+
+> @manta/plugin-medusa@0.1.0 test
+> vitest run
+
+
+ RUN  v2.1.9 /Users/olivierbelaud/BRUTAL/MEDUSA/packages/plugin-medusa
+
+ ✓ __tests__/layer-0-shim.test.ts (13 tests) 3ms
+ ✓ __tests__/layer-4-links.test.ts (7 tests) 892ms
+ ✓ __tests__/integration-module-crud.test.ts (6 tests) 766ms
+   ✓ integration: module CRUD via bridge > loads real Medusa Product module DML models into the bridge 761ms
+ ✓ __tests__/layer-1-modules.test.ts (13 tests) 1171ms
+ ✓ __tests__/integration-module-health.test.ts (90 tests) 905ms
+ ✓ __tests__/integration-module-registration.test.ts (11 tests) 916ms
+ ✓ __tests__/layer-3-subscribers.test.ts (4 tests) 1394ms
+ ✓ __tests__/layer-2-workflows.test.ts (8 tests) 1396ms
+ ✓ __tests__/layer-5-routes.test.ts (9 tests) 1749ms
+
+ Test Files  9 passed (9)
+      Tests  161 passed (161)
+   Start at  18:09:50
+   Duration  1.97s (transform 349ms, setup 0ms, collect 2.43s, tests 9.19s, environment 1ms, prepare 510ms)
+

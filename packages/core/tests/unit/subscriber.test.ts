@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import type { MantaApp, Message } from '@manta/core'
 import {
-  registerSubscriber,
-  makeIdempotent,
-  InMemoryEventBusAdapter,
+  defineSubscriber,
   InMemoryCacheAdapter,
+  InMemoryEventBusAdapter,
+  makeIdempotent,
+  registerSubscriber,
 } from '@manta/core'
-import type { Message } from '@manta/core'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 describe('Subscriber System', () => {
   let bus: InMemoryEventBusAdapter
@@ -36,11 +37,9 @@ describe('Subscriber System', () => {
   it('registerSubscriber handles multiple events', async () => {
     const received: string[] = []
 
-    registerSubscriber(
-      bus,
-      { event: ['order.created', 'order.updated'] },
-      (event) => { received.push(event.eventName) },
-    )
+    registerSubscriber(bus, { event: ['order.created', 'order.updated'] }, (event) => {
+      received.push(event.eventName)
+    })
 
     await bus.emit({
       eventName: 'order.created',
@@ -62,18 +61,14 @@ describe('Subscriber System', () => {
   it('registerSubscriber passes subscriberId', async () => {
     let callCount = 0
 
-    registerSubscriber(
-      bus,
-      { event: 'test.event', subscriberId: 'my-sub' },
-      () => { callCount++ },
-    )
+    registerSubscriber(bus, { event: 'test.event', subscriberId: 'my-sub' }, () => {
+      callCount++
+    })
 
     // Same subscriberId should deduplicate
-    registerSubscriber(
-      bus,
-      { event: 'test.event', subscriberId: 'my-sub' },
-      () => { callCount++ },
-    )
+    registerSubscriber(bus, { event: 'test.event', subscriberId: 'my-sub' }, () => {
+      callCount++
+    })
 
     await bus.emit({
       eventName: 'test.event',
@@ -83,6 +78,141 @@ describe('Subscriber System', () => {
 
     // Dedup means only called once
     expect(callCount).toBe(1)
+  })
+})
+
+describe('defineSubscriber()', () => {
+  // DS-01 — returns config with __type marker (object form)
+  it('returns config with __type: subscriber marker (object form)', () => {
+    const sub = defineSubscriber({
+      event: 'order.created',
+      handler: async () => {},
+    })
+
+    expect(sub.__type).toBe('subscriber')
+    expect(sub.event).toBe('order.created')
+    expect(typeof sub.handler).toBe('function')
+  })
+
+  // DS-01b — returns config with __type marker (string form)
+  it('returns config with __type: subscriber marker (string form)', () => {
+    const sub = defineSubscriber('order.created', async () => {})
+
+    expect(sub.__type).toBe('subscriber')
+    expect(sub.event).toBe('order.created')
+    expect(typeof sub.handler).toBe('function')
+  })
+
+  // DS-02 — handler receives (event, { command, log }) context (object form)
+  it('handler receives (event, { command, log }) context', async () => {
+    let receivedCommand: Record<string, unknown> | null = null
+    let receivedEvent: Message | null = null
+
+    const sub = defineSubscriber({
+      event: 'product.created',
+      handler: async (event, { command }) => {
+        receivedCommand = command as unknown as Record<string, unknown>
+        receivedEvent = event
+      },
+    })
+
+    const fakeCommand = { createProduct: async () => ({}) } as unknown as import('@manta/core').MantaCommands
+    const fakeLog = { info() {}, warn() {}, error() {}, debug() {} } as unknown as import('@manta/core').ILoggerPort
+    const msg: Message = {
+      eventName: 'product.created',
+      data: { id: 'prod_1' },
+      metadata: { timestamp: Date.now() },
+    }
+
+    await sub.handler(msg, { command: fakeCommand, log: fakeLog })
+
+    expect(receivedCommand).toBe(fakeCommand)
+    expect(receivedEvent!.data).toEqual({ id: 'prod_1' })
+  })
+
+  // DS-02b — handler receives (event, { command, log }) context (string form)
+  it('handler receives (event, { command, log }) context (string form)', async () => {
+    let receivedCommand: Record<string, unknown> | null = null
+    let receivedEvent: Message | null = null
+
+    const sub = defineSubscriber('product.created', async (event, { command }) => {
+      receivedCommand = command as unknown as Record<string, unknown>
+      receivedEvent = event
+    })
+
+    const fakeCommand = { createProduct: async () => ({}) } as unknown as import('@manta/core').MantaCommands
+    const fakeLog = { info() {}, warn() {}, error() {}, debug() {} } as unknown as import('@manta/core').ILoggerPort
+    const msg: Message = {
+      eventName: 'product.created',
+      data: { id: 'prod_1' },
+      metadata: { timestamp: Date.now() },
+    }
+
+    await sub.handler(msg, { command: fakeCommand, log: fakeLog })
+
+    expect(receivedCommand).toBe(fakeCommand)
+    expect(receivedEvent!.data).toEqual({ id: 'prod_1' })
+  })
+
+  // DS-03 — supports multiple events (object form only)
+  it('supports multiple events', () => {
+    const sub = defineSubscriber({
+      event: ['order.created', 'order.updated'],
+      handler: async () => {},
+    })
+
+    expect(sub.event).toEqual(['order.created', 'order.updated'])
+  })
+
+  // DS-04 — supports subscriberId (object form only)
+  it('supports subscriberId', () => {
+    const sub = defineSubscriber({
+      event: 'test.event',
+      subscriberId: 'my-sub',
+      handler: async () => {},
+    })
+
+    expect(sub.subscriberId).toBe('my-sub')
+  })
+
+  // DS-05 — typed message data
+  it('preserves generic type for message data', async () => {
+    interface ProductCreated {
+      sku: string
+      title: string
+    }
+
+    let receivedSku = ''
+
+    const sub = defineSubscriber<ProductCreated>({
+      event: 'product.created',
+      handler: async (event, { command: _command }) => {
+        receivedSku = event.data.sku
+      },
+    })
+
+    const fakeCommand = {} as import('@manta/core').MantaCommands
+    const fakeLog = { info() {}, warn() {}, error() {}, debug() {} } as unknown as import('@manta/core').ILoggerPort
+    await sub.handler(
+      {
+        eventName: 'product.created',
+        data: { sku: 'SKU-001', title: 'Widget' },
+        metadata: { timestamp: Date.now() },
+      },
+      { command: fakeCommand, log: fakeLog },
+    )
+
+    expect(receivedSku).toBe('SKU-001')
+  })
+
+  // DS-06 — string form throws on empty event
+  it('string form throws on empty event', () => {
+    expect(() => defineSubscriber('', async () => {})).toThrow('non-empty string')
+  })
+
+  // DS-07 — string form throws on missing handler
+  it('string form throws on missing handler', () => {
+    expect(() => defineSubscriber('test.event', undefined as any)).toThrow('handler must be a function')
   })
 })
 
@@ -153,11 +283,15 @@ describe('makeIdempotent()', () => {
   // IDEM-04 — Custom keyFn
   it('supports custom keyFn', async () => {
     let callCount = 0
-    const handler = makeIdempotent(cache, async () => {
-      callCount++
-    }, {
-      keyFn: (event) => `custom:${(event.data as Record<string, unknown>).id}`,
-    })
+    const handler = makeIdempotent(
+      cache,
+      async () => {
+        callCount++
+      },
+      {
+        keyFn: (event) => `custom:${(event.data as Record<string, unknown>).id}`,
+      },
+    )
 
     await handler({
       eventName: 'a',

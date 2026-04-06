@@ -4,12 +4,12 @@
 //
 // Requires PG running locally. Uses an isolated test database.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { resolve, join } from 'node:path'
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from 'node:fs'
+import { type ChildProcess, spawn } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import postgres from 'postgres'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..')
 const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
@@ -26,11 +26,7 @@ let projectDir: string
 /**
  * Wait for a string to appear in the process output.
  */
-function waitForOutput(
-  proc: ChildProcess,
-  needle: string,
-  timeoutMs = 15_000,
-): Promise<string> {
+function waitForOutput(proc: ChildProcess, needle: string, timeoutMs = 15_000): Promise<string> {
   return new Promise((resolve, reject) => {
     let output = ''
     const timer = setTimeout(() => {
@@ -58,9 +54,7 @@ function waitForOutput(
     proc.on('exit', (code) => {
       clearTimeout(timer)
       if (!output.includes(needle)) {
-        reject(new Error(
-          `Process exited (code ${code}) before "${needle}" appeared.\nGot:\n${output}`,
-        ))
+        reject(new Error(`Process exited (code ${code}) before "${needle}" appeared.\nGot:\n${output}`))
       }
     })
   })
@@ -69,11 +63,7 @@ function waitForOutput(
 /**
  * HTTP fetch helper with retry for server startup race.
  */
-async function fetchWithRetry(
-  url: string,
-  init?: RequestInit,
-  retries = 3,
-): Promise<Response> {
+async function fetchWithRetry(url: string, init?: RequestInit, retries = 3): Promise<Response> {
   for (let i = 0; i < retries; i++) {
     try {
       return await fetch(url, init)
@@ -173,7 +163,7 @@ describe('E2E smoke test — manta dev', () => {
       // 3. Health check
       const healthRes = await fetchWithRetry(`${BASE}/health/live`)
       expect(healthRes.status).toBe(200)
-      const healthBody = await healthRes.json() as { status: string }
+      const healthBody = (await healthRes.json()) as { status: string }
       expect(healthBody.status).toBe('alive')
 
       // 4. POST /admin/products — create a product
@@ -183,7 +173,7 @@ describe('E2E smoke test — manta dev', () => {
         body: JSON.stringify({ title: 'Smoke Test Widget', price: 4200, status: 'draft' }),
       })
       expect(createRes.status).toBe(201)
-      const createBody = await createRes.json() as {
+      const createBody = (await createRes.json()) as {
         product: { id: string; title: string; price: number; status: string }
       }
       expect(createBody.product.title).toBe('Smoke Test Widget')
@@ -196,7 +186,7 @@ describe('E2E smoke test — manta dev', () => {
       // 5. GET /admin/products — list products, should contain our product
       const listRes = await fetchWithRetry(`${BASE}/admin/products`)
       expect(listRes.status).toBe(200)
-      const listBody = await listRes.json() as {
+      const listBody = (await listRes.json()) as {
         products: Array<{ id: string; title: string }>
       }
       expect(listBody.products.some((p) => p.id === productId)).toBe(true)
@@ -204,7 +194,7 @@ describe('E2E smoke test — manta dev', () => {
       // 6. GET /admin/products/:id — get by ID
       const getRes = await fetchWithRetry(`${BASE}/admin/products/${productId}`)
       expect(getRes.status).toBe(200)
-      const getBody = await getRes.json() as {
+      const getBody = (await getRes.json()) as {
         product: { id: string; title: string; price: number }
       }
       expect(getBody.product.id).toBe(productId)
@@ -217,7 +207,7 @@ describe('E2E smoke test — manta dev', () => {
         body: JSON.stringify({ title: 'Updated Widget', price: 9900 }),
       })
       expect(updateRes.status).toBe(200)
-      const updateBody = await updateRes.json() as {
+      const updateBody = (await updateRes.json()) as {
         product: { id: string; title: string; price: number }
       }
       expect(updateBody.product.title).toBe('Updated Widget')
@@ -232,7 +222,7 @@ describe('E2E smoke test — manta dev', () => {
       // 9. GET /admin/products — deleted product should NOT appear
       const listAfterDelete = await fetchWithRetry(`${BASE}/admin/products`)
       expect(listAfterDelete.status).toBe(200)
-      const listAfterBody = await listAfterDelete.json() as {
+      const listAfterBody = (await listAfterDelete.json()) as {
         products: Array<{ id: string }>
       }
       expect(listAfterBody.products.some((p) => p.id === productId)).toBe(false)

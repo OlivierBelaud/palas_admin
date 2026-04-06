@@ -1,7 +1,7 @@
 // SPEC-034 — InMemoryEventBusAdapter implements IEventBusPort
 
-import type { IEventBusPort, Message, GroupStatus } from '../ports'
 import { MantaError } from '../errors/manta-error'
+import type { GroupStatus, IEventBusPort, Message } from '../ports'
 
 export class InMemoryEventBusAdapter implements IEventBusPort {
   private _subscribers = new Map<string, Array<{ id: string; handler: (event: Message) => Promise<void> | void }>>()
@@ -23,7 +23,10 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
       try {
         JSON.stringify(msg)
       } catch {
-        throw new MantaError('INVALID_DATA', 'Event payload is not serializable (circular references or non-serializable values detected)')
+        throw new MantaError(
+          'INVALID_DATA',
+          'Event payload is not serializable (circular references or non-serializable values detected)',
+        )
       }
     }
 
@@ -32,7 +35,10 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
     if (groupId) {
       // Check max active groups (E-13)
       if (!this._groups.has(groupId) && this._groups.size >= this._maxActiveGroups) {
-        throw new MantaError('RESOURCE_EXHAUSTED', `Too many active event groups (${this._maxActiveGroups}). Possible leak — check that releaseGroupedEvents/clearGroupedEvents are called.`)
+        throw new MantaError(
+          'RESOURCE_EXHAUSTED',
+          `Too many active event groups (${this._maxActiveGroups}). Possible leak — check that releaseGroupedEvents/clearGroupedEvents are called.`,
+        )
       }
 
       if (!this._groups.has(groupId)) {
@@ -59,15 +65,25 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
     for (const msg of events) {
       // Interceptors (fire-and-forget, read-only)
       for (const interceptor of this._interceptors) {
-        try { interceptor(msg) } catch { /* ignored */ }
+        try {
+          interceptor(msg)
+        } catch {
+          /* ignored */
+        }
       }
 
       // Deliver to subscribers — fire-and-forget (async, not awaited)
       // Same pattern as Medusa: "Subscribers listening to the event(s) are executed asynchronously."
       const handlers = this._subscribers.get(msg.eventName) ?? []
-      Promise.all(handlers.map((s) => {
-        try { return Promise.resolve(s.handler(msg)) } catch { return Promise.resolve() }
-      })).catch(() => {})
+      Promise.all(
+        handlers.map((s) => {
+          try {
+            return Promise.resolve(s.handler(msg)).catch(() => {})
+          } catch {
+            return Promise.resolve()
+          }
+        }),
+      )
     }
   }
 
@@ -89,7 +105,10 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
 
   unsubscribe(subscriberId: string): void {
     for (const [eventName, subs] of this._subscribers) {
-      this._subscribers.set(eventName, subs.filter((s) => s.id !== subscriberId))
+      this._subscribers.set(
+        eventName,
+        subs.filter((s) => s.id !== subscriberId),
+      )
     }
   }
 
@@ -108,13 +127,23 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
     // Deliver all events in FIFO order
     for (const msg of events) {
       for (const interceptor of this._interceptors) {
-        try { interceptor(msg, { isGrouped: true, eventGroupId }) } catch { /* ignored */ }
+        try {
+          interceptor(msg, { isGrouped: true, eventGroupId })
+        } catch {
+          /* ignored */
+        }
       }
 
       const handlers = this._subscribers.get(msg.eventName) ?? []
-      await Promise.all(handlers.map((s) => {
-        try { return Promise.resolve(s.handler(msg)) } catch { return Promise.resolve() }
-      }))
+      await Promise.all(
+        handlers.map((s) => {
+          try {
+            return Promise.resolve(s.handler(msg))
+          } catch {
+            return Promise.resolve()
+          }
+        }),
+      )
     }
   }
 
@@ -134,13 +163,21 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
     this._interceptors.push(fn as (msg: Message, ctx?: unknown) => void)
   }
 
-  removeInterceptor(fn: Function): void {
+  removeInterceptor(
+    fn: (message: Message, context?: { isGrouped?: boolean; eventGroupId?: string }) => Promise<void> | void,
+  ): void {
     this._interceptors = this._interceptors.filter((i) => i !== fn)
   }
 
-  onGroupCreated(handler: (id: string, count: number) => void) { this._onGroupCreated = handler }
-  onGroupReleased(handler: (id: string, count: number) => void) { this._onGroupReleased = handler }
-  onGroupCleared(handler: (id: string, count: number, reason: 'explicit' | 'ttl') => void) { this._onGroupCleared = handler }
+  onGroupCreated(handler: (id: string, count: number) => void) {
+    this._onGroupCreated = handler
+  }
+  onGroupReleased(handler: (id: string, count: number) => void) {
+    this._onGroupReleased = handler
+  }
+  onGroupCleared(handler: (id: string, count: number, reason: 'explicit' | 'ttl') => void) {
+    this._onGroupCleared = handler
+  }
 
   getGroupStatus(eventGroupId: string): GroupStatus | null {
     const events = this._groups.get(eventGroupId)
@@ -149,7 +186,9 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
   }
 
   /** Configure maxActiveGroups for testing E-13 */
-  _setMaxActiveGroups(max: number) { this._maxActiveGroups = max }
+  _setMaxActiveGroups(max: number) {
+    this._maxActiveGroups = max
+  }
   _reset() {
     this._subscribers.clear()
     this._interceptors = []
