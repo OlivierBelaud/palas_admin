@@ -18,7 +18,9 @@ export class NeonDrizzleAdapter implements IDatabasePort {
     if (this._disposed) {
       throw new MantaError('INVALID_STATE', 'Adapter has been disposed')
     }
+    console.log(`[neon] Initializing database (url: ${config.url?.replace(/:[^@]+@/, ':***@')})`)
     this._neonDb = createNeonDatabase({ url: config.url })
+    console.log('[neon] Database instance created')
   }
 
   async dispose(): Promise<void> {
@@ -30,14 +32,18 @@ export class NeonDrizzleAdapter implements IDatabasePort {
   }
 
   async healthCheck(): Promise<boolean> {
-    if (!this._neonDb || this._disposed) return false
+    if (!this._neonDb || this._disposed) {
+      console.error('[neon] healthCheck: db not initialized or disposed')
+      return false
+    }
     try {
       await Promise.race([
         this._neonDb.rawSql('SELECT 1'),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 2000)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Health check timeout (5s)')), 5000)),
       ])
       return true
-    } catch {
+    } catch (err) {
+      console.error('[neon] healthCheck FAILED:', (err as Error).message, (err as Error).stack?.split('\n').slice(0, 3).join('\n'))
       return false
     }
   }
