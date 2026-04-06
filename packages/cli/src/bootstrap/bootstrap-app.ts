@@ -49,18 +49,33 @@ import {
 } from '@manta/core'
 import {
   type CommandRegistry,
-  createApp,
+  ContextRegistry,
   InMemoryCacheAdapter,
   InMemoryEventBusAdapter,
   InMemoryFileAdapter,
   InMemoryJobScheduler,
   InMemoryLockingAdapter,
+  InMemoryRepository,
   InMemoryRepositoryFactory,
-  instantiateServiceDescriptor,
-  isServiceDescriptor,
   MantaError,
+  QueryRegistry,
+  QueryService,
   WorkflowManager,
+  createApp,
+  generateAllUserRoutes,
+  generateEntityCommands,
+  generateLinkCommands,
+  getEntityFilter,
+  getPublicPaths,
+  getRegisteredLinks,
+  instantiateServiceDescriptor,
+  isCommandAllowed,
+  isEntityAllowed,
+  isServiceDescriptor,
+  parseDmlEntity,
+  toCamel,
 } from '@manta/core'
+import { AuthIdentity, AuthModuleService, EmailpassAuthProvider, ProviderIdentity } from '@manta/core/auth'
 import type { ICachePort, IDatabasePort, IFilePort, IRepositoryFactory } from '@manta/core/ports'
 import { resolveAdapters, resolvePreset } from '../config/resolve-adapters'
 import { discoverResources } from '../resource-loader'
@@ -668,7 +683,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
             )
           } catch {
             // Table not yet registered — skip (happens in InMemory or when table gen fails)
-            const { InMemoryRepository } = await import('@manta/core')
+            // InMemoryRepository — already statically imported at top of file
             const repo = new InMemoryRepository(entityName.toLowerCase())
             instance = instantiateServiceDescriptor(
               {
@@ -686,7 +701,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
 
         if (instance) {
           // Register under canonical camelCase key only
-          const { toCamel } = await import('@manta/core')
+          // toCamel — already statically imported at top of file
           const camelEntity = toCamel(entityName)
           builder.registerModule(camelEntity, instance)
           // First entity of a module also registers under the module name
@@ -810,7 +825,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
       }
     }
 
-    const { getRegisteredLinks } = await import('@manta/core')
+    // getRegisteredLinks — already statically imported at top of file
     const discoveredLinks = getRegisteredLinks().map((l) => ({
       tableName: l.tableName,
       leftFk: l.leftFk,
@@ -838,7 +853,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   // [7f] Auto-generate entity commands from discovered modules
   // Each DML entity gets 5 atomic commands: create, update, delete, retrieve, list
   // These are registered as entity commands — no workflow, direct service call + emit
-  const { generateEntityCommands: genEntityCmds } = await import('@manta/core')
+  const genEntityCmds = generateEntityCommands  // (static import at top of file)
   type EntityCommandDef = Awaited<ReturnType<typeof genEntityCmds>>[number]
   const entityCommandRegistry = new Map<string, EntityCommandDef>()
   for (const [entityName, dmlEntity] of entityRegistry.entries()) {
@@ -863,7 +878,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   }
   // [7g] Auto-generate link/unlink commands from defineLink() definitions
   // Each defineLink() gets 2 atomic commands: link-{a}-{b} and unlink-{a}-{b}
-  const { generateLinkCommands: genLinkCmds } = await import('@manta/core')
+  const genLinkCmds = generateLinkCommands  // (static import at top of file)
   let linkCmdCount = 0
   for (const link of loadedLinks) {
     // Skip direct FK links (1:N intra-module) — no pivot table, no link/unlink commands
@@ -998,7 +1013,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
 
   // [12] Load commands — cross-module (src/commands/) + intra-module (modules/*/commands/)
   // Also detect defineCommandGraph() files for context-aware command exposure
-  const { isCommandAllowed: isEntityCmdAllowed } = await import('@manta/core')
+  const isEntityCmdAllowed = isCommandAllowed  // (static import at top of file)
   type CommandGraphDef = import('@manta/core').CommandGraphDefinition
   const commandGraphDefs = new Map<string, CommandGraphDef>()
   const explicitCommandNames = new Set<string>()
@@ -1061,7 +1076,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   }
 
   // [12c] Load queries + query graphs — V2 (src/queries/{context}/*.ts)
-  const { QueryRegistry: QR, isEntityAllowed } = await import('@manta/core')
+  const QR = QueryRegistry  // (static import at top of file)
   const queryRegistry = new QR()
   const queryGraphDefs = new Map<string, { entities: '*' | string[] }>()
   if (resources.queries.length > 0) {
@@ -1218,7 +1233,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
     if (db && typeof (db as DrizzlePgAdapter).setSchema === 'function') {
       // Use auto-generated tables + framework tables
       // Only keep ONE key per table object — prefer camelCase (Drizzle convention for db.query)
-      const frameworkTables = await import('@manta/core/db').catch(() => ({}) as Record<string, unknown>)
+      let frameworkTables: Record<string, unknown> = {}; try { frameworkTables = await import('@manta/core/db') } catch { /* no db schema exports */ }
       const allTables: Record<string, unknown> = { ...frameworkTables }
       const seenTableObjects = new Map<unknown, string>()
       // Iterate generatedTables — snake_case keys come first, then camelCase.
@@ -1240,7 +1255,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
       }
 
       // Collect DML entity relation metadata from discovered modules
-      const { parseDmlEntity, getRegisteredLinks } = await import('@manta/core')
+      // parseDmlEntity, getRegisteredLinks — already statically imported at top of file
       const entityInputs = []
       for (const modInfo of resources.modules) {
         for (const entity of modInfo.entities) {
@@ -1284,7 +1299,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
       // Create relational query adapter
       // Build relation alias map: entity → { userFriendlyName → drizzleRelName }
       // e.g. for customerGroup: { customers: 'customerCustomerGroup' }
-      const { getRegisteredLinks: getLinks2 } = await import('@manta/core')
+      const getLinks2 = getRegisteredLinks  // (static import at top of file)
       const relationAliases = new Map<string, Record<string, string>>()
       const toCamelAlias = (s: string) => s.replace(/[_-]([a-z])/g, (_: string, c: string) => c.toUpperCase())
       const pluralizeAlias = (s: string) => {
@@ -1324,7 +1339,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
 
   // [12e] Create and register QueryService for defineQueryGraph() support
   try {
-    const { QueryService } = await import('@manta/core')
+    // QueryService — already statically imported at top of file
     const queryService = new QueryService()
 
     // Wire relational query for native SQL JOINs (dotted field paths)
@@ -1345,7 +1360,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
     for (const mod of resources.modules) {
       for (const entity of mod.entities) {
         // Derive canonical camelCase key from directory name: 'customer-group' → 'customerGroup'
-        const { toCamel: toCamelName } = await import('@manta/core')
+        const toCamelName = toCamel  // (static import at top of file)
         const entityPascal = entity.name
           .split('-')
           .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -1485,7 +1500,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   }
 
   // [12b] Wire AuthModuleService + auth verifier
-  const { AuthModuleService, EmailpassAuthProvider, AuthIdentity, ProviderIdentity } = await import('@manta/core/auth')
+  // AuthModuleService, EmailpassAuthProvider, AuthIdentity, ProviderIdentity — already statically imported at top of file
 
   // Auth repos: generate Drizzle tables from DML models when DB available, else InMemory
   // biome-ignore lint/suspicious/noExplicitAny: repos assigned from different adapter paths
@@ -1586,7 +1601,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   }
 
   if (userDefinitions.length > 0) {
-    const { generateAllUserRoutes, getPublicPaths } = await import('@manta/core')
+    // generateAllUserRoutes, getPublicPaths — already statically imported at top of file
 
     for (const { contextName, def } of userDefinitions) {
       try {
@@ -1697,7 +1712,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   // Auth routes are now auto-generated per defineUserModel context (e.g., /api/admin/login)
 
   // [13d] Load contexts (src/contexts/*.ts)
-  const { ContextRegistry } = await import('@manta/core')
+  // ContextRegistry — already statically imported at top of file
   const contextRegistry = new ContextRegistry()
   // Include module names + entity names (as registered in the builder) for query access
   const moduleNames = [
@@ -2201,7 +2216,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
 
   // [13g] Register query graph endpoints — POST {basePath}/graph
   if (queryGraphDefs.size > 0) {
-    const { getEntityFilter } = await import('@manta/core')
+    // getEntityFilter — already statically imported at top of file
 
     for (const [ctxName, graphDef] of queryGraphDefs) {
       const ctx = contextRegistry.list().find((c) => c.name === ctxName)

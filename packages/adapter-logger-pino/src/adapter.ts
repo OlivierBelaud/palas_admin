@@ -53,13 +53,19 @@ export class PinoLoggerAdapter implements ILoggerPort {
     const pinoLevel = this.mantaToPinoLevel(this._level)
 
     if (options.pretty) {
-      this.logger = pino({
-        level: pinoLevel,
-        transport: {
-          target: 'pino-pretty',
-          options: { colorize: true },
-        },
-      })
+      try {
+        this.logger = pino({
+          level: pinoLevel,
+          transport: {
+            target: 'pino-pretty',
+            options: { colorize: true },
+          },
+        })
+      } catch {
+        // pino-pretty uses worker threads which require __dirname (unavailable in ESM bundles
+        // on Vercel/Lambda). Fall back to plain JSON logging.
+        this.logger = pino({ level: pinoLevel })
+      }
     } else {
       this.logger = pino({ level: pinoLevel })
     }
