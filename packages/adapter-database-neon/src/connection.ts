@@ -1,6 +1,6 @@
 // Neon connection — copied from @manta/adapter-neon for self-contained package
 
-import { neonConfig, Pool } from '@neondatabase/serverless'
+import { neon, neonConfig, Pool } from '@neondatabase/serverless'
 import { drizzle as drizzleNeonWs } from 'drizzle-orm/neon-serverless'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js'
@@ -30,18 +30,25 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
   const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
   const isNeon = options.url.includes('neon.tech') || options.url.includes('neon.')
 
-  // Serverless + Neon → use WebSocket Pool
+  // Serverless + Neon → use WebSocket Pool for ORM queries, HTTP driver for raw DDL
   if (isServerless && isNeon) {
     neonConfig.webSocketConstructor = globalThis.WebSocket
 
-    const pool = new Pool({ connectionString: options.url, max: 1 })
+    const pool = new Pool({ connectionString: options.url, max: 3 })
     const db = drizzleNeonWs(pool)
+
+    // Use the stateless HTTP driver (neon()) for raw SQL / DDL operations.
+    // The Pool's pool.query() has a known bug with frozen objects after the first
+    // query ("Cannot add property callback, object is not extensible"). The HTTP
+    // driver is stateless and doesn't have connection management issues — perfect
+    // for CREATE TABLE / INSERT one-off statements during bootstrap.
+    const httpSql = neon(options.url)
 
     return {
       db: db as unknown as PostgresJsDatabase,
       rawSql: async (query: string) => {
-        const result = await pool.query(query)
-        return result.rows
+        const result = await httpSql(query)
+        return result
       },
       close: async () => {
         await pool.end()
