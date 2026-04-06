@@ -2,5 +2,6 @@ node_modules/
 .manta/
 dist/
 .output/
-public/
+public/*
+!public/favicon.webp
 .env

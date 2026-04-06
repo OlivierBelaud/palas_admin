@@ -2,6 +2,7 @@ import { defineSpa } from '@manta/dashboard-core'
 
 export default defineSpa({
   title: 'Commerce Admin',
+  favicon: '/favicon.webp',
 
   navigation: [
     {

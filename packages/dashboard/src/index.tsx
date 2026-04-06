@@ -206,6 +206,19 @@ export function MantaDashboard({
     [registry],
   )
   const displayTitle = spaConfig?.title || title
+
+  // Apply favicon from spaConfig
+  useEffect(() => {
+    if (!spaConfig?.favicon) return
+    let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement | null
+    if (!link) {
+      link = document.createElement('link')
+      link.rel = 'icon'
+      document.head.appendChild(link)
+    }
+    link.href = spaConfig.favicon
+  }, [spaConfig?.favicon])
+
   const headerSlot = useMemo(() => <MantaHeader title={displayTitle} />, [displayTitle])
   const userMenuSlot = useMemo(() => <UserMenu />, [])
   const loginProps = useMemo(
