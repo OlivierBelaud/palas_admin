@@ -1,6 +1,6 @@
 // SPEC-074, SPEC-100 — manta build command
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import type {
   BuildOptions,
@@ -164,6 +164,63 @@ export async function buildCommand(
           config.routes = routes
           writeFileSync(configPath, JSON.stringify(config, null, 2))
           console.log('  ✓ Vercel config.json patched (SPA /admin fallback)')
+        }
+
+        // Copy source files into the Vercel function directory so they're available
+        // at runtime for filesystem-based resource discovery (discoverResources + jiti).
+        // On Vercel serverless, the function runs from /var/task/ which only contains
+        // the Nitro bundle — NOT the project source files. Without this copy, bootstrapApp
+        // finds 0 modules → 0 tables created → 0 routes registered → everything 404s.
+        const funcDir = join(cwd, '.vercel', 'output', 'functions', '__server.func')
+        if (existsSync(funcDir)) {
+          const srcDir = join(cwd, 'src')
+          const configFile = join(cwd, 'manta.config.ts')
+          const pkgFile = join(cwd, 'package.json')
+
+          if (existsSync(srcDir)) {
+            cpSync(srcDir, join(funcDir, 'src'), { recursive: true })
+            console.log('  ✓ Source files copied to function directory (src/)')
+          }
+          if (existsSync(configFile)) {
+            cpSync(configFile, join(funcDir, 'manta.config.ts'))
+          }
+          if (existsSync(pkgFile)) {
+            cpSync(pkgFile, join(funcDir, 'package.json'))
+          }
+
+          // Copy packages that user source files import at runtime (resolved by jiti).
+          // We skip nested node_modules to avoid circular symlink issues with pnpm.
+          // Only packages directly imported by src/ files need to be here.
+          const skipNodeModules = (src: string) => !src.includes('node_modules')
+
+          const depsToResolve = ['@manta/core', 'zod']
+          for (const dep of depsToResolve) {
+            const depPath = join(cwd, 'node_modules', ...dep.split('/'))
+            if (!existsSync(depPath)) continue
+            try {
+              const realPath = realpathSync(depPath)
+              const targetPath = join(funcDir, 'node_modules', ...dep.split('/'))
+              mkdirSync(join(funcDir, 'node_modules', dep.startsWith('@') ? dep.split('/')[0] : ''), { recursive: true })
+              cpSync(realPath, targetPath, { recursive: true, filter: skipNodeModules })
+              console.log(`  ✓ ${dep} copied to function directory`)
+            } catch (e) {
+              console.warn(`  ⚠ Failed to copy ${dep}: ${(e as Error).message}`)
+            }
+          }
+
+          // Also copy zod's sub-dependencies if any (it's self-contained, but just in case)
+          const zodDeps = ['drizzle-orm']
+          for (const dep of zodDeps) {
+            const depPath = join(cwd, 'node_modules', dep)
+            if (!existsSync(depPath)) continue
+            try {
+              const realPath = realpathSync(depPath)
+              const targetPath = join(funcDir, 'node_modules', dep)
+              cpSync(realPath, targetPath, { recursive: true, filter: skipNodeModules })
+            } catch {
+              // non-critical
+            }
+          }
         }
       }
     } catch (err) {
