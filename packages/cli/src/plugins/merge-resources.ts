@@ -16,14 +16,20 @@ import type { ResolvedPlugin } from './resolve-plugins'
 export async function mergePluginResources(
   plugins: ResolvedPlugin[],
   appResources: DiscoveredResources,
+  preloaded?: Array<{ name: string; resources: DiscoveredResources; rootDir: string }>,
 ): Promise<DiscoveredResources> {
   if (plugins.length === 0) return appResources
 
-  // Discover resources from each plugin
+  // Discover resources from each plugin (or use preloaded if available)
   const allLayers: DiscoveredResources[] = []
   for (const plugin of plugins) {
-    const pluginResources = await discoverResources(plugin.rootDir)
-    allLayers.push(pluginResources)
+    const pre = preloaded?.find((p) => p.name === plugin.name)
+    if (pre) {
+      allLayers.push(pre.resources)
+    } else {
+      const pluginResources = await discoverResources(plugin.rootDir)
+      allLayers.push(pluginResources)
+    }
   }
 
   // App resources come last (highest priority)

@@ -123,6 +123,8 @@ export interface BootstrapOptions {
   preloadedResources?: import('../resource-loader').DiscoveredResources
   /** Pre-loaded module exports map (from build-time manifest). Used as importFn fallback. */
   preloadedImports?: Record<string, Record<string, unknown>>
+  /** Pre-loaded plugin resources (from build-time manifest). Merged into resources when provided. */
+  preloadedPluginResources?: Array<{ name: string; resources: import('../resource-loader').DiscoveredResources; rootDir: string }>
 }
 
 export interface BootstrappedApp {
@@ -511,6 +513,17 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   if (options.preloadedResources) {
     logger.info('Using pre-loaded resources (build-time manifest)')
     resources = options.preloadedResources
+
+    // Merge plugin resources into the main resources (modules, commands, queries, etc.)
+    if (options.preloadedPluginResources?.length) {
+      const { mergePluginResources } = await import('../plugins/merge-resources')
+      resources = await mergePluginResources(
+        options.preloadedPluginResources.map((p) => ({ name: p.name, rootDir: p.rootDir })),
+        resources,
+        options.preloadedPluginResources,
+      )
+      logger.info(`  Plugins (preloaded): ${options.preloadedPluginResources.map((p) => p.name).join(', ')}`)
+    }
   } else {
     logger.info('Discovering resources...')
     const { resolvePlugins } = await import('../plugins/resolve-plugins')

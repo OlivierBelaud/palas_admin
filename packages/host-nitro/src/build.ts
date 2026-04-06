@@ -70,7 +70,7 @@ export async function buildForProduction(options: BuildOptions): Promise<BuildRe
 import { bootstrapApp } from '@manta/cli/bootstrap'
 import { loadEnv } from '@manta/cli/env'
 import mantaConfigModule from './manta.config'
-import { moduleImports, preloadedResources } from './manifest'
+import { moduleImports, preloadedResources, preloadedPluginResources } from './manifest'
 
 let _bootstrapped: any = null
 
@@ -100,6 +100,7 @@ async function bootstrap() {
     cwd,
     mode: 'dev',
     preloadedResources: preloadedResources as any,
+    preloadedPluginResources: preloadedPluginResources as any,
     importFn,
   })
   return _bootstrapped
