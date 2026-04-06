@@ -15,7 +15,7 @@ export default {
       '@manta/host-nitro',
     ],
   },
-  rollupConfig: {
-    external: ['zod', 'ai', '@ai-sdk/anthropic', '@ai-sdk/openai'],
-  },
+  // NOTE: do NOT externalize 'zod' or other deps — on Vercel serverless, external
+  // packages must be in node_modules at runtime which isn't guaranteed. Let Nitro
+  // inline everything. Only externalize native Node.js modules if needed.
 }
