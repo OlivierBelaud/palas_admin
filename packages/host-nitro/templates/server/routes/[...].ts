@@ -17,9 +17,9 @@ export default defineEventHandler(async (event) => {
   const method = event.method ?? 'GET'
   const headers = getRequestHeaders(event)
 
-  let body: string | undefined
+  let body: Uint8Array | undefined
   if (method !== 'GET' && method !== 'HEAD') {
-    body = (await readRawBody(event, 'utf8')) ?? undefined
+    body = ((await readRawBody(event, false)) as Uint8Array | undefined) ?? undefined
   }
 
   const request = new Request(url.toString(), { method, headers, body: body || undefined })
