@@ -59,7 +59,7 @@ export async function POST(req: Request) {
 
   // Read body as raw bytes to preserve gzip encoding for forwarding
   const rawBytes = new Uint8Array(await req.arrayBuffer())
-  console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBytes.length} bytes)`)
+  console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBytes.length} bytes, ct: ${ct}, first4: [${rawBytes[0]},${rawBytes[1]},${rawBytes[2]},${rawBytes[3]}])`)
 
   const headers: Record<string, string> = {}
   const ct = req.headers.get('content-type')
@@ -70,6 +70,7 @@ export async function POST(req: Request) {
   // Forward raw bytes to PostHog (gzip stays gzip)
   const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
   const responseBody = await resp.text()
+  console.log(`[posthog-proxy] PostHog response: ${resp.status} ${responseBody.slice(0, 200)}`)
 
   // Klaviyo identity bridge (fire-and-forget)
   if (rawBytes.length > 0 && config.klaviyoApiKey) {
