@@ -331,8 +331,8 @@ export class H3Adapter implements IHttpPort {
       }
       // Include raw body for non-GET/HEAD/OPTIONS requests so proxy routes can forward it.
       // Use the raw buffer (not JSON.stringify) to preserve binary/gzip data untouched.
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && rawBodyBuffer) {
-        reqInit.body = rawBodyBuffer
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && rawBodyBytes) {
+        reqInit.body = rawBodyBytes
       }
 
       const request = new Request(reqUrl.toString(), reqInit)
