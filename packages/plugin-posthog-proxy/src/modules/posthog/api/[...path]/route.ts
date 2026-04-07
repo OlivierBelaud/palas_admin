@@ -134,12 +134,17 @@ async function processEvents(body: unknown, config: PostHogProxyConfig) {
     const exchangeId = extractExchangeId(props?.$_kx as string | null, props?.$kla_id as string | null)
     if (!exchangeId) continue
 
-    console.log(`[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}`)
-    const email = await resolveKlaviyoEmail(exchangeId, config)
-    if (email) {
-      await identifyInPostHog(distinctId, email, config)
-      identifiedIds.add(distinctId)
-      console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
+    console.log(`[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}, exchangeId: ${exchangeId.slice(0, 30)}...`)
+    try {
+      const email = await resolveKlaviyoEmail(exchangeId, config)
+      console.log(`[posthog-proxy] Klaviyo result: ${email ?? 'null'}`)
+      if (email) {
+        await identifyInPostHog(distinctId, email, config)
+        identifiedIds.add(distinctId)
+        console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
+      }
+    } catch (err) {
+      console.log(`[posthog-proxy] ERROR resolving: ${(err as Error).message}`)
     }
   }
 }
