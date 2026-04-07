@@ -2372,7 +2372,11 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
             const handler = mod[exportName] as (req: Request) => Promise<Response> | Response
             if (typeof handler !== 'function') continue
 
-            adapter.registerRoute(exportName, urlPath, async (req: Request) => {
+            // Use registerRawRoute (bypasses pipeline) to preserve raw binary/gzip bodies
+            const registerFn = 'registerRawRoute' in adapter
+              ? (adapter as any).registerRawRoute.bind(adapter)
+              : adapter.registerRoute.bind(adapter)
+            registerFn(exportName, urlPath, async (req: Request) => {
               const mantaReq = req as Request & { app?: unknown; scope?: unknown }
               if (!mantaReq.app)
                 Object.defineProperty(mantaReq, 'app', { value: app, enumerable: true, configurable: true })
