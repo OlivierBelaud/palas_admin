@@ -2,8 +2,8 @@
 // Forwards all requests from the PostHog JS SDK (/capture/, /decide/, /e/, /s/, etc.)
 // + optional Klaviyo identity bridge.
 //
-// The PostHog client SDK hits: https://your-app.com/api/posthog/capture/, /api/posthog/decide/, ...
-// This catch-all matches everything under /api/posthog/** and forwards to PostHog's real host.
+// Identity bridge: extracts $_kx (newsletter click) or $kla_id (__kla_id cookie)
+// from event properties, resolves the email via Klaviyo API, and sends $identify to PostHog.
 
 import { gunzipSync } from 'node:zlib'
 
@@ -60,7 +60,6 @@ export async function POST(req: Request) {
   // Read body as raw bytes to preserve gzip encoding for forwarding
   const rawBytes = new Uint8Array(await req.arrayBuffer())
   const ct = req.headers.get('content-type')
-  console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBytes.length} bytes, ct: ${ct}, first4: [${rawBytes[0]},${rawBytes[1]},${rawBytes[2]},${rawBytes[3]}])`)
 
   const headers: Record<string, string> = {}
   if (ct) headers['content-type'] = ct
@@ -70,12 +69,10 @@ export async function POST(req: Request) {
   // Forward raw bytes to PostHog (gzip stays gzip)
   const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
   const responseBody = await resp.text()
-  console.log(`[posthog-proxy] PostHog response: ${resp.status} ${responseBody.slice(0, 200)}`)
 
   // Klaviyo identity bridge (fire-and-forget)
   if (rawBytes.length > 0 && config.klaviyoApiKey) {
     try {
-      // Try to get JSON: decompress gzip if needed, then parse
       const jsonText = tryDecompress(rawBytes)
       if (jsonText) {
         const parsed = JSON.parse(jsonText)
@@ -83,11 +80,9 @@ export async function POST(req: Request) {
           console.error('[posthog-proxy] Klaviyo bridge error:', err)
         })
       }
-    } catch (err) {
-      console.log('[posthog-proxy] Body not parseable (session recording, etc.):', (err as Error).message)
+    } catch {
+      // Not parseable (session recording binary, etc.) — skip
     }
-  } else if (!config.klaviyoApiKey) {
-    console.warn('[posthog-proxy] KLAVIYO_API_KEY not set — identity bridge disabled')
   }
 
   return new Response(responseBody, {
@@ -98,7 +93,6 @@ export async function POST(req: Request) {
 
 /** Try to decompress gzip, fall back to raw text */
 function tryDecompress(bytes: Uint8Array): string | null {
-  // Check gzip magic bytes (1f 8b)
   if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
     try {
       return gunzipSync(Buffer.from(bytes)).toString('utf-8')
@@ -106,7 +100,6 @@ function tryDecompress(bytes: Uint8Array): string | null {
       return null
     }
   }
-  // Not gzip — try as plain text
   try {
     return new TextDecoder().decode(bytes)
   } catch {
@@ -118,7 +111,6 @@ function tryDecompress(bytes: Uint8Array): string | null {
 
 function extractPath(req: Request): string {
   const url = new URL(req.url)
-  // The route is mounted at /api/posthog/**, so strip that prefix
   return url.pathname.replace(/^\/api\/posthog/, '') || '/'
 }
 
@@ -126,65 +118,87 @@ function extractPath(req: Request): string {
 
 async function processEvents(body: unknown, config: PostHogProxyConfig) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch ?? [body])
-  console.log(`[posthog-proxy] Processing ${(events as unknown[]).length} event(s) for Klaviyo bridge`)
 
   for (const event of events as Record<string, unknown>[]) {
-    console.log(`[posthog-proxy] RAW EVENT: ${JSON.stringify(event)}`)
+    // Skip session recording snapshots (no user properties)
+    if (event.event === '$snapshot') continue
 
     const props = event.properties as Record<string, unknown> | undefined
     const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
-    const kx = props?.$_kx as string | undefined
+    if (!distinctId) continue
+    if (identifiedIds.has(distinctId)) continue
 
-    console.log(`[posthog-proxy] Event: ${event.event}, distinct_id: ${distinctId}, $_kx: ${kx ? kx.slice(0, 30) + '...' : 'null'}`)
+    // Try to extract a Klaviyo exchange token from two sources:
+    // 1. $_kx — set by PostHog SDK when visitor clicked a Klaviyo email link
+    // 2. $kla_id — __kla_id cookie registered via posthog.register() on the frontend
+    const exchangeId = extractExchangeId(props?.$_kx as string | null, props?.$kla_id as string | null)
+    if (!exchangeId) continue
 
-    if (!kx || !distinctId) continue
-    if (identifiedIds.has(distinctId)) {
-      console.log(`[posthog-proxy] Already identified: ${distinctId}`)
-      continue
-    }
-
-    const email = await resolveKlaviyoEmail(kx, config)
-    console.log(`[posthog-proxy] Klaviyo resolved: ${email ?? 'null'} for distinct_id: ${distinctId}`)
+    console.log(`[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}`)
+    const email = await resolveKlaviyoEmail(exchangeId, config)
     if (email) {
       await identifyInPostHog(distinctId, email, config)
       identifiedIds.add(distinctId)
-      console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email} in PostHog`)
+      console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
     }
   }
 }
 
-async function resolveKlaviyoEmail(kxCookie: string, config: PostHogProxyConfig): Promise<string | null> {
-  if (identityCache.has(kxCookie)) return identityCache.get(kxCookie)!
+/**
+ * Extract the $exchange_id from either $_kx or $kla_id.
+ * Both are base64-encoded JSON: {"cid":"...", "$exchange_id":"..."}
+ * If $exchange_id is present, the user is identified in Klaviyo.
+ * If only cid exists, the user is anonymous — skip.
+ */
+function extractExchangeId(kx: string | null | undefined, klaId: string | null | undefined): string | null {
+  for (const token of [kx, klaId]) {
+    if (!token) continue
+    try {
+      const decoded = JSON.parse(Buffer.from(token, 'base64').toString())
+      if (decoded.$exchange_id) return decoded.$exchange_id as string
+    } catch {
+      // Not valid base64/JSON — skip
+    }
+  }
+  return null
+}
+
+/**
+ * Resolve a Klaviyo $exchange_id to an email using the profile-import endpoint.
+ * This is the correct API for exchange tokens (not GET /profiles/?filter=...).
+ */
+async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfig): Promise<string | null> {
+  if (identityCache.has(exchangeId)) return identityCache.get(exchangeId)!
   if (!config.klaviyoApiKey) return null
 
   try {
-    const decoded = JSON.parse(Buffer.from(kxCookie, 'base64').toString())
-    console.log('[posthog-proxy] $_kx decoded:', JSON.stringify(decoded))
-    const exchangeValue = (decoded.$exchange_id ?? decoded.cid) as string | undefined
-    if (!exchangeValue) {
-      console.warn('[posthog-proxy] No $exchange_id or cid in $_kx cookie')
-      return null
-    }
-    console.log(`[posthog-proxy] Querying Klaviyo for external_id: ${exchangeValue}`)
-
-    const res = await fetch(`https://a.klaviyo.com/api/profiles/?filter=equals(external_id,"${exchangeValue}")`, {
+    const res = await fetch('https://a.klaviyo.com/api/profile-import/', {
+      method: 'POST',
       headers: {
         Authorization: `Klaviyo-API-Key ${config.klaviyoApiKey}`,
+        'Content-Type': 'application/json',
         accept: 'application/json',
         revision: '2024-10-15',
       },
+      body: JSON.stringify({
+        data: {
+          type: 'profile',
+          attributes: { _kx: exchangeId },
+        },
+      }),
     })
 
     if (!res.ok) {
-      const errBody = await res.text()
-      console.error(`[posthog-proxy] Klaviyo API error ${res.status}: ${errBody}`)
+      console.error(`[posthog-proxy] Klaviyo API error ${res.status}: ${await res.text()}`)
       return null
     }
 
-    const data = (await res.json()) as { data?: Array<{ attributes?: { email?: string } }> }
-    console.log(`[posthog-proxy] Klaviyo response: ${data.data?.length ?? 0} profile(s) found`)
-    const email = data.data?.[0]?.attributes?.email
-    if (email) identityCache.set(kxCookie, email)
+    const data = (await res.json()) as { data?: { attributes?: { email?: string } } }
+    const email = data.data?.attributes?.email
+    if (email) {
+      identityCache.set(exchangeId, email)
+      console.log(`[posthog-proxy] Klaviyo resolved: ${email}`)
+    }
     return email ?? null
   } catch (err) {
     console.error('[posthog-proxy] resolveKlaviyoEmail error:', err)
@@ -198,24 +212,22 @@ async function identifyInPostHog(distinctId: string, email: string, config: Post
     return
   }
   try {
-    const identifyBody = {
-      api_key: config.publicToken,
-      distinct_id: email,
-      event: '$identify',
-      properties: {
-        $anon_distinct_id: distinctId,
-        $set: {
-          email,
-          klaviyo_identified: true,
-          identified_at: new Date().toISOString(),
-        },
-      },
-    }
-    console.log(`[posthog-proxy] Sending $identify to PostHog: ${email} (anon: ${distinctId})`)
     const res = await fetch(`${config.host}/i/v0/e/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(identifyBody),
+      body: JSON.stringify({
+        api_key: config.publicToken,
+        distinct_id: email,
+        event: '$identify',
+        properties: {
+          $anon_distinct_id: distinctId,
+          $set: {
+            email,
+            klaviyo_identified: true,
+            identified_at: new Date().toISOString(),
+          },
+        },
+      }),
     })
     console.log(`[posthog-proxy] PostHog $identify response: ${res.status}`)
   } catch (err) {
