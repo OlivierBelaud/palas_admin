@@ -133,10 +133,19 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
     if (!distinctId) continue
     if (identifiedIds.has(distinctId)) continue
 
-    // Try to extract a Klaviyo exchange token from two sources:
-    // 1. $_kx — set by PostHog SDK when visitor clicked a Klaviyo email link
-    // 2. $kla_id — __kla_id cookie registered via posthog.register() on the frontend
-    const exchangeId = extractExchangeId(props?.$_kx as string | null, props?.$kla_id as string | null)
+    // Try to extract a Klaviyo exchange token from multiple sources:
+    // 1. $_kx in properties (PostHog SDK cookie)
+    // 2. $kla_id from __kla_id cookie (registered via posthog.register)
+    // 3. $_kx or _kx in $set (PostHog SDK puts URL params in $set)
+    // 4. _kx from $current_url query param (newsletter link)
+    const $set = props?.$set as Record<string, unknown> | undefined
+    const kxFromUrl = extractKxFromUrl(props?.$current_url as string | undefined)
+    const exchangeId = extractExchangeId(
+      props?.$_kx as string | null,
+      props?.$kla_id as string | null,
+      $set?.$_kx as string | null ?? $set?._kx as string | null,
+      kxFromUrl,
+    )
     if (!exchangeId) continue
 
     console.log(`[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}, exchangeId: ${exchangeId.slice(0, 30)}...`)
@@ -162,29 +171,30 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
  * $kla_id: base64 JSON from __kla_id cookie: {"cid":"...", "$exchange_id":"..."}
  *          If only cid exists (no $exchange_id), the user is anonymous — skip.
  */
-function extractExchangeId(kx: string | null | undefined, klaId: string | null | undefined): string | null {
-  // $_kx from newsletter — it's the raw exchange_id directly (not base64)
-  if (kx) {
+function extractExchangeId(...tokens: (string | null | undefined)[]): string | null {
+  for (const token of tokens) {
+    if (!token) continue
+    // Try base64 JSON first (cookie format)
     try {
-      const decoded = JSON.parse(Buffer.from(kx, 'base64').toString())
+      const decoded = JSON.parse(Buffer.from(token, 'base64').toString())
       if (decoded.$exchange_id) return decoded.$exchange_id as string
     } catch {
-      // Not base64 JSON — it's the raw exchange_id from the URL
-      return kx
+      // Not base64 JSON — could be raw exchange_id from URL
+      // Raw exchange_ids contain dots (e.g. "g8yDA5d2_J7Ub...VeFGwD")
+      if (token.includes('.') && token.length > 10) return token
     }
   }
-
-  // $kla_id from __kla_id cookie — base64 JSON
-  if (klaId) {
-    try {
-      const decoded = JSON.parse(Buffer.from(klaId, 'base64').toString())
-      if (decoded.$exchange_id) return decoded.$exchange_id as string
-    } catch {
-      // Not valid base64/JSON — skip
-    }
-  }
-
   return null
+}
+
+function extractKxFromUrl(url: string | undefined): string | null {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    return parsed.searchParams.get('_kx')
+  } catch {
+    return null
+  }
 }
 
 /**
