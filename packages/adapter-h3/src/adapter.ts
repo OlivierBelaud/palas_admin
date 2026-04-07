@@ -197,74 +197,6 @@ export class H3Adapter implements IHttpPort {
     this._registerInternalRoute(method, path, handler, options)
   }
 
-  /**
-   * Register a raw route that bypasses the 12-step pipeline.
-   * Used for proxy routes (PostHog, etc.) that need untouched binary/gzip bodies.
-   */
-  registerRawRoute(
-    method: string,
-    path: string,
-    handler: (req: Request) => Promise<Response> | Response,
-  ): void {
-    const h3Handler = defineEventHandler(async (event: H3Event) => {
-      try {
-        const url = new URL(event.path ?? '/', `http://${this._host}:${this._port}`)
-        const m = getMethod(event)
-        const reqInit: RequestInit = { method: m, headers: {} }
-
-        // Copy all incoming headers
-        const rawHeaders = event.headers ?? (event.node?.req?.headers as Record<string, string | string[] | undefined>)
-        if (rawHeaders) {
-          for (const [key, value] of Object.entries(rawHeaders)) {
-            if (value) (reqInit.headers as Record<string, string>)[key] = Array.isArray(value) ? value[0] : value
-          }
-        }
-
-        // Read raw body directly from Node.js stream (bypasses h3 body parsing)
-        if (m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS') {
-          const nodeReq = event.node?.req
-          if (nodeReq) {
-            const chunks: Buffer[] = []
-            await new Promise<void>((resolve, reject) => {
-              nodeReq.on('data', (chunk: Buffer) => chunks.push(chunk))
-              nodeReq.on('end', () => resolve())
-              nodeReq.on('error', reject)
-            })
-            const bodyBuffer = Buffer.concat(chunks)
-            if (bodyBuffer.length > 0) {
-              reqInit.body = bodyBuffer
-            }
-          }
-        }
-
-        const request = new Request(url.toString(), reqInit)
-        const response = await handler(request)
-
-        // Send response
-        setResponseStatus(event, response.status)
-        response.headers.forEach((value, key) => {
-          setResponseHeader(event, key, value)
-        })
-        return await response.text()
-      } catch (error) {
-        setResponseStatus(event, 500)
-        setResponseHeader(event, 'content-type', 'application/json')
-        return JSON.stringify({ error: 'Proxy error', message: (error as Error).message })
-      }
-    })
-
-    const m = method.toLowerCase()
-    switch (m) {
-      case 'get': this._router.get(path, h3Handler); break
-      case 'post': this._router.post(path, h3Handler); break
-      case 'put': this._router.put(path, h3Handler); break
-      case 'delete': this._router.delete(path, h3Handler); break
-      case 'patch': this._router.patch(path, h3Handler); break
-      case 'options': this._router.options(path, h3Handler); break
-      default: this._router.get(path, h3Handler); break
-    }
-  }
-
   async handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url, 'http://localhost')
     const method = req.method.toUpperCase()
@@ -702,12 +634,8 @@ export class H3Adapter implements IHttpPort {
             throw new MantaError('FORBIDDEN', 'Access denied')
           }
 
-          // Build enriched request — preserve the original body
-          const enrichedReq = new Request(req.url, {
-            method: req.method,
-            headers: req.headers,
-            body: method !== 'GET' && method !== 'HEAD' ? JSON.stringify(body) : undefined,
-          })
+          // Build enriched request — clone original to preserve raw body (gzip, binary, etc.)
+          const enrichedReq = req.clone()
           Object.defineProperty(enrichedReq, 'validatedBody', { value: body, enumerable: true })
           Object.defineProperty(enrichedReq, 'requestId', { value: requestId, enumerable: true })
           if (authContext) {
