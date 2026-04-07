@@ -5,6 +5,8 @@
 // The PostHog client SDK hits: https://your-app.com/api/posthog/capture/, /api/posthog/decide/, ...
 // This catch-all matches everything under /api/posthog/** and forwards to PostHog's real host.
 
+import { gunzipSync } from 'node:zlib'
+
 interface PostHogProxyConfig {
   host: string
   publicToken?: string
@@ -55,8 +57,9 @@ export async function POST(req: Request) {
   const path = extractPath(req)
   const targetUrl = `${config.host}${path}`
 
-  const rawBody = await req.text()
-  console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBody.length} bytes)`)
+  // Read body as raw bytes to preserve gzip encoding for forwarding
+  const rawBytes = new Uint8Array(await req.arrayBuffer())
+  console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBytes.length} bytes)`)
 
   const headers: Record<string, string> = {}
   const ct = req.headers.get('content-type')
@@ -64,18 +67,23 @@ export async function POST(req: Request) {
   const ua = req.headers.get('user-agent')
   if (ua) headers['user-agent'] = ua
 
-  const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBody })
+  // Forward raw bytes to PostHog (gzip stays gzip)
+  const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
   const responseBody = await resp.text()
 
   // Klaviyo identity bridge (fire-and-forget)
-  if (rawBody && config.klaviyoApiKey) {
+  if (rawBytes.length > 0 && config.klaviyoApiKey) {
     try {
-      const parsed = JSON.parse(rawBody)
-      processEvents(parsed, config).catch((err) => {
-        console.error('[posthog-proxy] Klaviyo bridge error:', err)
-      })
+      // Try to get JSON: decompress gzip if needed, then parse
+      const jsonText = tryDecompress(rawBytes)
+      if (jsonText) {
+        const parsed = JSON.parse(jsonText)
+        processEvents(parsed, config).catch((err) => {
+          console.error('[posthog-proxy] Klaviyo bridge error:', err)
+        })
+      }
     } catch (err) {
-      console.log('[posthog-proxy] Body not JSON (session recording, etc.):', typeof rawBody, rawBody.slice(0, 100))
+      console.log('[posthog-proxy] Body not parseable (session recording, etc.):', (err as Error).message)
     }
   } else if (!config.klaviyoApiKey) {
     console.warn('[posthog-proxy] KLAVIYO_API_KEY not set — identity bridge disabled')
@@ -85,6 +93,24 @@ export async function POST(req: Request) {
     status: resp.status,
     headers: { ...CORS_HEADERS, 'Content-Type': resp.headers.get('Content-Type') ?? 'application/json' },
   })
+}
+
+/** Try to decompress gzip, fall back to raw text */
+function tryDecompress(bytes: Uint8Array): string | null {
+  // Check gzip magic bytes (1f 8b)
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    try {
+      return gunzipSync(Buffer.from(bytes)).toString('utf-8')
+    } catch {
+      return null
+    }
+  }
+  // Not gzip — try as plain text
+  try {
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return null
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

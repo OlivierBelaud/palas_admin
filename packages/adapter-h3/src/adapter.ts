@@ -11,6 +11,7 @@ import {
   getMethod,
   getRequestHeader,
   type H3Event,
+  readRawBody,
   setResponseHeader,
   setResponseStatus,
   toNodeListener,
@@ -272,7 +273,25 @@ export class H3Adapter implements IHttpPort {
       // Step 4 -- Scope (no-op)
 
       // Step 5 -- Body parsing
-      let body = await parseBody(event)
+      // Read raw body as bytes ONCE (the stream can only be consumed once).
+      // Then try JSON parse for CQRS routes. Proxy routes get the raw buffer.
+      let rawBodyBytes: Uint8Array | undefined
+      let body: unknown
+      const reqMethod = getMethod(event)
+      if (reqMethod !== 'GET' && reqMethod !== 'HEAD' && reqMethod !== 'OPTIONS') {
+        try {
+          rawBodyBytes = (await readRawBody(event, false)) as Uint8Array | undefined
+          if (rawBodyBytes) {
+            try {
+              body = JSON.parse(new TextDecoder().decode(rawBodyBytes))
+            } catch {
+              // Not JSON (gzip, binary, session recording, etc.) — body stays undefined
+            }
+          }
+        } catch {
+          // No body
+        }
+      }
 
       // Step 6 -- Auth
       let authContext: AuthContext | null = null
@@ -310,9 +329,10 @@ export class H3Adapter implements IHttpPort {
         method,
         headers: reqHeaders,
       }
-      // Include raw body for non-GET/HEAD/OPTIONS requests so proxy routes can forward it
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-        reqInit.body = body !== undefined ? JSON.stringify(body) : undefined
+      // Include raw body for non-GET/HEAD/OPTIONS requests so proxy routes can forward it.
+      // Use the raw buffer (not JSON.stringify) to preserve binary/gzip data untouched.
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && rawBodyBuffer) {
+        reqInit.body = rawBodyBuffer
       }
 
       const request = new Request(reqUrl.toString(), reqInit)
