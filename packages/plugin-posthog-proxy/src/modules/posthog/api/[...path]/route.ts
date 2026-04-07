@@ -81,7 +81,7 @@ export async function POST(req: Request) {
       const jsonText = tryDecompress(rawBytes)
       if (jsonText) {
         const parsed = JSON.parse(jsonText)
-        processEvents(parsed, config).catch((err) => {
+        processEvents(parsed, config, clientIp).catch((err) => {
           console.error('[posthog-proxy] Klaviyo bridge error:', err)
         })
       }
@@ -121,7 +121,7 @@ function extractPath(req: Request): string {
 
 // ── Klaviyo identity bridge ─────────────────────────────────────────
 
-async function processEvents(body: unknown, config: PostHogProxyConfig) {
+async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp?: string | null) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
@@ -144,7 +144,7 @@ async function processEvents(body: unknown, config: PostHogProxyConfig) {
       const email = await resolveKlaviyoEmail(exchangeId, config)
       console.log(`[posthog-proxy] Klaviyo result: ${email ?? 'null'}`)
       if (email) {
-        await identifyInPostHog(distinctId, email, config)
+        await identifyInPostHog(distinctId, email, config, clientIp)
         identifiedIds.add(distinctId)
         console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
       }
@@ -216,15 +216,17 @@ async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfi
   }
 }
 
-async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig) {
+async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null) {
   if (!config.publicToken) {
     console.warn('[posthog-proxy] POSTHOG_TOKEN not set — cannot send $identify')
     return
   }
   try {
+    const fetchHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (clientIp) fetchHeaders['x-forwarded-for'] = clientIp
     const res = await fetch(`${config.host}/i/v0/e/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: fetchHeaders,
       body: JSON.stringify({
         api_key: config.publicToken,
         distinct_id: email,
