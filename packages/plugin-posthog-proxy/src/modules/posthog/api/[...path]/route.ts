@@ -156,20 +156,34 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
 
 /**
  * Extract the $exchange_id from either $_kx or $kla_id.
- * Both are base64-encoded JSON: {"cid":"...", "$exchange_id":"..."}
- * If $exchange_id is present, the user is identified in Klaviyo.
- * If only cid exists, the user is anonymous — skip.
+ *
+ * $_kx: raw exchange_id from newsletter URL param (e.g. "g8yDA5d2_J7Ub...")
+ *       OR base64 JSON from PostHog SDK cookie reading.
+ * $kla_id: base64 JSON from __kla_id cookie: {"cid":"...", "$exchange_id":"..."}
+ *          If only cid exists (no $exchange_id), the user is anonymous — skip.
  */
 function extractExchangeId(kx: string | null | undefined, klaId: string | null | undefined): string | null {
-  for (const token of [kx, klaId]) {
-    if (!token) continue
+  // $_kx from newsletter — it's the raw exchange_id directly (not base64)
+  if (kx) {
     try {
-      const decoded = JSON.parse(Buffer.from(token, 'base64').toString())
+      const decoded = JSON.parse(Buffer.from(kx, 'base64').toString())
+      if (decoded.$exchange_id) return decoded.$exchange_id as string
+    } catch {
+      // Not base64 JSON — it's the raw exchange_id from the URL
+      return kx
+    }
+  }
+
+  // $kla_id from __kla_id cookie — base64 JSON
+  if (klaId) {
+    try {
+      const decoded = JSON.parse(Buffer.from(klaId, 'base64').toString())
       if (decoded.$exchange_id) return decoded.$exchange_id as string
     } catch {
       // Not valid base64/JSON — skip
     }
   }
+
   return null
 }
 
