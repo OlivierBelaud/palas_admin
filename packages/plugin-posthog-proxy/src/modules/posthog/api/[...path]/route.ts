@@ -59,10 +59,10 @@ export async function POST(req: Request) {
 
   // Read body as raw bytes to preserve gzip encoding for forwarding
   const rawBytes = new Uint8Array(await req.arrayBuffer())
+  const ct = req.headers.get('content-type')
   console.log(`[posthog-proxy] POST ${path} → ${targetUrl} (body: ${rawBytes.length} bytes, ct: ${ct}, first4: [${rawBytes[0]},${rawBytes[1]},${rawBytes[2]},${rawBytes[3]}])`)
 
   const headers: Record<string, string> = {}
-  const ct = req.headers.get('content-type')
   if (ct) headers['content-type'] = ct
   const ua = req.headers.get('user-agent')
   if (ua) headers['user-agent'] = ua
