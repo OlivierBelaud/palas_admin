@@ -44,6 +44,8 @@ export async function GET(req: Request) {
   const headers: Record<string, string> = {}
   const ua = req.headers.get('user-agent')
   if (ua) headers['user-agent'] = ua
+  const clientIp = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip')
+  if (clientIp) headers['x-forwarded-for'] = clientIp
 
   const resp = await fetch(targetUrl, { headers })
   return new Response(await resp.text(), {
@@ -65,6 +67,9 @@ export async function POST(req: Request) {
   if (ct) headers['content-type'] = ct
   const ua = req.headers.get('user-agent')
   if (ua) headers['user-agent'] = ua
+  // Forward client IP so PostHog GeoIP resolves the real user location, not the proxy's
+  const clientIp = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip')
+  if (clientIp) headers['x-forwarded-for'] = clientIp
 
   // Forward raw bytes to PostHog (gzip stays gzip)
   const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
