@@ -1050,7 +1050,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
           : col.label,
         accessorFn: (row) => resolveDataPath(row, col.key),
         enableSorting: isSortable,
-        cell: isFirst
+        cell: isFirst && !col.format
           ? (info) => {
               const val = resolveDataPath(info.row.original, col.key)
               if (val == null) return React.createElement(PlaceholderCell, null)

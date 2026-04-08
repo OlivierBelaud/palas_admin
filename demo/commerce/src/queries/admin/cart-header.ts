@@ -18,7 +18,7 @@ export default defineQuery({
 
     const title = cart.email ?? cart.distinct_id ?? 'Anonyme'
     const posthogUrl = cart.distinct_id
-      ? `https://eu.posthog.com/persons?q=${encodeURIComponent(cart.distinct_id)}`
+      ? `https://eu.posthog.com/project/153280/person/${encodeURIComponent(cart.distinct_id)}`
       : ''
     const posthogLabel = `Voir dans PostHog ↗`
 
