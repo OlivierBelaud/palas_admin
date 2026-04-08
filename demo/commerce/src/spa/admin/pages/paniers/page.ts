@@ -3,12 +3,9 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: { title: 'Paniers' },
   main: [
-    // ── Stats 30 jours (un seul appel) ──────────────────────────────────
     {
       type: 'StatsCard',
-      query: {
-        name: 'cart-stats',
-      },
+      query: { name: 'cart-stats' },
       metrics: [
         { label: 'Paniers (30j)', key: 'total_carts', format: 'number' },
         { label: 'En cours', key: 'active', format: 'number' },
@@ -21,35 +18,13 @@ export default definePage({
         { label: 'CA perdu (abandons)', key: 'abandoned_revenue', format: 'number' },
       ],
     },
-
-    // ── Tableau de tous les paniers ─────────────────────────────────────
     {
       type: 'DataTable',
       title: 'Tous les paniers',
-      query: {
-        graph: {
-          entity: 'cart',
-          fields: [
-            'email',
-            'first_name',
-            'last_name',
-            'total_price',
-            'item_count',
-            'currency',
-            'last_action',
-            'highest_stage',
-            'status',
-            'last_action_at',
-          ],
-          pagination: { limit: 20 },
-        },
-      },
+      query: { name: 'cart-list' },
       columns: [
-        { key: 'email', label: 'Client', format: 'highlight', sortable: true },
-        { key: 'first_name', label: 'Prénom' },
-        { key: 'last_name', label: 'Nom' },
+        { key: 'client', label: 'Client', format: 'highlight' },
         { key: 'total_price', label: 'Montant', format: 'number', sortable: true },
-        { key: 'currency', label: 'Devise' },
         { key: 'item_count', label: 'Articles', format: 'number' },
         {
           key: 'status',
@@ -81,13 +56,10 @@ export default definePage({
           },
           filterable: ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'],
         },
-        {
-          key: 'last_action',
-          label: 'Dernière action',
-        },
+        { key: 'last_action', label: 'Dernière action' },
         {
           key: 'last_action_at',
-          label: 'Dernière activité',
+          label: 'Activité',
           format: { type: 'date', format: 'relative' },
           sortable: true,
         },

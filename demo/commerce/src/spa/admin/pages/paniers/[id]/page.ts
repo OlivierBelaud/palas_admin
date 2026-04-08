@@ -3,10 +3,9 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: {
     titleField: 'email',
-    descriptionField: 'cart_token',
+    descriptionField: 'distinct_id',
   },
   main: [
-    // ── Contenu du panier ──────────────────────────────────────────────
     {
       type: 'JsonCard',
       title: 'Articles du panier',
@@ -17,8 +16,6 @@ export default definePage({
         },
       },
     },
-
-    // ── Timeline des événements ────────────────────────────────────────
     {
       type: 'RelationTable',
       title: 'Historique des actions',
@@ -56,14 +53,13 @@ export default definePage({
     },
   ],
   sidebar: [
-    // ── Infos client ───────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Client',
       query: {
         graph: {
           entity: 'cart',
-          fields: ['email', 'first_name', 'last_name', 'phone', 'city', 'country_code', 'shopify_customer_id'],
+          fields: ['email', 'first_name', 'last_name', 'phone', 'city', 'country_code', 'distinct_id', 'shopify_customer_id'],
         },
       },
       fields: [
@@ -73,11 +69,10 @@ export default definePage({
         { key: 'phone', label: 'Téléphone' },
         { key: 'city', label: 'Ville' },
         { key: 'country_code', label: 'Pays' },
+        { key: 'distinct_id', label: 'PostHog ID' },
         { key: 'shopify_customer_id', label: 'Shopify ID' },
       ],
     },
-
-    // ── Funnel ─────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Parcours',
@@ -94,8 +89,6 @@ export default definePage({
         { key: 'last_action_at', label: 'Dernière activité', display: { type: 'date', format: 'long' } },
       ],
     },
-
-    // ── Checkout ────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Checkout',
@@ -117,8 +110,6 @@ export default definePage({
         { key: 'is_first_order', label: 'Première commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
       ],
     },
-
-    // ── Dates ──────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Dates',
