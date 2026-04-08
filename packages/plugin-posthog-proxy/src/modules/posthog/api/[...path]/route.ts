@@ -54,7 +54,7 @@ export async function GET(req: Request) {
   })
 }
 
-export async function POST(req: Request) {
+export async function POST(req: Request & { app?: any }) {
   const config = getConfig()
   const path = extractPath(req)
   const targetUrl = `${config.host}${path}`
@@ -113,6 +113,13 @@ export async function POST(req: Request) {
         console.error('[posthog-proxy] Klaviyo bridge error:', err)
       })
     }
+
+    // Cart tracking: ingest cart:* and checkout:* events into the database
+    if (req.app) {
+      ingestCartEvents(parsed, req.app).catch((err) => {
+        console.error('[posthog-proxy] Cart tracking error:', err)
+      })
+    }
   }
 
   return new Response(responseBody, {
@@ -142,6 +149,114 @@ function tryDecompress(bytes: Uint8Array): string | null {
 function extractPath(req: Request): string {
   const url = new URL(req.url)
   return url.pathname.replace(/^\/api\/posthog/, '') || '/'
+}
+
+// ── Cart tracking bridge ────────────────────────────────────────
+// Intercepts cart:* and checkout:* events and calls the ingestCartEvent
+// command to persist them in the cart-tracking database tables.
+
+const CART_TRACKABLE_EVENTS = new Set([
+  'cart:product_added',
+  'cart:product_removed',
+  'cart:updated',
+  'cart:cleared',
+  'cart:viewed',
+  'checkout:started',
+  'checkout:contact_info_submitted',
+  'checkout:address_info_submitted',
+  'checkout:shipping_info_submitted',
+  'checkout:payment_info_submitted',
+  'checkout:completed',
+])
+
+async function ingestCartEvents(body: unknown, app: any) {
+  const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
+
+  for (const event of events as Record<string, unknown>[]) {
+    const eventName = event.event as string | undefined
+    if (!eventName || !CART_TRACKABLE_EVENTS.has(eventName)) continue
+
+    const props = event.properties as Record<string, unknown> | undefined
+    const $set = props?.$set as Record<string, unknown> | undefined
+    const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
+
+    // Resolve cart_token: for cart events it's in props.cart.cart_token,
+    // for checkout events it's in props.order_id (same as checkout token)
+    const cart = props?.cart as Record<string, unknown> | undefined
+    const cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
+    if (!cartToken) {
+      console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
+      continue
+    }
+
+    // Build items array from cart snapshot or checkout items
+    const cartItems = (cart?.items ?? props?.items ?? []) as any[]
+    const items = cartItems.map((item: any) => ({
+      id: String(item.id ?? ''),
+      product_id: String(item.product_id ?? ''),
+      sku: item.sku ?? undefined,
+      title: item.title ?? '',
+      variant_title: item.variant_title ?? undefined,
+      quantity: Number(item.quantity ?? 0),
+      price: Number(item.price ?? 0),
+      original_price: item.original_price != null ? Number(item.original_price) : undefined,
+      line_price: item.line_price != null ? Number(item.line_price) : undefined,
+      total_discount: item.total_discount != null ? Number(item.total_discount) : undefined,
+      discounts: item.discounts ?? undefined,
+      image_url: item.image_url ?? undefined,
+      url: item.url ?? undefined,
+    }))
+
+    const changedItems = (props?.changed_items ?? []) as any[]
+
+    const input = {
+      cart_token: cartToken,
+      action: eventName,
+      occurred_at: (event.timestamp as string) ?? new Date().toISOString(),
+      distinct_id: distinctId ?? null,
+      email: ($set?.email ?? props?.email ?? null) as string | null,
+      first_name: ($set?.first_name ?? null) as string | null,
+      last_name: ($set?.last_name ?? null) as string | null,
+      phone: ($set?.phone ?? null) as string | null,
+      city: ($set?.city ?? null) as string | null,
+      country_code: ($set?.country ?? null) as string | null,
+      shopify_customer_id: props?.shopify_customer_id ? String(props.shopify_customer_id) : null,
+      items,
+      changed_items: changedItems.length > 0 ? changedItems.map((item: any) => ({
+        ...items.find((i: any) => i.id === String(item.id)) ?? {},
+        id: String(item.id ?? ''),
+        product_id: String(item.product_id ?? ''),
+        title: item.title ?? '',
+        quantity: Number(item.quantity ?? 0),
+        price: Number(item.price ?? 0),
+        quantity_change: Number(item.quantity_change ?? 0),
+      })) : null,
+      total_price: Number(cart?.total_price ?? props?.total_price ?? 0),
+      currency: (cart?.currency ?? props?.currency ?? 'EUR') as string,
+      order_id: (props?.order_id ?? null) as string | null,
+      shopify_order_id: (props?.shopify_order_id ?? null) as string | null,
+      is_first_order: (props?.is_first_order ?? null) as boolean | null,
+      shipping_method: (props?.shipping_method ?? null) as string | null,
+      shipping_price: props?.shipping_price != null ? Number(props.shipping_price) : null,
+      discounts_amount: props?.discounts_amount != null ? Number(props.discounts_amount) : null,
+      discounts: (props?.discounts ?? null) as any[] | null,
+      subtotal_price: props?.subtotal_price != null ? Number(props.subtotal_price) : null,
+      total_tax: props?.total_tax != null ? Number(props.total_tax) : null,
+      raw_properties: props ?? null,
+    }
+
+    try {
+      const commands = app.commands as Record<string, Function> | undefined
+      if (commands?.ingestCartEvent) {
+        await commands.ingestCartEvent(input, { auth: null, headers: {} })
+        console.log(`[posthog-proxy] cart-tracking: ingested ${eventName} for cart ${cartToken}`)
+      } else {
+        console.log(`[posthog-proxy] cart-tracking: ingestCartEvent command not found, skipping`)
+      }
+    } catch (err) {
+      console.error(`[posthog-proxy] cart-tracking: failed to ingest ${eventName}:`, (err as Error).message)
+    }
+  }
 }
 
 // ── Checkout identity bridge ────────────────────────────────────
