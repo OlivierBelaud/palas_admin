@@ -165,6 +165,7 @@ const CART_TRACKABLE_EVENTS = new Set([
   'cart:updated',
   'cart:cleared',
   'cart:viewed',
+  'cart:closed',
   'checkout:started',
   'checkout:contact_info_submitted',
   'checkout:address_info_submitted',
