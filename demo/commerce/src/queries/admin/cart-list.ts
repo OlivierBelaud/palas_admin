@@ -15,6 +15,11 @@ export default defineQuery({
       pagination: { limit: 200 },
     }) as any[]
 
+    // Most recently active first
+    carts.sort((a: any, b: any) =>
+      new Date(b.last_action_at).getTime() - new Date(a.last_action_at).getTime(),
+    )
+
     return carts.map((c: any) => {
       const currency = c.currency ?? 'EUR'
       const client = c.email
