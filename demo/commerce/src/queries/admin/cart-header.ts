@@ -2,40 +2,26 @@ import { z } from 'zod'
 
 export default defineQuery({
   name: 'cart-header',
-  description: 'Cart header data + sidebar summary',
+  description: 'Cart header: title (email or PostHog ID) + PostHog link',
   input: z.object({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
-      fields: ['email', 'distinct_id', 'items', 'total_price', 'item_count', 'currency', 'discounts_amount'],
+      fields: ['email', 'distinct_id'],
       pagination: { limit: 5000 },
     }) as any[]
 
     const cart = carts.find((c: any) => c.id === input.id)
-    if (!cart) return { email: 'Panier inconnu', distinct_id: '', summary: '', articles: '-', total: '-', remises: '-' }
+    if (!cart) return { title: 'Panier inconnu', posthog_url: '', posthog_label: '' }
 
-    const symbol = (cart.currency ?? 'EUR') === 'EUR' ? '€' : cart.currency
-    const items = (cart.items ?? []) as any[]
+    const title = cart.email ?? cart.distinct_id ?? 'Anonyme'
+    const posthogUrl = cart.distinct_id
+      ? `https://eu.posthog.com/persons?q=${encodeURIComponent(cart.distinct_id)}`
+      : ''
+    const posthogLabel = `Voir dans PostHog ↗`
 
-    const itemsSummary = items.length > 0
-      ? items.map((i: any) => `${i.title} × ${i.quantity}`).join(' · ')
-      : 'Panier vide'
-
-    const summary = `${cart.item_count ?? 0} article${(cart.item_count ?? 0) > 1 ? 's' : ''} · ${cart.total_price ?? 0} ${symbol} · ${itemsSummary}`
-
-    const articles = items.length > 0
-      ? items.map((i: any) => `${i.title} × ${i.quantity} — ${i.price} ${symbol}`).join('\n')
-      : 'Panier vide'
-
-    return {
-      email: cart.email,
-      distinct_id: cart.distinct_id,
-      summary,
-      articles,
-      total: `${cart.total_price ?? 0} ${symbol}`,
-      remises: cart.discounts_amount ? `−${cart.discounts_amount} ${symbol}` : '-',
-    }
+    return { title, posthog_url: posthogUrl, posthog_label: posthogLabel }
   },
 })

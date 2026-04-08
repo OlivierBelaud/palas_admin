@@ -11,6 +11,8 @@ export function PageHeaderRenderer({ component, data }: BlockRendererProps) {
     descriptionField?: string
     subtitle?: string
     statusField?: string
+    linkField?: string
+    linkLabelField?: string
     actions?: Array<{ label: string; to?: string; variant?: string }>
   }
 
@@ -26,6 +28,10 @@ export function PageHeaderRenderer({ component, data }: BlockRendererProps) {
   const description = props.descriptionField && data ? String(data[props.descriptionField] || '') : props.subtitle || ''
   const status = props.statusField && data ? String(data[props.statusField] || '') : null
   const statusColor = status ? statusColors[status] || 'grey' : null
+
+  // External link support (e.g., link to PostHog person profile)
+  const linkHref = props.linkField && data ? String(data[props.linkField] || '') : null
+  const linkLabel = props.linkLabelField && data ? String(data[props.linkLabelField] || '') : null
 
   const actionButtons = props.actions?.map((action, i) =>
     React.createElement(
@@ -52,9 +58,21 @@ export function PageHeaderRenderer({ component, data }: BlockRendererProps) {
         React.createElement(Heading, { level: 'h1' }, title),
         status && statusColor ? React.createElement(StatusBadge, { color: statusColor }, status) : null,
       ),
-      description
-        ? React.createElement(Text, { size: 'small', className: 'text-muted-foreground' }, description)
-        : null,
+      // Description: plain text or external link
+      linkHref
+        ? React.createElement(
+            'a',
+            {
+              href: linkHref,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              className: 'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
+            },
+            linkLabel || description || linkHref,
+          )
+        : description
+          ? React.createElement(Text, { size: 'small', className: 'text-muted-foreground' }, description)
+          : null,
     ),
     actionButtons && actionButtons.length > 0
       ? React.createElement('div', { className: 'flex items-center gap-x-2' }, ...actionButtons)

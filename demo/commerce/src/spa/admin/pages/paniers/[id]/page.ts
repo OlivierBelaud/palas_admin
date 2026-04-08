@@ -2,23 +2,19 @@ import { definePage } from '@manta/dashboard-core'
 
 export default definePage({
   header: {
-    titleField: 'email,distinct_id',
-    descriptionField: 'summary',
+    titleField: 'title',
+    linkField: 'posthog_url',
+    linkLabelField: 'posthog_label',
   },
   main: [
-    // ── Résumé du panier (sert aussi de source pour le header) ──────
+    // ── Source de données pour le header (invisible si pas de fields) ──
     {
       type: 'InfoCard',
-      title: 'Panier',
       query: {
         name: 'cart-header',
         input: { id: ':id' },
       },
-      fields: [
-        { key: 'articles', label: 'Articles' },
-        { key: 'total', label: 'Total' },
-        { key: 'remises', label: 'Remises' },
-      ],
+      fields: [],
     },
 
     // ── Timeline des événements (plus récent en haut) ──────────────────
@@ -75,6 +71,19 @@ export default definePage({
         { key: 'country_code', label: 'Pays' },
         { key: 'distinct_id', label: 'PostHog ID' },
         { key: 'shopify_customer_id', label: 'Shopify ID' },
+      ],
+    },
+    {
+      type: 'InfoCard',
+      title: 'Panier',
+      query: {
+        name: 'cart-items',
+        input: { id: ':id' },
+      },
+      fields: [
+        { key: 'articles', label: 'Articles' },
+        { key: 'total', label: 'Total' },
+        { key: 'remises', label: 'Remises' },
       ],
     },
     {
