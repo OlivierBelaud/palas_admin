@@ -24,7 +24,7 @@ export default definePage({
       query: { name: 'cart-list' },
       columns: [
         { key: 'client', label: 'Client', format: 'highlight' },
-        { key: 'total_price', label: 'Montant', format: 'number', sortable: true },
+        { key: 'montant', label: 'Montant', sortable: true },
         { key: 'item_count', label: 'Articles', format: 'number' },
         {
           key: 'status',

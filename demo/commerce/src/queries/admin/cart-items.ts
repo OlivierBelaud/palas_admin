@@ -2,30 +2,33 @@ import { z } from 'zod'
 
 export default defineQuery({
   name: 'cart-items',
-  description: 'Get the items in a cart as table rows',
+  description: 'Get cart summary with formatted items for sidebar display',
   input: z.object({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
-      fields: ['items', 'discounts_amount', 'currency'],
+      fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount'],
       pagination: { limit: 5000 },
     }) as any[]
 
     const cart = carts.find((c: any) => c.id === input.id)
-    if (!cart) return []
+    if (!cart) return { articles: '-', total: '-', remises: '-' }
 
     const items = (cart.items ?? []) as any[]
-    return items.map((item: any) => ({
-      title: item.title ?? '-',
-      quantity: item.quantity ?? 0,
-      price: item.price ?? 0,
-      original_price: item.original_price ?? item.price ?? 0,
-      line_price: item.line_price ?? (item.quantity * item.price) ?? 0,
-      total_discount: item.total_discount ?? 0,
-      sku: item.sku ?? '-',
-      product_id: item.product_id ?? '-',
-    }))
+    const currency = cart.currency ?? 'EUR'
+
+    // Format each item as "Product × qty — price €"
+    const articles = items.length > 0
+      ? items.map((item: any) => `${item.title} × ${item.quantity} — ${item.price} ${currency}`).join('\n')
+      : 'Panier vide'
+
+    return {
+      articles,
+      total: `${cart.total_price ?? 0} ${currency}`,
+      nombre_articles: cart.item_count ?? 0,
+      remises: cart.discounts_amount ? `−${cart.discounts_amount} ${currency}` : '-',
+    }
   },
 })

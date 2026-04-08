@@ -6,27 +6,9 @@ export default definePage({
     descriptionField: 'distinct_id',
   },
   main: [
-    // ── Articles du panier ─────────────────────────────────────────────
+    // ── Timeline des événements (plus récent en haut) ──────────────────
     {
-      type: 'DataTable',
-      title: 'Articles du panier',
-      query: {
-        name: 'cart-items',
-        input: { id: ':id' },
-      },
-      columns: [
-        { key: 'title', label: 'Produit', format: 'highlight' },
-        { key: 'quantity', label: 'Qté', format: 'number' },
-        { key: 'price', label: 'Prix unit.', format: 'number' },
-        { key: 'line_price', label: 'Total ligne', format: 'number' },
-        { key: 'total_discount', label: 'Remise', format: 'number' },
-        { key: 'sku', label: 'SKU' },
-      ],
-    },
-
-    // ── Timeline des événements ────────────────────────────────────────
-    {
-      type: 'DataTable',
+      type: 'RelationTable',
       title: 'Historique des actions',
       query: {
         name: 'cart-events-list',
@@ -53,14 +35,14 @@ export default definePage({
             },
           },
         },
-        { key: 'total_price', label: 'Montant', format: 'number' },
         { key: 'item_count', label: 'Articles', format: 'number' },
-        { key: 'email', label: 'Email' },
+        { key: 'montant', label: 'Montant' },
         { key: 'occurred_at', label: 'Date', format: { type: 'date', format: 'long' } },
       ],
     },
   ],
   sidebar: [
+    // ── Client ─────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Client',
@@ -81,6 +63,22 @@ export default definePage({
         { key: 'shopify_customer_id', label: 'Shopify ID' },
       ],
     },
+    // ── Panier ─────────────────────────────────────────────────────────
+    {
+      type: 'InfoCard',
+      title: 'Panier',
+      query: {
+        name: 'cart-items',
+        input: { id: ':id' },
+      },
+      fields: [
+        { key: 'articles', label: 'Articles' },
+        { key: 'nombre_articles', label: 'Nb articles' },
+        { key: 'total', label: 'Total' },
+        { key: 'remises', label: 'Remises' },
+      ],
+    },
+    // ── Parcours ───────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Parcours',
@@ -97,13 +95,14 @@ export default definePage({
         { key: 'last_action_at', label: 'Dernière activité', display: { type: 'date', format: 'long' } },
       ],
     },
+    // ── Checkout ────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Checkout',
       query: {
         graph: {
           entity: 'cart',
-          fields: ['total_price', 'currency', 'order_id', 'shopify_order_id', 'shipping_method', 'shipping_price', 'discounts_amount', 'subtotal_price', 'total_tax', 'is_first_order'],
+          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'order_id', 'shopify_order_id', 'is_first_order'],
         },
       },
       fields: [
@@ -116,9 +115,10 @@ export default definePage({
         { key: 'total_tax', label: 'TVA' },
         { key: 'order_id', label: 'Order Token' },
         { key: 'shopify_order_id', label: 'Shopify Order ID' },
-        { key: 'is_first_order', label: 'Première commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
+        { key: 'is_first_order', label: '1ère commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
       ],
     },
+    // ── Dates ──────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Dates',

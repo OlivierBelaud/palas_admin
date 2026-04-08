@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export default defineQuery({
   name: 'cart-list',
-  description: 'List carts with computed client display name and PostHog link',
+  description: 'List carts with computed client display and formatted amounts',
   input: z.object({}).optional(),
   handler: async (_input, { query }) => {
     const carts = await query.graph({
@@ -16,19 +16,14 @@ export default defineQuery({
     }) as any[]
 
     return carts.map((c: any) => {
-      // Client display: email if known, otherwise truncated PostHog ID
-      const clientName = c.email
+      const currency = c.currency ?? 'EUR'
+      const client = c.email
         ?? (c.distinct_id ? `${c.distinct_id.slice(0, 8)}…` : 'Anonyme')
-
-      // PostHog person link (EU instance)
-      const posthogUrl = c.distinct_id
-        ? `https://eu.posthog.com/persons?q=${encodeURIComponent(c.distinct_id)}`
-        : null
 
       return {
         ...c,
-        client: clientName,
-        posthog_url: posthogUrl,
+        client,
+        montant: c.total_price != null ? `${c.total_price} ${currency}` : '-',
       }
     })
   },
