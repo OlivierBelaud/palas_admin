@@ -5,7 +5,7 @@ export default defineQuery({
   description: 'Aggregated cart statistics: funnel, abandonment breakdown, revenue (last 30 days)',
   input: z.object({}).optional(),
   handler: async (_input, { query }) => {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
     // Use DB-level filter instead of fetching everything and filtering in JS
     const carts = await query.graph({

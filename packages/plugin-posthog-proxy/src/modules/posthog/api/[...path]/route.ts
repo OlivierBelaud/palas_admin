@@ -54,7 +54,7 @@ export async function GET(req: Request) {
   })
 }
 
-export async function POST(req: Request & { app?: any }) {
+export async function POST(req: Request) {
   const config = getConfig()
   const path = extractPath(req)
   const targetUrl = `${config.host}${path}`
@@ -115,14 +115,11 @@ export async function POST(req: Request & { app?: any }) {
     }
 
     // Cart tracking: ingest cart:* and checkout:* events into the database
-    if (req.app) {
-      console.log('[posthog-proxy] cart-tracking: req.app available, calling ingestCartEvents')
-      ingestCartEvents(parsed, req.app).catch((err) => {
-        console.error('[posthog-proxy] Cart tracking error:', err)
-      })
-    } else {
-      console.log('[posthog-proxy] cart-tracking: req.app NOT available — commands not accessible')
-    }
+    // Uses internal HTTP call because direct app.commands requires WorkflowManager
+    const origin = new URL(req.url).origin
+    ingestCartEvents(parsed, origin).catch((err) => {
+      console.error('[posthog-proxy] Cart tracking error:', err)
+    })
   }
 
   return new Response(responseBody, {
@@ -172,7 +169,7 @@ const CART_TRACKABLE_EVENTS = new Set([
   'checkout:completed',
 ])
 
-async function ingestCartEvents(body: unknown, app: any) {
+async function ingestCartEvents(body: unknown, origin: string) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
@@ -249,23 +246,20 @@ async function ingestCartEvents(body: unknown, app: any) {
     }
 
     try {
-      // Try multiple ways to access the command
-      const commands = app.commands as Record<string, Function> | undefined
-      const commandRunner = commands?.ingestCartEvent
-        ?? commands?.['ingest-cart-event']
-        ?? commands?.['admin:ingestCartEvent']
-        ?? commands?.['admin:ingest-cart-event']
-
-      if (commandRunner) {
-        await commandRunner(input, { auth: null, headers: {} })
+      // Call ingestCartEvent via HTTP — direct app.commands doesn't have WorkflowManager
+      const res = await fetch(`${origin}/api/admin/command/ingestCartEvent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (res.ok) {
         console.log(`[posthog-proxy] cart-tracking: ✓ ingested ${eventName} for cart ${cartToken}`)
       } else {
-        // Log available commands to debug
-        const keys = commands ? Object.keys(commands).slice(0, 20) : []
-        console.log(`[posthog-proxy] cart-tracking: command not found. Available: [${keys.join(', ')}]`)
+        const text = await res.text()
+        console.error(`[posthog-proxy] cart-tracking: ✗ ${eventName} HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
     } catch (err) {
-      console.error(`[posthog-proxy] cart-tracking: ✗ failed ${eventName}:`, (err as Error).message, (err as Error).stack?.split('\n')[1])
+      console.error(`[posthog-proxy] cart-tracking: ✗ failed ${eventName}:`, (err as Error).message)
     }
   }
 }
