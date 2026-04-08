@@ -12,7 +12,7 @@ export default defineModel('Cart', {
   shopify_customer_id: field.text().nullable().index(),
 
   // ── Current cart state (snapshot, overwritten on every event) ──────
-  items: field.json<CartItem[]>().default([]),
+  items: field.json<CartItem[]>().nullable(),
   total_price: field.float().default(0),
   item_count: field.number().default(0),
   currency: field.text().default('EUR'),
