@@ -6,30 +6,32 @@ export default definePage({
     descriptionField: 'distinct_id',
   },
   main: [
+    // ── Articles du panier ─────────────────────────────────────────────
     {
-      type: 'InfoCard',
-      title: 'Panier',
+      type: 'DataTable',
+      title: 'Articles du panier',
       query: {
-        graph: {
-          entity: 'cart',
-          fields: ['total_price', 'item_count', 'currency', 'cart_token'],
-        },
-      },
-      fields: [
-        { key: 'total_price', label: 'Montant total' },
-        { key: 'item_count', label: 'Nombre d\'articles' },
-        { key: 'currency', label: 'Devise' },
-        { key: 'cart_token', label: 'Cart Token' },
-      ],
-    },
-    {
-      type: 'RelationTable',
-      title: 'Historique des actions',
-      query: {
-        name: 'cart-detail',
+        name: 'cart-items',
         input: { id: ':id' },
       },
-      dataPath: 'events',
+      columns: [
+        { key: 'title', label: 'Produit', format: 'highlight' },
+        { key: 'quantity', label: 'Qté', format: 'number' },
+        { key: 'price', label: 'Prix unit.', format: 'number' },
+        { key: 'line_price', label: 'Total ligne', format: 'number' },
+        { key: 'total_discount', label: 'Remise', format: 'number' },
+        { key: 'sku', label: 'SKU' },
+      ],
+    },
+
+    // ── Timeline des événements ────────────────────────────────────────
+    {
+      type: 'DataTable',
+      title: 'Historique des actions',
+      query: {
+        name: 'cart-events-list',
+        input: { id: ':id' },
+      },
       columns: [
         {
           key: 'action',
@@ -101,18 +103,19 @@ export default definePage({
       query: {
         graph: {
           entity: 'cart',
-          fields: ['order_id', 'shopify_order_id', 'shipping_method', 'shipping_price', 'discounts_amount', 'subtotal_price', 'total_tax', 'total_price', 'is_first_order'],
+          fields: ['total_price', 'currency', 'order_id', 'shopify_order_id', 'shipping_method', 'shipping_price', 'discounts_amount', 'subtotal_price', 'total_tax', 'is_first_order'],
         },
       },
       fields: [
-        { key: 'order_id', label: 'Order Token' },
-        { key: 'shopify_order_id', label: 'Shopify Order ID' },
+        { key: 'total_price', label: 'Total' },
+        { key: 'currency', label: 'Devise' },
         { key: 'subtotal_price', label: 'Sous-total' },
         { key: 'discounts_amount', label: 'Remises' },
         { key: 'shipping_method', label: 'Livraison' },
         { key: 'shipping_price', label: 'Frais de port' },
         { key: 'total_tax', label: 'TVA' },
-        { key: 'total_price', label: 'Total' },
+        { key: 'order_id', label: 'Order Token' },
+        { key: 'shopify_order_id', label: 'Shopify Order ID' },
         { key: 'is_first_order', label: 'Première commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
       ],
     },
