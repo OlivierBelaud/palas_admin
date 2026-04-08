@@ -2,12 +2,8 @@ import { definePage } from '@manta/dashboard-core'
 
 export default definePage({
   header: {
-    query: {
-      name: 'cart-header',
-      input: { id: ':id' },
-    },
-    titleField: 'title',
-    descriptionField: 'description',
+    titleField: 'email,distinct_id',
+    descriptionField: 'cart_token',
   },
   main: [
     // ── Timeline des événements (plus récent en haut) ──────────────────
@@ -31,10 +27,10 @@ export default definePage({
               'cart:cleared': 'red',
               'cart:viewed': 'gray',
               'checkout:started': 'blue',
-              'checkout:contact_info_submitted': 'purple',
-              'checkout:address_info_submitted': 'purple',
-              'checkout:shipping_info_submitted': 'purple',
-              'checkout:payment_info_submitted': 'orange',
+              'checkout:contact': 'purple',
+              'checkout:address': 'purple',
+              'checkout:shipping': 'purple',
+              'checkout:payment': 'orange',
               'checkout:completed': 'green',
             },
           },
