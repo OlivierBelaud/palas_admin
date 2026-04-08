@@ -10,6 +10,50 @@ import type { GraphQueryDef, HeaderAction, NamedQueryDef } from '../primitives'
 import { Heading, statusColors, Text } from '../renderers/blocks/shared'
 import { useBlockQuery } from './use-block-query'
 
+/** Button that executes a command with confirmation dialog */
+function CommandButton({ command, label, destructive }: { command: string; label: string; destructive?: boolean }) {
+  const cmd = useCommand(command)
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirm = async () => {
+    setLoading(true)
+    try {
+      await (cmd as any).mutateAsync({})
+      window.location.reload()
+    } catch {
+      // Error handled by the command
+    } finally {
+      setLoading(false)
+      setOpen(false)
+    }
+  }
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      Button,
+      {
+        size: 'small',
+        variant: destructive ? ('destructive' as any) : ('default' as any),
+        onClick: () => setOpen(true),
+        disabled: loading,
+      },
+      loading ? 'En cours...' : label,
+    ),
+    React.createElement(ConfirmDialog, {
+      open,
+      onClose: () => setOpen(false),
+      title: 'Confirmer',
+      description: `Êtes-vous sûr de vouloir exécuter "${label}" ?`,
+      onConfirm: handleConfirm,
+      confirmLabel: label,
+      destructive: !!destructive,
+    }),
+  )
+}
+
 export interface PageHeaderBlockProps {
   query?: GraphQueryDef | NamedQueryDef
   title?: string
@@ -101,6 +145,9 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
         default:
           return React.createElement(Button, { key: i, size: 'small' }, a)
       }
+    }
+    if (a.command) {
+      return React.createElement(CommandButton, { key: i, command: a.command, label: a.label, destructive: a.destructive })
     }
     if (a.to) {
       return React.createElement(

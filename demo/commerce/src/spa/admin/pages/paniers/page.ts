@@ -1,7 +1,12 @@
 import { definePage } from '@manta/dashboard-core'
 
 export default definePage({
-  header: { title: 'Paniers' },
+  header: {
+    title: 'Paniers',
+    actions: [
+      { label: 'Purger paniers vides', command: 'purgeEmptyCarts', destructive: true },
+    ],
+  },
   main: [
     {
       type: 'StatsCard',
