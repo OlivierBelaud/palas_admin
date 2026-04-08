@@ -3,7 +3,7 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: { title: 'Paniers' },
   main: [
-    // ── Stats 30 jours ─────────────────────────────────────────────────
+    // ── Stats 30 jours (un seul appel) ──────────────────────────────────
     {
       type: 'StatsCard',
       query: {
@@ -12,19 +12,11 @@ export default definePage({
       metrics: [
         { label: 'Paniers (30j)', key: 'total_carts', format: 'number' },
         { label: 'En cours', key: 'active', format: 'number' },
+        { label: 'Complétés', key: 'completed', format: 'number' },
         { label: 'Paniers abandonnés', key: 'cart_abandoned', format: 'number' },
         { label: 'Checkouts abandonnés', key: 'checkout_abandoned', format: 'number' },
         { label: 'Paiements échoués', key: 'payment_abandoned', format: 'number' },
-        { label: 'Complétés', key: 'completed', format: 'number' },
-      ],
-    },
-    {
-      type: 'StatsCard',
-      query: {
-        name: 'cart-stats',
-      },
-      metrics: [
-        { label: 'CA réalisé (30j)', key: 'total_revenue', format: 'number' },
+        { label: 'CA réalisé', key: 'total_revenue', format: 'number' },
         { label: 'Panier moyen', key: 'avg_cart_value', format: 'number' },
         { label: 'CA perdu (abandons)', key: 'abandoned_revenue', format: 'number' },
       ],

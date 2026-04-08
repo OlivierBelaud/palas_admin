@@ -5,60 +5,69 @@ export default defineQuery({
   description: 'Aggregated cart statistics: funnel, abandonment breakdown, revenue (last 30 days)',
   input: z.object({}).optional(),
   handler: async (_input, { query }) => {
-    const now = new Date()
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-    // Get all carts with activity in the last 30 days
-    const allCarts = await query.graph({
+    // Use DB-level filter instead of fetching everything and filtering in JS
+    const carts = await query.graph({
       entity: 'cart',
-      pagination: { limit: 10000 },
+      filters: {
+        last_action_at: { $gte: thirtyDaysAgo },
+      },
+      fields: ['status', 'total_price', 'highest_stage'],
+      pagination: { limit: 5000 },
     }) as any[]
 
-    const carts = allCarts.filter((c: any) =>
-      new Date(c.last_action_at).toISOString() >= thirtyDaysAgo,
-    )
+    const empty = {
+      total_carts: 0,
+      active: 0,
+      cart_abandoned: 0,
+      checkout_abandoned: 0,
+      payment_abandoned: 0,
+      completed: 0,
+      total_revenue: 0,
+      avg_cart_value: 0,
+      abandoned_revenue: 0,
+    }
 
-    if (carts.length === 0) {
-      return {
-        total_carts: 0,
-        active: 0,
-        cart_abandoned: 0,
-        checkout_abandoned: 0,
-        payment_abandoned: 0,
-        completed: 0,
-        total_revenue: 0,
-        avg_cart_value: 0,
-        abandoned_revenue: 0,
+    if (carts.length === 0) return empty
+
+    let active = 0
+    let cartAbandoned = 0
+    let checkoutAbandoned = 0
+    let paymentAbandoned = 0
+    let completed = 0
+    let totalRevenue = 0
+    let abandonedRevenue = 0
+    let nonEmptySum = 0
+    let nonEmptyCount = 0
+
+    for (const c of carts) {
+      const price = c.total_price ?? 0
+      switch (c.status) {
+        case 'active': active++; break
+        case 'cart_abandoned': cartAbandoned++; break
+        case 'checkout_abandoned': checkoutAbandoned++; break
+        case 'payment_abandoned': paymentAbandoned++; break
+        case 'completed': completed++; totalRevenue += price; break
+      }
+      if (price > 0) {
+        nonEmptySum += price
+        nonEmptyCount++
+      }
+      if (c.status !== 'completed' && c.status !== 'active' && price > 0) {
+        abandonedRevenue += price
       }
     }
 
-    const statusCounts: Record<string, number> = {}
-    for (const cart of carts) {
-      const s = cart.status ?? 'active'
-      statusCounts[s] = (statusCounts[s] ?? 0) + 1
-    }
-
-    const completedCarts = carts.filter((c: any) => c.status === 'completed')
-    const totalRevenue = completedCarts.reduce((sum: number, c: any) => sum + (c.total_price ?? 0), 0)
-
-    const nonEmpty = carts.filter((c: any) => c.total_price > 0)
-    const avgCartValue = nonEmpty.length > 0
-      ? nonEmpty.reduce((sum: number, c: any) => sum + c.total_price, 0) / nonEmpty.length
-      : 0
-
-    // Revenue lost in abandoned carts (all non-completed with total > 0)
-    const abandonedCarts = carts.filter((c: any) => c.status !== 'completed' && c.status !== 'active' && c.total_price > 0)
-    const abandonedRevenue = abandonedCarts.reduce((sum: number, c: any) => sum + (c.total_price ?? 0), 0)
-
     return {
       total_carts: carts.length,
-      active: statusCounts.active ?? 0,
-      cart_abandoned: statusCounts.cart_abandoned ?? 0,
-      checkout_abandoned: statusCounts.checkout_abandoned ?? 0,
-      payment_abandoned: statusCounts.payment_abandoned ?? 0,
-      completed: statusCounts.completed ?? 0,
+      active,
+      cart_abandoned: cartAbandoned,
+      checkout_abandoned: checkoutAbandoned,
+      payment_abandoned: paymentAbandoned,
+      completed,
       total_revenue: Math.round(totalRevenue * 100) / 100,
-      avg_cart_value: Math.round(avgCartValue * 100) / 100,
+      avg_cart_value: nonEmptyCount > 0 ? Math.round((nonEmptySum / nonEmptyCount) * 100) / 100 : 0,
       abandoned_revenue: Math.round(abandonedRevenue * 100) / 100,
     }
   },
