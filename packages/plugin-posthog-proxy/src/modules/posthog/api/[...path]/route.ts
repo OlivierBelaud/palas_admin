@@ -54,7 +54,7 @@ export async function GET(req: Request) {
   })
 }
 
-export async function POST(req: Request) {
+export async function POST(req: Request & { app?: any }) {
   const config = getConfig()
   const path = extractPath(req)
   const targetUrl = `${config.host}${path}`
@@ -114,12 +114,16 @@ export async function POST(req: Request) {
       })
     }
 
-    // Cart tracking: ingest cart:* and checkout:* events into the database
-    // Uses internal HTTP call because direct app.commands requires WorkflowManager
-    const origin = new URL(req.url).origin
-    ingestCartEvents(parsed, origin).catch((err) => {
-      console.error('[posthog-proxy] Cart tracking error:', err)
-    })
+    // Cart tracking: write directly to DB via raw SQL (no commands/workflows/HTTP)
+    const db = req.app?.resolve?.('IDatabasePort')
+    const pool = db?.getPool?.()
+    if (pool) {
+      ingestCartEvents(parsed, pool).catch((err) => {
+        console.error('[posthog-proxy] Cart tracking error:', err)
+      })
+    } else {
+      console.log('[posthog-proxy] cart-tracking: no DB pool available')
+    }
   }
 
   return new Response(responseBody, {
@@ -169,7 +173,17 @@ const CART_TRACKABLE_EVENTS = new Set([
   'checkout:completed',
 ])
 
-async function ingestCartEvents(body: unknown, origin: string) {
+const STAGE_ORDER = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
+
+function actionToStage(action: string): string {
+  if (action.startsWith('cart:')) return 'cart'
+  if (action === 'checkout:started') return 'checkout_started'
+  if (action === 'checkout:payment_info_submitted') return 'payment_attempted'
+  if (action === 'checkout:completed') return 'completed'
+  return 'checkout_engaged'
+}
+
+async function ingestCartEvents(body: unknown, sql: any) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
@@ -180,8 +194,7 @@ async function ingestCartEvents(body: unknown, origin: string) {
     const $set = props?.$set as Record<string, unknown> | undefined
     const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
 
-    // Resolve cart_token: for cart events it's in props.cart.cart_token,
-    // for checkout events it's in props.order_id (same as checkout token)
+    // Resolve cart_token from cart snapshot or checkout order_id
     const cart = props?.cart as Record<string, unknown> | undefined
     const cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
     if (!cartToken) {
@@ -189,77 +202,100 @@ async function ingestCartEvents(body: unknown, origin: string) {
       continue
     }
 
-    // Build items array from cart snapshot or checkout items
     const cartItems = (cart?.items ?? props?.items ?? []) as any[]
-    const items = cartItems.map((item: any) => ({
-      id: String(item.id ?? ''),
-      product_id: String(item.product_id ?? ''),
-      sku: item.sku ?? undefined,
-      title: item.title ?? '',
-      variant_title: item.variant_title ?? undefined,
-      quantity: Number(item.quantity ?? 0),
-      price: Number(item.price ?? 0),
-      original_price: item.original_price != null ? Number(item.original_price) : undefined,
-      line_price: item.line_price != null ? Number(item.line_price) : undefined,
-      total_discount: item.total_discount != null ? Number(item.total_discount) : undefined,
-      discounts: item.discounts ?? undefined,
-      image_url: item.image_url ?? undefined,
-      url: item.url ?? undefined,
-    }))
-
-    const changedItems = (props?.changed_items ?? []) as any[]
-
-    const input = {
-      cart_token: cartToken,
-      action: eventName,
-      occurred_at: (event.timestamp as string) ?? new Date().toISOString(),
-      distinct_id: distinctId ?? null,
-      email: ($set?.email ?? props?.email ?? null) as string | null,
-      first_name: ($set?.first_name ?? null) as string | null,
-      last_name: ($set?.last_name ?? null) as string | null,
-      phone: ($set?.phone ?? null) as string | null,
-      city: ($set?.city ?? null) as string | null,
-      country_code: ($set?.country ?? null) as string | null,
-      shopify_customer_id: props?.shopify_customer_id ? String(props.shopify_customer_id) : null,
-      items,
-      changed_items: changedItems.length > 0 ? changedItems.map((item: any) => ({
-        ...items.find((i: any) => i.id === String(item.id)) ?? {},
-        id: String(item.id ?? ''),
-        product_id: String(item.product_id ?? ''),
-        title: item.title ?? '',
-        quantity: Number(item.quantity ?? 0),
-        price: Number(item.price ?? 0),
-        quantity_change: Number(item.quantity_change ?? 0),
-      })) : null,
-      total_price: Number(cart?.total_price ?? props?.total_price ?? 0),
-      currency: (cart?.currency ?? props?.currency ?? 'EUR') as string,
-      order_id: (props?.order_id ?? null) as string | null,
-      shopify_order_id: (props?.shopify_order_id ?? null) as string | null,
-      is_first_order: (props?.is_first_order ?? null) as boolean | null,
-      shipping_method: (props?.shipping_method ?? null) as string | null,
-      shipping_price: props?.shipping_price != null ? Number(props.shipping_price) : null,
-      discounts_amount: props?.discounts_amount != null ? Number(props.discounts_amount) : null,
-      discounts: (props?.discounts ?? null) as any[] | null,
-      subtotal_price: props?.subtotal_price != null ? Number(props.subtotal_price) : null,
-      total_tax: props?.total_tax != null ? Number(props.total_tax) : null,
-      raw_properties: props ?? null,
-    }
+    const changedItems = (props?.changed_items ?? null) as any[] | null
+    const email = ($set?.email ?? props?.email ?? null) as string | null
+    const firstName = ($set?.first_name ?? null) as string | null
+    const lastName = ($set?.last_name ?? null) as string | null
+    const phone = ($set?.phone ?? null) as string | null
+    const city = ($set?.city ?? null) as string | null
+    const countryCode = ($set?.country ?? null) as string | null
+    const totalPrice = Number(cart?.total_price ?? props?.total_price ?? 0)
+    const currency = (cart?.currency ?? props?.currency ?? 'EUR') as string
+    const occurredAt = (event.timestamp as string) ?? new Date().toISOString()
+    const newStage = actionToStage(eventName)
+    const status = eventName === 'checkout:completed' ? 'completed' : 'active'
 
     try {
-      // Call ingestCartEvent via HTTP — direct app.commands doesn't have WorkflowManager
-      const res = await fetch(`${origin}/api/admin/command/ingestCartEvent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      if (res.ok) {
-        console.log(`[posthog-proxy] cart-tracking: ✓ ingested ${eventName} for cart ${cartToken}`)
-      } else {
-        const text = await res.text()
-        console.error(`[posthog-proxy] cart-tracking: ✗ ${eventName} HTTP ${res.status}: ${text.slice(0, 200)}`)
-      }
+      const pg = sql as { unsafe: (q: string, params?: any[]) => Promise<any[]> }
+
+      // 1. UPSERT the cart head — distinct_id is the primary tracking key
+      await pg.unsafe(`
+        INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
+          shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
+          highest_stage, status, order_id, shopify_order_id, is_first_order,
+          shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
+          created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), NOW())
+        ON CONFLICT (cart_token) DO UPDATE SET
+          distinct_id = COALESCE(EXCLUDED.distinct_id, carts.distinct_id),
+          email = COALESCE(EXCLUDED.email, carts.email),
+          first_name = COALESCE(EXCLUDED.first_name, carts.first_name),
+          last_name = COALESCE(EXCLUDED.last_name, carts.last_name),
+          phone = COALESCE(EXCLUDED.phone, carts.phone),
+          city = COALESCE(EXCLUDED.city, carts.city),
+          country_code = COALESCE(EXCLUDED.country_code, carts.country_code),
+          shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, carts.shopify_customer_id),
+          items = EXCLUDED.items,
+          total_price = EXCLUDED.total_price,
+          item_count = EXCLUDED.item_count,
+          currency = EXCLUDED.currency,
+          last_action = EXCLUDED.last_action,
+          last_action_at = EXCLUDED.last_action_at,
+          highest_stage = CASE
+            WHEN array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], EXCLUDED.highest_stage)
+               > array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], carts.highest_stage)
+            THEN EXCLUDED.highest_stage ELSE carts.highest_stage END,
+          status = CASE WHEN EXCLUDED.status = 'completed' THEN 'completed' ELSE carts.status END,
+          order_id = COALESCE(EXCLUDED.order_id, carts.order_id),
+          shopify_order_id = COALESCE(EXCLUDED.shopify_order_id, carts.shopify_order_id),
+          is_first_order = COALESCE(EXCLUDED.is_first_order, carts.is_first_order),
+          shipping_method = COALESCE(EXCLUDED.shipping_method, carts.shipping_method),
+          shipping_price = COALESCE(EXCLUDED.shipping_price, carts.shipping_price),
+          discounts_amount = COALESCE(EXCLUDED.discounts_amount, carts.discounts_amount),
+          discounts = COALESCE(EXCLUDED.discounts, carts.discounts),
+          subtotal_price = COALESCE(EXCLUDED.subtotal_price, carts.subtotal_price),
+          total_tax = COALESCE(EXCLUDED.total_tax, carts.total_tax),
+          updated_at = NOW()
+      `, [
+        crypto.randomUUID(), cartToken, distinctId ?? null, email, firstName, lastName, phone, city, countryCode,
+        props?.shopify_customer_id ? String(props.shopify_customer_id) : null,
+        JSON.stringify(cartItems), totalPrice, cartItems.length, currency,
+        eventName, occurredAt, newStage, status,
+        (props?.order_id ?? null) as string | null,
+        (props?.shopify_order_id ?? null) as string | null,
+        (props?.is_first_order ?? null) as boolean | null,
+        (props?.shipping_method ?? null) as string | null,
+        props?.shipping_price != null ? Number(props.shipping_price) : null,
+        props?.discounts_amount != null ? Number(props.discounts_amount) : null,
+        props?.discounts ? JSON.stringify(props.discounts) : null,
+        props?.subtotal_price != null ? Number(props.subtotal_price) : null,
+        props?.total_tax != null ? Number(props.total_tax) : null,
+      ])
+
+      // 2. INSERT the event (append-only)
+      await pg.unsafe(`
+        INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
+          changed_items, occurred_at, distinct_id, email, order_id,
+          shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
+          created_at, updated_at)
+        VALUES ($1, (SELECT id FROM carts WHERE cart_token = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+      `, [
+        crypto.randomUUID(), cartToken, eventName,
+        JSON.stringify(cartItems), totalPrice, cartItems.length, currency,
+        changedItems ? JSON.stringify(changedItems) : null,
+        occurredAt, distinctId ?? null, email,
+        (props?.order_id ?? null) as string | null,
+        (props?.shipping_method ?? null) as string | null,
+        props?.shipping_price != null ? Number(props.shipping_price) : null,
+        props?.discounts_amount != null ? Number(props.discounts_amount) : null,
+        props?.discounts ? JSON.stringify(props.discounts) : null,
+        JSON.stringify(props),
+      ])
+
+      console.log(`[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`)
     } catch (err) {
-      console.error(`[posthog-proxy] cart-tracking: ✗ failed ${eventName}:`, (err as Error).message)
+      console.error(`[posthog-proxy] cart-tracking: ✗ ${eventName}:`, (err as Error).message)
     }
   }
 }
