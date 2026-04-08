@@ -217,16 +217,35 @@ async function ingestCartEvents(body: unknown, sql: any) {
     const status = eventName === 'checkout:completed' ? 'completed' : 'active'
 
     try {
-      const pg = sql as { unsafe: (q: string, params?: any[]) => Promise<any[]> }
+      const id = crypto.randomUUID()
+      const eventId = crypto.randomUUID()
+      const itemsJson = JSON.stringify(cartItems)
+      const changedJson = changedItems ? JSON.stringify(changedItems) : null
+      const discountsJson = props?.discounts ? JSON.stringify(props.discounts) : null
+      const rawJson = JSON.stringify(props)
+      const orderId = (props?.order_id ?? null) as string | null
+      const shopifyOrderId = (props?.shopify_order_id ?? null) as string | null
+      const isFirstOrder = (props?.is_first_order ?? null) as boolean | null
+      const shippingMethod = (props?.shipping_method ?? null) as string | null
+      const shippingPrice = props?.shipping_price != null ? Number(props.shipping_price) : null
+      const discountsAmount = props?.discounts_amount != null ? Number(props.discounts_amount) : null
+      const subtotalPrice = props?.subtotal_price != null ? Number(props.subtotal_price) : null
+      const totalTax = props?.total_tax != null ? Number(props.total_tax) : null
+      const shopifyCustId = props?.shopify_customer_id ? String(props.shopify_customer_id) : null
 
-      // 1. UPSERT the cart head — distinct_id is the primary tracking key
-      await pg.unsafe(`
+      // 1. UPSERT the cart head
+      await sql`
         INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
           shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
           highest_stage, status, order_id, shopify_order_id, is_first_order,
           shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
           created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW(), NOW())
+        VALUES (${id}, ${cartToken}, ${distinctId ?? null}, ${email}, ${firstName}, ${lastName}, ${phone}, ${city}, ${countryCode},
+          ${shopifyCustId}, ${itemsJson}::jsonb, ${totalPrice}, ${cartItems.length}, ${currency},
+          ${eventName}, ${occurredAt}, ${newStage}, ${status},
+          ${orderId}, ${shopifyOrderId}, ${isFirstOrder},
+          ${shippingMethod}, ${shippingPrice}, ${discountsAmount}, ${discountsJson}::jsonb, ${subtotalPrice}, ${totalTax},
+          NOW(), NOW())
         ON CONFLICT (cart_token) DO UPDATE SET
           distinct_id = COALESCE(EXCLUDED.distinct_id, carts.distinct_id),
           email = COALESCE(EXCLUDED.email, carts.email),
@@ -257,41 +276,20 @@ async function ingestCartEvents(body: unknown, sql: any) {
           subtotal_price = COALESCE(EXCLUDED.subtotal_price, carts.subtotal_price),
           total_tax = COALESCE(EXCLUDED.total_tax, carts.total_tax),
           updated_at = NOW()
-      `, [
-        crypto.randomUUID(), cartToken, distinctId ?? null, email, firstName, lastName, phone, city, countryCode,
-        props?.shopify_customer_id ? String(props.shopify_customer_id) : null,
-        JSON.stringify(cartItems), totalPrice, cartItems.length, currency,
-        eventName, occurredAt, newStage, status,
-        (props?.order_id ?? null) as string | null,
-        (props?.shopify_order_id ?? null) as string | null,
-        (props?.is_first_order ?? null) as boolean | null,
-        (props?.shipping_method ?? null) as string | null,
-        props?.shipping_price != null ? Number(props.shipping_price) : null,
-        props?.discounts_amount != null ? Number(props.discounts_amount) : null,
-        props?.discounts ? JSON.stringify(props.discounts) : null,
-        props?.subtotal_price != null ? Number(props.subtotal_price) : null,
-        props?.total_tax != null ? Number(props.total_tax) : null,
-      ])
+      `
 
       // 2. INSERT the event (append-only)
-      await pg.unsafe(`
+      await sql`
         INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
           changed_items, occurred_at, distinct_id, email, order_id,
           shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
           created_at, updated_at)
-        VALUES ($1, (SELECT id FROM carts WHERE cart_token = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
-      `, [
-        crypto.randomUUID(), cartToken, eventName,
-        JSON.stringify(cartItems), totalPrice, cartItems.length, currency,
-        changedItems ? JSON.stringify(changedItems) : null,
-        occurredAt, distinctId ?? null, email,
-        (props?.order_id ?? null) as string | null,
-        (props?.shipping_method ?? null) as string | null,
-        props?.shipping_price != null ? Number(props.shipping_price) : null,
-        props?.discounts_amount != null ? Number(props.discounts_amount) : null,
-        props?.discounts ? JSON.stringify(props.discounts) : null,
-        JSON.stringify(props),
-      ])
+        VALUES (${eventId}, (SELECT id FROM carts WHERE cart_token = ${cartToken}), ${eventName},
+          ${itemsJson}::jsonb, ${totalPrice}, ${cartItems.length}, ${currency},
+          ${changedJson}::jsonb, ${occurredAt}, ${distinctId ?? null}, ${email},
+          ${orderId}, ${shippingMethod}, ${shippingPrice}, ${discountsAmount}, ${discountsJson}::jsonb, ${rawJson}::jsonb,
+          NOW(), NOW())
+      `
 
       console.log(`[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`)
     } catch (err) {
