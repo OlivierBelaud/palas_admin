@@ -11,6 +11,11 @@ export default defineSpa({
       to: '/activite-site',
     },
     {
+      icon: 'ShoppingCart',
+      label: 'Paniers',
+      to: '/paniers',
+    },
+    {
       icon: 'Users',
       label: 'Customers',
       to: '/customers',
