@@ -75,19 +75,36 @@ export async function POST(req: Request) {
   const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
   const responseBody = await resp.text()
 
-  // Klaviyo identity bridge (fire-and-forget)
-  if (rawBytes.length > 0 && config.klaviyoApiKey) {
+  // ── Log all incoming events ────────────────────────────────────
+  let parsed: unknown = null
+  if (rawBytes.length > 0) {
     try {
       const jsonText = tryDecompress(rawBytes)
       if (jsonText) {
-        const parsed = JSON.parse(jsonText)
-        processEvents(parsed, config, clientIp).catch((err) => {
-          console.error('[posthog-proxy] Klaviyo bridge error:', err)
-        })
+        parsed = JSON.parse(jsonText)
+        const events = Array.isArray(parsed)
+          ? parsed
+          : ((parsed as Record<string, unknown>).batch as unknown[] ?? [parsed])
+        for (const evt of events as Record<string, unknown>[]) {
+          const eventName = evt.event as string | undefined
+          if (eventName === '$snapshot') continue // skip session recordings
+          const props = evt.properties as Record<string, unknown> | undefined
+          const distinctId = (evt.distinct_id ?? props?.distinct_id) as string | undefined
+          console.log(
+            `[posthog-proxy] ${path} ← event: ${eventName ?? '?'} | distinct_id: ${distinctId ?? '?'} | url: ${props?.$current_url ?? '-'}`,
+          )
+        }
       }
     } catch {
       // Not parseable (session recording binary, etc.) — skip
     }
+  }
+
+  // Klaviyo identity bridge (fire-and-forget)
+  if (parsed && config.klaviyoApiKey) {
+    processEvents(parsed, config, clientIp).catch((err) => {
+      console.error('[posthog-proxy] Klaviyo bridge error:', err)
+    })
   }
 
   return new Response(responseBody, {
