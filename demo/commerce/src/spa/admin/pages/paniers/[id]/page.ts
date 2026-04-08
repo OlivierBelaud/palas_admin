@@ -33,6 +33,7 @@ export default definePage({
               'cart:cleared': 'red',
               'cart:viewed': 'gray',
               'cart:closed': 'gray',
+              'cart:discount_applied': 'blue',
               'checkout:started': 'blue',
               'checkout:contact': 'purple',
               'checkout:address': 'purple',

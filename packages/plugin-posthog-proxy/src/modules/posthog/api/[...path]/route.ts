@@ -166,6 +166,7 @@ const CART_TRACKABLE_EVENTS = new Set([
   'cart:cleared',
   'cart:viewed',
   'cart:closed',
+  'cart:discount_applied',
   'checkout:started',
   'checkout:contact_info_submitted',
   'checkout:address_info_submitted',
@@ -202,9 +203,9 @@ async function ingestCartEvents(body: unknown, sql: any) {
     const $set = props?.$set as Record<string, unknown> | undefined
     const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
 
-    // Resolve cart_token from cart snapshot or checkout order_id
+    // Resolve cart_token: top-level first (new contract), then nested in cart, then order_id
     const cart = props?.cart as Record<string, unknown> | undefined
-    let cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
+    const cartToken = (props?.cart_token ?? cart?.cart_token ?? props?.order_id) as string | undefined
 
     if (!cartToken) {
       console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
@@ -302,6 +303,15 @@ async function ingestCartEvents(body: unknown, sql: any) {
           ${esc(orderId)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
           NOW(), NOW())
       `)
+
+      // 3. Retroactive email propagation: if we now have an email, update ALL carts
+      // from the same distinct_id that don't have an email yet
+      if (email && distinctId) {
+        await pg.unsafe(`
+          UPDATE carts SET email = ${esc(email)}, updated_at = NOW()
+          WHERE distinct_id = ${esc(distinctId)} AND email IS NULL AND cart_token != ${esc(cartToken)}
+        `)
+      }
 
       console.log(`[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`)
     } catch (err) {

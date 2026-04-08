@@ -25,6 +25,7 @@ export default defineModel('Cart', {
     'cart:cleared',
     'cart:viewed',
     'cart:closed',
+    'cart:discount_applied',
     'checkout:started',
     'checkout:contact_info_submitted',
     'checkout:address_info_submitted',
