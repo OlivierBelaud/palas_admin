@@ -3,9 +3,24 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: {
     titleField: 'email,distinct_id',
-    descriptionField: 'cart_token',
+    descriptionField: 'summary',
   },
   main: [
+    // ── Résumé du panier (sert aussi de source pour le header) ──────
+    {
+      type: 'InfoCard',
+      title: 'Panier',
+      query: {
+        name: 'cart-header',
+        input: { id: ':id' },
+      },
+      fields: [
+        { key: 'articles', label: 'Articles' },
+        { key: 'total', label: 'Total' },
+        { key: 'remises', label: 'Remises' },
+      ],
+    },
+
     // ── Timeline des événements (plus récent en haut) ──────────────────
     {
       type: 'RelationTable',
@@ -42,7 +57,6 @@ export default definePage({
     },
   ],
   sidebar: [
-    // ── Client ─────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Client',
@@ -63,22 +77,6 @@ export default definePage({
         { key: 'shopify_customer_id', label: 'Shopify ID' },
       ],
     },
-    // ── Panier ─────────────────────────────────────────────────────────
-    {
-      type: 'InfoCard',
-      title: 'Panier',
-      query: {
-        name: 'cart-items',
-        input: { id: ':id' },
-      },
-      fields: [
-        { key: 'articles', label: 'Articles' },
-        { key: 'nombre_articles', label: 'Nb articles' },
-        { key: 'total', label: 'Total' },
-        { key: 'remises', label: 'Remises' },
-      ],
-    },
-    // ── Parcours ───────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Parcours',
@@ -95,7 +93,6 @@ export default definePage({
         { key: 'last_action_at', label: 'Dernière activité', display: { type: 'date', format: 'long' } },
       ],
     },
-    // ── Checkout ────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Checkout',
@@ -118,7 +115,6 @@ export default definePage({
         { key: 'is_first_order', label: '1ère commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
       ],
     },
-    // ── Dates ──────────────────────────────────────────────────────────
     {
       type: 'InfoCard',
       title: 'Dates',
