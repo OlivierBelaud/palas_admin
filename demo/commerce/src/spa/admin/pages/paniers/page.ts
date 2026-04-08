@@ -4,7 +4,7 @@ export default definePage({
   header: {
     title: 'Paniers',
     actions: [
-      { label: 'Purger paniers vides', command: 'purgeEmptyCarts', destructive: true },
+      { label: 'Purger paniers vides', command: '/api/cart-tracking/purge-empty', destructive: true },
     ],
   },
   main: [

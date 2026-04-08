@@ -10,19 +10,24 @@ import type { GraphQueryDef, HeaderAction, NamedQueryDef } from '../primitives'
 import { Heading, statusColors, Text } from '../renderers/blocks/shared'
 import { useBlockQuery } from './use-block-query'
 
-/** Button that executes a command with confirmation dialog */
+/** Button that executes a command or custom action with confirmation dialog */
 function CommandButton({ command, label, destructive }: { command: string; label: string; destructive?: boolean }) {
-  const cmd = useCommand(command)
+  const isUrl = command.startsWith('/')
+  const cmd = isUrl ? null : useCommand(command)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleConfirm = async () => {
     setLoading(true)
     try {
-      await (cmd as any).mutateAsync({})
+      if (isUrl) {
+        await fetch(command, { method: 'POST' })
+      } else {
+        await (cmd as any).mutateAsync({})
+      }
       window.location.reload()
     } catch {
-      // Error handled by the command
+      // Error handled
     } finally {
       setLoading(false)
       setOpen(false)
