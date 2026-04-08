@@ -100,11 +100,19 @@ export async function POST(req: Request) {
     }
   }
 
-  // Klaviyo identity bridge (fire-and-forget)
-  if (parsed && config.klaviyoApiKey) {
-    processEvents(parsed, config, clientIp).catch((err) => {
-      console.error('[posthog-proxy] Klaviyo bridge error:', err)
+  // ── Identity bridges (fire-and-forget) ──────────────────────────
+  if (parsed) {
+    // Checkout identity: resolve email from checkout:contact_info_submitted
+    processCheckoutIdentity(parsed, config, clientIp).catch((err) => {
+      console.error('[posthog-proxy] Checkout identity error:', err)
     })
+
+    // Klaviyo identity: resolve email from $_kx / $kla_id tokens
+    if (config.klaviyoApiKey) {
+      processEvents(parsed, config, clientIp).catch((err) => {
+        console.error('[posthog-proxy] Klaviyo bridge error:', err)
+      })
+    }
   }
 
   return new Response(responseBody, {
@@ -134,6 +142,78 @@ function tryDecompress(bytes: Uint8Array): string | null {
 function extractPath(req: Request): string {
   const url = new URL(req.url)
   return url.pathname.replace(/^\/api\/posthog/, '') || '/'
+}
+
+// ── Checkout identity bridge ────────────────────────────────────
+// When checkout:contact_info_submitted arrives, extract the email
+// and $identify the anonymous checkout distinct_id.
+
+const CHECKOUT_EVENTS_WITH_EMAIL = new Set([
+  'checkout:contact_info_submitted',
+  'checkout:completed',
+  'checkout:shipping_info_submitted',
+])
+
+async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig, clientIp?: string | null) {
+  const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
+
+  for (const event of events as Record<string, unknown>[]) {
+    const eventName = event.event as string | undefined
+    if (!eventName) continue
+
+    // Log full properties for ALL checkout:* events (debug)
+    if (eventName.startsWith('checkout:')) {
+      console.log(`[posthog-proxy] CHECKOUT EVENT DUMP: ${eventName}`, JSON.stringify(event, null, 2))
+    }
+
+    // Only try to identify on events that carry email
+    if (!CHECKOUT_EVENTS_WITH_EMAIL.has(eventName)) continue
+
+    const props = event.properties as Record<string, unknown> | undefined
+    const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
+    if (!distinctId) continue
+    if (identifiedIds.has(distinctId)) continue
+
+    // Try to extract email from multiple paths (Shopify web pixel structure varies)
+    const email = extractEmailFromCheckout(event, props)
+    if (!email) {
+      console.log(`[posthog-proxy] ${eventName}: no email found for ${distinctId}`)
+      continue
+    }
+
+    console.log(`[posthog-proxy] ${eventName}: found email ${email} for ${distinctId} — sending $identify`)
+    await identifyInPostHog(distinctId, email, config, clientIp, 'checkout')
+    identifiedIds.add(distinctId)
+  }
+}
+
+/** Try every known path where Shopify might put the email */
+function extractEmailFromCheckout(event: Record<string, unknown>, props?: Record<string, unknown>): string | null {
+  // Direct properties
+  if (typeof props?.email === 'string') return props.email
+  if (typeof props?.$email === 'string') return props.$email
+
+  // Nested in $set
+  const $set = props?.$set as Record<string, unknown> | undefined
+  if (typeof $set?.email === 'string') return $set.email
+  if (typeof $set?.$email === 'string') return $set.$email
+
+  // Shopify checkout object (common in web pixel events)
+  const checkout = (props?.checkout ?? event.checkout) as Record<string, unknown> | undefined
+  if (typeof checkout?.email === 'string') return checkout.email
+
+  // Shopify customer object
+  const customer = (checkout?.customer ?? props?.customer ?? event.customer) as Record<string, unknown> | undefined
+  if (typeof customer?.email === 'string') return customer.email
+
+  // Billing/shipping address
+  const billing = (checkout?.billingAddress ?? props?.billingAddress) as Record<string, unknown> | undefined
+  if (typeof billing?.email === 'string') return billing.email
+
+  // $user_email (PostHog convention)
+  if (typeof props?.$user_email === 'string') return props.$user_email
+
+  return null
 }
 
 // ── Klaviyo identity bridge ─────────────────────────────────────────
@@ -257,7 +337,7 @@ async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfi
   }
 }
 
-async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null) {
+async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null, source = 'klaviyo') {
   if (!config.publicToken) {
     console.warn('[posthog-proxy] POSTHOG_TOKEN not set — cannot send $identify')
     return
@@ -276,13 +356,13 @@ async function identifyInPostHog(distinctId: string, email: string, config: Post
           $anon_distinct_id: distinctId,
           $set: {
             email,
-            klaviyo_identified: true,
+            [`${source}_identified`]: true,
             identified_at: new Date().toISOString(),
           },
         },
       }),
     })
-    console.log(`[posthog-proxy] PostHog $identify response: ${res.status}`)
+    console.log(`[posthog-proxy] PostHog $identify (${source}) response: ${res.status}`)
   } catch (err) {
     console.error('[posthog-proxy] identifyInPostHog error:', err)
   }
