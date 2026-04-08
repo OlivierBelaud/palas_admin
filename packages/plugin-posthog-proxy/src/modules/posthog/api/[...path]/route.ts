@@ -184,6 +184,13 @@ function actionToStage(action: string): string {
   return 'checkout_engaged'
 }
 
+const esc = (v: any) => {
+  if (v === null || v === undefined) return 'NULL'
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+  if (typeof v === 'number') return String(v)
+  return `'${String(v).replace(/'/g, "''")}'`
+}
+
 async function ingestCartEvents(body: unknown, sql: any) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
 
@@ -197,7 +204,21 @@ async function ingestCartEvents(body: unknown, sql: any) {
 
     // Resolve cart_token from cart snapshot or checkout order_id
     const cart = props?.cart as Record<string, unknown> | undefined
-    const cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
+    let cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
+
+    // cart:viewed and cart:closed don't carry a cart_token — look up by distinct_id
+    if (!cartToken && distinctId && (eventName === 'cart:viewed' || eventName === 'cart:closed')) {
+      try {
+        const pg = sql as { unsafe: (q: string) => Promise<any[]> }
+        const rows = await pg.unsafe(
+          `SELECT cart_token FROM carts WHERE distinct_id = ${esc(distinctId)} ORDER BY updated_at DESC LIMIT 1`,
+        )
+        if (rows.length > 0) cartToken = rows[0].cart_token
+      } catch {
+        // DB lookup failed — skip
+      }
+    }
+
     if (!cartToken) {
       console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
       continue
@@ -236,14 +257,6 @@ async function ingestCartEvents(body: unknown, sql: any) {
 
       // postgres.js tagged template — no ::jsonb casts needed, columns handle types
       const pg = sql as { unsafe: (q: string) => Promise<any[]> }
-
-      // Build VALUES with proper escaping
-      const esc = (v: any) => {
-        if (v === null || v === undefined) return 'NULL'
-        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
-        if (typeof v === 'number') return String(v)
-        return `'${String(v).replace(/'/g, "''")}'`
-      }
 
       // 1. UPSERT the cart head
       await pg.unsafe(`
