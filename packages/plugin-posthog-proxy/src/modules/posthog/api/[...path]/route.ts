@@ -205,7 +205,29 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
       },
     })
 
-    // 2. Send $create_alias — link Shopify customer ID to this distinct_id
+    // 2. Merge store distinct_id → checkout distinct_id (same person)
+    const storeDistinctId = props?._store_distinct_id as string | undefined
+    if (storeDistinctId && storeDistinctId !== distinctId) {
+      console.log(`[posthog-proxy] ${eventName}: merging store ${storeDistinctId} → checkout ${distinctId} via $identify`)
+      // Identify the STORE distinct_id with the same email — PostHog merges both into one person
+      await sendPostHogEvent(config, clientIp, {
+        api_key: config.publicToken!,
+        event: '$identify',
+        distinct_id: storeDistinctId,
+        properties: {
+          $set: {
+            email,
+            ...(firstName && { first_name: firstName }),
+            ...(lastName && { last_name: lastName }),
+            checkout_identified: true,
+            identified_at: new Date().toISOString(),
+          },
+        },
+      })
+      identifiedIds.add(storeDistinctId)
+    }
+
+    // 3. Send $create_alias — link Shopify customer ID to this distinct_id
     if (shopifyCustomerId) {
       console.log(`[posthog-proxy] ${eventName}: aliasing shopify_customer_id ${shopifyCustomerId} → ${distinctId}`)
       await sendPostHogEvent(config, clientIp, {
