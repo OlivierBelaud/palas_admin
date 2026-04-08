@@ -17,7 +17,8 @@ export default defineQuery({
     if (!cart) return { articles: '-', total: '-', remises: '-' }
 
     const items = (cart.items ?? []) as any[]
-    const symbol = (cart.currency ?? 'EUR') === 'EUR' ? '€' : cart.currency
+    const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+    const symbol = symbols[cart.currency ?? 'EUR'] ?? cart.currency
 
     const articles = items.length > 0
       ? items.map((item: any) => `${item.title} × ${item.quantity} — ${item.price} ${symbol}`).join('\n')

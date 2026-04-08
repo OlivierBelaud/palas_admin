@@ -25,7 +25,8 @@ export default defineQuery({
           .replace(/_submitted$/, '')
           .replace(/_info$/, '')
 
-        const symbol = (e.currency ?? 'EUR') === 'EUR' ? '€' : e.currency
+        const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+        const symbol = symbols[e.currency ?? 'EUR'] ?? e.currency
         return {
           ...e,
           action: cleanAction,

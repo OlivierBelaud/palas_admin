@@ -25,7 +25,8 @@ export default defineQuery({
       const client = c.email
         ?? (c.distinct_id ? `${c.distinct_id.slice(0, 8)}…` : 'Anonyme')
 
-      const symbol = currency === 'EUR' ? '€' : currency
+      const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+      const symbol = symbols[currency] ?? currency
       return {
         ...c,
         client,
