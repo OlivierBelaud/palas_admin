@@ -7,14 +7,20 @@ export default definePage({
   },
   main: [
     {
-      type: 'JsonCard',
-      title: 'Articles du panier',
+      type: 'InfoCard',
+      title: 'Panier',
       query: {
         graph: {
           entity: 'cart',
-          fields: ['items'],
+          fields: ['total_price', 'item_count', 'currency', 'cart_token'],
         },
       },
+      fields: [
+        { key: 'total_price', label: 'Montant total' },
+        { key: 'item_count', label: 'Nombre d\'articles' },
+        { key: 'currency', label: 'Devise' },
+        { key: 'cart_token', label: 'Cart Token' },
+      ],
     },
     {
       type: 'RelationTable',

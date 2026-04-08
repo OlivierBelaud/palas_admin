@@ -7,24 +7,24 @@ export default defineQuery({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
-    // Get the cart head
     const carts = await query.graph({
       entity: 'cart',
-      pagination: { limit: 1 },
+      pagination: { limit: 5000 },
     }) as any[]
     const cart = carts.find((c: any) => c.id === input.id)
-    if (!cart) return null
+    if (!cart) return { events: [] }
 
-    // Get all events for this cart, ordered by time
-    const events = await query.graph({
+    // Fetch all events and filter by cart_id in JS
+    const allEvents = await query.graph({
       entity: 'cartEvent',
-      filters: { cart_id: input.id },
-      pagination: { limit: 1000 },
+      pagination: { limit: 5000 },
     }) as any[]
 
-    events.sort((a: any, b: any) =>
-      new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
-    )
+    const events = allEvents
+      .filter((e: any) => e.cart_id === input.id)
+      .sort((a: any, b: any) =>
+        new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+      )
 
     return { ...cart, events }
   },
