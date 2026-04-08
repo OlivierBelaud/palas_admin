@@ -2,8 +2,12 @@ import { definePage } from '@manta/dashboard-core'
 
 export default definePage({
   header: {
-    titleField: 'email',
-    descriptionField: 'distinct_id',
+    query: {
+      name: 'cart-header',
+      input: { id: ':id' },
+    },
+    titleField: 'title',
+    descriptionField: 'description',
   },
   main: [
     // ── Timeline des événements (plus récent en haut) ──────────────────

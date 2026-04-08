@@ -17,18 +17,17 @@ export default defineQuery({
     if (!cart) return { articles: '-', total: '-', remises: '-' }
 
     const items = (cart.items ?? []) as any[]
-    const currency = cart.currency ?? 'EUR'
+    const symbol = (cart.currency ?? 'EUR') === 'EUR' ? '€' : cart.currency
 
-    // Format each item as "Product × qty — price €"
     const articles = items.length > 0
-      ? items.map((item: any) => `${item.title} × ${item.quantity} — ${item.price} ${currency}`).join('\n')
+      ? items.map((item: any) => `${item.title} × ${item.quantity} — ${item.price} ${symbol}`).join('\n')
       : 'Panier vide'
 
     return {
       articles,
-      total: `${cart.total_price ?? 0} ${currency}`,
+      total: `${cart.total_price ?? 0} ${symbol}`,
       nombre_articles: cart.item_count ?? 0,
-      remises: cart.discounts_amount ? `−${cart.discounts_amount} ${currency}` : '-',
+      remises: cart.discounts_amount ? `−${cart.discounts_amount} ${symbol}` : '-',
     }
   },
 })

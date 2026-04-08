@@ -18,9 +18,19 @@ export default defineQuery({
       .sort((a: any, b: any) =>
         new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
       )
-      .map((e: any) => ({
-        ...e,
-        montant: e.total_price != null ? `${e.total_price} ${e.currency ?? '€'}` : '-',
-      }))
+      .map((e: any) => {
+        // Clean action name: remove _submitted/_info suffixes
+        const cleanAction = (e.action as string)
+          .replace(/_info_submitted$/, '')
+          .replace(/_submitted$/, '')
+          .replace(/_info$/, '')
+
+        const symbol = (e.currency ?? 'EUR') === 'EUR' ? '€' : e.currency
+        return {
+          ...e,
+          action: cleanAction,
+          montant: e.total_price != null ? `${e.total_price} ${symbol}` : '-',
+        }
+      })
   },
 })
