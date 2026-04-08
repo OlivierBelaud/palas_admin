@@ -206,7 +206,7 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
     })
 
     // 2. Merge store distinct_id → checkout distinct_id (same person)
-    const storeDistinctId = props?._store_distinct_id as string | undefined
+    const storeDistinctId = (props?._distinct_id ?? props?._store_distinct_id) as string | undefined
     if (storeDistinctId && storeDistinctId !== distinctId) {
       console.log(`[posthog-proxy] ${eventName}: merging store ${storeDistinctId} → checkout ${distinctId} via $identify`)
       // Identify the STORE distinct_id with the same email — PostHog merges both into one person
