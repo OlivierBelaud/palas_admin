@@ -206,19 +206,6 @@ async function ingestCartEvents(body: unknown, sql: any) {
     const cart = props?.cart as Record<string, unknown> | undefined
     let cartToken = (cart?.cart_token ?? props?.order_id ?? props?.cart_token) as string | undefined
 
-    // cart:viewed and cart:closed don't carry a cart_token — look up by distinct_id
-    if (!cartToken && distinctId && (eventName === 'cart:viewed' || eventName === 'cart:closed')) {
-      try {
-        const pg = sql as { unsafe: (q: string) => Promise<any[]> }
-        const rows = await pg.unsafe(
-          `SELECT cart_token FROM carts WHERE distinct_id = ${esc(distinctId)} ORDER BY updated_at DESC LIMIT 1`,
-        )
-        if (rows.length > 0) cartToken = rows[0].cart_token
-      } catch {
-        // DB lookup failed — skip
-      }
-    }
-
     if (!cartToken) {
       console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
       continue
