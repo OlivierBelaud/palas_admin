@@ -5,22 +5,17 @@ export default definePage({
     titleField: 'title',
     linkField: 'posthog_url',
     linkLabelField: 'posthog_label',
+    query: {
+      name: 'cart-header',
+      input: { id: ':id' },
+    },
   },
   main: [
-    // ── Source de données pour le header (invisible si pas de fields) ──
-    {
-      type: 'InfoCard',
-      query: {
-        name: 'cart-header',
-        input: { id: ':id' },
-      },
-      fields: [],
-    },
-
     // ── Timeline des événements (plus récent en haut) ──────────────────
     {
-      type: 'RelationTable',
+      type: 'DataTable',
       title: 'Historique des actions',
+      pagination: false,
       query: {
         name: 'cart-events-list',
         input: { id: ':id' },

@@ -49,10 +49,10 @@ export function PageRenderer({ spec, customBlocks }: PageRendererProps) {
   const header = spec.header
     ? React.createElement(PageHeaderBlock, {
         ...spec.header,
-        // If header needs data (titleField, statusField), it needs a query from first block
+        // Header query: use header.query if provided, otherwise fall back to first block's query
         query:
-          spec.header.titleField || spec.header.descriptionField || spec.header.statusField
-            ? spec.main[0]?.query
+          spec.header.titleField || spec.header.descriptionField || spec.header.statusField || spec.header.linkField
+            ? ((spec.header as any).query ?? spec.main[0]?.query)
             : undefined,
       })
     : null

@@ -16,6 +16,8 @@ export interface PageHeaderBlockProps {
   titleField?: string
   descriptionField?: string
   statusField?: string
+  linkField?: string
+  linkLabelField?: string
   actions?: HeaderAction[]
 }
 
@@ -38,6 +40,8 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
       : props.title || ''
 
   const description = props.descriptionField && record ? String(record[props.descriptionField] || '') : ''
+  const linkHref = props.linkField && record ? String(record[props.linkField] || '') : ''
+  const linkLabel = props.linkLabelField && record ? String(record[props.linkLabelField] || '') : ''
   const status = props.statusField && record ? String(record[props.statusField] || '') : null
   const statusColor = status ? (statusColors as Record<string, string>)[status] || 'grey' : null
 
@@ -123,9 +127,20 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
           React.createElement(Heading, { level: 'h1' }, title),
           status && statusColor ? React.createElement(StatusBadge, { color: statusColor as any }, status) : null,
         ),
-        description
-          ? React.createElement(Text, { size: 'small', className: 'text-muted-foreground' }, description)
-          : null,
+        linkHref
+          ? React.createElement(
+              'a',
+              {
+                href: linkHref,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                className: 'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
+              },
+              linkLabel || description || linkHref,
+            )
+          : description
+            ? React.createElement(Text, { size: 'small', className: 'text-muted-foreground' }, description)
+            : null,
       ),
       actionButtons.length > 0
         ? React.createElement('div', { className: 'flex items-center gap-x-2' }, ...actionButtons)
