@@ -174,15 +174,50 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
     if (!distinctId) continue
     if (identifiedIds.has(distinctId)) continue
 
-    // Try to extract email from multiple paths (Shopify web pixel structure varies)
+    const $set = props?.$set as Record<string, unknown> | undefined
+
+    // Extract email from $set (confirmed Shopify structure)
     const email = extractEmailFromCheckout(event, props)
     if (!email) {
       console.log(`[posthog-proxy] ${eventName}: no email found for ${distinctId}`)
       continue
     }
 
+    const firstName = $set?.first_name as string | undefined
+    const lastName = $set?.last_name as string | undefined
+    const shopifyCustomerId = $set?.id as number | undefined
+
+    // 1. Send $identify — keep the original distinct_id, put person data in $set
     console.log(`[posthog-proxy] ${eventName}: found email ${email} for ${distinctId} — sending $identify`)
-    await identifyInPostHog(distinctId, email, config, clientIp, 'checkout')
+    await sendPostHogEvent(config, clientIp, {
+      api_key: config.publicToken!,
+      event: '$identify',
+      distinct_id: distinctId,
+      properties: {
+        $set: {
+          email,
+          ...(firstName && { first_name: firstName }),
+          ...(lastName && { last_name: lastName }),
+          ...(shopifyCustomerId && { shopify_customer_id: shopifyCustomerId }),
+          checkout_identified: true,
+          identified_at: new Date().toISOString(),
+        },
+      },
+    })
+
+    // 2. Send $create_alias — link Shopify customer ID to this distinct_id
+    if (shopifyCustomerId) {
+      console.log(`[posthog-proxy] ${eventName}: aliasing shopify_customer_id ${shopifyCustomerId} → ${distinctId}`)
+      await sendPostHogEvent(config, clientIp, {
+        api_key: config.publicToken!,
+        event: '$create_alias',
+        distinct_id: distinctId,
+        properties: {
+          alias: String(shopifyCustomerId),
+        },
+      })
+    }
+
     identifiedIds.add(distinctId)
   }
 }
@@ -337,9 +372,10 @@ async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfi
   }
 }
 
-async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null, source = 'klaviyo') {
+/** Low-level: send a single event to PostHog ingest API */
+async function sendPostHogEvent(config: PostHogProxyConfig, clientIp?: string | null, payload?: Record<string, unknown>) {
   if (!config.publicToken) {
-    console.warn('[posthog-proxy] POSTHOG_TOKEN not set — cannot send $identify')
+    console.warn('[posthog-proxy] POSTHOG_TOKEN not set — cannot send event')
     return
   }
   try {
@@ -348,22 +384,26 @@ async function identifyInPostHog(distinctId: string, email: string, config: Post
     const res = await fetch(`${config.host}/i/v0/e/`, {
       method: 'POST',
       headers: fetchHeaders,
-      body: JSON.stringify({
-        api_key: config.publicToken,
-        distinct_id: email,
-        event: '$identify',
-        properties: {
-          $anon_distinct_id: distinctId,
-          $set: {
-            email,
-            [`${source}_identified`]: true,
-            identified_at: new Date().toISOString(),
-          },
-        },
-      }),
+      body: JSON.stringify(payload),
     })
-    console.log(`[posthog-proxy] PostHog $identify (${source}) response: ${res.status}`)
+    console.log(`[posthog-proxy] PostHog ${payload?.event} response: ${res.status}`)
   } catch (err) {
-    console.error('[posthog-proxy] identifyInPostHog error:', err)
+    console.error(`[posthog-proxy] sendPostHogEvent error (${payload?.event}):`, err)
   }
+}
+
+/** Klaviyo identity bridge: identify anonymous distinct_id with resolved email */
+async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null) {
+  await sendPostHogEvent(config, clientIp, {
+    api_key: config.publicToken,
+    event: '$identify',
+    distinct_id: distinctId,
+    properties: {
+      $set: {
+        email,
+        klaviyo_identified: true,
+        identified_at: new Date().toISOString(),
+      },
+    },
+  })
 }
