@@ -233,18 +233,29 @@ async function ingestCartEvents(body: unknown, sql: any) {
       const totalTax = props?.total_tax != null ? Number(props.total_tax) : null
       const shopifyCustId = props?.shopify_customer_id ? String(props.shopify_customer_id) : null
 
+      // postgres.js tagged template — no ::jsonb casts needed, columns handle types
+      const pg = sql as { unsafe: (q: string) => Promise<any[]> }
+
+      // Build VALUES with proper escaping
+      const esc = (v: any) => {
+        if (v === null || v === undefined) return 'NULL'
+        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+        if (typeof v === 'number') return String(v)
+        return `'${String(v).replace(/'/g, "''")}'`
+      }
+
       // 1. UPSERT the cart head
-      await sql`
+      await pg.unsafe(`
         INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
           shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
           highest_stage, status, order_id, shopify_order_id, is_first_order,
           shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
           created_at, updated_at)
-        VALUES (${id}, ${cartToken}, ${distinctId ?? null}, ${email}, ${firstName}, ${lastName}, ${phone}, ${city}, ${countryCode},
-          ${shopifyCustId}, ${itemsJson}::jsonb, ${totalPrice}, ${cartItems.length}, ${currency},
-          ${eventName}, ${occurredAt}, ${newStage}, ${status},
-          ${orderId}, ${shopifyOrderId}, ${isFirstOrder},
-          ${shippingMethod}, ${shippingPrice}, ${discountsAmount}, ${discountsJson}::jsonb, ${subtotalPrice}, ${totalTax},
+        VALUES (${esc(id)}, ${esc(cartToken)}, ${esc(distinctId ?? null)}, ${esc(email)}, ${esc(firstName)}, ${esc(lastName)}, ${esc(phone)}, ${esc(city)}, ${esc(countryCode)},
+          ${esc(shopifyCustId)}, ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
+          ${esc(eventName)}, ${esc(occurredAt)}, ${esc(newStage)}, ${esc(status)},
+          ${esc(orderId)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
+          ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${subtotalPrice ?? 'NULL'}, ${totalTax ?? 'NULL'},
           NOW(), NOW())
         ON CONFLICT (cart_token) DO UPDATE SET
           distinct_id = COALESCE(EXCLUDED.distinct_id, carts.distinct_id),
@@ -276,20 +287,20 @@ async function ingestCartEvents(body: unknown, sql: any) {
           subtotal_price = COALESCE(EXCLUDED.subtotal_price, carts.subtotal_price),
           total_tax = COALESCE(EXCLUDED.total_tax, carts.total_tax),
           updated_at = NOW()
-      `
+      `)
 
       // 2. INSERT the event (append-only)
-      await sql`
+      await pg.unsafe(`
         INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
           changed_items, occurred_at, distinct_id, email, order_id,
           shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
           created_at, updated_at)
-        VALUES (${eventId}, (SELECT id FROM carts WHERE cart_token = ${cartToken}), ${eventName},
-          ${itemsJson}::jsonb, ${totalPrice}, ${cartItems.length}, ${currency},
-          ${changedJson}::jsonb, ${occurredAt}, ${distinctId ?? null}, ${email},
-          ${orderId}, ${shippingMethod}, ${shippingPrice}, ${discountsAmount}, ${discountsJson}::jsonb, ${rawJson}::jsonb,
+        VALUES (${esc(eventId)}, (SELECT id FROM carts WHERE cart_token = ${esc(cartToken)}), ${esc(eventName)},
+          ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
+          ${changedJson ? `${esc(changedJson)}::jsonb` : 'NULL'}, ${esc(occurredAt)}, ${esc(distinctId ?? null)}, ${esc(email)},
+          ${esc(orderId)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
           NOW(), NOW())
-      `
+      `)
 
       console.log(`[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`)
     } catch (err) {
