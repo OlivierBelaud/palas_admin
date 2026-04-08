@@ -116,9 +116,12 @@ export async function POST(req: Request & { app?: any }) {
 
     // Cart tracking: ingest cart:* and checkout:* events into the database
     if (req.app) {
+      console.log('[posthog-proxy] cart-tracking: req.app available, calling ingestCartEvents')
       ingestCartEvents(parsed, req.app).catch((err) => {
         console.error('[posthog-proxy] Cart tracking error:', err)
       })
+    } else {
+      console.log('[posthog-proxy] cart-tracking: req.app NOT available — commands not accessible')
     }
   }
 
@@ -246,15 +249,23 @@ async function ingestCartEvents(body: unknown, app: any) {
     }
 
     try {
+      // Try multiple ways to access the command
       const commands = app.commands as Record<string, Function> | undefined
-      if (commands?.ingestCartEvent) {
-        await commands.ingestCartEvent(input, { auth: null, headers: {} })
-        console.log(`[posthog-proxy] cart-tracking: ingested ${eventName} for cart ${cartToken}`)
+      const commandRunner = commands?.ingestCartEvent
+        ?? commands?.['ingest-cart-event']
+        ?? commands?.['admin:ingestCartEvent']
+        ?? commands?.['admin:ingest-cart-event']
+
+      if (commandRunner) {
+        await commandRunner(input, { auth: null, headers: {} })
+        console.log(`[posthog-proxy] cart-tracking: ✓ ingested ${eventName} for cart ${cartToken}`)
       } else {
-        console.log(`[posthog-proxy] cart-tracking: ingestCartEvent command not found, skipping`)
+        // Log available commands to debug
+        const keys = commands ? Object.keys(commands).slice(0, 20) : []
+        console.log(`[posthog-proxy] cart-tracking: command not found. Available: [${keys.join(', ')}]`)
       }
     } catch (err) {
-      console.error(`[posthog-proxy] cart-tracking: failed to ingest ${eventName}:`, (err as Error).message)
+      console.error(`[posthog-proxy] cart-tracking: ✗ failed ${eventName}:`, (err as Error).message, (err as Error).stack?.split('\n')[1])
     }
   }
 }
