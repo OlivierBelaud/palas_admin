@@ -15,11 +15,8 @@ export default defineQuery({
         'last_action', 'highest_stage', 'status', 'last_action_at', 'created_at',
       ],
       pagination: { limit: 100 },
+      sort: { last_action_at: 'desc' },
     }) as any[]
-
-    carts.sort((a: any, b: any) =>
-      new Date(b.last_action_at).getTime() - new Date(a.last_action_at).getTime(),
-    )
 
     return carts.map((c: any) => {
       const currency = c.currency ?? 'EUR'
