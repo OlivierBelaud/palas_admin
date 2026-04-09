@@ -2723,6 +2723,20 @@ async function ensureEntityTables(
       // Table may already exist with different schema — skip
       logger.warn(`  Table ${finalTable}: ${(err as Error).message}`)
     }
+
+    // Add missing columns to existing tables (ALTER TABLE ADD COLUMN IF NOT EXISTS)
+    for (const col of columns) {
+      if (col.startsWith('id ')) continue // skip primary key
+      const colName = col.split(' ')[0]
+      const colDef = col.slice(colName.length + 1)
+      try {
+        await (pg as { unsafe: (query: string) => Promise<unknown[]> }).unsafe(
+          `ALTER TABLE ${finalTable} ADD COLUMN IF NOT EXISTS ${colName} ${colDef}`,
+        )
+      } catch {
+        // Column already exists or other non-critical error — skip
+      }
+    }
   }
 
   // Create link pivot tables

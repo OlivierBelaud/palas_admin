@@ -65,10 +65,12 @@ export default defineModel('Cart', {
     'completed',
   ]).default('active'),
 
-  // ── Checkout details (filled progressively) ───────────────────────
-  order_id: field.text().nullable(),
+  // ── Tokens (three distinct Shopify identifiers) ────────────────────
+  // cart_token is already the unique key above
   checkout_token: field.text().nullable(),
   shopify_order_id: field.text().nullable(),
+
+  // ── Checkout details (filled progressively) ───────────────────────
   is_first_order: field.boolean().nullable(),
   shipping_method: field.text().nullable(),
   shipping_price: field.float().nullable(),
