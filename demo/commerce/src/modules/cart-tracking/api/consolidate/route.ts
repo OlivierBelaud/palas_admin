@@ -8,68 +8,72 @@ export async function POST(req: Request & { app?: any }) {
   try {
     const pg = pool as { unsafe: (q: string) => Promise<any[]> }
 
-    // Find carts where the cart_token is actually a checkout_token
-    // (i.e., another cart exists with that value as checkout_token)
-    // These are duplicate entries created before cart_token was sent correctly.
-    //
-    // Strategy:
-    // 1. Find carts whose cart_token matches another cart's checkout_token
-    // 2. Move their events to the real cart (the one with the matching checkout_token)
-    // 3. Delete the orphan cart
-
-    const orphans = await pg.unsafe(`
-      SELECT orphan.id AS orphan_id, orphan.cart_token AS orphan_token,
-             real_cart.id AS real_id, real_cart.cart_token AS real_token
-      FROM carts orphan
-      JOIN carts real_cart ON real_cart.checkout_token = orphan.cart_token
-      WHERE orphan.id != real_cart.id
+    // Find duplicate carts: same distinct_id with multiple entries.
+    // For each group, keep the one with the most events (= the real cart_token),
+    // move events from the others, merge identity, delete duplicates.
+    const duplicates = await pg.unsafe(`
+      SELECT distinct_id, array_agg(id ORDER BY updated_at DESC) AS cart_ids,
+             array_agg(cart_token ORDER BY updated_at DESC) AS tokens,
+             COUNT(*) AS cnt
+      FROM carts
+      WHERE distinct_id IS NOT NULL
+      GROUP BY distinct_id
+      HAVING COUNT(*) > 1
     `)
 
-    if (orphans.length === 0) {
+    if (duplicates.length === 0) {
       return new Response(JSON.stringify({ consolidated: 0, events_moved: 0 }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
     }
 
+    let totalMerged = 0
     let totalEventsMoved = 0
 
-    for (const row of orphans) {
-      // Move events from orphan cart to real cart
-      const moved = await pg.unsafe(`
-        UPDATE cart_events SET cart_id = '${row.real_id.replace(/'/g, "''")}'
-        WHERE cart_id = '${row.orphan_id.replace(/'/g, "''")}'
-      `)
-      totalEventsMoved += (moved as any).count ?? 0
+    for (const group of duplicates) {
+      const cartIds = group.cart_ids as string[]
+      const keepId = cartIds[0] // most recently updated = main cart
 
-      // Merge identity: copy email/name from orphan to real if real is missing them
-      await pg.unsafe(`
-        UPDATE carts SET
-          email = COALESCE(carts.email, orphan.email),
-          first_name = COALESCE(carts.first_name, orphan.first_name),
-          last_name = COALESCE(carts.last_name, orphan.last_name),
-          phone = COALESCE(carts.phone, orphan.phone),
-          city = COALESCE(carts.city, orphan.city),
-          country_code = COALESCE(carts.country_code, orphan.country_code),
-          shopify_customer_id = COALESCE(carts.shopify_customer_id, orphan.shopify_customer_id),
-          updated_at = NOW()
-        FROM carts orphan
-        WHERE carts.id = '${row.real_id.replace(/'/g, "''")}'
-          AND orphan.id = '${row.orphan_id.replace(/'/g, "''")}'
-      `)
+      for (let i = 1; i < cartIds.length; i++) {
+        const orphanId = cartIds[i]
+        const esc = (v: string) => v.replace(/'/g, "''")
 
-      // Delete the orphan cart
-      await pg.unsafe(`
-        DELETE FROM carts WHERE id = '${row.orphan_id.replace(/'/g, "''")}'
-      `)
+        // Move events from orphan to keeper
+        await pg.unsafe(`UPDATE cart_events SET cart_id = '${esc(keepId)}' WHERE cart_id = '${esc(orphanId)}'`)
+
+        // Merge identity and checkout info from orphan into keeper
+        await pg.unsafe(`
+          UPDATE carts SET
+            email = COALESCE(carts.email, o.email),
+            first_name = COALESCE(carts.first_name, o.first_name),
+            last_name = COALESCE(carts.last_name, o.last_name),
+            phone = COALESCE(carts.phone, o.phone),
+            city = COALESCE(carts.city, o.city),
+            country_code = COALESCE(carts.country_code, o.country_code),
+            shopify_customer_id = COALESCE(carts.shopify_customer_id, o.shopify_customer_id),
+            checkout_token = COALESCE(carts.checkout_token, o.checkout_token),
+            shopify_order_id = COALESCE(carts.shopify_order_id, o.shopify_order_id),
+            highest_stage = CASE
+              WHEN array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], carts.highest_stage)
+                 >= array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], o.highest_stage)
+              THEN carts.highest_stage ELSE o.highest_stage END,
+            updated_at = NOW()
+          FROM carts o
+          WHERE carts.id = '${esc(keepId)}' AND o.id = '${esc(orphanId)}'
+        `)
+
+        // Delete orphan
+        await pg.unsafe(`DELETE FROM cart_events WHERE cart_id = '${esc(orphanId)}'`)
+        await pg.unsafe(`DELETE FROM carts WHERE id = '${esc(orphanId)}'`)
+
+        totalMerged++
+      }
     }
 
-    console.log(`[cart-tracking] Consolidated ${orphans.length} orphan carts, ${totalEventsMoved} events moved`)
+    console.log(`[cart-tracking] Consolidated ${totalMerged} duplicate carts`)
 
-    return new Response(JSON.stringify({
-      consolidated: orphans.length,
-      events_moved: totalEventsMoved,
-    }), {
+    return new Response(JSON.stringify({ consolidated: totalMerged, groups: duplicates.length }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })
