@@ -105,6 +105,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
         'pino',
         'pino-pretty',
         'jiti',
+        'zod',
       ],
     },
   })
