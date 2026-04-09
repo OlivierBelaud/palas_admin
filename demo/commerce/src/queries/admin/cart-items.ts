@@ -9,7 +9,7 @@ export default defineQuery({
   handler: async (input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
-      fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount'],
+      fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount', 'cart_token'],
       pagination: { limit: 5000 },
     }) as any[]
 
@@ -25,6 +25,7 @@ export default defineQuery({
       : 'Panier vide'
 
     return {
+      cart_token: cart.cart_token ?? '-',
       articles,
       total: `${cart.total_price ?? 0} ${symbol}`,
       nombre_articles: cart.item_count ?? 0,

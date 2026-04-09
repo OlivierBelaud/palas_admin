@@ -78,6 +78,7 @@ export default definePage({
         input: { id: ':id' },
       },
       fields: [
+        { key: 'cart_token', label: 'Cart Token' },
         { key: 'articles', label: 'Articles' },
         { key: 'total', label: 'Total' },
         { key: 'remises', label: 'Remises' },
