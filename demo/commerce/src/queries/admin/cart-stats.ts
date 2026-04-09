@@ -1,4 +1,3 @@
-import { z } from 'zod'
 
 export default defineQuery({
   name: 'cart-stats',

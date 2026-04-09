@@ -1,4 +1,3 @@
-import { z } from 'zod'
 
 const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
 

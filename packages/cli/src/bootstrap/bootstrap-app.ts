@@ -47,6 +47,7 @@ import {
   field as _field,
   many as _many,
 } from '@manta/core'
+import { z as _z } from 'zod'
 import {
   type CommandRegistry,
   ContextRegistry,
@@ -381,6 +382,7 @@ async function registerGlobals() {
   if (!g.defineMiddleware) g.defineMiddleware = _defineMiddleware
   if (!g.field) g.field = _field
   if (!g.many) g.many = _many
+  if (!g.z) g.z = _z
 }
 
 /**

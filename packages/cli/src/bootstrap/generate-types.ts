@@ -31,6 +31,8 @@ async function injectGlobals() {
   g.defineMiddleware = core.defineMiddleware
   g.field = core.field
   g.many = core.many
+  const { z } = await import('zod')
+  g.z = z
 }
 
 // ── Pluralization (must match instantiate.ts) ────────────────────────
