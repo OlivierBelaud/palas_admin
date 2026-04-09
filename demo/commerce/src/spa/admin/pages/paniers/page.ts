@@ -65,10 +65,11 @@ export default definePage({
         { key: 'last_action', label: 'Dernière action' },
         {
           key: 'last_action_at',
-          label: 'Activité',
-          format: { type: 'date', format: 'relative' },
+          label: 'Date',
+          format: { type: 'date', format: 'long' },
           sortable: true,
         },
+        { key: 'duree', label: 'Durée' },
       ],
       searchable: true,
       navigateTo: '/paniers/:id',
