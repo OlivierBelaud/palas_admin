@@ -4,6 +4,7 @@ export default definePage({
   header: {
     title: 'Paniers',
     actions: [
+      { label: 'Consolider', command: '/api/cart-tracking/consolidate' },
       { label: 'Purger paniers vides', command: '/api/cart-tracking/purge-empty', destructive: true },
     ],
   },
