@@ -203,9 +203,9 @@ async function ingestCartEvents(body: unknown, sql: any) {
     const $set = props?.$set as Record<string, unknown> | undefined
     const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
 
-    // Resolve cart_token: top-level first (new contract), then nested in cart, then order_id
+    // Resolve cart_token: top-level first (new contract), then nested in cart
     const cart = props?.cart as Record<string, unknown> | undefined
-    const cartToken = (props?.cart_token ?? cart?.cart_token ?? props?.order_id) as string | undefined
+    const cartToken = (props?.cart_token ?? cart?.cart_token) as string | undefined
 
     if (!cartToken) {
       console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
@@ -233,7 +233,7 @@ async function ingestCartEvents(body: unknown, sql: any) {
       const changedJson = changedItems ? JSON.stringify(changedItems) : null
       const discountsJson = props?.discounts ? JSON.stringify(props.discounts) : null
       const rawJson = JSON.stringify(props)
-      const orderId = (props?.order_id ?? null) as string | null
+      const checkoutToken = (props?.checkout_token ?? null) as string | null
       const shopifyOrderId = (props?.shopify_order_id ?? null) as string | null
       const isFirstOrder = (props?.is_first_order ?? null) as boolean | null
       const shippingMethod = (props?.shipping_method ?? null) as string | null
@@ -250,13 +250,13 @@ async function ingestCartEvents(body: unknown, sql: any) {
       await pg.unsafe(`
         INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
           shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
-          highest_stage, status, order_id, shopify_order_id, is_first_order,
+          highest_stage, status, checkout_token, shopify_order_id, is_first_order,
           shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
           created_at, updated_at)
         VALUES (${esc(id)}, ${esc(cartToken)}, ${esc(distinctId ?? null)}, ${esc(email)}, ${esc(firstName)}, ${esc(lastName)}, ${esc(phone)}, ${esc(city)}, ${esc(countryCode)},
           ${esc(shopifyCustId)}, ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
           ${esc(eventName)}, ${esc(occurredAt)}, ${esc(newStage)}, ${esc(status)},
-          ${esc(orderId)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
+          ${esc(checkoutToken)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
           ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${subtotalPrice ?? 'NULL'}, ${totalTax ?? 'NULL'},
           NOW(), NOW())
         ON CONFLICT (cart_token) DO UPDATE SET
@@ -279,7 +279,7 @@ async function ingestCartEvents(body: unknown, sql: any) {
                > array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], carts.highest_stage)
             THEN EXCLUDED.highest_stage ELSE carts.highest_stage END,
           status = CASE WHEN EXCLUDED.status = 'completed' THEN 'completed' ELSE carts.status END,
-          order_id = COALESCE(EXCLUDED.order_id, carts.order_id),
+          checkout_token = COALESCE(EXCLUDED.checkout_token, carts.checkout_token),
           shopify_order_id = COALESCE(EXCLUDED.shopify_order_id, carts.shopify_order_id),
           is_first_order = COALESCE(EXCLUDED.is_first_order, carts.is_first_order),
           shipping_method = COALESCE(EXCLUDED.shipping_method, carts.shipping_method),
@@ -294,13 +294,13 @@ async function ingestCartEvents(body: unknown, sql: any) {
       // 2. INSERT the event (append-only)
       await pg.unsafe(`
         INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
-          changed_items, occurred_at, distinct_id, email, order_id,
+          changed_items, occurred_at, distinct_id, email, checkout_token,
           shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
           created_at, updated_at)
         VALUES (${esc(eventId)}, (SELECT id FROM carts WHERE cart_token = ${esc(cartToken)}), ${esc(eventName)},
           ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
           ${changedJson ? `${esc(changedJson)}::jsonb` : 'NULL'}, ${esc(occurredAt)}, ${esc(distinctId ?? null)}, ${esc(email)},
-          ${esc(orderId)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
+          ${esc(checkoutToken)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
           NOW(), NOW())
       `)
 

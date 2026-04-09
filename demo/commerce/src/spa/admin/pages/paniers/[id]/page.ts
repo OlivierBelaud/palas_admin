@@ -106,7 +106,7 @@ export default definePage({
       query: {
         graph: {
           entity: 'cart',
-          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'order_id', 'shopify_order_id', 'is_first_order'],
+          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'checkout_token', 'shopify_order_id', 'is_first_order'],
         },
       },
       fields: [
@@ -117,7 +117,7 @@ export default definePage({
         { key: 'shipping_method', label: 'Livraison' },
         { key: 'shipping_price', label: 'Frais de port' },
         { key: 'total_tax', label: 'TVA' },
-        { key: 'order_id', label: 'Order Token' },
+        { key: 'checkout_token', label: 'Checkout Token' },
         { key: 'shopify_order_id', label: 'Shopify Order ID' },
         { key: 'is_first_order', label: '1ère commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
       ],

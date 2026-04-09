@@ -33,7 +33,7 @@ export default defineModel('CartEvent', {
   email: field.text().nullable(),
 
   // ── Checkout-specific fields (null for cart events) ───────────────
-  order_id: field.text().nullable(),
+  checkout_token: field.text().nullable(),
   shipping_method: field.text().nullable(),
   shipping_price: field.float().nullable(),
   discounts_amount: field.float().nullable(),
