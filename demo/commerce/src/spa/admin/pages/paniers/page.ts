@@ -33,21 +33,6 @@ export default definePage({
         { key: 'montant', label: 'Montant', sortable: true },
         { key: 'item_count', label: 'Articles', format: 'number' },
         {
-          key: 'status',
-          label: 'Statut',
-          format: {
-            type: 'badge',
-            values: {
-              active: 'blue',
-              cart_abandoned: 'orange',
-              checkout_abandoned: 'orange',
-              payment_abandoned: 'red',
-              completed: 'green',
-            },
-          },
-          filterable: ['active', 'cart_abandoned', 'checkout_abandoned', 'payment_abandoned', 'completed'],
-        },
-        {
           key: 'highest_stage',
           label: 'Étape max',
           format: {
@@ -63,13 +48,13 @@ export default definePage({
           filterable: ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'],
         },
         { key: 'last_action', label: 'Dernière action' },
+        { key: 'duree', label: 'Durée' },
         {
           key: 'last_action_at',
           label: 'Date',
           format: { type: 'date', format: 'long' },
           sortable: true,
         },
-        { key: 'duree', label: 'Durée' },
       ],
       searchable: true,
       navigateTo: '/paniers/:id',
