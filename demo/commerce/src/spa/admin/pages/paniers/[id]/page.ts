@@ -106,7 +106,7 @@ export default definePage({
       query: {
         graph: {
           entity: 'cart',
-          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'checkout_token', 'shopify_order_id', 'is_first_order'],
+          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'checkout_token', 'shopify_order_id', 'is_first_order', 'order_id'],
         },
       },
       fields: [

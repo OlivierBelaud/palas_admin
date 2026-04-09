@@ -66,6 +66,7 @@ export default defineModel('Cart', {
   ]).default('active'),
 
   // ── Checkout details (filled progressively) ───────────────────────
+  order_id: field.text().nullable(),
   checkout_token: field.text().nullable(),
   shopify_order_id: field.text().nullable(),
   is_first_order: field.boolean().nullable(),

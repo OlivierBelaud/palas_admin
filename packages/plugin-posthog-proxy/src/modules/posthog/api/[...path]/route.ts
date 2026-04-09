@@ -192,7 +192,25 @@ const esc = (v: any) => {
   return `'${String(v).replace(/'/g, "''")}'`
 }
 
+let _migrated = false
+async function ensureCheckoutTokenColumn(sql: any) {
+  if (_migrated) return
+  _migrated = true
+  const pg = sql as { unsafe: (q: string) => Promise<any[]> }
+  try {
+    await pg.unsafe(`ALTER TABLE carts ADD COLUMN IF NOT EXISTS checkout_token TEXT`)
+    await pg.unsafe(`ALTER TABLE cart_events ADD COLUMN IF NOT EXISTS checkout_token TEXT`)
+    // Copy existing order_id data to checkout_token if it exists
+    await pg.unsafe(`UPDATE carts SET checkout_token = order_id WHERE checkout_token IS NULL AND order_id IS NOT NULL`)
+    await pg.unsafe(`UPDATE cart_events SET checkout_token = order_id WHERE checkout_token IS NULL AND order_id IS NOT NULL`)
+    console.log('[posthog-proxy] cart-tracking: checkout_token column ensured')
+  } catch (err) {
+    console.log('[posthog-proxy] cart-tracking: migration note:', (err as Error).message)
+  }
+}
+
 async function ingestCartEvents(body: unknown, sql: any) {
+  await ensureCheckoutTokenColumn(sql)
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
@@ -250,13 +268,13 @@ async function ingestCartEvents(body: unknown, sql: any) {
       await pg.unsafe(`
         INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
           shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
-          highest_stage, status, checkout_token, shopify_order_id, is_first_order,
+          highest_stage, status, order_id, checkout_token, shopify_order_id, is_first_order,
           shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
           created_at, updated_at)
         VALUES (${esc(id)}, ${esc(cartToken)}, ${esc(distinctId ?? null)}, ${esc(email)}, ${esc(firstName)}, ${esc(lastName)}, ${esc(phone)}, ${esc(city)}, ${esc(countryCode)},
           ${esc(shopifyCustId)}, ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
           ${esc(eventName)}, ${esc(occurredAt)}, ${esc(newStage)}, ${esc(status)},
-          ${esc(checkoutToken)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
+          ${esc(checkoutToken)}, ${esc(checkoutToken)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
           ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${subtotalPrice ?? 'NULL'}, ${totalTax ?? 'NULL'},
           NOW(), NOW())
         ON CONFLICT (cart_token) DO UPDATE SET
@@ -279,6 +297,7 @@ async function ingestCartEvents(body: unknown, sql: any) {
                > array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], carts.highest_stage)
             THEN EXCLUDED.highest_stage ELSE carts.highest_stage END,
           status = CASE WHEN EXCLUDED.status = 'completed' THEN 'completed' ELSE carts.status END,
+          order_id = COALESCE(EXCLUDED.order_id, carts.order_id),
           checkout_token = COALESCE(EXCLUDED.checkout_token, carts.checkout_token),
           shopify_order_id = COALESCE(EXCLUDED.shopify_order_id, carts.shopify_order_id),
           is_first_order = COALESCE(EXCLUDED.is_first_order, carts.is_first_order),
@@ -294,13 +313,13 @@ async function ingestCartEvents(body: unknown, sql: any) {
       // 2. INSERT the event (append-only)
       await pg.unsafe(`
         INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
-          changed_items, occurred_at, distinct_id, email, checkout_token,
+          changed_items, occurred_at, distinct_id, email, order_id, checkout_token,
           shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
           created_at, updated_at)
         VALUES (${esc(eventId)}, (SELECT id FROM carts WHERE cart_token = ${esc(cartToken)}), ${esc(eventName)},
           ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
           ${changedJson ? `${esc(changedJson)}::jsonb` : 'NULL'}, ${esc(occurredAt)}, ${esc(distinctId ?? null)}, ${esc(email)},
-          ${esc(checkoutToken)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
+          ${esc(checkoutToken)}, ${esc(checkoutToken)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
           NOW(), NOW())
       `)
 
