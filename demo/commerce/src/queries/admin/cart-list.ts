@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+
 export default defineQuery({
   name: 'cart-list',
   description: 'List carts with computed client display and formatted amounts',
@@ -12,21 +14,15 @@ export default defineQuery({
         'total_price', 'item_count', 'currency',
         'last_action', 'highest_stage', 'status', 'last_action_at',
       ],
-      pagination: { limit: 200 },
+      pagination: { limit: 100 },
+      orderBy: [{ field: 'updated_at', direction: 'DESC' }],
     }) as any[]
-
-    // Most recently active first
-    carts.sort((a: any, b: any) =>
-      new Date(b.last_action_at).getTime() - new Date(a.last_action_at).getTime(),
-    )
 
     return carts.map((c: any) => {
       const currency = c.currency ?? 'EUR'
       const client = c.email
         ?? (c.distinct_id ? `${c.distinct_id.slice(0, 8)}…` : 'Anonyme')
-
-      const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
-      const symbol = symbols[currency] ?? currency
+      const symbol = SYMBOLS[currency] ?? currency
       return {
         ...c,
         client,

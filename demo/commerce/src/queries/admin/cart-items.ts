@@ -1,27 +1,29 @@
 import { z } from 'zod'
 
+const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+
 export default defineQuery({
   name: 'cart-items',
-  description: 'Get cart summary with formatted items for sidebar display',
+  description: 'Get cart summary for sidebar display',
   input: z.object({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
+      filters: { id: input.id },
       fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount', 'cart_token'],
-      pagination: { limit: 5000 },
+      pagination: { limit: 1 },
     }) as any[]
 
-    const cart = carts.find((c: any) => c.id === input.id)
-    if (!cart) return { articles: '-', total: '-', remises: '-' }
+    const cart = carts[0]
+    if (!cart) return { cart_token: '-', articles: '-', total: '-', remises: '-' }
 
+    const symbol = SYMBOLS[cart.currency ?? 'EUR'] ?? cart.currency
     const items = (cart.items ?? []) as any[]
-    const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
-    const symbol = symbols[cart.currency ?? 'EUR'] ?? cart.currency
 
     const articles = items.length > 0
-      ? items.map((item: any) => `${item.title} × ${item.quantity} — ${item.price} ${symbol}`).join('\n')
+      ? items.map((i: any) => `${i.title} × ${i.quantity} — ${i.price} ${symbol}`).join('\n')
       : 'Panier vide'
 
     return {

@@ -9,19 +9,19 @@ export default defineQuery({
   handler: async (input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
+      filters: { id: input.id },
       fields: ['email', 'distinct_id'],
-      pagination: { limit: 5000 },
+      pagination: { limit: 1 },
     }) as any[]
 
-    const cart = carts.find((c: any) => c.id === input.id)
+    const cart = carts[0]
     if (!cart) return { title: 'Panier inconnu', posthog_url: '', posthog_label: '' }
 
     const title = cart.email ?? cart.distinct_id ?? 'Anonyme'
     const posthogUrl = cart.distinct_id
       ? `https://eu.posthog.com/project/153280/person/${encodeURIComponent(cart.distinct_id)}`
       : ''
-    const posthogLabel = `Voir dans PostHog ↗`
 
-    return { title, posthog_url: posthogUrl, posthog_label: posthogLabel }
+    return { title, posthog_url: posthogUrl, posthog_label: 'Voir dans PostHog ↗' }
   },
 })

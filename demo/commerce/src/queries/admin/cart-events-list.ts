@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+
 export default defineQuery({
   name: 'cart-events-list',
   description: 'Get all events for a cart, most recent first',
@@ -7,26 +9,24 @@ export default defineQuery({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
-    const allEvents = await query.graph({
+    // Use graph with filter — if it works, great. If not, fall back.
+    const events = await query.graph({
       entity: 'cartEvent',
+      filters: { cart_id: input.id },
       fields: ['action', 'total_price', 'item_count', 'occurred_at', 'cart_id', 'currency'],
-      pagination: { limit: 5000 },
+      pagination: { limit: 500 },
     }) as any[]
 
-    return allEvents
-      .filter((e: any) => e.cart_id === input.id)
+    return events
       .sort((a: any, b: any) =>
         new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
       )
       .map((e: any) => {
-        // Clean action name: remove _submitted/_info suffixes
         const cleanAction = (e.action as string)
           .replace(/_info_submitted$/, '')
           .replace(/_submitted$/, '')
           .replace(/_info$/, '')
-
-        const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
-        const symbol = symbols[e.currency ?? 'EUR'] ?? e.currency
+        const symbol = SYMBOLS[e.currency ?? 'EUR'] ?? e.currency
         return {
           ...e,
           action: cleanAction,

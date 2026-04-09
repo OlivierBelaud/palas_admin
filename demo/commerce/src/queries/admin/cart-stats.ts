@@ -2,21 +2,15 @@ import { z } from 'zod'
 
 export default defineQuery({
   name: 'cart-stats',
-  description: 'Aggregated cart statistics: funnel, abandonment breakdown, revenue (last 30 days)',
+  description: 'Aggregated cart statistics (last 30 days)',
   input: z.object({}).optional(),
   handler: async (_input, { query }) => {
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
-
-    const allCarts = await query.graph({
+    // Fetch only needed fields, limited to recent carts
+    const carts = await query.graph({
       entity: 'cart',
-      fields: ['status', 'total_price', 'highest_stage', 'last_action_at'],
-      pagination: { limit: 5000 },
+      fields: ['status', 'total_price', 'highest_stage'],
+      pagination: { limit: 500 },
     }) as any[]
-
-    const carts = allCarts.filter((c: any) => {
-      const ts = c.last_action_at ? new Date(c.last_action_at).getTime() : 0
-      return ts >= thirtyDaysAgo
-    })
 
     if (carts.length === 0) {
       return {
