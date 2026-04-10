@@ -8,7 +8,7 @@ import {
   InMemoryLockingAdapter,
   TestLogger,
 } from '@manta/core'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const makeInfra = () => ({
   eventBus: new InMemoryEventBusAdapter(),
@@ -115,7 +115,7 @@ describe('IJobSchedulerPort Conformance', () => {
       { retry: { maxRetries: 3, backoff: 'fixed', delay: 10 } },
     )
 
-    const result = await scheduler.runJob('retry-job')
+    const _result = await scheduler.runJob('retry-job')
 
     // Should eventually succeed after retries
     expect(attempts).toBeGreaterThanOrEqual(1)

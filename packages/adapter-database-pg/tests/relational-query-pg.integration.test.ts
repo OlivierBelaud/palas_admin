@@ -62,12 +62,12 @@ const productCategories = pgTable(
   }),
 )
 
-import { createTableRelationsHelpers, eq, extractTablesRelationalConfig, isNull, relations } from 'drizzle-orm'
+import { createTableRelationsHelpers, eq, extractTablesRelationalConfig, relations } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { buildDrizzleRelations, generateIntraModuleRelations, generateLinkRelations } from '../src/relation-generator'
+import { buildDrizzleRelations, generateIntraModuleRelations } from '../src/relation-generator'
 import { DrizzleRelationalQuery } from '../src/relational-query'
 
 // ── Schema with relations ───────────────────────────────────────────
@@ -325,7 +325,7 @@ describe('Relational queries with real PostgreSQL', () => {
 
     // p3 (deleted_at set) is NOT auto-filtered by Drizzle — it returns all rows
     // Soft-delete filtering is our framework responsibility, not Drizzle's
-    const p3 = results.find((r) => r.id === 'rqtest_p3')
+    const _p3 = results.find((r) => r.id === 'rqtest_p3')
     // Drizzle doesn't auto-filter, so p3 may or may not be here
     // What we verify is that the relation loading works regardless
     expect(results.length).toBeGreaterThanOrEqual(2)

@@ -84,18 +84,18 @@ export class InMemoryTransaction {
 
       // D-11 — FK violation (PG 23503 → NOT_FOUND)
       // Simulate: child_table.parent_id must reference test_table.id
-      if (tableName === 'child_table' && row['parent_id']) {
+      if (tableName === 'child_table' && row.parent_id) {
         const parentTable = this._tables.get('test_table')
-        if (!parentTable || !parentTable.has(String(row['parent_id']))) {
+        if (!parentTable || !parentTable.has(String(row.parent_id))) {
           throw new MantaError(
             'NOT_FOUND',
-            `Foreign key violation: referenced row in "test_table" not found for parent_id="${row['parent_id']}"`,
+            `Foreign key violation: referenced row in "test_table" not found for parent_id="${row.parent_id}"`,
           )
         }
       }
 
       // D-10 — Duplicate key (PG 23505 → DUPLICATE_ERROR)
-      const id = String(row['id'] ?? '')
+      const id = String(row.id ?? '')
       if (id && table.has(id)) {
         throw new MantaError('DUPLICATE_ERROR', `Duplicate key violation: id="${id}" already exists in "${tableName}"`)
       }
@@ -150,18 +150,19 @@ export class InMemoryDatabaseAdapter implements IDatabasePort {
     const schemaCopy = new Map(this._schema)
 
     const tx = new InMemoryTransaction(snapshot, schemaCopy)
-    try {
-      const result = await fn(tx)
-      // Commit: apply snapshot to real tables
-      this._tables.clear()
-      for (const [name, rows] of snapshot) {
-        this._tables.set(name, rows)
-      }
-      return result
-    } catch (error) {
-      // Rollback: snapshot is discarded
-      throw error
+    const result = await fn(tx)
+    // Commit: apply snapshot to real tables
+    this._tables.clear()
+    for (const [name, rows] of snapshot) {
+      this._tables.set(name, rows)
     }
+    return result
+  }
+
+  async raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+    const tx = new InMemoryTransaction(this._tables, this._schema)
+    const result = await tx.execute(sql, params)
+    return result as T[]
   }
 
   _reset() {

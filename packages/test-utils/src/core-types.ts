@@ -242,6 +242,8 @@ export interface IDatabasePort {
   healthCheck(): Promise<boolean>
   getClient(): unknown
   getPool(): unknown
+  /** Execute raw parameterized SQL. Use $1, $2 placeholders. Escape hatch for complex queries. */
+  raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
   transaction<T>(fn: (tx: unknown) => Promise<T>, options?: TransactionOptions): Promise<T>
   introspect?(): Promise<unknown>
 }

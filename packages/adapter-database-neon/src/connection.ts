@@ -15,7 +15,7 @@ export interface NeonDatabase {
   /** Drizzle db instance — use this for all queries */
   db: PostgresJsDatabase | ReturnType<typeof drizzleNeonWs>
   /** Raw SQL function for DDL (CREATE TABLE etc.) */
-  rawSql: (query: string) => Promise<unknown>
+  rawSql: (query: string, params?: unknown[]) => Promise<unknown>
   /** Close connections */
   close: () => Promise<void>
 }
@@ -46,8 +46,8 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
 
     return {
       db: db as unknown as PostgresJsDatabase,
-      rawSql: async (query: string) => {
-        const result = await httpSql(query)
+      rawSql: async (query: string, params?: unknown[]) => {
+        const result = await httpSql(query, params ?? [])
         return result
       },
       close: async () => {
@@ -67,7 +67,7 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
 
   return {
     db,
-    rawSql: async (query: string) => pgSql.unsafe(query),
+    rawSql: async (query: string, params?: unknown[]) => pgSql.unsafe(query, (params ?? []) as never[]),
     close: () => pgSql.end(),
   }
 }

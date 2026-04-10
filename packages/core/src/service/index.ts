@@ -41,12 +41,12 @@ export function buildEventNamesFromModelName(modelName: string): {
 
 function pluralize(name: string): string {
   if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) {
-    return name + 'es'
+    return `${name}es`
   }
   if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) {
-    return name.slice(0, -1) + 'ies'
+    return `${name.slice(0, -1)}ies`
   }
-  return name + 's'
+  return `${name}s`
 }
 
 /**
@@ -102,7 +102,7 @@ export function createService(
       this.container_ = deps
       // Try to resolve event bus from deps (Medusa pattern)
       try {
-        this.eventBusModuleService_ = deps.eventBusModuleService ?? deps['IEventBusPort'] ?? undefined
+        this.eventBusModuleService_ = deps.eventBusModuleService ?? deps.IEventBusPort ?? undefined
       } catch {
         this.eventBusModuleService_ = undefined
       }

@@ -1,4 +1,3 @@
-
 export default defineQuery({
   name: 'customer-addresses',
   description: 'List shipping addresses linked to a customer',
@@ -9,34 +8,24 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
   }),
   handler: async (input, { query }) => {
-    const allLinks = await query.graph({
-      entity: 'customer_address' as any,
-      pagination: { limit: 500 },
+    // Single query: load customer with addresses via 1:N relation (pivot has type + is_default)
+    const customers = await query.graph({
+      entity: 'customer',
+      fields: ['*', 'addresses.*'],
+      filters: { id: input.customer_id },
+      pagination: { limit: 1 },
     })
 
-    const customerLinks = (allLinks as any[])
-      .filter((l) => l.customer_id === input.customer_id && l.type === input.type)
+    const customer = customers[0] as Record<string, unknown> | undefined
+    if (!customer) return { data: [], count: 0 }
 
-    if (customerLinks.length === 0) return { data: [], count: 0 }
-
-    const addressIds = customerLinks.map((l) => l.address_id).filter(Boolean)
-
-    const allAddresses = await query.graph({
-      entity: 'address',
-      pagination: { limit: 200 },
-    })
-
-    const linked = (allAddresses as any[])
-      .filter((a) => addressIds.includes(a.id))
-      .map((a) => {
-        const link = customerLinks.find((l) => l.address_id === a.id)
-        return { ...a, type: link?.type, is_default: link?.is_default }
-      })
+    // Filter by type (pivot column merged into each address by the framework)
+    const allAddresses = ((customer.addresses ?? []) as Record<string, unknown>[]).filter((a) => a.type === input.type)
 
     const off = input.offset ?? 0
     const lim = input.limit ?? 20
-    const paged = linked.slice(off, off + lim)
+    const paged = allAddresses.slice(off, off + lim)
 
-    return { data: paged, count: linked.length }
+    return { data: paged, count: allAddresses.length }
   },
 })

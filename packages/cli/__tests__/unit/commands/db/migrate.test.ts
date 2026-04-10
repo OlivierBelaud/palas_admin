@@ -3,7 +3,7 @@
 // Tests: lock acquisition, pending detection, dry-run, all-or-nothing,
 //        concurrent index, tracking, lock release
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { detectConcurrentIndex, findPendingMigrations, migrateCommand } from '../../../../src/commands/db/migrate'
 import type { MigrateDeps } from '../../../../src/commands/db/types'
 

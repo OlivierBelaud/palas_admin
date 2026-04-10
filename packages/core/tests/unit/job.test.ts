@@ -36,7 +36,9 @@ describe('defineJob()', () => {
       name: 'digest',
       schedule: '0 9 * * 1',
       handler: async ({ command }) => {
-        return await command.sendDigest({ since_days: 7 })
+        return await (command as unknown as { sendDigest: (i: unknown) => Promise<unknown> }).sendDigest({
+          since_days: 7,
+        })
       },
     })
 

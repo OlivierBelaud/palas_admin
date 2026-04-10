@@ -1,4 +1,3 @@
-
 export default defineCommand({
   name: 'createCustomerGroupWithMembers',
   description: 'Create a customer group and optionally add customers to it',
@@ -9,7 +8,7 @@ export default defineCommand({
   workflow: async (input, { step }) => {
     const { customer_ids, ...groupData } = input
 
-    const group = await step.command.createCustomerGroup(groupData) as { id: string; name: string }
+    const group = (await step.command.createCustomerGroup(groupData)) as { id: string; name: string }
 
     if (customer_ids && customer_ids.length > 0) {
       for (const customerId of customer_ids) {

@@ -75,7 +75,10 @@ export const AiPanel = () => {
   return createPortal(
     <>
       {/* Overlay — only in fullscreen */}
-      {isFullscreen && <div className="fixed inset-0 z-[400] bg-background/60 backdrop-blur-sm" onClick={close} />}
+      {isFullscreen && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay, close is keyboard-accessible via Escape
+        <div className="fixed inset-0 z-[400] bg-background/60 backdrop-blur-sm" onClick={close} />
+      )}
 
       {/* Panel container — sidebar or fullscreen via CSS */}
       <div
@@ -151,6 +154,7 @@ const ResizeHandle = ({ width, onResize }: { width: number; onResize: (width: nu
   }, [onResize])
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: resize handle, mouse-only by design
     <div
       className="group fixed top-0 z-[401] flex h-full w-3 justify-center"
       style={{ right: width - 6, cursor: 'col-resize' }}

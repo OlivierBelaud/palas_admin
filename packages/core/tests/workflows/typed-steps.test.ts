@@ -120,12 +120,12 @@ describe('Typed steps', () => {
 
   // ST-05 — step.action accepts invoke + compensate
   it('ST-05: step.action accepts invoke + compensate', async () => {
-    let compensated = false
+    let _compensated = false
 
     const chargeStep = step.action('charge-payment', {
       invoke: async (input: { amount: number }) => ({ chargeId: 'ch_123', amount: input.amount }),
       compensate: async () => {
-        compensated = true
+        _compensated = true
       },
     })
 
@@ -161,7 +161,7 @@ describe('Typed steps', () => {
     const checkpoints: Array<{ stepId: string; data: unknown }> = []
 
     const storage = {
-      async save(txId: string, stepId: string, data: unknown) {
+      async save(_txId: string, stepId: string, data: unknown) {
         checkpoints.push({ stepId, data })
       },
       async list() {

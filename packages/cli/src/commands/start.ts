@@ -90,12 +90,12 @@ export async function startCommand(
 function validateProdSecrets(config: LoadedConfig): string[] {
   const errors: string[] = []
 
-  if (!config.auth?.jwtSecret && !process.env['JWT_SECRET']) {
+  if (!config.auth?.jwtSecret && !process.env.JWT_SECRET) {
     errors.push('JWT_SECRET is required in production. Set it in .env')
   }
 
   if (config.auth?.session?.enabled) {
-    const cookieSecret = process.env['COOKIE_SECRET']
+    const cookieSecret = process.env.COOKIE_SECRET
     if (!cookieSecret) {
       errors.push('COOKIE_SECRET is required when session auth is enabled. Set it in .env')
     }

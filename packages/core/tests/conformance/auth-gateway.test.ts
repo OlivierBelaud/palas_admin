@@ -1,10 +1,6 @@
 import {
   type AuthContext,
-  type AuthCredentials,
   createTestAuth,
-  type IAuthGateway,
-  type IAuthModuleService,
-  type IAuthPort,
   MockAuthGateway,
   type MockAuthModuleService,
   type MockAuthPort,

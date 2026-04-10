@@ -25,7 +25,7 @@ export function SpecRenderer({ spec, resolver, params }: SpecRendererProps) {
   const resolvedSpec = useMemo(() => {
     const overridden = resolver.resolvePageSpec(spec.id)
     return overridden || spec
-  }, [spec, resolver, _overrideVersion])
+  }, [spec, resolver])
 
   // Delegate all data fetching to the hook
   const { data, items, rawData, isLoading, error } = useSpecQuery({

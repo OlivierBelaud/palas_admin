@@ -33,14 +33,7 @@ const MANTA_WORKSPACE_PACKAGES = [
   '@manta/adapter-logger-pino',
 ]
 
-const SERVER_EXTERNAL_PACKAGES = [
-  'postgres',
-  'pino',
-  'pino-pretty',
-  'drizzle-orm',
-  '@neondatabase/serverless',
-  'jiti',
-]
+const SERVER_EXTERNAL_PACKAGES = ['postgres', 'pino', 'pino-pretty', 'drizzle-orm', '@neondatabase/serverless', 'jiti']
 
 export function withManta(nextConfig: NextConfig = {}): NextConfig {
   const userTranspile: string[] = Array.isArray(nextConfig.transpilePackages) ? nextConfig.transpilePackages : []

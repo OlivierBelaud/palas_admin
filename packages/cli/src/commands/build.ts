@@ -1,6 +1,6 @@
 // SPEC-074, SPEC-100 — manta build command
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import type {
   BuildOptions,
@@ -206,7 +206,7 @@ export async function buildCommand(
       }
     } catch (err) {
       result.exitCode = 1
-      result.errors.push('Nitro build failed: ' + (err instanceof Error ? err.message : String(err)))
+      result.errors.push(`Nitro build failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -264,7 +264,7 @@ function scanRoutesRecursive(dir: string, apiDir: string, routes: ManifestRouteE
       const relDir = relative(apiDir, dir)
       const pathSegments = relDir.split('/').filter(Boolean)
       const namespace = pathSegments[0] ?? 'root'
-      const routePath = '/' + pathSegments.join('/')
+      const routePath = `/${pathSegments.join('/')}`
 
       routes.push({
         path: routePath,

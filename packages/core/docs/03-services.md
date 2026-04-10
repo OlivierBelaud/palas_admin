@@ -97,7 +97,35 @@ await db.delete(['id1', 'id2'])     // Batch delete
 // Soft-delete
 await db.softDelete(['prod_123'])   // Sets deleted_at
 await db.restore(['prod_123'])       // Clears deleted_at
+
+// Bulk upsert (insert or replace on conflict)
+await db.upsertWithReplace(
+  [{ id: 'prod_1', title: 'A' }, { id: 'prod_2', title: 'B' }],
+  ['title'],           // fields to replace on conflict (optional)
+  ['id'],              // conflict target columns (optional, defaults to ['id'])
+)
+// Note: upsertWithReplace bypasses compensation — it's a bulk operation
+// mixing creates and updates, which cannot be atomically reversed.
 ```
+
+## Raw SQL escape hatch — db.raw()
+
+When TypedRepository methods are not enough (complex aggregations, window functions, CTEs), use `db.raw()` on the database port:
+
+```typescript
+// In a command step or via app.infra.db
+const results = await app.infra.db.raw<{ total: number; status: string }>(
+  `SELECT status, COUNT(*)::int AS total FROM product WHERE created_at > $1 GROUP BY status`,
+  [since],
+)
+```
+
+**Signature:** `raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>`
+
+- Uses `$1`, `$2` parameterized placeholders (safe from SQL injection)
+- Available on all database adapters: DrizzlePgAdapter, NeonAdapter, InMemoryDatabaseAdapter
+- The in-memory adapter throws `MantaError('NOT_FOUND')` — raw SQL only works against real databases
+- **Use sparingly** — prefer TypedRepository methods for standard CRUD. `raw()` is for queries that the ORM cannot express.
 
 ## Isolation
 

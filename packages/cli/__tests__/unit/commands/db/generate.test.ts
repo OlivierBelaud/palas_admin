@@ -137,22 +137,22 @@ describe('B6 — db:generate — pure functions', () => {
   // GENERATE-08 — isNonInteractive checks CI
   // -------------------------------------------------------------------
   it('GENERATE-08 — isNonInteractive true when CI=true', () => {
-    const orig = process.env['CI']
-    process.env['CI'] = 'true'
+    const orig = process.env.CI
+    process.env.CI = 'true'
     expect(isNonInteractive()).toBe(true)
-    if (orig !== undefined) process.env['CI'] = orig
-    else delete process.env['CI']
+    if (orig !== undefined) process.env.CI = orig
+    else delete process.env.CI
   })
 
   // -------------------------------------------------------------------
   // GENERATE-09 — isNonInteractive checks MANTA_NON_INTERACTIVE
   // -------------------------------------------------------------------
   it('GENERATE-09 — isNonInteractive true when MANTA_NON_INTERACTIVE=true', () => {
-    const orig = process.env['MANTA_NON_INTERACTIVE']
-    process.env['MANTA_NON_INTERACTIVE'] = 'true'
+    const orig = process.env.MANTA_NON_INTERACTIVE
+    process.env.MANTA_NON_INTERACTIVE = 'true'
     expect(isNonInteractive()).toBe(true)
-    if (orig !== undefined) process.env['MANTA_NON_INTERACTIVE'] = orig
-    else delete process.env['MANTA_NON_INTERACTIVE']
+    if (orig !== undefined) process.env.MANTA_NON_INTERACTIVE = orig
+    else delete process.env.MANTA_NON_INTERACTIVE
   })
 
   // -------------------------------------------------------------------

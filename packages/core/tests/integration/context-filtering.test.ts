@@ -2,7 +2,7 @@
 // Tests the ContextRegistry behavior + query handler semantics without HTTP transport.
 
 import { ContextRegistry } from '@manta/core'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { defineContext } from '../../src/context'
 
 const MODULES = ['catalog', 'inventory', 'order', 'cart']
@@ -420,7 +420,7 @@ describe('Context Filtering — Nested Relations', () => {
 
   // CF-19 — Warning message includes context name and module
   it('warning message is descriptive for AI consumption', () => {
-    const exposedModules = new Set(['catalog'])
+    const _exposedModules = new Set(['catalog'])
     const contextName = 'store'
     const field = 'inventory.quantity'
     const relation = field.split('.')[0]

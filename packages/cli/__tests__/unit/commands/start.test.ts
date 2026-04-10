@@ -20,14 +20,14 @@ function teardown() {
 describe('B3 — manta start', () => {
   beforeEach(() => {
     setup()
-    delete process.env['JWT_SECRET']
-    delete process.env['COOKIE_SECRET']
-    delete process.env['DATABASE_URL']
+    delete process.env.JWT_SECRET
+    delete process.env.COOKIE_SECRET
+    delete process.env.DATABASE_URL
   })
   afterEach(() => {
     teardown()
-    delete process.env['JWT_SECRET']
-    delete process.env['COOKIE_SECRET']
+    delete process.env.JWT_SECRET
+    delete process.env.COOKIE_SECRET
   })
 
   // -------------------------------------------------------------------
@@ -61,7 +61,7 @@ describe('B3 — manta start', () => {
   // START-03 — Exit(1) if COOKIE_SECRET absent when sessions enabled
   // -------------------------------------------------------------------
   it('START-03 — exit 1 if COOKIE_SECRET absent when sessions enabled', async () => {
-    process.env['JWT_SECRET'] = 'test-secret-32-chars-long-enough'
+    process.env.JWT_SECRET = 'test-secret-32-chars-long-enough'
     writeFileSync(join(TMP, 'package.json'), '{}')
     writeFileSync(
       join(TMP, 'manta.config.mjs'),
@@ -79,7 +79,7 @@ describe('B3 — manta start', () => {
   // START-04 — No error if COOKIE_SECRET absent when sessions disabled
   // -------------------------------------------------------------------
   it('START-04 — no COOKIE_SECRET error when sessions disabled', async () => {
-    process.env['JWT_SECRET'] = 'test-secret-32-chars-long-enough'
+    process.env.JWT_SECRET = 'test-secret-32-chars-long-enough'
     writeFileSync(join(TMP, 'package.json'), '{}')
     writeFileSync(
       join(TMP, 'manta.config.mjs'),

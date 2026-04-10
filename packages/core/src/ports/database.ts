@@ -36,6 +36,9 @@ export interface IDatabasePort {
    */
   getPool(): unknown
 
+  /** Execute raw parameterized SQL. Use $1, $2 placeholders. Escape hatch for complex queries. */
+  raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
+
   /**
    * Optional: introspect the database schema.
    * Used by manta db:diff for schema comparison.

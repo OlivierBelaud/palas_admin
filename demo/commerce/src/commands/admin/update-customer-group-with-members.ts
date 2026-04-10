@@ -1,4 +1,3 @@
-
 export default defineCommand({
   name: 'updateCustomerGroupWithMembers',
   description: 'Update a customer group — name and/or customer membership',
@@ -11,7 +10,7 @@ export default defineCommand({
   workflow: async (input, { step }) => {
     const { id, customer_ids_to_add, customer_ids_to_remove, ...data } = input
 
-    const group = await step.command.updateCustomerGroup({ id, ...data }) as { id: string; name: string }
+    const group = (await step.command.updateCustomerGroup({ id, ...data })) as { id: string; name: string }
 
     if (customer_ids_to_add) {
       for (const customerId of customer_ids_to_add) {
@@ -20,7 +19,9 @@ export default defineCommand({
             customer_id: customerId,
             customer_group_id: id,
           })
-        } catch { /* already linked */ }
+        } catch {
+          /* already linked */
+        }
       }
     }
 
@@ -31,7 +32,9 @@ export default defineCommand({
             customer_id: customerId,
             customer_group_id: id,
           })
-        } catch { /* not linked */ }
+        } catch {
+          /* not linked */
+        }
       }
     }
 

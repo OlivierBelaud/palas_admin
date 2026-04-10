@@ -66,9 +66,9 @@ function dmlTypeToDrizzle(meta: PropertyMeta): DrizzleColumnLike {
 function entityToTableName(entityName: string): string {
   // Convert PascalCase to snake_case
   const snake = entityName.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
-  if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) return snake + 'es'
-  if (snake.endsWith('y') && !/[aeiou]y$/i.test(snake)) return snake.slice(0, -1) + 'ies'
-  return snake + 's'
+  if (snake.endsWith('s') || snake.endsWith('x') || snake.endsWith('ch') || snake.endsWith('sh')) return `${snake}es`
+  if (snake.endsWith('y') && !/[aeiou]y$/i.test(snake)) return `${snake.slice(0, -1)}ies`
+  return `${snake}s`
 }
 
 /**
@@ -129,6 +129,7 @@ export function generatePgTableFromDml(entity: { name: string; schema: Record<st
   if (!columns.deleted_at) columns.deleted_at = timestamp('deleted_at', { withTimezone: true })
 
   const tableName = entityToTableName(entity.name)
+  // biome-ignore lint/suspicious/noExplicitAny: Drizzle pgTable accepts dynamic column records that don't type-check against its strict generic constraints
   const table = pgTable(tableName, columns as any)
 
   return { tableName, table }
@@ -140,31 +141,63 @@ export function generatePgTableFromDml(entity: { name: string; schema: Record<st
  * @param link - A ResolvedLink from defineLink()
  * @returns { tableName, table } — the Drizzle pgTable for the pivot
  */
-export function generateLinkPgTable(link: { tableName: string; leftFk: string; rightFk: string }): {
+export function generateLinkPgTable(link: {
+  tableName: string
+  leftFk: string
+  rightFk: string
+  extraColumns?: Record<string, unknown>
+}): {
   tableName: string
   table: PgTable
 } {
   const { tableName, leftFk, rightFk } = link
 
-  const table = pgTable(
-    tableName,
-    {
-      id: text('id').primaryKey(),
-      [leftFk]: text(leftFk).notNull(),
-      [rightFk]: text(rightFk).notNull(),
-      created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
-      updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-      deleted_at: timestamp('deleted_at', { withTimezone: true }),
-    },
-    (t) => ({
-      idx_left: index(`idx_${tableName}_${leftFk}`).on(
-        (t as unknown as Record<string, ReturnType<typeof text>>)[leftFk],
-      ),
-      idx_right: index(`idx_${tableName}_${rightFk}`).on(
-        (t as unknown as Record<string, ReturnType<typeof text>>)[rightFk],
-      ),
-    }),
-  )
+  const columns: Record<string, unknown> = {
+    id: text('id').primaryKey(),
+    [leftFk]: text(leftFk).notNull(),
+    [rightFk]: text(rightFk).notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
+  }
+
+  // Add extra columns from defineLink() extraColumns
+  if (link.extraColumns) {
+    for (const [fieldName, fieldValue] of Object.entries(link.extraColumns)) {
+      const v = fieldValue as Record<string, unknown>
+      if (typeof v?.parse === 'function') {
+        try {
+          const meta = v.parse(fieldName) as PropertyMeta
+          let col = dmlTypeToDrizzle(meta)
+
+          if (!meta.nullable && meta.dataType.name !== 'id') {
+            col = col.notNull()
+          }
+          if (meta.defaultValue !== undefined) {
+            col = col.default(meta.defaultValue)
+          }
+          if (meta.unique) {
+            col = col.unique()
+          }
+
+          columns[fieldName] = col
+        } catch {
+          columns[fieldName] = text(fieldName)
+        }
+      } else {
+        // Fallback for non-DML fields (e.g. Medusa plugin)
+        columns[fieldName] = text(fieldName)
+      }
+    }
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: Drizzle pgTable accepts dynamic column records that don't type-check against its strict generic constraints
+  const table = pgTable(tableName, columns as any, (t) => ({
+    idx_left: index(`idx_${tableName}_${leftFk}`).on((t as unknown as Record<string, ReturnType<typeof text>>)[leftFk]),
+    idx_right: index(`idx_${tableName}_${rightFk}`).on(
+      (t as unknown as Record<string, ReturnType<typeof text>>)[rightFk],
+    ),
+  }))
 
   return { tableName, table }
 }

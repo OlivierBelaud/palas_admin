@@ -13,7 +13,6 @@ export type {
   CompletedStep,
   StepContext,
   StepDefinition,
-  StepExecutionContext,
   StepFn,
   StepHandlerContext,
   StepResolveContext,
@@ -23,5 +22,3 @@ export type {
   WorkflowRunOptions,
   WorkflowRunResult,
 } from './types'
-// Legacy — kept for backward compat (plugin-medusa, existing tests)
-export { StepResponse, WorkflowResponse } from './types'

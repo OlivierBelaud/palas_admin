@@ -1,4 +1,3 @@
-import type { DashboardAppProps } from '@manta/dashboard-core'
 import { DashboardApp, LocalStorageOverrideStore, UserMenu } from '@manta/dashboard-core'
 import React from 'react'
 import { components } from './components/index'

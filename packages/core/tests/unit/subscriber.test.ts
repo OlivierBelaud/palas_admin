@@ -1,4 +1,4 @@
-import type { MantaApp, Message } from '@manta/core'
+import type { Message } from '@manta/core'
 import {
   defineSubscriber,
   InMemoryCacheAdapter,
@@ -7,6 +7,17 @@ import {
   registerSubscriber,
 } from '@manta/core'
 import { beforeEach, describe, expect, it } from 'vitest'
+
+// Augment the generated event map with test-only events so that
+// defineSubscriber's overloaded signatures accept them.
+declare global {
+  interface MantaGeneratedEventMap {
+    'order.created': { id: string; sku?: string; title?: string }
+    'order.updated': { id: string }
+    'product.created': { id?: string; sku?: string; title?: string }
+    'test.event': Record<string, unknown>
+  }
+}
 
 describe('Subscriber System', () => {
   let bus: InMemoryEventBusAdapter
@@ -118,11 +129,11 @@ describe('defineSubscriber()', () => {
 
     const fakeCommand = { createProduct: async () => ({}) } as unknown as import('@manta/core').MantaCommands
     const fakeLog = { info() {}, warn() {}, error() {}, debug() {} } as unknown as import('@manta/core').ILoggerPort
-    const msg: Message = {
+    const msg = {
       eventName: 'product.created',
       data: { id: 'prod_1' },
       metadata: { timestamp: Date.now() },
-    }
+    } as Message<{ id?: string; sku?: string; title?: string }>
 
     await sub.handler(msg, { command: fakeCommand, log: fakeLog })
 
@@ -142,11 +153,11 @@ describe('defineSubscriber()', () => {
 
     const fakeCommand = { createProduct: async () => ({}) } as unknown as import('@manta/core').MantaCommands
     const fakeLog = { info() {}, warn() {}, error() {}, debug() {} } as unknown as import('@manta/core').ILoggerPort
-    const msg: Message = {
+    const msg = {
       eventName: 'product.created',
       data: { id: 'prod_1' },
       metadata: { timestamp: Date.now() },
-    }
+    } as Message<{ id?: string; sku?: string; title?: string }>
 
     await sub.handler(msg, { command: fakeCommand, log: fakeLog })
 
@@ -207,7 +218,10 @@ describe('defineSubscriber()', () => {
 
   // DS-06 — string form throws on empty event
   it('string form throws on empty event', () => {
-    expect(() => defineSubscriber('', async () => {})).toThrow('non-empty string')
+    // Intentional: pass an invalid empty event name to verify runtime validation.
+    expect(() => defineSubscriber('' as keyof import('@manta/core').MantaEventMap, async () => {})).toThrow(
+      'non-empty string',
+    )
   })
 
   // DS-07 — string form throws on missing handler

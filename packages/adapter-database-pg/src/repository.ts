@@ -2,7 +2,7 @@
 
 import { MantaError } from '@manta/core/errors'
 import type { IRepository, TransactionOptions } from '@manta/core/ports'
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { isPgError, mapPgError } from './error-mapper'

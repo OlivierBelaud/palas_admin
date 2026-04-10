@@ -31,6 +31,7 @@ export interface MantaProviderProps extends MantaClientOptions {
  * ```
  */
 export function MantaProvider({ children, queryClient, ...clientOptions }: MantaProviderProps) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only recreate on context/baseUrl change
   const client = useMemo(() => new MantaClient(clientOptions), [clientOptions.context, clientOptions.baseUrl])
 
   return (

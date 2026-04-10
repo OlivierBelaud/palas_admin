@@ -2,7 +2,6 @@ import { cn } from '@manta/ui'
 import { Collapsible as RadixCollapsible } from 'radix-ui'
 import { type PropsWithChildren, type ReactNode, useCallback, useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ConditionalTooltip } from '../components/common/conditional-tooltip'
 
 type ItemType = 'core' | 'extension' | 'setting'
 
@@ -28,7 +27,7 @@ const NESTED_NAV_LINK_CLASSES = 'pl-[42px] pr-3 py-1.5 w-full text-muted-foregro
 const SETTING_NAV_LINK_CLASSES = 'pl-3 py-1.5'
 
 const getIsOpen = (to: string, items: NestedItemProps[] | undefined, pathname: string) => {
-  return [to, ...(items?.map((i) => i.to) ?? [])].some((p) => pathname === p || pathname.startsWith(p + '/'))
+  return [to, ...(items?.map((i) => i.to) ?? [])].some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
 const NavItemTooltip = ({ children }: PropsWithChildren<{ to: string }>) => {
@@ -59,7 +58,7 @@ export const NavItem = ({ icon, label, to, items, type = 'core', from }: INavIte
         // Match exact path or nested path (segment-level, not string prefix)
         // e.g. /customer-groups matches /customer-groups and /customer-groups/123
         // but NOT /customer-groups-analysis
-        isActive = pathname === to || pathname.startsWith(to + '/')
+        isActive = pathname === to || pathname.startsWith(`${to}/`)
       }
 
       return cn(BASE_NAV_LINK_CLASSES, {

@@ -367,7 +367,7 @@ export async function createMigrationTestContext(_options?: Record<string, unkno
       for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]
         const schema = generatedSchemas[i]
-        const tableName = (entity.name as string).toLowerCase() + 's'
+        const tableName = `${(entity.name as string).toLowerCase()}s`
         const cols = Object.entries(schema.columns)
           .map(([name, col]) => `  "${name}" ${col.type}${col.notNull ? ' NOT NULL' : ''}`)
           .join(',\n')
@@ -398,7 +398,7 @@ export async function createMigrationTestContext(_options?: Record<string, unkno
       const differences: Difference[] = []
       for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]
-        const tableName = (entity.name as string).toLowerCase() + 's'
+        const tableName = `${(entity.name as string).toLowerCase()}s`
         const expected = generatedSchemas[i]
         if (i >= migratedSchemas.length) {
           for (const colName of Object.keys(expected.columns)) {
@@ -548,7 +548,9 @@ export function validateSerializability(value: unknown, path = ''): void {
     return
   }
   if (Array.isArray(value)) {
-    value.forEach((item, i) => validateSerializability(item, `${path}[${i}]`))
+    value.forEach((item, i) => {
+      validateSerializability(item, `${path}[${i}]`)
+    })
     return
   }
   if (typeof value === 'object') {

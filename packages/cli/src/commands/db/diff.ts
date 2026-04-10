@@ -79,7 +79,7 @@ export function compareSchemas(
  * Accepts injectable deps for testability (hexagonal architecture).
  */
 export async function diffCommand(
-  options: DiffOptions = {},
+  _options: DiffOptions = {},
   expectedSchema: Array<{ table: string; columns: string[] }>,
   deps: DiffDeps,
 ): Promise<DiffCommandResult> {

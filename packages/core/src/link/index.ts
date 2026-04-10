@@ -89,7 +89,7 @@ export function createModelProxy(): ModelProxy {
     get(_, prop: string) {
       return { __modelRef: true, entityName: prop } as ModelRef
     },
-  })
+  }) as unknown as ModelProxy
 }
 
 function isModelRef(value: unknown): value is ModelRef {

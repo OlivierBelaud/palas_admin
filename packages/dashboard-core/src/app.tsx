@@ -23,7 +23,6 @@ import { ProtectedRoute } from './shell/auth-guard'
 import { ErrorBoundary } from './shell/error-boundary'
 import type { LoginPageProps } from './shell/login-page'
 import { LoginPage } from './shell/login-page'
-import type { MainLayoutProps } from './shell/main-layout'
 import { MainLayout } from './shell/main-layout'
 import type { INavItem } from './shell/nav-item'
 import { buildBreadcrumbHandle } from './shell/page-breadcrumb'
@@ -194,7 +193,7 @@ export function DashboardApp({
       for (const { entry: dEntry, spec: dSpec } of validEntries) {
         if (dSpec.type !== 'detail') continue
         const dPath = dEntry.path
-        if (dPath.startsWith(entry.path + '/')) {
+        if (dPath.startsWith(`${entry.path}/`)) {
           const remainder = dPath.slice(entry.path.length + 1)
           if (remainder.startsWith(':') && !remainder.includes('/')) {
             nestedDetailPaths.add(dPath)
@@ -214,7 +213,7 @@ export function DashboardApp({
       const matchingCustomRoutes = customRoutes
         .filter((cr) => {
           const crPath = typeof cr.path === 'string' ? cr.path : ''
-          return crPath.startsWith(listingPath + '/')
+          return crPath.startsWith(`${listingPath}/`)
         })
         .map((cr) => ({
           ...cr,
@@ -273,7 +272,7 @@ export function DashboardApp({
       const detailChildren: RouteObject[] = []
       for (const detail of sortedPages) {
         if (detail === page) continue
-        if (!detail.route.startsWith(page.route + '/')) continue
+        if (!detail.route.startsWith(`${page.route}/`)) continue
         const remainder = detail.route.slice(page.route.length + 1)
         // Only nest direct :param children (e.g., :id but not :id/something)
         if (!remainder.startsWith(':') || remainder.includes('/')) continue
@@ -403,7 +402,22 @@ export function DashboardApp({
       { basename },
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolver, routeMap])
+  }, [
+    resolver,
+    routeMap,
+    basename,
+    commandSchemas,
+    customBlocks,
+    customRoutes,
+    defaultRedirect,
+    formRoutes,
+    headerSlot,
+    iconMap,
+    loginProps,
+    navigation,
+    pageSpecs.filter,
+    userMenuSlot,
+  ])
 
   const api = useMemo(() => extensionApi || defaultApi, [extensionApi])
 

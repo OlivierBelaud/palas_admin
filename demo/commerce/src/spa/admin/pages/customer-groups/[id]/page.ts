@@ -28,7 +28,11 @@ export default definePage({
         { key: 'first_name', label: 'First Name' },
         { key: 'last_name', label: 'Last Name' },
         { key: 'phone', label: 'Phone' },
-        { key: 'has_account', label: 'Account', format: { type: 'badge', true: { label: 'Yes', color: 'green' }, false: { label: 'No', color: 'orange' } } },
+        {
+          key: 'has_account',
+          label: 'Account',
+          format: { type: 'badge', true: { label: 'Yes', color: 'green' }, false: { label: 'No', color: 'orange' } },
+        },
         { key: 'created_at', label: 'Joined', format: 'date' },
       ],
       searchable: true,

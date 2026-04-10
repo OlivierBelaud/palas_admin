@@ -1,3 +1,4 @@
+// biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@manta/core'
 
 export default defineConfig({

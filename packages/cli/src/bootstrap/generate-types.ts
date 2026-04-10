@@ -6,7 +6,20 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
+import { MantaError } from '@manta/core'
 import { discoverResources } from '../resource-loader'
+import { validateGeneratedTypeScript } from './validate-generated-ts'
+
+// ── Identifier sanitization ──────────────────────────────────────────
+// SPEC TS-04 — Reject invalid identifiers at the source with clear
+// MantaError messages. Pairs with the output validator (belt + braces).
+
+function assertSafeIdentifierComponent(value: string, kind: 'camelCase' | 'PascalCase', where: string): void {
+  const pattern = kind === 'PascalCase' ? /^[A-Z][A-Za-z0-9]*$/ : /^[a-z][A-Za-z0-9]*$/
+  if (!pattern.test(value)) {
+    throw new MantaError('INVALID_DATA', `Invalid ${kind} identifier "${value}" in ${where}. Must match ${pattern}.`)
+  }
+}
 
 // ── Inject globals so model imports work in standalone codegen ────────
 
@@ -38,9 +51,9 @@ async function injectGlobals() {
 // ── Pluralization (must match instantiate.ts) ────────────────────────
 
 function pluralize(name: string): string {
-  if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) return name + 'es'
-  if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) return name.slice(0, -1) + 'ies'
-  return name + 's'
+  if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) return `${name}es`
+  if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) return `${name.slice(0, -1)}ies`
+  return `${name}s`
 }
 
 // ── Module entry collection ──────────────────────────────────────────
@@ -68,6 +81,7 @@ async function collectModuleEntries(resources: Awaited<ReturnType<typeof discove
       if (def?.__type === 'user' && def?.model) {
         const model = def.model as { name: string; schema: unknown }
         const contextName = def.contextName as string
+        assertSafeIdentifierComponent(model.name, 'PascalCase', `defineUserModel in ${userInfo.path}`)
         // Find the module this user belongs to
         const parentModule =
           resources.modules.find((m) => m.entities.some((e) => e.modelPath === userInfo.path)) ??
@@ -85,7 +99,9 @@ async function collectModuleEntries(resources: Awaited<ReturnType<typeof discove
           isUserModel: true,
         } as ModuleEntry & { isUserModel?: boolean })
       }
-    } catch {
+    } catch (err) {
+      // Propagate validation errors (bad identifiers); swallow only true import failures.
+      if (MantaError.is(err)) throw err
       // User model not importable
     }
   }
@@ -124,6 +140,8 @@ async function collectModuleEntries(resources: Awaited<ReturnType<typeof discove
         }
 
         if (!entityExportName) continue
+
+        assertSafeIdentifierComponent(entityName, 'PascalCase', `defineModel in ${entity.modelPath}`)
 
         // Fix: 'default' is a reserved word — alias it to the entity name
         let isDefaultExport = false
@@ -166,7 +184,9 @@ async function collectModuleEntries(resources: Awaited<ReturnType<typeof discove
           isDefaultExport,
           isExternal,
         })
-      } catch {
+      } catch (err) {
+        // Propagate validation errors (bad identifiers); swallow only true import failures.
+        if (MantaError.is(err)) throw err
         // Entity model may not be importable — skip
       }
     }
@@ -237,13 +257,21 @@ async function collectEvents(resources: Awaited<ReturnType<typeof discoverResour
       if (sub?.event) {
         const eventNames = Array.isArray(sub.event) ? sub.event : [sub.event]
         for (const name of eventNames) {
-          if (!seen.has(name as string)) {
-            seen.add(name as string)
-            events.push({ eventName: name as string, sourceFile: subInfo.path, sourceType: 'subscriber' })
+          const eventName = name as string
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(eventName)) {
+            throw new MantaError(
+              'INVALID_DATA',
+              `Invalid subscriber event name "${eventName}" in ${subInfo.path}. Must be alphanumeric with dots/hyphens.`,
+            )
+          }
+          if (!seen.has(eventName)) {
+            seen.add(eventName)
+            events.push({ eventName, sourceFile: subInfo.path, sourceType: 'subscriber' })
           }
         }
       }
-    } catch {
+    } catch (err) {
+      if (MantaError.is(err)) throw err
       // Skip
     }
   }
@@ -364,11 +392,15 @@ export async function generateTypesFromModules(cwd: string): Promise<void> {
   }
 
   // Agent imports
-  const agentEntries = resources.agents.map((a) => ({
-    kebab: a.id,
-    camel: a.id.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase()),
-    path: a.path,
-  }))
+  const agentEntries = resources.agents.map((a) => {
+    const camel = a.id.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase())
+    assertSafeIdentifierComponent(camel, 'camelCase', `defineAgent in ${a.path}`)
+    return {
+      kebab: a.id,
+      camel,
+      path: a.path,
+    }
+  })
 
   if (agentEntries.length > 0) {
     lines.push("import type { z } from 'zod'")
@@ -550,6 +582,7 @@ export async function generateTypesFromModules(cwd: string): Promise<void> {
   const commandEntries: Array<{ kebab: string; camel: string }> = []
   for (const cmd of resources.commands) {
     const camel = cmd.id.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase())
+    assertSafeIdentifierComponent(camel, 'camelCase', `defineCommand in ${cmd.path}`)
     commandEntries.push({ kebab: cmd.id, camel })
   }
 
@@ -562,9 +595,13 @@ export async function generateTypesFromModules(cwd: string): Promise<void> {
       const def = ctxMod.default as { actors?: string | string[] } | undefined
       if (def?.actors) {
         const actors = Array.isArray(def.actors) ? def.actors : [def.actors]
-        for (const a of actors) actorSet.add(a)
+        for (const a of actors) {
+          assertSafeIdentifierComponent(a, 'camelCase', `defineContext actor in ${ctxInfo.path}`)
+          actorSet.add(a)
+        }
       }
     } catch (err) {
+      if (MantaError.is(err)) throw err
       console.warn(`  [codegen] Warning: failed to import context '${ctxInfo.id}': ${(err as Error).message}`)
     }
   }
@@ -705,7 +742,7 @@ export async function generateTypesFromModules(cwd: string): Promise<void> {
     lines.push('  interface MantaGeneratedQueries {')
     for (const q of resources.queries) {
       if (q.id === 'graph') continue // skip defineQueryGraph entries
-      const camel = q.id.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase())
+      const _camel = q.id.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase())
       lines.push(`    '${q.id}': (params?: Record<string, unknown>) => Promise<unknown>`)
     }
     lines.push('  }')
@@ -786,7 +823,9 @@ export async function generateTypesFromModules(cwd: string): Promise<void> {
   lines.push('export {}')
   lines.push('')
 
-  writeFileSync(outPath, lines.join('\n'))
+  const source = lines.join('\n')
+  validateGeneratedTypeScript(source, 'generated.d.ts')
+  writeFileSync(outPath, source)
 
   // ── Generate command schemas for frontend (runtime metadata) ────────
   await generateCommandSchemas(cwd, resources, mantaDir)
@@ -890,7 +929,7 @@ function extractZodFields(schema: unknown): FieldMeta[] {
  * Generate .manta/command-schemas.ts — runtime metadata for frontend form validation.
  */
 async function generateCommandSchemas(
-  cwd: string,
+  _cwd: string,
   resources: Awaited<ReturnType<typeof discoverResources>>,
   mantaDir: string,
 ): Promise<void> {
@@ -922,5 +961,6 @@ async function generateCommandSchemas(
     '',
   ].join('\n')
 
+  validateGeneratedTypeScript(content, 'command-schemas.ts')
   writeFileSync(outPath, content)
 }

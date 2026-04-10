@@ -153,7 +153,7 @@ export function generateLinkRelations(links: readonly ResolvedLink[]): DrizzleRe
   const toCamel = (s: string) => s.replace(/[_-]([a-z])/g, (_: string, c: string) => c.toUpperCase())
 
   /** Pluralize: 'customer' → 'customers', 'customerGroup' → 'customerGroups' */
-  const pluralize = (s: string) => {
+  const _pluralize = (s: string) => {
     if (s.endsWith('s') || s.endsWith('x') || s.endsWith('ch') || s.endsWith('sh')) return `${s}es`
     if (s.endsWith('y') && !/[aeiou]y$/i.test(s)) return `${s.slice(0, -1)}ies`
     return `${s}s`
@@ -163,7 +163,7 @@ export function generateLinkRelations(links: readonly ResolvedLink[]): DrizzleRe
     const leftEntity = link.leftEntity.toLowerCase()
     const rightEntity = link.rightEntity.toLowerCase()
     const pivotTable = link.tableName
-    const isMany = link.cardinality === 'M:N'
+    const _isMany = link.cardinality === 'M:N'
 
     const leftCamel = toCamel(leftEntity)
     const rightCamel = toCamel(rightEntity)
@@ -258,7 +258,20 @@ export function buildDrizzleRelations(
     const actualKey = normalizedTableLookup.get(normalized)
     if (actualKey) return tables[actualKey]
     // Try pluralized (entity name → table name convention)
-    const pluralized = normalized.endsWith('s') ? normalized : `${normalized}s`
+    // Must match entityToTableKey() pluralization: -s/-x/-ch/-sh → +es, consonant+y → +ies, else → +s
+    let pluralized: string
+    if (
+      normalized.endsWith('s') ||
+      normalized.endsWith('x') ||
+      normalized.endsWith('ch') ||
+      normalized.endsWith('sh')
+    ) {
+      pluralized = `${normalized}es`
+    } else if (normalized.endsWith('y') && !/[aeiou]y$/i.test(normalized)) {
+      pluralized = `${normalized.slice(0, -1)}ies`
+    } else {
+      pluralized = `${normalized}s`
+    }
     const pluralKey = normalizedTableLookup.get(pluralized)
     return pluralKey ? tables[pluralKey] : undefined
   }
@@ -307,6 +320,7 @@ export function buildDrizzleRelations(
       }
 
       return config
+      // biome-ignore lint/suspicious/noExplicitAny: Drizzle relations() callback uses a builder pattern with dynamically typed helpers
     }) as any)
 
     // Drizzle expects {tableKey}Relations to match {tableKey} in the schema.

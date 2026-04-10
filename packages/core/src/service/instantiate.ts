@@ -19,9 +19,9 @@ import type { ServiceConfig } from './index'
 import { SnapshotRepository } from './snapshot-repository'
 
 function pluralize(name: string): string {
-  if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) return name + 'es'
-  if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) return name.slice(0, -1) + 'ies'
-  return name + 's'
+  if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) return `${name}es`
+  if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) return `${name.slice(0, -1)}ies`
+  return `${name}s`
 }
 
 function buildEventNames(modelName: string) {

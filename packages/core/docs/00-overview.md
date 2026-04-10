@@ -28,18 +28,25 @@ This is why the framework controls the routing, not you. If you defined routes m
 ## The mental model
 
 ```
-defineModel()       — Data shape (what exists)
-defineService()     — Mutations (what can change, with rollback)
-defineCommand()     — Entry point (orchestrates services into workflows)
-defineSubscriber()  — Reaction (side-effect triggered by events)
-defineJob()         — Schedule (periodic tasks)
-defineLink()        — Relation (connect entities across modules)
-defineContext()     — Access (who sees what, on which API path)
-defineAgent()       — AI step (typed LLM call)
-defineConfig()      — Configuration (database, presets, features)
+defineModel()         — Data shape (what exists)
+defineService()       — Mutations (what can change, with rollback)
+defineCommand()       — Entry point (orchestrates services into workflows)
+defineCommandGraph()  — Expose module commands on a context's catch-all route
+defineQuery()         — Typed read handler
+defineQueryGraph()    — Cross-module read graph (filesystem-derived access rules)
+defineSubscriber()    — Reaction (side-effect triggered by events)
+defineJob()           — Schedule (periodic tasks)
+defineLink()          — Relation (connect entities across modules)
+defineAgent()         — AI step (typed LLM call)
+defineWorkflow()      — Named compensable workflow (advanced)
+defineUserModel()     — Auth-ready user model for a context
+defineMiddleware()    — HTTP middleware (per-context override)
+defineMiddlewares()   — HTTP pipeline configuration
+defineConfig()        — Configuration (database, presets, features)
+definePreset()        — Reusable config preset
 ```
 
-**9 functions. That's the entire public API.** All are globals — zero imports needed.
+**Plus helpers**: `field`, `many`, `z` (Zod), `MantaError`, `service`. All globals — zero imports needed. Contexts are filesystem-derived in V2 (`src/contexts/*.ts`) — no `defineContext()` function.
 
 ## The module rule
 
@@ -145,6 +152,47 @@ Manta follows a **"you can't make mistakes"** philosophy:
 - Error messages tell you **what to do**, not just what went wrong
 
 This makes the framework AI-safe: an AI coding agent reading the error messages can fix issues in one pass.
+
+## Type safety guarantees
+
+Manta is a zero-import framework but fully typed. When you write:
+
+```typescript
+export default defineCommand({
+  name: 'create-product',
+  input: z.object({ title: z.string() }),
+  workflow: async (input, ctx) => {
+    // input.title is inferred as string
+    // ctx.app, ctx.app.infra, ctx.app.resolve() are all typed
+    // step.service.product.create({ ... }) has full autocomplete
+  },
+})
+```
+
+All the following are available at compile time without any import:
+
+| Global | Type |
+|--------|------|
+| `defineCommand`, `defineQuery`, `defineModel`, `defineService`, `defineLink`, `defineSubscriber`, `defineJob`, `defineAgent`, `defineContext`, `defineWorkflow`, `defineUserModel`, `defineConfig`, `definePreset`, `defineMiddleware` | Type-safe |
+| `field`, `many`, `service` | Type-safe |
+| `z` (Zod) | Type-safe |
+
+These are declared in `packages/core/src/globals.d.ts` and injected at runtime by `registerGlobals()` in `@manta/cli`.
+
+### Escape hatches
+For rare cases where you need raw SQL or direct infra access:
+- **`ctx.app.infra.db`** — the underlying `IDatabasePort`. Returns `unknown` from the public API for safety; cast to your adapter's type if needed.
+- **`db.raw<T>(sql, params)`** — parameterized raw SQL. Use for CTEs, window functions, multi-table operations. Service methods should be preferred for simple cases.
+
+### Auto-generated types
+Running `manta dev` or `manta generate` produces `.manta/generated.d.ts` which augments the global registries:
+- `MantaGeneratedEntities` — your DML entities
+- `MantaGeneratedCommands` — your commands
+- `MantaGeneratedAppModules` — `app.modules.*` autocomplete
+- `MantaEventMap` — event names for subscribers
+- `MantaActorMap` — actor types for contexts
+
+This file is **gitignored** and regenerated on every `manta dev` boot. The codegen validates its own output (via TypeScript parser) to prevent invalid `.d.ts` from corrupting downstream tooling.
 
 ## Helpers (used inside define functions)
 

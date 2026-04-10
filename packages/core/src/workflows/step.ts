@@ -14,19 +14,14 @@ import type { PgTable } from 'drizzle-orm/pg-core'
 import { MantaError } from '../errors/manta-error'
 import type { ResolvedLink } from '../link'
 import { getRegisteredLinks } from '../link'
+import { pluralize } from '../naming'
 import type { SnapshotRepository } from '../service/snapshot-repository'
 import { workflowContextStorage } from './manager'
-import type { StepContext, StepDefinition, StepHandlerContext, StepResolveContext, WorkflowContext } from './types'
+import type { StepContext, WorkflowContext } from './types'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function pluralize(name: string): string {
-  if (name.endsWith('s') || name.endsWith('x') || name.endsWith('ch') || name.endsWith('sh')) return name + 'es'
-  if (name.endsWith('y') && !/[aeiou]y$/i.test(name)) return name.slice(0, -1) + 'ies'
-  return name + 's'
-}
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
@@ -51,7 +46,7 @@ function resolveLinks(ctx: StepContext): readonly ResolvedLink[] {
  */
 // biome-ignore lint/suspicious/noExplicitAny: Drizzle db is dynamically typed across adapters
 function getDb(ctx: StepContext): any {
-  return (ctx.app.infra as any).db
+  return ctx.app.infra.db
 }
 
 /**
@@ -74,11 +69,12 @@ function getLinkTable(ctx: StepContext, tableName: string): PgTable {
 
 /**
  * Get a column from a Drizzle table by name.
+ * Returns any because the column is passed to Drizzle query builders (eq, select, etc.)
+ * which require their internal column types we can't express from a string key.
  */
-// biome-ignore lint/suspicious/noExplicitAny: Drizzle column access is dynamic
+// biome-ignore lint/suspicious/noExplicitAny: Drizzle column dynamic access — see JSDoc
 function getColumn(table: PgTable, columnName: string): any {
-  // biome-ignore lint/suspicious/noExplicitAny: Drizzle table internals
-  return (table as any)[columnName]
+  return (table as unknown as Record<string, unknown>)[columnName]
 }
 
 function resolveService(ctx: StepContext, entity: string): Record<string, Function> {
@@ -195,7 +191,7 @@ interface CascadeDeleteResult {
   deletedChildren: Array<{ entity: string; id: string }>
 }
 
-function findCascadeLinks(ctx: StepContext, entityModule: string, entityName: string): ResolvedLink[] {
+function _findCascadeLinks(ctx: StepContext, entityModule: string, entityName: string): ResolvedLink[] {
   return resolveLinks(ctx).filter(
     (link) => (link.leftModule === entityModule || link.leftEntity === entityName) && link.cascadeLeft === true,
   )
@@ -602,7 +598,7 @@ function stepLinkExplicit(
  *   step.unlink(customer, group)
  *   step.unlink({ entity: 'customer', id: 'cus_1' }, { entity: 'customer_group', id: 'grp_1' })
  */
-function stepUnlink(
+function _stepUnlink(
   a: Record<string, unknown>,
   b: Record<string, unknown>,
   ctx: StepContext,
@@ -1033,7 +1029,7 @@ function createCommandNamespace(): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 // Agent step — step.agent.NAME(input, ctx)
 // AI SDK imports are in a separate file (ai-step.ts) to avoid compile-time
-// dependency on the 'ai' package. Loaded dynamically via require().
+// dependency on the 'ai' package. Loaded dynamically via await import().
 // ---------------------------------------------------------------------------
 
 // biome-ignore lint/suspicious/noExplicitAny: AgentDefinition generic
@@ -1042,11 +1038,8 @@ async function stepAgent(agentDef: any, input: unknown, ctx: StepContext): Promi
   const promptText = agentDef.instructions({ input: parsed })
 
   return runStep(`agent-${agentDef.name}`, ctx, async () => {
-    // Dynamic require to avoid compile-time dependency on AI SDK
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic import path
-    const aiStepPath = ['./ai', '-step'].join('')
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic module
-    const mod = require(aiStepPath) as any
+    // Dynamic import to avoid compile-time dependency on AI SDK
+    const mod: typeof import('./ai-step') = await import('./ai-step')
     return mod.executeAgent(agentDef, parsed, promptText)
   })
 }
@@ -1089,7 +1082,7 @@ function createAgentNamespace(): Record<string, unknown> {
 const stepBase = {
   emit: stepEmit,
   action: stepAction,
-  service: createServiceNamespace() as MantaGeneratedAppModules,
+  service: createServiceNamespace() as unknown as MantaGeneratedAppModules,
   command: createCommandNamespace(),
   link: createLinkNamespace(),
   agent: createAgentNamespace(),
@@ -1130,11 +1123,7 @@ const stepBase = {
 export interface LinkCrud {
   list: (where: Record<string, unknown>, ctx: StepContext) => Promise<Record<string, unknown>[]>
   create: (data: Record<string, unknown>, ctx: StepContext) => Promise<Record<string, unknown>>
-  update: (
-    where: Record<string, unknown>,
-    patch: Record<string, unknown>,
-    ctx: StepContext,
-  ) => Promise<{ ok: true }>
+  update: (where: Record<string, unknown>, patch: Record<string, unknown>, ctx: StepContext) => Promise<{ ok: true }>
   delete: (where: Record<string, unknown>, ctx: StepContext) => Promise<{ ok: true }>
 }
 
@@ -1142,9 +1131,9 @@ export interface MantaStep {
   emit: typeof stepEmit
   action: typeof stepAction
   service: MantaGeneratedAppModules
-  command: Record<string, (input: unknown) => Promise<unknown>>
+  command: Record<string, (input: unknown, ctx: StepContext) => Promise<unknown>>
   link: Record<string, LinkCrud>
-  agent: Record<string, (input: unknown) => Promise<unknown>>
+  agent: Record<string, (input: unknown, ctx: StepContext) => Promise<unknown>>
   create: typeof stepCreate
   update: typeof stepUpdate
   delete: typeof stepDelete
@@ -1153,13 +1142,10 @@ export interface MantaStep {
   invoke: typeof stepInvoke
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Proxy type intersection
 export const step: MantaStep = new Proxy(stepBase, {
-  // biome-ignore lint/suspicious/noExplicitAny: Proxy handler needs dynamic target type
-  get(target: any, prop: string) {
-    if (prop in target) return target[prop]
+  get(target, prop: string) {
+    if (prop in target) return (target as Record<string, unknown>)[prop]
     // Fallback: treat unknown property as module name (backward compat during migration)
     return createModuleProxy(prop)
   },
-  // biome-ignore lint/suspicious/noExplicitAny: Proxy type intersection
-}) as any
+}) as unknown as MantaStep

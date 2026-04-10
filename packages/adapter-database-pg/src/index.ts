@@ -16,6 +16,7 @@ export {
   generateLinkRelations,
   mergeRelationDefs,
 } from './relation-generator'
+export type { RelationAlias, RelationAliasEntry, RelationAliasMap } from './relational-query'
 export { DrizzleRelationalQuery } from './relational-query'
 export type { DrizzleRepositoryOptions } from './repository'
 export { DrizzleRepository } from './repository'

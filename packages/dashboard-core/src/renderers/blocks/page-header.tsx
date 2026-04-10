@@ -66,7 +66,8 @@ export function PageHeaderRenderer({ component, data }: BlockRendererProps) {
               href: linkHref,
               target: '_blank',
               rel: 'noopener noreferrer',
-              className: 'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
+              className:
+                'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
             },
             linkLabel || description || linkHref,
           )

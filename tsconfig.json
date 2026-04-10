@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -20,6 +21,6 @@
       "@manta/adapter-h3": ["./packages/adapter-h3/src/index.ts"]
     }
   },
-  "include": ["tests/**/*.ts", "packages/**/*.ts", "demo/**/*.ts", "demo/**/.manta/generated.d.ts"],
-  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "dist/**", "demo/**/.manta/server/**"]
+  "include": ["tests/**/*.ts", "packages/**/*.ts", "demo/**/*.ts", "demo/**/*.tsx", "demo/**/.manta/generated.d.ts"],
+  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**"]
 }

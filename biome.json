@@ -22,6 +22,12 @@
       "semicolons": "asNeeded"
     }
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "plugins": ["./.claude/biome-plugins/no-raw-error.grit"],
   "linter": {
     "enabled": true,
     "rules": {
@@ -73,6 +79,40 @@
             "useKeyWithClickEvents": "off",
             "noNoninteractiveElementToInteractiveRole": "off",
             "useButtonType": "warn"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["demo/**/*.ts", "demo/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@manta/core": "Import from @manta/core is forbidden in app code — Manta primitives are globals (no imports needed)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["demo/**/*.tsx", "demo/**/src/spa/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "fetch": "Use @manta/sdk hooks (useCommand, useQuery) instead of raw fetch in React components."
+                }
+              }
+            }
           }
         }
       }

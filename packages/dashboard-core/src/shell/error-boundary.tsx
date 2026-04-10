@@ -15,7 +15,8 @@ export const ErrorBoundary = () => {
     code = status ?? null
   }
 
-  if (process.env.NODE_ENV === 'development') {
+  // Dev-only logging. Vite replaces import.meta.env.DEV at build time in the SPA.
+  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
     console.error(error)
   }
 

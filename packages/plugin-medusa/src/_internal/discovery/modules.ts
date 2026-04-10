@@ -257,7 +257,7 @@ export function discoverModules(): DiscoveredModule[] {
       }
 
       // Alert if module has custom methods beyond CRUD
-      if (service && service.prototype) {
+      if (service?.prototype) {
         const ownMethods = Object.getOwnPropertyNames(service.prototype).filter(
           (m) => m !== 'constructor' && !m.startsWith('_'),
         )
@@ -360,7 +360,7 @@ export function buildEntityMap(modules: DiscoveredModule[]): Record<string, stri
       // Map entity name to module name (which is the service key)
       map[model.name.toLowerCase()] = mod.name
       // Also map plural forms
-      const plural = model.name.toLowerCase() + 's'
+      const plural = `${model.name.toLowerCase()}s`
       map[plural] = mod.name
     }
   }

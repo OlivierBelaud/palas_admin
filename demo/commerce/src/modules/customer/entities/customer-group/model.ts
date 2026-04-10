@@ -1,4 +1,3 @@
-
 export default defineModel('CustomerGroup', {
   name: field.text().unique(),
   metadata: field.json().nullable(),

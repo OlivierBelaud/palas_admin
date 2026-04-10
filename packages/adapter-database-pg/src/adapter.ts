@@ -93,6 +93,11 @@ export class DrizzlePgAdapter implements IDatabasePort {
     }
   }
 
+  async raw<T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> {
+    const sql = this.getPool()
+    return sql.unsafe(query, (params ?? []) as never[]) as unknown as T[]
+  }
+
   async introspect(): Promise<unknown> {
     const sql = this.getPool()
     const tables = await sql`

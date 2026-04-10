@@ -4,7 +4,7 @@ export { getRequestContext, type RequestContext, runInRequestContext } from './r
 // app.modules.product.list() with full autocompletion.
 // Modules are isolated: they receive deps directly, never the app object.
 
-import type { CommandRegistry } from '../command'
+import { CommandRegistry } from '../command'
 import type { CommandDefinition } from '../command/types'
 import { MantaError } from '../errors/manta-error'
 import type { MantaEventMap } from '../events/types'
@@ -22,15 +22,8 @@ export interface MantaInfra {
   cache: ICachePort
   locking: ILockingPort
   file: IFilePort
-}
-
-/**
- * Internal infra — includes db access. Not part of public API.
- * @internal
- */
-export interface MantaInfraInternal extends MantaInfra {
-  // biome-ignore lint/suspicious/noExplicitAny: database adapter varies
-  db: any
+  /** Database adapter — present when a database is configured. Typed as unknown to avoid coupling to any specific ORM. */
+  db?: unknown
 }
 
 /**
@@ -83,7 +76,7 @@ export interface MantaApp<
 // ── Builder (production) ───────────────────────
 
 export interface MantaAppOptions {
-  infra: MantaInfra | MantaInfraInternal
+  infra: MantaInfra
 }
 
 export function createApp(options: MantaAppOptions): MantaAppBuilder {
@@ -126,9 +119,7 @@ export class MantaAppBuilder {
   registerCommand(def: CommandDefinition<any, any>): void {
     if (this._frozen) throw new MantaError('INVALID_STATE', 'App is frozen — cannot register after boot')
     if (!this._commandRegistry) {
-      // Lazy import to avoid circular — CommandRegistry is pure domain
-      const { CommandRegistry: CR } = require('../command')
-      this._commandRegistry = new CR()
+      this._commandRegistry = new CommandRegistry()
     }
     this._commandRegistry!.register(def)
   }
@@ -252,7 +243,7 @@ export function createTestMantaApp(options: MantaAppOptions): TestMantaApp {
 
 // ── Internal helpers ───────────────────────────
 
-function registerInfraInMap(resolveMap: Map<string, unknown>, infra: MantaInfra | MantaInfraInternal): void {
+function registerInfraInMap(resolveMap: Map<string, unknown>, infra: MantaInfra): void {
   resolveMap.set('IEventBusPort', infra.eventBus)
   resolveMap.set('event_bus', infra.eventBus)
   resolveMap.set('eventBusModuleService', infra.eventBus)
@@ -262,8 +253,7 @@ function registerInfraInMap(resolveMap: Map<string, unknown>, infra: MantaInfra 
   resolveMap.set('cache', infra.cache)
   resolveMap.set('ILockingPort', infra.locking)
   resolveMap.set('IFilePort', infra.file)
-  // db is internal-only — accessible via resolve('db') but not on public MantaInfra
-  if ('db' in infra) resolveMap.set('db', infra.db)
+  if (infra.db) resolveMap.set('db', infra.db)
 }
 
 function buildApp<

@@ -16,6 +16,7 @@ export type MantaErrorType =
   | 'UNKNOWN_MODULES'
   | 'INVALID_STATE'
   | 'NOT_IMPLEMENTED'
+  | 'NOT_SUPPORTED'
   | 'RESOURCE_EXHAUSTED'
 
 /**

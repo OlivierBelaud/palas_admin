@@ -103,7 +103,7 @@ export default defineLink(many('product'), many('collection'))
 
 ## Extra columns on pivot table
 
-For M:N relations (or any cross-module link), you can add extra columns:
+For M:N relations (or any cross-module link), you can add extra columns using `field.*`:
 
 ```typescript
 export default defineLink(many('product'), many('collection'), {
@@ -112,6 +112,26 @@ export default defineLink(many('product'), many('collection'), {
 ```
 
 Extra columns are only supported on pivot tables — not on FK-based links.
+
+### Syntax
+
+The third argument to `defineLink()` is an object of `field.*` definitions, exactly like `defineModel` properties:
+
+```typescript
+// src/links/customer-address.ts
+export default defineLink('customer', many('address'), {
+  type: field.text(),
+  is_default: field.boolean().default(false),
+})
+```
+
+This creates a pivot table `customer_address` with columns: `customer_id`, `address_id`, `type`, `is_default`, plus the standard `id`, `created_at`, `updated_at`, `deleted_at`.
+
+### Behavior
+
+- **Schema generation**: Extra columns are added to the pivot table's Drizzle schema automatically.
+- **Auto-generated link commands**: When `defineLink()` has extra columns, the auto-generated Zod schema for link commands includes the extra fields. `step.link(a, b, { type: 'shipping', is_default: true })` passes extra column values to the INSERT.
+- **Query graph integration**: When using relation field syntax in `query.graph()` (e.g., `fields: ['*', 'addresses.*']`), extra columns from the pivot table are merged into each target entity in the result. For example, each address object will include `type` and `is_default` from the pivot row.
 
 ## Usage in workflows
 

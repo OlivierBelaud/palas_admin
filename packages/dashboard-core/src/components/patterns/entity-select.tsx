@@ -17,7 +17,7 @@
 
 import { cn } from '@manta/ui'
 import { Check, Search, X } from 'lucide-react'
-import React, { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 export interface EntitySelectColumn {
   key: string

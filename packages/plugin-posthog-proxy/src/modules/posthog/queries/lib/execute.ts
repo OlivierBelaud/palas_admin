@@ -18,10 +18,7 @@ export function readPostHogConnection(): PostHogConnection {
   const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
   const personalApiKey = process.env.POSTHOG_API_KEY
   if (!personalApiKey) {
-    throw new MantaError(
-      'INVALID_DATA',
-      'POSTHOG_API_KEY env var not set — cannot query PostHog data warehouse.',
-    )
+    throw new MantaError('INVALID_DATA', 'POSTHOG_API_KEY env var not set — cannot query PostHog data warehouse.')
   }
   return { host, personalApiKey }
 }

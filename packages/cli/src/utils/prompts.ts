@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline'
  */
 export async function confirm(question: string, defaultValue: boolean = false): Promise<boolean> {
   // Non-interactive check
-  if (!process.stdin.isTTY || process.env['CI'] === 'true' || process.env['MANTA_NON_INTERACTIVE'] === 'true') {
+  if (!process.stdin.isTTY || process.env.CI === 'true' || process.env.MANTA_NON_INTERACTIVE === 'true') {
     return defaultValue
   }
 

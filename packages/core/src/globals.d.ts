@@ -1,5 +1,5 @@
 import type { defineAgent as _defineAgent } from './ai'
-import type { defineCommand as _defineCommand } from './command'
+import type { defineCommand as _defineCommand, defineCommandGraph as _defineCommandGraph } from './command'
 import type { defineModel as _defineModel, field as _field } from './dml/model'
 import type { defineJob as _defineJob } from './job'
 import type { defineLink as _defineLink, many as _many } from './link'
@@ -12,12 +12,16 @@ import type { defineWorkflow as _defineWorkflow } from './workflows/define-workf
 import type { defineConfig as _defineConfig } from './config/define-config'
 import type { definePreset as _definePreset } from './config/presets'
 import type { defineMiddleware as _defineMiddleware } from './middleware/define-middleware'
+import type { defineMiddlewares as _defineMiddlewares } from './middleware'
+import type { MantaError as _MantaError } from './errors/manta-error'
+import type { z as _z } from 'zod'
 
 declare global {
   const defineModel: typeof _defineModel
   const defineService: typeof _defineService
   const defineLink: typeof _defineLink
   const defineCommand: typeof _defineCommand
+  const defineCommandGraph: typeof _defineCommandGraph
   const defineQuery: typeof _defineQuery
   const defineQueryGraph: typeof _defineQueryGraph
   const defineWorkflow: typeof _defineWorkflow
@@ -27,8 +31,12 @@ declare global {
   const defineConfig: typeof _defineConfig
   const definePreset: typeof _definePreset
   const defineMiddleware: typeof _defineMiddleware
+  const defineMiddlewares: typeof _defineMiddlewares
   const field: typeof _field
   const many: typeof _many
+  const z: typeof _z
+  const MantaError: typeof _MantaError
+  type MantaError = _MantaError
 
   // ── defineSubscriber — callable interface for codegen merging ──────
   // Base overloads come from typeof _defineSubscriber.

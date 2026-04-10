@@ -3,7 +3,7 @@
 // Existing process.env values are NOT overwritten
 
 import { existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 interface EnvLoadResult {
   loaded: string[]
@@ -15,7 +15,7 @@ interface EnvLoadResult {
  * Later files override earlier files, but existing process.env is never overwritten.
  */
 export function loadEnv(cwd: string = process.cwd()): EnvLoadResult {
-  const nodeEnv = process.env['NODE_ENV'] ?? 'development'
+  const nodeEnv = process.env.NODE_ENV ?? 'development'
   const filesToLoad = ['.env', '.env.local', `.env.${nodeEnv}`, `.env.${nodeEnv}.local`]
 
   const loaded: string[] = []

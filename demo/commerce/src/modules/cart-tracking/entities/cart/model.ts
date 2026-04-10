@@ -1,4 +1,3 @@
-
 export default defineModel('Cart', {
   // ── Identity ──────────────────────────────────────────────────────
   cart_token: field.text().unique(),
@@ -42,13 +41,9 @@ export default defineModel('Cart', {
   // checkout_engaged    → a commencé à remplir des infos (contact, adresse, shipping)
   // payment_attempted   → a cliqué "Payer" (intent to pay, pas encore confirmé)
   // completed           → paiement réussi, page "Merci"
-  highest_stage: field.enum([
-    'cart',
-    'checkout_started',
-    'checkout_engaged',
-    'payment_attempted',
-    'completed',
-  ]).default('cart'),
+  highest_stage: field
+    .enum(['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'])
+    .default('cart'),
 
   // Statut du panier — reflète OÙ l'abandon a eu lieu
   //
@@ -57,13 +52,9 @@ export default defineModel('Cart', {
   // checkout_abandoned   → a démarré le checkout mais n'a pas payé
   // payment_abandoned    → a cliqué "Payer" mais paiement échoué/abandonné
   // completed            → paiement réussi
-  status: field.enum([
-    'active',
-    'cart_abandoned',
-    'checkout_abandoned',
-    'payment_abandoned',
-    'completed',
-  ]).default('active'),
+  status: field
+    .enum(['active', 'cart_abandoned', 'checkout_abandoned', 'payment_abandoned', 'completed'])
+    .default('active'),
 
   // ── Tokens (three distinct Shopify identifiers) ────────────────────
   // cart_token is already the unique key above

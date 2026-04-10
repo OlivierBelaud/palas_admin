@@ -6,7 +6,7 @@
 // Requires PG running locally. Uses an isolated test database.
 
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import postgres from 'postgres'
@@ -17,7 +17,7 @@ const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
 const TSX = resolve(ROOT, 'node_modules', '.bin', 'tsx')
 const DEMO_DIR = resolve(ROOT, 'demo')
 
-const BASE_DB_URL = process.env['TEST_DATABASE_URL'] || 'postgresql://olivierbelaud@localhost:5432/postgres'
+const BASE_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://olivierbelaud@localhost:5432/postgres'
 const TEST_DB = `build_start_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 const START_PORT = 19500 + Math.floor(Math.random() * 500)
 
@@ -369,6 +369,7 @@ describe('manta start', () => {
       expect(jsonLines.length).toBeGreaterThan(0)
 
       // Should NOT contain ANSI color codes
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: detecting ANSI escape sequences
       const hasAnsi = lines.some((l) => /\x1b\[/.test(l))
       expect(hasAnsi).toBe(false)
     } finally {

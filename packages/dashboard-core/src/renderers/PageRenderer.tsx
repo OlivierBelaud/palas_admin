@@ -6,7 +6,6 @@ import React, { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { resolveBlock } from '../blocks/block-registry'
 import { PageHeaderBlock } from '../blocks/PageHeader'
-import { Skeleton } from '../components/common/skeleton'
 import type { BlockDef, PageDef } from '../primitives'
 import { usePrefetchQueries } from './hooks/usePrefetchQueries'
 

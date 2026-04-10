@@ -4,8 +4,10 @@
 import type { z } from 'zod'
 import type { DmlEntity } from '../dml/entity'
 import { MantaError } from '../errors/manta-error'
+import type { ActionStepConfig } from '../workflows/step'
+import { step as stepApi } from '../workflows/step'
 import type { StepContext } from '../workflows/types'
-import type { CommandDefinition, CommandToolSchema, TypedCommandConfig, TypedStep } from './types'
+import type { CommandDefinition, CommandToolSchema, TypedCommandConfig } from './types'
 
 // ── Typed step proxy (pre-bound to ctx) ──────────────────────────────
 
@@ -17,13 +19,6 @@ import type { CommandDefinition, CommandToolSchema, TypedCommandConfig, TypedSte
 type EntityIdMap = Map<string, string[]>
 
 function createBoundModuleProxy(moduleName: string, ctx: StepContext, ids: EntityIdMap): Record<string, unknown> {
-  // biome-ignore lint/suspicious/noExplicitAny: lazy import to avoid circular deps
-  let stepModule: any = null
-  const getStep = () => {
-    if (!stepModule) stepModule = require('../workflows/step')
-    return stepModule.step
-  }
-
   // Resolve the DML entity name from the service (e.g. module "catalog" → entity "Product")
   // The CRUD methods use the entity name, not the module name.
   let entity = moduleName.charAt(0).toUpperCase() + moduleName.slice(1)
@@ -39,11 +34,10 @@ function createBoundModuleProxy(moduleName: string, ctx: StepContext, ids: Entit
 
   return new Proxy({} as Record<string, unknown>, {
     get(_target, methodName: string) {
-      const s = getStep()
       switch (methodName) {
         case 'create':
           return async (data: Record<string, unknown>) => {
-            const result = await s.create(entity, data, ctx)
+            const result = await stepApi.create(entity, data, ctx)
             const id = (result as Record<string, unknown>).id as string
             const existing = ids.get(entity) ?? []
             existing.push(id)
@@ -51,9 +45,9 @@ function createBoundModuleProxy(moduleName: string, ctx: StepContext, ids: Entit
             return result
           }
         case 'update':
-          return (id: string, data: Record<string, unknown>) => s.update(entity, id, data, ctx)
+          return (id: string, data: Record<string, unknown>) => stepApi.update(entity, id, data, ctx)
         case 'delete':
-          return (id: string) => s.delete(entity, id, ctx)
+          return (id: string) => stepApi.delete(entity, id, ctx)
         case 'link':
           return new Proxy({} as Record<string, Function>, {
             get(_t, rightEntityProp: string) {
@@ -75,13 +69,13 @@ function createBoundModuleProxy(moduleName: string, ctx: StepContext, ids: Entit
                     'INVALID_DATA',
                     `Cannot link: no ${rightEntity} created yet in this workflow. Call step.service.${rightEntity.toLowerCase()}.create() first.`,
                   )
-                return s.linkExplicit(entity, leftId, rightEntity, rightId, ctx, extraColumns)
+                return stepApi.linkExplicit(entity, leftId, rightEntity, rightId, ctx, extraColumns)
               }
             },
           })
         default:
           // Service compensable methods (activate, archive, etc.)
-          return (...args: unknown[]) => s.invoke(moduleName, methodName, args, ctx)
+          return (...args: unknown[]) => stepApi.invoke(moduleName, methodName, args, ctx)
       }
     },
   })
@@ -90,13 +84,6 @@ function createBoundModuleProxy(moduleName: string, ctx: StepContext, ids: Entit
 function createBoundStepProxy(entities: Record<string, unknown>, ctx: StepContext, moduleScope?: string): unknown {
   // Shared ID tracker across all module proxies
   const ids: EntityIdMap = new Map()
-
-  // biome-ignore lint/suspicious/noExplicitAny: lazy import
-  let stepModule: any = null
-  const getStep = () => {
-    if (!stepModule) stepModule = require('../workflows/step')
-    return stepModule.step
-  }
 
   // Resolve which entity names this command can access
   // If moduleScope is set, only entities from that module are allowed
@@ -146,7 +133,7 @@ function createBoundStepProxy(entities: Record<string, unknown>, ctx: StepContex
   const boundCommandProxy = new Proxy({} as Record<string, unknown>, {
     get(_target, commandName: string) {
       return async (input: unknown) => {
-        return getStep().command[commandName](input, ctx)
+        return stepApi.command[commandName](input, ctx)
       }
     },
   })
@@ -155,7 +142,7 @@ function createBoundStepProxy(entities: Record<string, unknown>, ctx: StepContex
   const boundAgentProxy = new Proxy({} as Record<string, unknown>, {
     get(_target, agentName: string) {
       return async (input: unknown) => {
-        return getStep().agent[agentName](input, ctx)
+        return stepApi.agent[agentName](input, ctx)
       }
     },
   })
@@ -166,16 +153,16 @@ function createBoundStepProxy(entities: Record<string, unknown>, ctx: StepContex
     get(_target, linkName: string) {
       return {
         list: async (where: Record<string, unknown>) => {
-          return getStep().link[linkName].list(where, ctx)
+          return stepApi.link[linkName].list(where, ctx)
         },
         create: async (data: Record<string, unknown>) => {
-          return getStep().link[linkName].create(data, ctx)
+          return stepApi.link[linkName].create(data, ctx)
         },
         update: async (where: Record<string, unknown>, patch: Record<string, unknown>) => {
-          return getStep().link[linkName].update(where, patch, ctx)
+          return stepApi.link[linkName].update(where, patch, ctx)
         },
         delete: async (where: Record<string, unknown>) => {
-          return getStep().link[linkName].delete(where, ctx)
+          return stepApi.link[linkName].delete(where, ctx)
         },
       }
     },
@@ -189,12 +176,12 @@ function createBoundStepProxy(entities: Record<string, unknown>, ctx: StepContex
       if (prop === 'agent') return boundAgentProxy
       if (prop === 'emit') {
         return (eventName: string, data: Record<string, unknown>) => {
-          return getStep().emit(eventName, data, ctx)
+          return stepApi.emit(eventName, data, ctx)
         }
       }
       if (prop === 'action') {
-        return (name: string, config: Record<string, unknown>) => {
-          const actionFn = getStep().action(name, config)
+        return (name: string, config: ActionStepConfig) => {
+          const actionFn = stepApi.action(name, config)
           return (input: unknown) => actionFn(input, ctx)
         }
       }
@@ -369,21 +356,22 @@ export const QUERY_TOOL_SCHEMA: CommandToolSchema = {
 
 // ── zodToJsonSchema ──────────────────────────────────────────────────
 
+// biome-ignore lint/suspicious/noExplicitAny: Zod internals use _def with varying shapes per typeName
+type ZodDef = { typeName?: string; [key: string]: any }
+
 // biome-ignore lint/suspicious/noExplicitAny: Zod internals use _def with varying shapes
 export function zodToJsonSchema(schema: z.ZodType<any>): Record<string, unknown> {
-  // biome-ignore lint/suspicious/noExplicitAny: Zod internal _def access
-  const def = (schema as any)._def
+  const def = (schema as unknown as { _def: ZodDef })._def
   const typeName: string = def?.typeName ?? ''
 
   if (typeName === 'ZodObject') {
-    const shape = def.shape?.() ?? {}
+    const shape: Record<string, z.ZodTypeAny> = def.shape?.() ?? {}
     const properties: Record<string, unknown> = {}
     const required: string[] = []
     for (const [key, value] of Object.entries(shape)) {
-      // biome-ignore lint/suspicious/noExplicitAny: recursive Zod traversal
-      const prop = value as any
+      const prop = value
       properties[key] = zodToJsonSchema(prop)
-      const innerTypeName = prop._def?.typeName ?? ''
+      const innerTypeName = (prop as unknown as { _def?: { typeName?: string } })._def?.typeName ?? ''
       if (innerTypeName !== 'ZodOptional' && innerTypeName !== 'ZodDefault') required.push(key)
     }
     return { type: 'object', properties, ...(required.length > 0 ? { required } : {}) }

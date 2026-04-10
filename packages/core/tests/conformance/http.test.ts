@@ -9,7 +9,7 @@ import {
   MantaError,
   TestLogger,
 } from '@manta/core'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const makeInfra = () => ({
   eventBus: new InMemoryEventBusAdapter(),
@@ -54,7 +54,7 @@ describe('IHttpPort Conformance', () => {
   // H-02 — SPEC-037: dynamic parameters
   it('routing > paramètres dynamiques', async () => {
     http.registerRoute('GET', '/api/users/:id', async (req) => {
-      const url = new URL(req.url)
+      const _url = new URL(req.url)
       // Parameter extraction depends on adapter implementation
       return new Response(JSON.stringify({ id: '123' }), {
         headers: { 'Content-Type': 'application/json' },
@@ -241,7 +241,7 @@ describe('IHttpPort Conformance', () => {
 
   // H-14 — SPEC-039: body parser form data
   it('body parser > form data', async () => {
-    http.registerRoute('POST', '/api/upload', async (req) => {
+    http.registerRoute('POST', '/api/upload', async (_req) => {
       return new Response('ok')
     })
 

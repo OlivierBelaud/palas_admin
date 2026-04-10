@@ -50,7 +50,7 @@ function filePathToUrlPattern(filePath: string, apiDir: string): string {
     .replace(/route\.js$/, '')
     .replace(/\/$/, '')
     .replace(/\[([^\]]+)\]/g, ':$1')
-  return '/' + rel
+  return `/${rel}`
 }
 
 /**

@@ -7,7 +7,7 @@ export default defineSpa({
   navigation: [
     {
       icon: 'BarChart3',
-      label: "Activité du site",
+      label: 'Activité du site',
       to: '/activite-site',
     },
     {
@@ -19,15 +19,11 @@ export default defineSpa({
       icon: 'Users',
       label: 'Customers',
       to: '/customers',
-      items: [
-        { label: 'Customer Groups', to: '/customer-groups' },
-      ],
+      items: [{ label: 'Customer Groups', to: '/customer-groups' }],
     },
   ],
 
-  settings: [
-    { icon: 'Settings', label: 'General', to: '/settings' },
-  ],
+  settings: [{ icon: 'Settings', label: 'General', to: '/settings' }],
 
   ai: true,
 })

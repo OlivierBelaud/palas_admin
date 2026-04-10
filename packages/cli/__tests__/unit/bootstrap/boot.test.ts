@@ -8,7 +8,7 @@
 // - Handles errors per step severity
 
 import { ContainerRegistrationKeys } from '@manta/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { boot, lazyBoot } from '../../../src/bootstrap/boot'
 import type { BootContext } from '../../../src/types'
 

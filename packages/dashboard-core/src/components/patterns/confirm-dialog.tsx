@@ -13,7 +13,6 @@
 
 import { cn } from '@manta/ui'
 import { AlertTriangle } from 'lucide-react'
-import React from 'react'
 
 export interface ConfirmDialogProps {
   open: boolean

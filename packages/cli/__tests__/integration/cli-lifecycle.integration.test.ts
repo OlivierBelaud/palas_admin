@@ -229,12 +229,13 @@ describe('CLI lifecycle e2e', () => {
   // These tests require PG running locally on port 5432.
   // They use an isolated test database per test.
 
-  const TEST_DB_URL = process.env['TEST_DATABASE_URL'] || 'postgresql://localhost:5432/manta_test_main'
+  const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/manta_test_main'
   const testDbName = `cli_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const testDbUrl = TEST_DB_URL.replace(/\/[^/]+$/, `/${testDbName}`)
 
   let dbProjectDir: string
 
+  // biome-ignore lint/suspicious/noDuplicateTestHooks: DB-specific setup separate from main beforeAll
   beforeAll(() => {
     dbProjectDir = join(tempDir, 'db-test')
     mkdirSync(dbProjectDir, { recursive: true })
@@ -331,6 +332,7 @@ describe('CLI lifecycle e2e', () => {
   })
 
   // Cleanup: drop the test database after all DB tests
+  // biome-ignore lint/suspicious/noDuplicateTestHooks: DB-specific cleanup separate from main afterAll
   afterAll(async () => {
     try {
       const pg = await import('pg')

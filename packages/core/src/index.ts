@@ -34,7 +34,7 @@ export type { AgentDefinition } from './ai'
 // ── Agent (AI step) ──────────────────────────────
 export { defineAgent } from './ai'
 // ── App ──────────────────────────────────────────
-export type { MantaApp, MantaAppModules, MantaInfra, MantaInfraInternal, RequestContext, TestMantaApp } from './app'
+export type { MantaApp, MantaAppModules, MantaInfra, RequestContext, TestMantaApp } from './app'
 export { createApp, createTestMantaApp, getRequestContext, MantaAppBuilder, runInRequestContext } from './app'
 export type {
   CommandAccessMap,
@@ -119,6 +119,7 @@ export {
 } from './dml'
 export type { DmlEntityOptions, DmlPropertyDefinition, DmlRelationDefinition } from './dml/entity'
 export { DmlEntity } from './dml/entity'
+export { fromZodSchema } from './dml/from-zod'
 export type {
   GeneratedSchema,
   ParsedDmlEntity,
@@ -130,7 +131,6 @@ export { generateDrizzleSchema, parseDmlEntity } from './dml/generator'
 export type { InferEntity } from './dml/infer'
 // ── DML (Data Modeling Language) ─────────────────
 export { defineModel, field, model } from './dml/model'
-export { fromZodSchema } from './dml/from-zod'
 export { belongsTo } from './dml/relations/belongs-to'
 export { hasMany } from './dml/relations/has-many'
 export { hasOne, hasOneWithFK } from './dml/relations/has-one'
@@ -216,6 +216,7 @@ export type {
   EntityResolver,
   GraphQueryConfig,
   IndexQueryConfig,
+  InferEntityResult,
   QueryConfig,
   QueryDefinition,
   QueryGraphDefinition,
@@ -272,8 +273,8 @@ export type {
   ActionStepConfig,
   CrudStepConfig,
   EmitEventStepInput,
+  StepContext,
   StepDefinition,
-  StepExecutionContext,
   StepHandlerContext,
   StepResolveContext,
   WorkflowDefinition,
@@ -294,8 +295,6 @@ export {
   defineWorkflow,
   ENTITY_TAG,
   emitEventStep,
-  StepResponse,
   step,
   WorkflowManager,
-  WorkflowResponse,
 } from './workflows'

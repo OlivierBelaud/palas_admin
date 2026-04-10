@@ -5,7 +5,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { type DiscoveredResources, discoverResources } from '../../src/resource-loader'
+import { discoverResources } from '../../src/resource-loader'
 
 let testDir: string
 
@@ -171,12 +171,30 @@ describe('ResourceLoader — discoverResources()', () => {
     expect(result.modules).toHaveLength(0)
   })
 
-  // RL-13 — Module name derived from directory name
-  it('RL-13 — module name derived from directory name', async () => {
+  // RL-13 — Kebab-case directory name canonicalizes to camelCase identifier,
+  // and the raw on-disk name is preserved as `dirName`.
+  it('RL-13 — kebab-case directory produces camelCase name + preserves dirName', async () => {
     createFile('src/modules/my-custom-module/entities/item/model.ts', `export const Item = {}`)
 
     const result = await discoverResources(testDir)
     expect(result.modules).toHaveLength(1)
-    expect(result.modules[0]!.name).toBe('my-custom-module')
+    expect(result.modules[0]!.name).toBe('myCustomModule')
+    expect(result.modules[0]!.dirName).toBe('my-custom-module')
+  })
+
+  // RL-14 — Collision detection: two dirs that canonicalize to the same JS identifier throw.
+  it('RL-14 — two dirs canonicalizing to the same identifier throw a collision error', async () => {
+    createFile('src/modules/my-mod/entities/item/model.ts', `export const Item = {}`)
+    createFile('src/modules/myMod/entities/item/model.ts', `export const Item = {}`)
+
+    await expect(discoverResources(testDir)).rejects.toThrow(/collision/i)
+  })
+
+  // RL-15 — Invalid identifier: directory name that cannot produce a valid JS identifier.
+  it('RL-15 — directory name that is not a valid JS identifier throws', async () => {
+    // Leading digit → canonicalized name still starts with a digit → invalid JS identifier.
+    createFile('src/modules/1-bad/entities/item/model.ts', `export const Item = {}`)
+
+    await expect(discoverResources(testDir)).rejects.toThrow(/valid JS identifier/)
   })
 })

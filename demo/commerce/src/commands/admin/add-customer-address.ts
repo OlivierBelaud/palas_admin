@@ -1,4 +1,3 @@
-
 export default defineCommand({
   name: 'addCustomerAddress',
   description: 'Create an address and link it to a customer (shipping or billing)',
@@ -21,21 +20,33 @@ export default defineCommand({
   workflow: async (input, { step }) => {
     const { customer_id, type, is_default, ...addressData } = input
 
+    // step.link is typed as a callable at the type level; the runtime exposes per-link CRUD
+    // namespaces (list/create/update/delete) on link names. Cast to access them.
+    const linkCrud = step.link as unknown as Record<
+      string,
+      {
+        list: (where: Record<string, unknown>) => Promise<Record<string, unknown>[]>
+        create: (data: Record<string, unknown>) => Promise<Record<string, unknown>>
+        update: (where: Record<string, unknown>, patch: Record<string, unknown>) => Promise<{ ok: true }>
+        delete: (where: Record<string, unknown>) => Promise<{ ok: true }>
+      }
+    >
+
     // Billing: enforce "one billing address per customer" by removing any existing billing link + address
     if (type === 'billing') {
-      const existing = await step.link.customerAddress.list({ customer_id, type: 'billing' })
+      const existing = await linkCrud.customerAddress.list({ customer_id, type: 'billing' })
       if (existing.length > 0) {
         const oldAddressId = existing[0].address_id as string
-        await step.link.customerAddress.delete({ customer_id, address_id: oldAddressId })
+        await linkCrud.customerAddress.delete({ customer_id, address_id: oldAddressId })
         await step.service.address.delete(oldAddressId)
       }
     }
 
     // Shipping default: unset any previously default shipping link
     if (type === 'shipping' && is_default) {
-      const existing = await step.link.customerAddress.list({ customer_id, type: 'shipping', is_default: true })
+      const existing = await linkCrud.customerAddress.list({ customer_id, type: 'shipping', is_default: true })
       if (existing.length > 0) {
-        await step.link.customerAddress.update(
+        await linkCrud.customerAddress.update(
           { customer_id, address_id: existing[0].address_id as string },
           { is_default: false },
         )
@@ -44,7 +55,7 @@ export default defineCommand({
 
     const address = (await step.service.address.create(addressData)) as { id: string }
 
-    await step.link.customerAddress.create({
+    await linkCrud.customerAddress.create({
       customer_id,
       address_id: address.id,
       type,

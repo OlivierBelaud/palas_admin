@@ -1,6 +1,8 @@
-import { definePage } from '@manta/dashboard-core'
+import { definePage, type HeaderDef } from '@manta/dashboard-core'
 
 export default definePage({
+  // HeaderDef doesn't yet declare `linkLabelField` or `query`; cast to preserve
+  // the runtime shape consumed by the custom cart-header renderer.
   header: {
     titleField: 'title',
     linkField: 'posthog_url',
@@ -9,7 +11,7 @@ export default definePage({
       name: 'cart-header',
       input: { id: ':id' },
     },
-  },
+  } as HeaderDef,
   main: [
     // ── Timeline des événements (plus récent en haut) ──────────────────
     {
@@ -56,7 +58,16 @@ export default definePage({
       query: {
         graph: {
           entity: 'cart',
-          fields: ['email', 'first_name', 'last_name', 'phone', 'city', 'country_code', 'distinct_id', 'shopify_customer_id'],
+          fields: [
+            'email',
+            'first_name',
+            'last_name',
+            'phone',
+            'city',
+            'country_code',
+            'distinct_id',
+            'shopify_customer_id',
+          ],
         },
       },
       fields: [
@@ -94,7 +105,20 @@ export default definePage({
         },
       },
       fields: [
-        { key: 'status', label: 'Statut', display: { type: 'badge', values: { active: 'blue', cart_abandoned: 'orange', checkout_abandoned: 'orange', payment_abandoned: 'red', completed: 'green' } } },
+        {
+          key: 'status',
+          label: 'Statut',
+          display: {
+            type: 'badge',
+            values: {
+              active: 'blue',
+              cart_abandoned: 'orange',
+              checkout_abandoned: 'orange',
+              payment_abandoned: 'red',
+              completed: 'green',
+            },
+          },
+        },
         { key: 'highest_stage', label: 'Étape max' },
         { key: 'last_action', label: 'Dernière action' },
         { key: 'last_action_at', label: 'Dernière activité', display: { type: 'date', format: 'long' } },
@@ -106,7 +130,18 @@ export default definePage({
       query: {
         graph: {
           entity: 'cart',
-          fields: ['total_price', 'currency', 'subtotal_price', 'discounts_amount', 'shipping_method', 'shipping_price', 'total_tax', 'checkout_token', 'shopify_order_id', 'is_first_order'],
+          fields: [
+            'total_price',
+            'currency',
+            'subtotal_price',
+            'discounts_amount',
+            'shipping_method',
+            'shipping_price',
+            'total_tax',
+            'checkout_token',
+            'shopify_order_id',
+            'is_first_order',
+          ],
         },
       },
       fields: [
@@ -119,7 +154,11 @@ export default definePage({
         { key: 'total_tax', label: 'TVA' },
         { key: 'checkout_token', label: 'Checkout Token' },
         { key: 'shopify_order_id', label: 'Order ID Shopify' },
-        { key: 'is_first_order', label: '1ère commande', display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } } },
+        {
+          key: 'is_first_order',
+          label: '1ère commande',
+          display: { type: 'badge', true: { label: 'Oui', color: 'green' }, false: { label: 'Non', color: 'gray' } },
+        },
       ],
     },
     {

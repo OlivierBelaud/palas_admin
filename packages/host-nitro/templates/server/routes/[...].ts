@@ -22,7 +22,11 @@ export default defineEventHandler(async (event) => {
     body = ((await readRawBody(event, false)) as Uint8Array | undefined) ?? undefined
   }
 
-  const request = new Request(url.toString(), { method, headers, body: body || undefined })
+  const request = new Request(url.toString(), {
+    method,
+    headers,
+    body: (body || undefined) as BodyInit | undefined,
+  })
   const response = await adapter.handleRequest(request)
 
   // Return the Web Response directly — Nitro V3 web entry format supports this.

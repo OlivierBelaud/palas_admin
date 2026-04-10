@@ -51,16 +51,18 @@ export default definePage({
       },
       columns: [
         { key: 'address_name', label: 'Name' },
-        { key: 'is_default', label: 'Default', format: { type: 'badge', true: { label: 'Default', color: 'green' }, false: { label: '', color: 'gray' } } },
+        {
+          key: 'is_default',
+          label: 'Default',
+          format: { type: 'badge', true: { label: 'Default', color: 'green' }, false: { label: '', color: 'gray' } },
+        },
         { key: 'first_name', label: 'Recipient' },
         { key: 'address_1', label: 'Address' },
         { key: 'city', label: 'City' },
         { key: 'country_code', label: 'Country' },
         { key: 'postal_code', label: 'Postal Code' },
       ],
-      actions: [
-        { label: 'Add Shipping Address', to: 'add-shipping-address' },
-      ],
+      actions: [{ label: 'Add Shipping Address', to: 'add-shipping-address' }],
       rowActions: [
         { label: 'Edit', icon: 'pencil', to: 'edit-address/:row.id' },
         { label: 'Delete', icon: 'trash', action: 'delete', entity: 'address', destructive: true },
@@ -77,7 +79,13 @@ export default definePage({
           fields: ['has_account'],
         },
       },
-      fields: [{ key: 'has_account', label: 'Account', display: { type: 'badge', true: { label: 'Yes', color: 'green' }, false: { label: 'No', color: 'orange' } } }],
+      fields: [
+        {
+          key: 'has_account',
+          label: 'Account',
+          display: { type: 'badge', true: { label: 'Yes', color: 'green' }, false: { label: 'No', color: 'orange' } },
+        },
+      ],
     },
     {
       type: 'InfoCard',

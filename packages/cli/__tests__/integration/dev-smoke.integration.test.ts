@@ -5,7 +5,7 @@
 // Requires PG running locally. Uses an isolated test database.
 
 import { type ChildProcess, spawn } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import postgres from 'postgres'
@@ -16,7 +16,7 @@ const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
 const TSX = resolve(ROOT, 'node_modules', '.bin', 'tsx')
 const DEMO_DIR = resolve(ROOT, 'demo')
 
-const BASE_DB_URL = process.env['TEST_DATABASE_URL'] || 'postgresql://olivierbelaud@localhost:5432/postgres'
+const BASE_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://olivierbelaud@localhost:5432/postgres'
 const TEST_DB = `smoke_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 const TEST_PORT = 19000 + Math.floor(Math.random() * 1000)
 

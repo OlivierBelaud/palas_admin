@@ -2,7 +2,7 @@
 // Tests that each step calls the right methods and handles fatal/warning correctly
 
 import { ContainerRegistrationKeys, type InMemoryEventBusAdapter, type TestMantaApp } from '@manta/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { boot, lazyBoot } from '../../../src/bootstrap/boot'
 import type { DiscoveredResources } from '../../../src/resource-loader'
 import type { BootContext } from '../../../src/types'
@@ -53,11 +53,15 @@ describe('Lazy boot steps 9-18', () => {
     ctx.discoveredResources.modules = [
       {
         name: 'product',
+        dirName: 'product',
+        moduleDir: '/fake/src/modules/product',
         path: '/fake/src/modules/product/entities/product/model.ts',
         entities: [
           { name: 'product', modelPath: '/fake/src/modules/product/entities/product/model.ts', servicePath: undefined },
         ],
-        workflows: [],
+        commands: [],
+        queries: [],
+        apiRoutes: [],
         intraLinks: [],
         models: ['product'],
         service: 'ProductService',
@@ -84,9 +88,13 @@ describe('Lazy boot steps 9-18', () => {
     ctx.discoveredResources.modules = [
       {
         name: 'broken-module',
+        dirName: 'broken-module',
+        moduleDir: '/nonexistent/path',
         path: '/nonexistent/path/that/does/not/exist.ts',
         entities: [{ name: 'broken', modelPath: '/nonexistent/path/that/does/not/exist.ts', servicePath: undefined }],
-        workflows: [],
+        commands: [],
+        queries: [],
+        apiRoutes: [],
         intraLinks: [],
         models: [],
         service: 'BrokenService',

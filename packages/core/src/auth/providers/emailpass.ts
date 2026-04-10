@@ -1,7 +1,7 @@
 // Emailpass auth provider — ISO Medusa's @medusajs/auth-emailpass
 // Handles email/password registration and authentication.
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { AuthenticationInput, AuthenticationResponse, IAuthIdentityProviderService, IAuthProvider } from './types'
 
 /**
@@ -10,15 +10,7 @@ import type { AuthenticationInput, AuthenticationResponse, IAuthIdentityProvider
  */
 async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString('hex')
-  const hash = await new Promise<string>((resolve, reject) => {
-    const { scryptSync } = require('node:crypto') as typeof import('node:crypto')
-    try {
-      const derived = scryptSync(password, salt, 64)
-      resolve(derived.toString('hex'))
-    } catch (err) {
-      reject(err)
-    }
-  })
+  const hash = scryptSync(password, salt, 64).toString('hex')
   return `${salt}:${hash}`
 }
 
@@ -28,7 +20,6 @@ async function hashPassword(password: string): Promise<string> {
 async function comparePassword(password: string, storedHash: string): Promise<boolean> {
   const [salt, hash] = storedHash.split(':')
   if (!salt || !hash) return false
-  const { scryptSync } = require('node:crypto') as typeof import('node:crypto')
   const derived = scryptSync(password, salt, 64).toString('hex')
   // Timing-safe comparison
   const hashBuffer = Buffer.from(hash, 'hex')

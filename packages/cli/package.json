@@ -30,7 +30,8 @@
     "dotenv": "^16.4.0",
     "jiti": "^2.6.0",
     "drizzle-orm": "^0.35.0",
-    "postgres": "^3.4.0"
+    "postgres": "^3.4.0",
+    "typescript": "^6.0.2"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

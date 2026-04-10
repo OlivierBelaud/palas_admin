@@ -9,7 +9,6 @@ import { LocalStorageOverrideStore } from '@manta/dashboard-core'
 export class ApiOverrideStore extends LocalStorageOverrideStore {
   private apiUrl: string
   private flushTimer: ReturnType<typeof setTimeout> | null = null
-  private pendingFlush = false
 
   constructor({ apiUrl }: { apiUrl: string }) {
     super()
@@ -32,7 +31,7 @@ export class ApiOverrideStore extends LocalStorageOverrideStore {
         const data = (await res.json()) as { overrides?: Overrides }
         if (data.overrides) {
           // Merge API overrides into local state
-          const current = this.getOverrides()
+          const _current = this.getOverrides()
           // API takes precedence for components/pages, local for custom pages
           // (custom pages may have been created offline)
           // For simplicity, just use API state if it has content

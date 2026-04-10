@@ -11,13 +11,16 @@
 // they need to be statically imported and bundled by Nitro/rolldown.
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 import type { DiscoveredResources } from '../resource-loader'
 
 /**
  * Collect all file paths that bootstrapApp needs to import from a DiscoveredResources object.
  */
-function collectImportPaths(resources: DiscoveredResources, pluginResources: Array<{ name: string; resources: DiscoveredResources; rootDir: string }>): Array<{ absPath: string; label: string }> {
+function collectImportPaths(
+  resources: DiscoveredResources,
+  pluginResources: Array<{ name: string; resources: DiscoveredResources; rootDir: string }>,
+): Array<{ absPath: string; label: string }> {
   const paths: Array<{ absPath: string; label: string }> = []
 
   function addFromResources(r: DiscoveredResources, prefix: string) {
@@ -29,7 +32,8 @@ function collectImportPaths(resources: DiscoveredResources, pluginResources: Arr
       for (const c of m.commands) paths.push({ absPath: c.path, label: `${prefix}mcmd_${m.name}_${c.id}` })
       for (const q of m.queries) paths.push({ absPath: q.path, label: `${prefix}mquery_${m.name}_${q.id}` })
       for (const l of m.intraLinks) paths.push({ absPath: l.path, label: `${prefix}mlink_${m.name}_${l.id}` })
-      for (const a of m.apiRoutes) paths.push({ absPath: a.file, label: `${prefix}mapi_${m.name}_${a.relativePath.replace(/[^a-z0-9]/gi, '_')}` })
+      for (const a of m.apiRoutes)
+        paths.push({ absPath: a.file, label: `${prefix}mapi_${m.name}_${a.relativePath.replace(/[^a-z0-9]/gi, '_')}` })
     }
     for (const c of r.commands) paths.push({ absPath: c.path, label: `${prefix}cmd_${c.id}` })
     for (const q of r.queries) paths.push({ absPath: q.path, label: `${prefix}query_${q.id}` })
@@ -54,7 +58,7 @@ function collectImportPaths(resources: DiscoveredResources, pluginResources: Arr
 /**
  * Sanitize a label to be a valid JS identifier.
  */
-function sanitize(s: string): string {
+function _sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^(\d)/, '_$1')
 }
 
@@ -73,7 +77,7 @@ export function generateBuildManifest(
 
   // Deduplicate by absPath
   const seen = new Set<string>()
-  const uniquePaths = allPaths.filter(p => {
+  const uniquePaths = allPaths.filter((p) => {
     if (seen.has(p.absPath)) return false
     seen.add(p.absPath)
     return true
@@ -99,7 +103,7 @@ export function generateBuildManifest(
     const { absPath } = uniquePaths[i]
     let relPath = relative(targetDir, absPath)
     relPath = relPath.replace(/\.tsx?$/, '')
-    if (!relPath.startsWith('.')) relPath = './' + relPath
+    if (!relPath.startsWith('.')) relPath = `./${relPath}`
     lines.push(`  ${JSON.stringify(absPath)}: () => import('${relPath}') as Promise<Record<string, unknown>>,`)
   }
   lines.push('}')
@@ -111,7 +115,13 @@ export function generateBuildManifest(
 
   // Plugin resources
   lines.push('')
-  lines.push(`export const preloadedPluginResources = ${JSON.stringify(pluginResources.map(p => ({ name: p.name, resources: p.resources, rootDir: p.rootDir })), null, 2)} as const`)
+  lines.push(
+    `export const preloadedPluginResources = ${JSON.stringify(
+      pluginResources.map((p) => ({ name: p.name, resources: p.resources, rootDir: p.rootDir })),
+      null,
+      2,
+    )} as const`,
+  )
 
   lines.push('')
 

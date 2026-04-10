@@ -1,4 +1,3 @@
-
 export default defineQuery({
   name: 'group-detail',
   description: 'Get customer group details with linked customer IDs',
@@ -6,22 +5,18 @@ export default defineQuery({
     id: z.string(),
   }),
   handler: async (input, { query }) => {
+    // Single query: load customer group with its customers via M:N relation
     const groups = await query.graph({
       entity: 'customerGroup',
-      pagination: { limit: 200 },
+      fields: ['*', 'customers.*'],
+      filters: { id: input.id },
+      pagination: { limit: 1 },
     })
-    const group = (groups as any[]).find((g: any) => g.id === input.id)
+
+    const group = groups[0] as unknown as Record<string, unknown> | undefined
     if (!group) return null
 
-    const allLinks = await query.graph({
-      entity: 'customer_customer_group' as any,
-      pagination: { limit: 500 },
-    })
-    const customerIds = (allLinks as any[])
-      .filter((l: any) => l.customer_group_id === input.id)
-      .map((l: any) => l.customer_id)
-      .filter(Boolean)
-
-    return { ...group, customer_ids: customerIds }
+    const customers = (group.customers ?? []) as Record<string, unknown>[]
+    return { ...group, customer_ids: customers.map((c) => c.id) }
   },
 })

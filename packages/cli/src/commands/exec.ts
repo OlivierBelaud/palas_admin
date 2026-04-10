@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
-import type { IEventBusPort, IFilePort, Message, TestMantaApp, WorkflowDefinition } from '@manta/core'
+import type { Message, TestMantaApp, WorkflowDefinition } from '@manta/core'
 import {
   createTestMantaApp,
   InMemoryCacheAdapter,

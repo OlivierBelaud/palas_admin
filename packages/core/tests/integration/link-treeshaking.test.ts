@@ -75,7 +75,7 @@ describe('defineLink Tree-Shaking Integration', () => {
   // SPEC-068: undeclared plugin link is ignored in production
   it('plugin link present but NOT declared is ignored', () => {
     const declaredLinks = ['test-plugin/src/links/declared.ts']
-    const filesOnDisk = ['test-plugin/src/links/declared.ts', 'test-plugin/src/links/undeclared.ts']
+    const _filesOnDisk = ['test-plugin/src/links/declared.ts', 'test-plugin/src/links/undeclared.ts']
 
     // Manifest only includes declared links
     const manifest = { links: declaredLinks }

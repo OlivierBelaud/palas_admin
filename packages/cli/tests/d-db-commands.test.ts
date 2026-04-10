@@ -1,7 +1,7 @@
 // Section D — Database commands (generate, migrate, rollback, diff, create)
 // Tests: D-01 → D-20
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { extractDbName } from '../src/commands/db/create'
@@ -91,19 +91,19 @@ describe('D — db:generate', () => {
   })
 
   it('D-07 — isNonInteractive returns true when CI=true', () => {
-    const orig = process.env['CI']
-    process.env['CI'] = 'true'
+    const orig = process.env.CI
+    process.env.CI = 'true'
     expect(isNonInteractive()).toBe(true)
-    if (orig !== undefined) process.env['CI'] = orig
-    else delete process.env['CI']
+    if (orig !== undefined) process.env.CI = orig
+    else delete process.env.CI
   })
 
   it('D-08 — isNonInteractive returns true when MANTA_NON_INTERACTIVE=true', () => {
-    const orig = process.env['MANTA_NON_INTERACTIVE']
-    process.env['MANTA_NON_INTERACTIVE'] = 'true'
+    const orig = process.env.MANTA_NON_INTERACTIVE
+    process.env.MANTA_NON_INTERACTIVE = 'true'
     expect(isNonInteractive()).toBe(true)
-    if (orig !== undefined) process.env['MANTA_NON_INTERACTIVE'] = orig
-    else delete process.env['MANTA_NON_INTERACTIVE']
+    if (orig !== undefined) process.env.MANTA_NON_INTERACTIVE = orig
+    else delete process.env.MANTA_NON_INTERACTIVE
   })
 
   it('D-09 — detectDangerousChanges finds DROP COLUMN', () => {
@@ -162,13 +162,16 @@ describe('D — db:rollback', () => {
     expect(error).toContain('not found')
   })
 
-  it('D-16 — validateRollbackFile returns error if file is just TODO placeholder', () => {
+  it('D-16 — validateRollbackFile returns error if file is just comments (skeleton)', () => {
     const filePath = 'drizzle/migrations/0001.down.sql'
     mkdirSync(join(TMP, 'drizzle/migrations'), { recursive: true })
-    writeFileSync(join(TMP, filePath), '-- TODO: Write rollback SQL for this migration')
+    writeFileSync(
+      join(TMP, filePath),
+      '-- Rollback SQL for this migration.\n-- Revert your model and run db:generate.\n',
+    )
     const error = validateRollbackFile(filePath, TMP)
     expect(error).not.toBeNull()
-    expect(error).toContain('TODO placeholder')
+    expect(error).toContain('no SQL')
   })
 
   it('D-17 — validateRollbackFile returns null if file has real SQL', () => {

@@ -1,4 +1,4 @@
-import type { MantaApp, TestMantaApp } from '@manta/core'
+import type { MantaApp } from '@manta/core'
 import {
   createStep,
   createTestMantaApp,
@@ -18,7 +18,7 @@ describe('WorkflowManager', () => {
   let manager: WorkflowManager
 
   beforeEach(() => {
-    app = createTestApp()
+    app = createTestApp() as unknown as MantaApp
     manager = new WorkflowManager(app)
   })
 

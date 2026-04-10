@@ -1,4 +1,4 @@
-import { Button, cn, DropdownMenu, IconButton, StatusBadge, Tooltip, toast } from '@manta/ui'
+import { Button, cn, DropdownMenu, IconButton, Tooltip, toast } from '@manta/ui'
 import { useQueryClient } from '@tanstack/react-query'
 import { Image, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import React, { useCallback, useState } from 'react'
@@ -120,7 +120,8 @@ export function renderCellValue(value: unknown, format?: string | ColumnFormat):
   if (format === 'badge') {
     const strVal = String(value)
     const label = strVal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-    return React.createElement(StatusCell, { color: getStatusColor(strVal) }, label)
+    // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+    return React.createElement(StatusCell, { color: getStatusColor(strVal), children: label })
   }
 
   if (format === 'count') {
@@ -163,7 +164,7 @@ export type ActionDef = {
 /** Resolve :param placeholders in an action path using entity data */
 export function resolveActionTo(to: string, data: Record<string, unknown>): string {
   return to.replace(/:(\w+)/g, (_, key) => {
-    const val = data[key] ?? data['id']
+    const val = data[key] ?? data.id
     return val != null ? String(val) : key
   })
 }
@@ -514,13 +515,11 @@ export function renderCellByType(
       const strVal = String(value)
       // Capitalize first letter of each word, replace underscores with spaces (matches Medusa)
       const label = strVal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-      return React.createElement(
-        StatusCell,
-        {
-          color: getStatusColor(strVal),
-        },
-        label,
-      )
+      return React.createElement(StatusCell, {
+        color: getStatusColor(strVal),
+        // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+        children: label,
+      })
     }
 
     case 'count': {
@@ -561,23 +560,21 @@ export function renderCellByType(
           className: 'flex items-center gap-x-1 text-sm',
         },
         React.createElement('span', { className: 'truncate' }, names.slice(0, 2).join(', ')),
-        React.createElement(
-          Tooltip,
-          {
-            content: React.createElement(
-              'ul',
-              { className: 'list-none p-0 m-0' },
-              names.slice(2).map((n, i) => React.createElement('li', { key: i }, n)),
-            ),
-          },
-          React.createElement(
+        React.createElement(Tooltip, {
+          content: React.createElement(
+            'ul',
+            { className: 'list-none p-0 m-0' },
+            names.slice(2).map((n, i) => React.createElement('li', { key: i }, n)),
+          ),
+          // biome-ignore lint/correctness/noChildrenProp: Tooltip type requires children as prop
+          children: React.createElement(
             'span',
             {
               className: 'text-muted-foreground whitespace-nowrap cursor-default',
             },
             `+${names.length - 2} more`,
           ),
-        ),
+        }),
       )
     }
 
@@ -742,7 +739,8 @@ export function renderCellByFormat(value: unknown, format?: ColumnFormat): React
         if (value == null) return React.createElement(PlaceholderCell, null)
         const strVal = String(value)
         const label = strVal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-        return React.createElement(StatusCell, { color: getStatusColor(strVal) }, label)
+        // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+        return React.createElement(StatusCell, { color: getStatusColor(strVal), children: label })
       }
 
       case 'boolean':
@@ -802,7 +800,8 @@ export function renderCellByFormat(value: unknown, format?: ColumnFormat): React
         const config = boolVal ? format.true : format.false
         const label = config?.label ?? (boolVal ? 'Yes' : 'No')
         const color = config?.color ?? (boolVal ? 'green' : 'grey')
-        return React.createElement(StatusCell, { color }, label)
+        // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+        return React.createElement(StatusCell, { color, children: label })
       }
 
       // Enum badge with value→color mapping
@@ -811,14 +810,16 @@ export function renderCellByFormat(value: unknown, format?: ColumnFormat): React
         const strVal = String(value)
         const color = format.values[strVal] ?? format.values[strVal.toLowerCase()] ?? 'grey'
         const label = strVal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-        return React.createElement(StatusCell, { color }, label)
+        // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+        return React.createElement(StatusCell, { color, children: label })
       }
 
       // Default badge
       if (value == null) return React.createElement(PlaceholderCell, null)
       const strVal = String(value)
       const label = strVal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-      return React.createElement(StatusCell, { color: getStatusColor(strVal) }, label)
+      // biome-ignore lint/correctness/noChildrenProp: StatusCell type requires children as prop
+      return React.createElement(StatusCell, { color: getStatusColor(strVal), children: label })
     }
 
     case 'currency': {

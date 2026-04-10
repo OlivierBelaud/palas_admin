@@ -1,5 +1,5 @@
-import { type AuthContext, createTestAuth, type IAuthPort, MockAuthPort } from '@manta/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { type AuthContext, createTestAuth, MockAuthPort } from '@manta/test-utils'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 describe('IAuthPort Conformance', () => {
   let authPort: MockAuthPort

@@ -1,7 +1,27 @@
 // Base property class — all DML property types extend this.
 // Type parameter T tracks the inferred TypeScript type of the property.
 
-import { MantaError } from '../../errors/manta-error'
+import { ComputedProperty } from './computed'
+import { NullableModifier } from './nullable'
+
+/**
+ * Nullable API — what is returned by .nullable().
+ * Mirrors the runtime NullableModifier which forwards chain modifiers.
+ */
+export interface NullableApi<T> {
+  /** @internal Type brand for InferEntity — do not use directly. */
+  readonly $dataType: T | null
+  /** Mark as searchable (forwarded to underlying property). */
+  searchable(): NullableApi<T>
+  /** Add a database index (forwarded to underlying property). */
+  index(name?: string): NullableApi<T>
+  /** Add a unique constraint (forwarded to underlying property). */
+  unique(name?: string): NullableApi<T>
+  /** Set a default value (forwarded to underlying property). */
+  default(value: T): NullableApi<T>
+  /** Serialize property metadata. */
+  parse(fieldName: string): PropertyMetadata
+}
 
 export interface PropertyMetadata {
   fieldName: string
@@ -17,43 +37,6 @@ export interface PropertyMetadata {
   values?: unknown
 }
 
-// Direct lazy-loaded references — resolved on first call, NOT via deferred registration.
-// The old pattern (_registerNullableModifier called as a side-effect from nullable.ts) was
-// broken by production bundlers (rolldown/rollup) that split base.ts and nullable.ts into
-// different chunks with no guaranteed execution order → "NullableModifier not registered"
-// on Vercel serverless. Lazy require() breaks the circular dep safely at call time.
-// biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-let _NullableMod: (new (schema: any) => any) | null = null
-// biome-ignore lint/suspicious/noExplicitAny: circular dep resolution
-let _ComputedMod: (new (schema: any) => any) | null = null
-
-function getNullableModifier() {
-  if (!_NullableMod) {
-    // Lazy require — called only when .nullable() is first invoked, breaking circular dep
-    _NullableMod = (require('./nullable') as { NullableModifier: new (schema: any) => any }).NullableModifier
-  }
-  return _NullableMod
-}
-
-function getComputedProperty() {
-  if (!_ComputedMod) {
-    _ComputedMod = (require('./computed') as { ComputedProperty: new (schema: any) => any }).ComputedProperty
-  }
-  return _ComputedMod
-}
-
-/** @internal Kept for backward compatibility — no-op, lazy loading handles it now. */
-// biome-ignore lint/suspicious/noExplicitAny: backward compat
-export function _registerNullableModifier(_ctor: new (schema: any) => any): void {
-  // No-op — lazy require in getNullableModifier() replaces this
-}
-
-/** @internal Kept for backward compatibility — no-op. */
-// biome-ignore lint/suspicious/noExplicitAny: backward compat
-export function _registerComputedProperty(_ctor: new (schema: any) => any): void {
-  // No-op
-}
-
 // ── Public API interface — what the developer sees in autocompletion ──
 
 /**
@@ -64,7 +47,7 @@ export interface DmlProperty<T> {
   /** @internal Type brand for InferEntity — do not use directly. */
   readonly $dataType: T
   /** Mark property as nullable. */
-  nullable(): { $dataType: T | null; parse: (fieldName: string) => PropertyMetadata }
+  nullable(): NullableApi<T>
   /** Mark as computed (derived, not stored). */
   // biome-ignore lint/suspicious/noExplicitAny: returns ComputedProperty
   computed(): any
@@ -142,14 +125,14 @@ export abstract class BaseProperty<T> {
   #translatable = false
 
   /** Mark property as nullable. Returns an object with $dataType: T | null for type inference. */
-  nullable(): { $dataType: T | null; parse: (fieldName: string) => PropertyMetadata } {
-    return new (getNullableModifier())(this)
+  nullable(): NullableApi<T> {
+    return new NullableModifier(this) as unknown as NullableApi<T>
   }
 
   /** Mark as computed. Returns ComputedProperty<T | null, this> for type inference. */
   // biome-ignore lint/suspicious/noExplicitAny: returns ComputedProperty
   computed(): any {
-    return new (getComputedProperty())(this)
+    return new ComputedProperty(this)
   }
 
   /** Add an index. */

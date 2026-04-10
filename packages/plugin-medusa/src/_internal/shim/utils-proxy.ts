@@ -74,7 +74,7 @@ proxy.DALUtils = {
 
 // --- Event builder factory (keep real if available, stub if not) ---
 if (!proxy.moduleEventBuilderFactory) {
-  proxy.moduleEventBuilderFactory = (name: string) => () => noopDecorator
+  proxy.moduleEventBuilderFactory = (_name: string) => () => noopDecorator
 }
 if (!proxy.buildEventNamesFromEntityName) {
   proxy.buildEventNamesFromEntityName = (names: string | string[]) => {

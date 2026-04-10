@@ -1,4 +1,3 @@
-
 export default defineQuery({
   name: 'customer-billing-address',
   description: 'Get the single billing address for a customer (falls back to default shipping)',
@@ -6,36 +5,30 @@ export default defineQuery({
     customer_id: z.string(),
   }),
   handler: async (input, { query }) => {
-    const allLinks = await query.graph({
-      entity: 'customer_address' as any,
-      pagination: { limit: 500 },
+    // Single query: load customer with all addresses via 1:N relation (pivot has type + is_default)
+    const customers = await query.graph({
+      entity: 'customer',
+      fields: ['*', 'addresses.*'],
+      filters: { id: input.customer_id },
+      pagination: { limit: 1 },
     })
 
-    const customerLinks = (allLinks as any[])
-      .filter((l) => l.customer_id === input.customer_id)
+    const customer = customers[0] as Record<string, unknown> | undefined
+    if (!customer) return null
 
-    if (customerLinks.length === 0) return null
+    const addresses = (customer.addresses ?? []) as Record<string, unknown>[]
+    if (addresses.length === 0) return null
 
     // Try billing first, fallback to default shipping
-    let targetLink = customerLinks.find((l) => l.type === 'billing')
-    if (!targetLink) {
-      targetLink = customerLinks.find((l) => l.type === 'shipping' && l.is_default)
+    let target = addresses.find((a) => a.type === 'billing')
+    if (!target) {
+      target = addresses.find((a) => a.type === 'shipping' && a.is_default)
     }
-    if (!targetLink) return null
-
-    const allAddresses = await query.graph({
-      entity: 'address',
-      pagination: { limit: 200 },
-    })
-
-    const address = (allAddresses as any[]).find((a) => a.id === targetLink.address_id)
-    if (!address) return null
+    if (!target) return null
 
     return {
-      ...address,
-      type: targetLink.type,
-      is_default: targetLink.is_default,
-      is_fallback: targetLink.type === 'shipping',
+      ...target,
+      is_fallback: target.type === 'shipping',
     }
   },
 })

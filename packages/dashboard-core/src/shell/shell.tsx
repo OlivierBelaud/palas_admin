@@ -118,6 +118,7 @@ const Breadcrumbs = () => {
         const isSingle = crumbs.length === 1
 
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: breadcrumbs derived from pathname, stable per route
           <li key={index} className={cn('flex items-center')}>
             {!isLast ? (
               <Link className="transition-colors hover:text-muted-foreground" to={crumb.path}>
@@ -127,7 +128,6 @@ const Breadcrumbs = () => {
               <div>
                 {!isSingle && <span className="block lg:hidden">...</span>}
                 <span
-                  key={index}
                   className={cn({
                     'hidden lg:block': !isSingle,
                   })}

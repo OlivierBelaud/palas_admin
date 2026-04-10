@@ -294,7 +294,7 @@ describe('buildDrizzleRelations — real Drizzle integration', () => {
     expect(result.tables.product_collection_link.relations.collection.referencedTableName).toBe('collections')
 
     // Products → many(pivot)
-    expect(result.tables.products.relations).toHaveProperty('link_product_collection_link')
+    expect(result.tables.products.relations).toHaveProperty('productCollectionLink')
   })
 
   it('combined intra + cross module schema passes full validation', () => {
@@ -363,7 +363,7 @@ describe('buildDrizzleRelations — real Drizzle integration', () => {
     const prodRels = Object.keys(result.tables.products.relations)
     expect(prodRels).toContain('variants')
     expect(prodRels).toContain('category')
-    expect(prodRels).toContain('link_product_collection_link')
+    expect(prodRels).toContain('productCollectionLink')
 
     // Variants has: product (one)
     expect(Object.keys(result.tables.variants.relations)).toContain('product')

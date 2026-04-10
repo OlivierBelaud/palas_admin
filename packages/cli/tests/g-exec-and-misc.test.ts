@@ -157,31 +157,31 @@ describe('G — Spinner', () => {
 describe('G — Profile resolution', () => {
   it('G-11 — ConfigManager.detectProfile returns dev by default', async () => {
     const { ConfigManager } = await import('@manta/core')
-    const orig = process.env['APP_ENV']
-    const origNode = process.env['NODE_ENV']
-    delete process.env['APP_ENV']
-    process.env['NODE_ENV'] = 'development'
+    const orig = process.env.APP_ENV
+    const origNode = process.env.NODE_ENV
+    delete process.env.APP_ENV
+    process.env.NODE_ENV = 'development'
 
     expect(ConfigManager.detectProfile()).toBe('dev')
 
-    if (orig !== undefined) process.env['APP_ENV'] = orig
-    else delete process.env['APP_ENV']
-    if (origNode !== undefined) process.env['NODE_ENV'] = origNode
-    else delete process.env['NODE_ENV']
+    if (orig !== undefined) process.env.APP_ENV = orig
+    else delete process.env.APP_ENV
+    if (origNode !== undefined) process.env.NODE_ENV = origNode
+    else delete process.env.NODE_ENV
   })
 
   it('G-12 — ConfigManager.detectProfile returns prod for production', async () => {
     const { ConfigManager } = await import('@manta/core')
-    const orig = process.env['APP_ENV']
-    const origNode = process.env['NODE_ENV']
-    delete process.env['APP_ENV']
-    process.env['NODE_ENV'] = 'production'
+    const orig = process.env.APP_ENV
+    const origNode = process.env.NODE_ENV
+    delete process.env.APP_ENV
+    process.env.NODE_ENV = 'production'
 
     expect(ConfigManager.detectProfile()).toBe('prod')
 
-    if (orig !== undefined) process.env['APP_ENV'] = orig
-    else delete process.env['APP_ENV']
-    if (origNode !== undefined) process.env['NODE_ENV'] = origNode
-    else delete process.env['NODE_ENV']
+    if (orig !== undefined) process.env.APP_ENV = orig
+    else delete process.env.APP_ENV
+    if (origNode !== undefined) process.env.NODE_ENV = origNode
+    else delete process.env.NODE_ENV
   })
 })

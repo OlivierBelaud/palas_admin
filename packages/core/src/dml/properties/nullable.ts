@@ -1,6 +1,6 @@
 // NullableModifier — wraps a property and changes its inferred type to T | null.
 
-import { _registerNullableModifier, type BaseProperty, type PropertyMetadata } from './base'
+import type { BaseProperty, PropertyMetadata } from './base'
 
 /**
  * Marks a property as nullable.
@@ -24,8 +24,11 @@ export class NullableModifier<T, Schema extends BaseProperty<T>> {
   /** Forward searchable() to the underlying property. */
   searchable(): this {
     this.#schema._setSearchable()
-    if ('dataType' in this.#schema && typeof (this.#schema as any).dataType?.options === 'object') {
-      ;(this.#schema as any).dataType.options.searchable = true
+    const schemaWithDataType = this.#schema as unknown as {
+      dataType?: { options?: Record<string, unknown> }
+    }
+    if (typeof schemaWithDataType.dataType?.options === 'object' && schemaWithDataType.dataType.options !== null) {
+      schemaWithDataType.dataType.options.searchable = true
     }
     return this
   }
@@ -53,6 +56,3 @@ export class NullableModifier<T, Schema extends BaseProperty<T>> {
     return this.#schema.parse(fieldName)
   }
 }
-
-// Register with BaseProperty to break circular dep
-_registerNullableModifier(NullableModifier)

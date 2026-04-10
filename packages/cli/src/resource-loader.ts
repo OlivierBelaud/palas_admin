@@ -4,7 +4,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
-import { MantaError } from '@manta/core'
+import { MantaError, toCamel } from '@manta/core'
 
 export interface DiscoveredEntity {
   /** Entity directory name (e.g. 'post', 'category') */
@@ -16,8 +16,18 @@ export interface DiscoveredEntity {
 }
 
 export interface DiscoveredModule {
-  /** Module directory name (e.g. 'blog', 'inventory') */
+  /**
+   * Canonical camelCase module identifier (e.g. 'blog', 'inventory', 'myCustomModule').
+   * Used as JS/TS key everywhere downstream — DI container, registry keys, command scopes,
+   * entity tags, interface keys, etc.
+   */
   name: string
+  /**
+   * Raw on-disk directory name (e.g. 'blog', 'inventory', 'my-custom-module').
+   * Use this for filesystem paths, user-facing logs, and URL segments only.
+   * Never use it as a JS identifier.
+   */
+  dirName: string
   /** Absolute path to the module directory */
   moduleDir: string
   /** Discovered entities within this module */
@@ -266,11 +276,36 @@ function discoverModules(srcDir: string): DiscoveredModule[] {
     const moduleDir = resolve(modulesDir, entry)
     if (!statSync(moduleDir).isDirectory()) continue
 
+    // Canonicalize directory name → camelCase JS identifier.
+    // `dirName` is the raw on-disk name (for filesystem + logs + URLs).
+    // `name` is the canonical camelCase identifier used as a JS/TS key everywhere downstream.
+    const dirName = entry
+    const name = toCamel(entry)
+
+    // Validate that the canonicalized name is a legal JS identifier.
+    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) {
+      throw new MantaError(
+        'INVALID_DATA',
+        `Module directory "${dirName}" does not produce a valid JS identifier ("${name}"). ` +
+          `Use kebab-case or camelCase letters only.`,
+      )
+    }
+
+    // Collision detection: two different directories canonicalizing to the same identifier.
+    const existing = modules.find((m) => m.name === name)
+    if (existing) {
+      throw new MantaError(
+        'INVALID_DATA',
+        `Module directory collision: "${dirName}" and "${existing.dirName}" both canonicalize to "${name}". ` +
+          `Rename one of them.`,
+      )
+    }
+
     // Validate structure — reject model.ts/service.ts at module root
-    validateModuleStructure(moduleDir, entry)
+    validateModuleStructure(moduleDir, dirName)
 
     // Discover entities from entities/*/model.ts
-    const entities = discoverEntities(moduleDir, entry)
+    const entities = discoverEntities(moduleDir, dirName)
     if (entities.length === 0) continue // Skip modules with no entities
 
     // Discover intra-module commands from commands/*.ts (commands scoped to this module)
@@ -288,21 +323,20 @@ function discoverModules(srcDir: string): DiscoveredModule[] {
     // Discover intra-module raw API routes from api/**/route.ts (escape hatch for non-CQRS)
     const moduleApiRoutes = discoverModuleApiRoutes(resolve(moduleDir, 'api'))
 
-    // Discover intra-module links from links/*.ts
-    const moduleLinks = discoverTsFiles(resolve(moduleDir, 'links'), (name, path) => ({
-      id: name,
+    // Discover intra-module links from links/*.ts — use canonical `name` for the modules list
+    // since consumers use it as a JS identifier for intra-module detection.
+    const moduleLinks = discoverTsFiles(resolve(moduleDir, 'links'), (linkName, path) => ({
+      id: linkName,
       path,
-      modules: [entry],
+      modules: [name],
     }))
 
-    // Module name = directory name
-    const name = entry
-
-    // Service name convention: capitalize + "Service"
-    const service = `${name.charAt(0).toUpperCase()}${name.slice(1).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}Service`
+    // Service name convention: capitalize canonical name + "Service" (e.g. 'myMod' → 'MyModService')
+    const service = `${name.charAt(0).toUpperCase()}${name.slice(1)}Service`
 
     modules.push({
       name,
+      dirName,
       moduleDir,
       entities,
       commands: moduleCommands,
@@ -543,10 +577,10 @@ function discoverUsers(modules: DiscoveredModule[], modulesDir: string): Discove
     }
 
     // Legacy: modules ending with '-user' that have index.ts
-    if (mod.name.endsWith('-user')) {
-      const indexPath = resolve(modulesDir, mod.name, 'index.ts')
+    if (mod.dirName.endsWith('-user')) {
+      const indexPath = resolve(modulesDir, mod.dirName, 'index.ts')
       if (existsSync(indexPath)) {
-        const contextName = mod.name.replace(/-user$/, '')
+        const contextName = mod.dirName.replace(/-user$/, '')
         // Don't add duplicate if already found via model.ts scan
         if (!users.some((u) => u.contextName === contextName)) {
           users.push({ contextName, moduleName: mod.name, path: indexPath })

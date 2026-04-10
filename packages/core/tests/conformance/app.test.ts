@@ -6,10 +6,8 @@ import {
   InMemoryEventBusAdapter,
   InMemoryFileAdapter,
   InMemoryLockingAdapter,
-  type MantaApp,
   type MantaAppBuilder,
   TestLogger,
-  type TestMantaApp,
 } from '../../src'
 
 interface ProductService {

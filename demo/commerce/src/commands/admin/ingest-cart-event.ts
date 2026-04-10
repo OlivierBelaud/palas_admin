@@ -1,4 +1,3 @@
-
 const ItemDiscountSchema = z.object({
   title: z.string(),
   amount: z.number(),
@@ -98,9 +97,46 @@ export default defineCommand({
     raw_properties: z.record(z.unknown()).nullable().optional(),
   }),
   workflow: async (input, { step }) => {
+    // step.service is typed with module names (MantaGeneratedAppModules), but the runtime
+    // Proxy also resolves entity names (cart, cartEvent) to per-entity CRUD. We describe
+    // the shape we actually use below.
+    type CartRow = {
+      id: string
+      highest_stage: (typeof STAGES)[number]
+      status: string
+      distinct_id?: string | null
+      email?: string | null
+      first_name?: string | null
+      last_name?: string | null
+      phone?: string | null
+      city?: string | null
+      country_code?: string | null
+      shopify_customer_id?: string | null
+      order_id?: string | null
+      shopify_order_id?: string | null
+      is_first_order?: boolean | null
+      shipping_method?: string | null
+      shipping_price?: number | null
+      discounts_amount?: number | null
+      discounts?: unknown
+      subtotal_price?: number | null
+      total_tax?: number | null
+    }
+    type EntityCrud<Row> = {
+      list: (filters: Record<string, unknown>) => Promise<Row[]>
+      create: (data: Record<string, unknown>) => Promise<Row>
+      update: (id: string, data: Record<string, unknown>) => Promise<Row>
+    }
+    // step.service is typed with module names (MantaGeneratedAppModules), but the runtime
+    // Proxy also exposes entity names (cart, cartEvent) as CRUD shortcuts not in generated types.
+    const svc = step.service as unknown as {
+      cart: EntityCrud<CartRow>
+      cartEvent: EntityCrud<Record<string, unknown>>
+    }
+
     // 1. Find or create the Cart head
-    const existingCarts = await step.service.cart.list({ cart_token: input.cart_token })
-    const existing = (existingCarts as any[])[0] as any | undefined
+    const existingCarts = await svc.cart.list({ cart_token: input.cart_token })
+    const existing: CartRow | undefined = existingCarts[0]
 
     const newStage = actionToStage(input.action)
     const newStageIdx = STAGES.indexOf(newStage)
@@ -112,7 +148,7 @@ export default defineCommand({
     const status = input.action === 'checkout:completed' ? 'completed' : (existing?.status ?? 'active')
 
     // Merge identity: keep existing values, fill in new ones progressively
-    const merge = (newVal: any, existingVal: any) => newVal ?? existingVal ?? null
+    const merge = <A, B>(newVal: A, existingVal: B): A | B | null => newVal ?? existingVal ?? null
 
     const cartData = {
       cart_token: input.cart_token,
@@ -145,15 +181,15 @@ export default defineCommand({
 
     let cartId: string
     if (existing) {
-      await step.service.cart.update(existing.id, cartData)
+      await svc.cart.update(existing.id, cartData)
       cartId = existing.id
     } else {
-      const created = (await step.service.cart.create(cartData)) as any
+      const created = await svc.cart.create(cartData)
       cartId = created.id
     }
 
     // 2. Always append the event (append-only log)
-    await step.service.cartEvent.create({
+    await svc.cartEvent.create({
       cart_id: cartId,
       action: input.action,
       items_snapshot: input.items,

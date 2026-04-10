@@ -12,7 +12,9 @@
 
 import { z } from 'zod'
 import type { DmlEntity } from '../dml/entity'
+import { MantaError } from '../errors/manta-error'
 import type { ResolvedLink } from '../link'
+import type { StepContext } from '../workflows/types'
 import { dmlToZod } from './dml-to-zod'
 import type { CommandDefinition } from './types'
 
@@ -108,17 +110,19 @@ export function generateEntityCommands(moduleName: string, entity: DmlEntity): E
     name: `create${cap}`,
     description: `Create a new ${entityLower}`,
     input: schemas.create,
-    workflow: async (input: unknown, ctx: unknown) => {
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic service resolution
-      const app = (ctx as any).app
-      const modules = app.modules as Record<string, Record<string, Function>>
+    workflow: async (input: unknown, ctx: StepContext) => {
+      const modules = ctx.app.modules as Record<string, Record<string, Function>>
       const service = modules[entityLower] ?? modules[moduleName]
       const result = await service[`create${pluralize(entityName)}`](input)
 
-      const eventBus = app.infra?.eventBus
+      const eventBus = ctx.app.infra?.eventBus
       if (eventBus) {
         const id = (result as Record<string, unknown>)?.id
-        await eventBus.emit(`${entityLower}.created`, { id, ...(input as Record<string, unknown>) })
+        await eventBus.emit({
+          eventName: `${entityLower}.created`,
+          data: { id, ...(input as Record<string, unknown>) },
+          metadata: { timestamp: Date.now() },
+        })
       }
 
       return result
@@ -135,17 +139,19 @@ export function generateEntityCommands(moduleName: string, entity: DmlEntity): E
     name: `update${cap}`,
     description: `Update an existing ${entityLower}`,
     input: schemas.update,
-    workflow: async (input: unknown, ctx: unknown) => {
+    workflow: async (input: unknown, ctx: StepContext) => {
       const { id, ...data } = input as Record<string, unknown> & { id: string }
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic service resolution
-      const app = (ctx as any).app
-      const modules = app.modules as Record<string, Record<string, Function>>
+      const modules = ctx.app.modules as Record<string, Record<string, Function>>
       const service = modules[entityLower] ?? modules[moduleName]
       const result = await service[`update${pluralize(entityName)}`]({ id, ...data })
 
-      const eventBus = app.infra?.eventBus
+      const eventBus = ctx.app.infra?.eventBus
       if (eventBus) {
-        await eventBus.emit(`${entityLower}.updated`, { id })
+        await eventBus.emit({
+          eventName: `${entityLower}.updated`,
+          data: { id },
+          metadata: { timestamp: Date.now() },
+        })
       }
 
       return result
@@ -162,17 +168,19 @@ export function generateEntityCommands(moduleName: string, entity: DmlEntity): E
     name: `delete${cap}`,
     description: `Delete a ${entityLower}`,
     input: schemas.delete,
-    workflow: async (input: unknown, ctx: unknown) => {
+    workflow: async (input: unknown, ctx: StepContext) => {
       const { id } = input as { id: string }
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic service resolution
-      const app = (ctx as any).app
-      const modules = app.modules as Record<string, Record<string, Function>>
+      const modules = ctx.app.modules as Record<string, Record<string, Function>>
       const service = modules[entityLower] ?? modules[moduleName]
       await service[`delete${pluralize(entityName)}`](id)
 
-      const eventBus = app.infra?.eventBus
+      const eventBus = ctx.app.infra?.eventBus
       if (eventBus) {
-        await eventBus.emit(`${entityLower}.deleted`, { id })
+        await eventBus.emit({
+          eventName: `${entityLower}.deleted`,
+          data: { id },
+          metadata: { timestamp: Date.now() },
+        })
       }
 
       return { id, deleted: true }
@@ -189,11 +197,9 @@ export function generateEntityCommands(moduleName: string, entity: DmlEntity): E
     name: `retrieve${cap}`,
     description: `Retrieve a ${entityLower} by ID`,
     input: schemas.retrieve,
-    workflow: async (input: unknown, ctx: unknown) => {
+    workflow: async (input: unknown, ctx: StepContext) => {
       const { id } = input as { id: string }
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic service resolution
-      const app = (ctx as any).app
-      const modules = app.modules as Record<string, Record<string, Function>>
+      const modules = ctx.app.modules as Record<string, Record<string, Function>>
       const service = modules[entityLower] ?? modules[moduleName]
       return service[`retrieve${entityName}`](id)
     },
@@ -209,16 +215,14 @@ export function generateEntityCommands(moduleName: string, entity: DmlEntity): E
     name: `list${capPlural}`,
     description: `List ${entityLower} entities`,
     input: schemas.list,
-    workflow: async (input: unknown, ctx: unknown) => {
+    workflow: async (input: unknown, ctx: StepContext) => {
       const { filters, limit, offset, order } = input as {
         filters?: Record<string, unknown>
         limit?: number
         offset?: number
         order?: Record<string, 'ASC' | 'DESC'>
       }
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic service resolution
-      const app = (ctx as any).app
-      const modules = app.modules as Record<string, Record<string, Function>>
+      const modules = ctx.app.modules as Record<string, Record<string, Function>>
       const service = modules[entityLower] ?? modules[moduleName]
       return service[`list${pluralize(entityName)}`](filters, { take: limit, skip: offset, order })
     },
@@ -268,10 +272,49 @@ export function generateLinkCommands(link: ResolvedLink): EntityCommand[] {
   const leftFk = link.leftFk
   const rightFk = link.rightFk
 
-  const inputSchema = z.object({
+  // Build input schema: FK fields + extra columns (if any)
+  const inputFields: Record<string, z.ZodTypeAny> = {
     [leftFk]: z.string(),
     [rightFk]: z.string(),
-  })
+  }
+
+  // Map DML dataType names to Zod types for extra columns
+  const extraColumnNames: string[] = []
+  if (link.extraColumns) {
+    for (const [fieldName, fieldValue] of Object.entries(link.extraColumns)) {
+      const v = fieldValue as Record<string, unknown>
+      if (typeof v?.parse === 'function') {
+        const meta = v.parse(fieldName) as { dataType: { name: string }; nullable: boolean; defaultValue?: unknown }
+        let zodType: z.ZodTypeAny
+        switch (meta.dataType.name) {
+          case 'text':
+          case 'id':
+          case 'enum':
+          case 'dateTime':
+            zodType = z.string()
+            break
+          case 'number':
+          case 'serial':
+          case 'float':
+            zodType = z.number()
+            break
+          case 'boolean':
+            zodType = z.boolean()
+            break
+          default:
+            zodType = z.unknown()
+            break
+        }
+        if (meta.nullable || meta.defaultValue !== undefined) {
+          zodType = zodType.optional()
+        }
+        inputFields[fieldName] = zodType
+        extraColumnNames.push(fieldName)
+      }
+    }
+  }
+
+  const inputSchema = z.object(inputFields)
 
   const commands: EntityCommand[] = []
 
@@ -285,36 +328,43 @@ export function generateLinkCommands(link: ResolvedLink): EntityCommand[] {
     name: `link${leftCap}${rightCap}`,
     description: `Link a ${leftLower} to a ${rightLower}`,
     input: inputSchema,
-    workflow: async (input: unknown, ctx: unknown) => {
-      const data = input as Record<string, string>
-      const leftId = data[leftFk]
-      const rightId = data[rightFk]
+    workflow: async (input: unknown, ctx: StepContext) => {
+      const data = input as Record<string, unknown>
+      const leftId = data[leftFk] as string
+      const rightId = data[rightFk] as string
 
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic app resolution
-      const app = (ctx as any).app
-      const db = (app.infra as Record<string, unknown>).db as {
+      const db = ctx.app.infra.db as {
         insert: (table: unknown) => { values: (v: unknown) => { onConflictDoNothing: () => Promise<unknown> } }
       }
-      const tables = app.resolve('__generatedTables') as Map<string, unknown>
+      const tables = ctx.app.resolve('__generatedTables') as Map<string, unknown>
       const linkTable = tables.get(link.tableName)
       if (!linkTable) {
-        throw new Error(`Link table "${link.tableName}" not found`)
+        throw new MantaError('NOT_FOUND', `Link table "${link.tableName}" not found`)
       }
 
-      await db
-        .insert(linkTable)
-        .values({
-          id: `link_${leftId}_${rightId}`,
-          [leftFk]: leftId,
-          [rightFk]: rightId,
-          created_at: new Date(),
-          updated_at: new Date(),
-        })
-        .onConflictDoNothing()
+      // Build values with FK fields + any extra column values from input
+      const values: Record<string, unknown> = {
+        id: `link_${leftId}_${rightId}`,
+        [leftFk]: leftId,
+        [rightFk]: rightId,
+        created_at: new Date(),
+        updated_at: new Date(),
+      }
+      for (const col of extraColumnNames) {
+        if (data[col] !== undefined) {
+          values[col] = data[col]
+        }
+      }
 
-      const eventBus = app.infra?.eventBus
+      await db.insert(linkTable).values(values).onConflictDoNothing()
+
+      const eventBus = ctx.app.infra?.eventBus
       if (eventBus) {
-        await eventBus.emit(`${leftLower}.${rightLower}.linked`, { [leftFk]: leftId, [rightFk]: rightId })
+        await eventBus.emit({
+          eventName: `${leftLower}.${rightLower}.linked`,
+          data: { [leftFk]: leftId, [rightFk]: rightId },
+          metadata: { timestamp: Date.now() },
+        })
       }
 
       return { success: true }
@@ -331,33 +381,37 @@ export function generateLinkCommands(link: ResolvedLink): EntityCommand[] {
     name: `unlink${leftCap}${rightCap}`,
     description: `Unlink a ${leftLower} from a ${rightLower}`,
     input: inputSchema,
-    workflow: async (input: unknown, ctx: unknown) => {
+    workflow: async (input: unknown, ctx: StepContext) => {
       const data = input as Record<string, string>
       const leftId = data[leftFk]
       const rightId = data[rightFk]
 
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic app resolution
-      const app = (ctx as any).app
-      const db = (app.infra as Record<string, unknown>).db as {
+      const db = ctx.app.infra.db as {
         delete: (table: unknown) => { where: (cond: unknown) => Promise<unknown> }
       }
-      const tables = app.resolve('__generatedTables') as Map<string, unknown>
+      const tables = ctx.app.resolve('__generatedTables') as Map<string, unknown>
       const linkTable = tables.get(link.tableName)
       if (!linkTable) {
-        throw new Error(`Link table "${link.tableName}" not found`)
+        throw new MantaError('NOT_FOUND', `Link table "${link.tableName}" not found`)
       }
 
-      // biome-ignore lint/suspicious/noExplicitAny: Drizzle dynamic column access
-      const leftFkCol = (linkTable as any)[leftFk]
-      // biome-ignore lint/suspicious/noExplicitAny: Drizzle dynamic column access
-      const rightFkCol = (linkTable as any)[rightFk]
+      // Drizzle dynamic column access — columns are passed to eq() which requires
+      // typed Drizzle column types we can't express from a string key.
+      // biome-ignore lint/suspicious/noExplicitAny: Drizzle column dynamic access
+      const linkTableCols = linkTable as Record<string, any>
+      const leftFkCol = linkTableCols[leftFk]
+      const rightFkCol = linkTableCols[rightFk]
 
       const { eq, and } = await import('drizzle-orm')
       await db.delete(linkTable).where(and(eq(leftFkCol, leftId), eq(rightFkCol, rightId)))
 
-      const eventBus = app.infra?.eventBus
+      const eventBus = ctx.app.infra?.eventBus
       if (eventBus) {
-        await eventBus.emit(`${leftLower}.${rightLower}.unlinked`, { [leftFk]: leftId, [rightFk]: rightId })
+        await eventBus.emit({
+          eventName: `${leftLower}.${rightLower}.unlinked`,
+          data: { [leftFk]: leftId, [rightFk]: rightId },
+          metadata: { timestamp: Date.now() },
+        })
       }
 
       return { success: true }

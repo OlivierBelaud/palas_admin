@@ -23,7 +23,11 @@ function buildFetchUrl(
   searchParams: URLSearchParams,
   dataSource: DataSource,
 ): string {
-  const { endpoint, params: queryParams } = buildQueryParams(spec.query, state, dataSource)
+  const { endpoint, params: queryParams } = buildQueryParams(
+    spec.query as Parameters<typeof buildQueryParams>[0],
+    state,
+    dataSource,
+  )
 
   const url = new URL(endpoint, window.location.origin)
   for (const [key, value] of Object.entries(queryParams)) {
@@ -95,7 +99,7 @@ export function useSpecQuery({ resolvedSpec, params, dataSource }: UseSpecQueryO
   // Resolve entity ID from spec
   const resolvedId = resolvedSpec.query.id
     ? typeof resolvedSpec.query.id === 'object' && '$state' in resolvedSpec.query.id
-      ? (params || {})[resolvedSpec.query.id.$state.split('/').pop() || 'id']
+      ? params?.[resolvedSpec.query.id.$state.split('/').pop() || 'id']
       : String(resolvedSpec.query.id)
     : undefined
 
@@ -115,12 +119,12 @@ export function useSpecQuery({ resolvedSpec, params, dataSource }: UseSpecQueryO
   }, [entityKey, resolvedSpec.type, resolvedSpec.id, resolvedId, searchParamsKey, specFiltersKey])
 
   // Stable params key for URL building
-  const paramsKey = useMemo(() => JSON.stringify(params || {}), [params])
+  const _paramsKey = useMemo(() => JSON.stringify(params || {}), [params])
 
   // Fetch URL (GET fallback)
   const fetchUrl = useMemo(
     () => buildFetchUrl(resolvedSpec, state, searchParams, dataSource),
-    [resolvedSpec, paramsKey, searchParamsKey, dataSource],
+    [resolvedSpec, dataSource, searchParams, state],
   )
 
   // CQRS query body (POST /api/admin/query)
@@ -161,7 +165,7 @@ export function useSpecQuery({ resolvedSpec, params, dataSource }: UseSpecQueryO
     }
 
     return body
-  }, [resolvedSpec, resolvedId, searchParamsKey])
+  }, [resolvedSpec, resolvedId, searchParams])
 
   // Data fetching
   const {

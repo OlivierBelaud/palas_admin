@@ -20,6 +20,8 @@ export interface HeaderDef {
   descriptionField?: string
   /** Status badge from entity field */
   statusField?: string
+  /** Field to render as a link (e.g. to a detail page) */
+  linkField?: string
   /** Action buttons in the header */
   actions?: HeaderAction[]
 }

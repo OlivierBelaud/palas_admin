@@ -44,6 +44,7 @@ export interface TypedRepository<T> {
   delete(ids: string | string[]): Promise<void>
   softDelete(ids: string | string[]): Promise<Record<string, string[]>>
   restore(ids: string | string[]): Promise<void>
+  upsertWithReplace(data: Partial<T>[], replaceFields?: string[], conflictTarget?: string[]): Promise<T[]>
 }
 
 /**
@@ -145,7 +146,8 @@ export function defineService<Methods extends ServiceMethods>(
 
   return {
     __type: 'service' as const,
-    entity: null as any, // resolved at boot time
+    // biome-ignore lint/suspicious/noExplicitAny: entity is resolved at boot time from _entityName
+    entity: null as unknown as DmlEntity<any>,
     factory,
     $modelObjects: {},
     publicMethods: options?.publicMethods,

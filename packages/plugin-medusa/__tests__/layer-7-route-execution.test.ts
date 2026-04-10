@@ -13,7 +13,7 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest'
 import { clearAlerts } from '../src/_internal/alerts'
 import { createRemoteQueryCallable, MedusaQueryAdapter } from '../src/_internal/mapping/query-adapter'
-import { applyMiddlewares, MedusaScope, wrapMedusaRouteHandler } from '../src/_internal/mapping/route-bridge'
+import { MedusaScope, wrapMedusaRouteHandler } from '../src/_internal/mapping/route-bridge'
 
 describe('layer-7: route execution', () => {
   // biome-ignore lint/suspicious/noExplicitAny: test

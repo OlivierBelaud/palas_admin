@@ -27,9 +27,7 @@ export class VercelBlobAdapter implements IFilePort {
     data: Buffer | ReadableStream,
     contentType?: string,
   ): Promise<{ key: string; url: string }> {
-    // biome-ignore lint/suspicious/noExplicitAny: Buffer/ReadableStream→PutBody compat
-    const blobData: any = data instanceof Buffer ? data : data
-    const blob = await put(key, blobData, {
+    const blob = await put(key, data, {
       access: 'public',
       contentType,
       addRandomSuffix: false,

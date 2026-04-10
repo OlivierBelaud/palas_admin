@@ -23,13 +23,13 @@ const makeInfra = () => ({
 describe('IRepository Conformance', () => {
   let repo: IRepository
   let app: TestMantaApp
-  let ctx: Context
+  let _ctx: Context
 
   beforeEach(() => {
     app = createTestMantaApp({ infra: makeInfra() })
     repo = new InMemoryRepository()
     app.register('IRepository', repo)
-    ctx = createTestContext()
+    _ctx = createTestContext()
   })
 
   afterEach(async () => {

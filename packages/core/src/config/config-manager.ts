@@ -88,7 +88,7 @@ export class ConfigManager {
    * @returns The detected environment profile
    */
   static detectProfile(): EnvProfile {
-    const appEnv = process.env['APP_ENV'] ?? process.env['NODE_ENV'] ?? 'development'
+    const appEnv = process.env.APP_ENV ?? process.env.NODE_ENV ?? 'development'
     const normalized = appEnv.toLowerCase()
 
     if (normalized === 'production' || normalized === 'staging') {
@@ -103,7 +103,7 @@ export class ConfigManager {
    * @returns The raw environment string
    */
   static getEnvString(): string {
-    return process.env['APP_ENV'] ?? process.env['NODE_ENV'] ?? 'development'
+    return process.env.APP_ENV ?? process.env.NODE_ENV ?? 'development'
   }
 
   /**

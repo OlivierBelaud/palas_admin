@@ -1,4 +1,4 @@
-import { type GeneratedSchema, generateDrizzleSchema, MantaError, parseDmlEntity } from '@manta/test-utils'
+import { generateDrizzleSchema, parseDmlEntity } from '@manta/test-utils'
 import { describe, expect, it } from 'vitest'
 
 describe('DML Generator Conformance', () => {

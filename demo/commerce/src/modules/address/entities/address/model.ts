@@ -1,4 +1,3 @@
-
 export default defineModel('Address', {
   address_name: field.text().nullable(),
   company: field.text().nullable(),

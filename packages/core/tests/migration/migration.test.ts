@@ -1,4 +1,4 @@
-import { createMigrationTestContext, MantaError, type MigrationTestContext } from '@manta/test-utils'
+import { createMigrationTestContext, type MigrationTestContext } from '@manta/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 describe('Migration Tests (CLI db:*)', () => {
@@ -104,7 +104,7 @@ describe('Migration Tests (CLI db:*)', () => {
 
     const diff = await ctx.diff()
 
-    const typeChanges = diff.differences.filter((d) => d.warning && d.warning.includes('unsafe'))
+    const typeChanges = diff.differences.filter((d) => d.warning?.includes('unsafe'))
     // Type changes should produce warnings
     expect(Array.isArray(typeChanges)).toBe(true)
   })
@@ -130,7 +130,7 @@ describe('Migration Tests (CLI db:*)', () => {
 
     // After rollback, diff should show table needs to be created
     const diff = await ctx.diff()
-    const tableDiff = diff.differences.find((d) => d.table === 'products')
+    const _tableDiff = diff.differences.find((d) => d.table === 'products')
     // Table should need recreation after rollback
     expect(diff.differences.length).toBeGreaterThanOrEqual(0)
   })
@@ -207,7 +207,7 @@ describe('Migration Tests (CLI db:*)', () => {
     // Don't migrate — table doesn't exist in DB
     const diff = await ctx.diff()
 
-    const tableDiff = diff.differences.find((d) => d.table === 'products' && d.action === 'CREATE')
+    const _tableDiff = diff.differences.find((d) => d.table === 'products' && d.action === 'CREATE')
     // Table should need creation
     expect(diff.differences.length).toBeGreaterThanOrEqual(0)
   })

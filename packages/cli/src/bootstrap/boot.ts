@@ -261,7 +261,7 @@ async function stepLoadModules(ctx: BootContext): Promise<void> {
         }
       } catch (err) {
         throw new Error(
-          `Failed to load entity '${modInfo.name}/${entity.name}': ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to load entity '${modInfo.dirName}/${entity.name}': ${err instanceof Error ? err.message : String(err)}`,
         )
       }
     }

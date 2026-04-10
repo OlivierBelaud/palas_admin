@@ -1,6 +1,7 @@
 // CG-01 → CG-12 — defineCommandGraph, dmlToZod, generateEntityCommands tests
 
 import { describe, expect, it } from 'vitest'
+import type { CommandAccessRule } from '../../src/command/define-command-graph'
 import {
   defineCommandGraph,
   getCommandScope,
@@ -18,6 +19,12 @@ import '../../src/dml/properties/nullable'
 import '../../src/dml/properties/computed'
 import { defineModel, field } from '../../src/dml/model'
 
+// Helper: defineCommandGraph's typed overload expects `Record<ModuleNameArg, ...>` which, with
+// codegen-populated MantaGeneratedAppModules, becomes an intersection that requires all registered
+// module keys. Tests use arbitrary module names, so we cast through `any` to bypass the constraint.
+// biome-ignore lint/suspicious/noExplicitAny: test helper to bypass codegen-augmented module keys
+const access = (map: Record<string, CommandAccessRule>): any => map
+
 // ── defineCommandGraph ──────────────────────────────────────────────
 
 describe('defineCommandGraph', () => {
@@ -30,10 +37,12 @@ describe('defineCommandGraph', () => {
 
   // CG-02
   it('creates a filtered command graph with per-module rules', () => {
-    const graph = defineCommandGraph({
-      catalog: true,
-      customer: ['create', 'update'],
-    })
+    const graph = defineCommandGraph(
+      access({
+        catalog: true,
+        customer: ['create', 'update'],
+      }),
+    )
     expect(graph.__type).toBe('command-graph')
     expect(graph.access).toEqual({
       catalog: true,
@@ -62,7 +71,7 @@ describe('isModuleAllowed', () => {
 
   // CG-06
   it('filtered graph allows only listed modules', () => {
-    const graph = defineCommandGraph({ catalog: true, customer: ['create'] })
+    const graph = defineCommandGraph(access({ catalog: true, customer: ['create'] }))
     expect(isModuleAllowed(graph, 'catalog')).toBe(true)
     expect(isModuleAllowed(graph, 'customer')).toBe(true)
     expect(isModuleAllowed(graph, 'stats')).toBe(false)
@@ -79,14 +88,14 @@ describe('isCommandAllowed', () => {
 
   // CG-08
   it('true rule allows all operations', () => {
-    const graph = defineCommandGraph({ catalog: true })
+    const graph = defineCommandGraph(access({ catalog: true }))
     expect(isCommandAllowed(graph, 'catalog', 'create')).toBe(true)
     expect(isCommandAllowed(graph, 'catalog', 'custom-method')).toBe(true)
   })
 
   // CG-09
   it('array rule allows only listed operations', () => {
-    const graph = defineCommandGraph({ customer: ['create', 'update'] })
+    const graph = defineCommandGraph(access({ customer: ['create', 'update'] }))
     expect(isCommandAllowed(graph, 'customer', 'create')).toBe(true)
     expect(isCommandAllowed(graph, 'customer', 'update')).toBe(true)
     expect(isCommandAllowed(graph, 'customer', 'delete')).toBe(false)
@@ -94,16 +103,18 @@ describe('isCommandAllowed', () => {
 
   // CG-10
   it('function rule allows all operations (scope is for data filtering)', () => {
-    const graph = defineCommandGraph({
-      order: (auth) => ({ customer_id: auth.id }),
-    })
+    const graph = defineCommandGraph(
+      access({
+        order: (auth) => ({ customer_id: auth.id }),
+      }),
+    )
     expect(isCommandAllowed(graph, 'order', 'create')).toBe(true)
     expect(isCommandAllowed(graph, 'order', 'delete')).toBe(true)
   })
 
   // CG-11
   it('unlisted module blocks all operations', () => {
-    const graph = defineCommandGraph({ catalog: true })
+    const graph = defineCommandGraph(access({ catalog: true }))
     expect(isCommandAllowed(graph, 'stats', 'create')).toBe(false)
   })
 })
@@ -115,32 +126,36 @@ describe('getCommandScope', () => {
   })
 
   it('true rule returns undefined (no scope)', () => {
-    const graph = defineCommandGraph({ catalog: true })
+    const graph = defineCommandGraph(access({ catalog: true }))
     expect(getCommandScope(graph, 'catalog', null)).toBeUndefined()
   })
 
   it('array rule returns undefined (no scope)', () => {
-    const graph = defineCommandGraph({ catalog: ['create'] })
+    const graph = defineCommandGraph(access({ catalog: ['create'] }))
     expect(getCommandScope(graph, 'catalog', null)).toBeUndefined()
   })
 
   it('function rule returns scope from auth', () => {
-    const graph = defineCommandGraph({
-      order: (auth) => ({ customer_id: auth.id }),
-    })
-    const scope = getCommandScope(graph, 'order', { id: 'user-1', actor_type: 'customer' })
+    const graph = defineCommandGraph(
+      access({
+        order: (auth) => ({ customer_id: auth.id }),
+      }),
+    )
+    const scope = getCommandScope(graph, 'order', { id: 'user-1', type: 'customer' })
     expect(scope).toEqual({ customer_id: 'user-1' })
   })
 
   it('function rule returns null when no auth', () => {
-    const graph = defineCommandGraph({
-      order: (auth) => ({ customer_id: auth.id }),
-    })
+    const graph = defineCommandGraph(
+      access({
+        order: (auth) => ({ customer_id: auth.id }),
+      }),
+    )
     expect(getCommandScope(graph, 'order', null)).toBeNull()
   })
 
   it('unlisted module returns null', () => {
-    const graph = defineCommandGraph({ catalog: true })
+    const graph = defineCommandGraph(access({ catalog: true }))
     expect(getCommandScope(graph, 'stats', null)).toBeNull()
   })
 })
@@ -292,7 +307,7 @@ describe('generateEntityCommands', () => {
       title: 'Widget',
       price: 100,
       status: 'draft',
-    })
+    }) as Record<string, unknown>
     expect(valid.title).toBe('Widget')
 
     // Missing required field
@@ -304,7 +319,7 @@ describe('generateEntityCommands', () => {
     const updateCmd = commands.find((c) => c.__operation === 'update')!
 
     // Valid with just id + partial fields
-    const valid = updateCmd.input.parse({ id: '123', title: 'Updated' })
+    const valid = updateCmd.input.parse({ id: '123', title: 'Updated' }) as Record<string, unknown>
     expect(valid.id).toBe('123')
 
     // Missing id
@@ -384,7 +399,7 @@ describe('generateLinkCommands', () => {
     const linkCmd = commands.find((c) => c.__operation === 'link')!
 
     // Valid input
-    const valid = linkCmd.input.parse({ customer_id: 'abc', customer_group_id: 'def' })
+    const valid = linkCmd.input.parse({ customer_id: 'abc', customer_group_id: 'def' }) as Record<string, unknown>
     expect(valid.customer_id).toBe('abc')
     expect(valid.customer_group_id).toBe('def')
 
@@ -415,5 +430,166 @@ describe('generateLinkCommands', () => {
     const names = commands.map((c) => c.name)
     expect(names).toContain('linkProductInventoryItem')
     expect(names).toContain('unlinkProductInventoryItem')
+  })
+
+  // ── extraColumns support ────────────────────────────────────
+
+  // Helper: DML-like field mock with .parse()
+  function mockField(dataType: string, opts?: { nullable?: boolean; defaultValue?: unknown }) {
+    return {
+      parse: (fieldName: string) => ({
+        fieldName,
+        dataType: { name: dataType },
+        nullable: opts?.nullable ?? false,
+        primaryKey: false,
+        computed: false,
+        defaultValue: opts?.defaultValue,
+      }),
+    }
+  }
+
+  it('CG-EC-01 — extraColumns fields are included in the input Zod schema', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        quantity: mockField('number'),
+        sku: mockField('text'),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // Valid input includes extra columns
+    const valid = linkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+      quantity: 42,
+      sku: 'SKU-001',
+    }) as Record<string, unknown>
+    expect(valid.quantity).toBe(42)
+    expect(valid.sku).toBe('SKU-001')
+  })
+
+  it('CG-EC-02 — nullable extraColumn is optional in the Zod schema', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        notes: mockField('text', { nullable: true }),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // Should pass without notes (it is optional)
+    const valid = linkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+    }) as Record<string, unknown>
+    expect(valid.customer_id).toBe('c1')
+    expect(valid.notes).toBeUndefined()
+  })
+
+  it('CG-EC-03 — extraColumn with defaultValue is optional in the Zod schema', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        position: mockField('number', { defaultValue: 0 }),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // Should pass without position (it has a default)
+    const valid = linkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+    }) as Record<string, unknown>
+    expect(valid.customer_id).toBe('c1')
+    expect(valid.position).toBeUndefined()
+  })
+
+  it('CG-EC-04 — required extraColumn rejects input when missing', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        quantity: mockField('number'), // not nullable, no default → required
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // Missing required extra column should throw
+    expect(() =>
+      linkCmd.input.parse({
+        customer_id: 'c1',
+        customer_group_id: 'g1',
+      }),
+    ).toThrow()
+  })
+
+  it('CG-EC-05 — boolean extraColumn maps to z.boolean()', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        is_primary: mockField('boolean'),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // String should be rejected for boolean field
+    expect(() =>
+      linkCmd.input.parse({
+        customer_id: 'c1',
+        customer_group_id: 'g1',
+        is_primary: 'not-a-bool',
+      }),
+    ).toThrow()
+
+    // Boolean should pass
+    const valid = linkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+      is_primary: true,
+    }) as Record<string, unknown>
+    expect(valid.is_primary).toBe(true)
+  })
+
+  it('CG-EC-06 — unlink command also gets the extraColumns in its schema', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        quantity: mockField('number'),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const unlinkCmd = commands.find((c) => c.__operation === 'unlink')!
+
+    // Unlink shares the same input schema
+    const valid = unlinkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+      quantity: 10,
+    }) as Record<string, unknown>
+    expect(valid.quantity).toBe(10)
+  })
+
+  it('CG-EC-07 — json/array extraColumn maps to z.unknown()', () => {
+    const linkWithExtras = {
+      ...link,
+      extraColumns: {
+        metadata: mockField('json', { nullable: true }),
+      },
+    }
+    const commands = generateLinkCommands(linkWithExtras)
+    const linkCmd = commands.find((c) => c.__operation === 'link')!
+
+    // Any value should be accepted for z.unknown()
+    const valid = linkCmd.input.parse({
+      customer_id: 'c1',
+      customer_group_id: 'g1',
+      metadata: { foo: 'bar' },
+    }) as Record<string, unknown>
+    expect(valid.metadata).toEqual({ foo: 'bar' })
   })
 })

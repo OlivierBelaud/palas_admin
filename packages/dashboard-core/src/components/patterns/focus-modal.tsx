@@ -27,7 +27,7 @@ export interface FocusModalProps {
   onClose: () => void
   title: string
   description?: string
-  children: React.ReactNode
+  children?: React.ReactNode
   /** Footer content — rendered fixed at the bottom, outside the scrollable area */
   footer?: React.ReactNode
   /** Max width of the content area. Default: 'max-w-[720px]' */
@@ -48,6 +48,7 @@ export function FocusModal({
   return (
     <FocusModalContext.Provider value={{ onClose }}>
       {/* Overlay backdrop — page visible behind */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay, keyboard-accessible via Escape */}
       <div className="fixed inset-0 z-50 bg-black/40 animate-in fade-in-0" onClick={onClose} />
 
       {/* Modal card — inset from edges, rounded, with shadow */}

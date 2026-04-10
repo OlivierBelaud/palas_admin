@@ -146,6 +146,7 @@ export function extractAllSteps(): Map<string, CapturedStep> {
       return fn
     },
     transform: (_deps: unknown, fn: Function) => fn({}),
+    // biome-ignore lint/suspicious/noThenProperty: stubbing Medusa's when().then() workflow builder
     when: () => ({ then: () => ({}) }),
     createHook: () => ({}),
     WorkflowResponse: class {
@@ -186,7 +187,7 @@ export function extractAllSteps(): Map<string, CapturedStep> {
 
       modified = modified.replace(/require\("(\.\.[^"]+|\.\/[^"]+)"\)/g, (_match: string, relPath: string) => {
         const absPath = resolve(dirname(filePath), relPath)
-        const resolved = [absPath + '.js', join(absPath, 'index.js'), absPath].find((p) => existsSync(p))
+        const resolved = [`${absPath}.js`, join(absPath, 'index.js'), absPath].find((p) => existsSync(p))
         if (resolved) return `LOCAL_REQUIRE("${resolved}")`
         return '({})'
       })
@@ -274,7 +275,7 @@ export function transpileWorkflow(medusaWorkflow: any, allSteps: Map<string, Cap
     if (step) workflowSteps.set(node.action, step)
   }
 
-  const totalStepNodes = dag.filter((n) => n.type === 'step').length
+  const _totalStepNodes = dag.filter((n) => n.type === 'step').length
 
   return {
     name,

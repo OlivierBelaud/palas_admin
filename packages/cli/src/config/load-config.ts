@@ -43,10 +43,7 @@ export interface LoadConfigOptions {
   importFn?: (path: string) => Promise<Record<string, unknown>>
 }
 
-export async function loadConfig(
-  cwd: string = process.cwd(),
-  opts: LoadConfigOptions = {},
-): Promise<LoadedConfig> {
+export async function loadConfig(cwd: string = process.cwd(), opts: LoadConfigOptions = {}): Promise<LoadedConfig> {
   const configPath = findConfigFile(cwd)
 
   if (!configPath) {

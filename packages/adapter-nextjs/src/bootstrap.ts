@@ -16,7 +16,7 @@ import type { BootstrappedApp } from '@manta/cli/bootstrap'
 let _bootstrapped: Promise<BootstrappedApp> | null = null
 
 async function bootstrap(): Promise<BootstrappedApp> {
-  const cwd = process.env['MANTA_CWD'] ?? process.cwd()
+  const cwd = process.env.MANTA_CWD ?? process.cwd()
 
   // Defer @manta/cli imports until first request so Next's module graph doesn't
   // try to bundle CLI-only code into the client. We import specific subpaths
@@ -41,7 +41,7 @@ async function bootstrap(): Promise<BootstrappedApp> {
 
   const config = await loadConfig(cwd, { importFn })
 
-  const mode = process.env['NODE_ENV'] === 'production' ? 'prod' : 'dev'
+  const mode = process.env.NODE_ENV === 'production' ? 'prod' : 'dev'
   return bootstrapApp({ config, cwd, mode, importFn })
 }
 

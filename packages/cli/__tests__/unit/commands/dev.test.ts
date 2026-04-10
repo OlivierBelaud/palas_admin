@@ -4,7 +4,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { devCommand } from '../../../src/commands/dev'
 
 const TMP = resolve(__dirname, '__tmp_dev_test__')
@@ -22,8 +22,8 @@ describe('B2 — manta dev', () => {
   beforeEach(() => {
     setup()
     // Clear env vars that might interfere
-    delete process.env['DATABASE_URL']
-    delete process.env['JWT_SECRET']
+    delete process.env.DATABASE_URL
+    delete process.env.JWT_SECRET
   })
   afterEach(teardown)
 

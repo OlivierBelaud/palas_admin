@@ -13,6 +13,7 @@ import { useBlockQuery } from './use-block-query'
 /** Button that executes a command or custom action with confirmation dialog */
 function CommandButton({ command, label, destructive }: { command: string; label: string; destructive?: boolean }) {
   const isUrl = command.startsWith('/')
+  // biome-ignore lint/correctness/useHookAtTopLevel: command is stable for component lifetime
   const cmd = isUrl ? null : useCommand(command)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -152,7 +153,12 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
       }
     }
     if (a.command) {
-      return React.createElement(CommandButton, { key: i, command: a.command, label: a.label, destructive: a.destructive })
+      return React.createElement(CommandButton, {
+        key: i,
+        command: a.command,
+        label: a.label,
+        destructive: a.destructive,
+      })
     }
     if (a.to) {
       return React.createElement(
@@ -186,7 +192,8 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
                 href: linkHref,
                 target: '_blank',
                 rel: 'noopener noreferrer',
-                className: 'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
+                className:
+                  'text-sm text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-4 transition-colors',
               },
               linkLabel || description || linkHref,
             )

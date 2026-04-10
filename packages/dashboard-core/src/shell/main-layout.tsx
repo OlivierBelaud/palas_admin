@@ -1,10 +1,8 @@
-import { Avatar, cn, Divider, DropdownMenu } from '@manta/ui'
-import { ExternalLink, LayoutGrid, MoreHorizontal, Search, Settings, Sparkles } from 'lucide-react'
+import { cn, Divider } from '@manta/ui'
+import { LayoutGrid, Search, Settings, Sparkles } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Skeleton } from '../components/common/skeleton'
+import { useLocation } from 'react-router-dom'
 import { useDashboardContext } from '../context'
-import { useDocumentDirection } from '../hooks/use-document-direction'
 import type { NavigationItem as NavOverrideItem } from '../interfaces/override-store'
 import { useExtension } from '../providers/extension-provider'
 import { useSearch } from '../providers/search-provider'
@@ -35,7 +33,9 @@ export const MainLayout = ({ navigation, headerSlot, userMenuSlot, iconMap }: Ma
       navigation.map((item) => ({
         key: item.to,
         label: item.label,
-        icon: (item.icon as React.ReactElement)?.type?.name || 'LayoutGrid',
+        icon:
+          (((item.icon as React.ReactElement)?.type as { name?: string } | undefined)?.name as string | undefined) ||
+          'LayoutGrid',
         path: item.to,
         items: item.items?.map((child: { label: string; to: string }) => ({
           key: child.to,
@@ -219,10 +219,10 @@ const ExtensionRouteSection = () => {
       </div>
       <div className="flex flex-col gap-y-1 py-3">
         <nav className="flex flex-col gap-y-0.5 py-1 pb-4">
-          {menuItems.map((item, i) => {
+          {menuItems.map((item) => {
             return (
               <NavItem
-                key={i}
+                key={item.to ?? item.label}
                 to={item.to}
                 label={item.label}
                 icon={item.icon ? <item.icon /> : <LayoutGrid className="h-4 w-4" />}

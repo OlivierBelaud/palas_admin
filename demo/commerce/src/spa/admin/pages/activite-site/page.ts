@@ -5,7 +5,7 @@ import { definePage } from '@manta/dashboard-core'
 // the /api/admin/posthog/hogql relay endpoint, which requires POSTHOG_API_KEY server-side.
 
 export default definePage({
-  header: { title: "Activité du site" },
+  header: { title: 'Activité du site' },
   main: [
     // ── StatsCard — compteurs du jour, une seule query HogQL à 3 colonnes ─────────
     {

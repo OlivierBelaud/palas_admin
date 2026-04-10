@@ -30,7 +30,7 @@ const require = createRequire(import.meta.url)
 describe('Transpiler E2E', () => {
   // biome-ignore lint/suspicious/noExplicitAny: dynamic modules
   let app: MantaApp<any>
-  let manager: WorkflowManager
+  let _manager: WorkflowManager
   let allSteps: Map<string, CapturedStep>
 
   beforeAll(() => {
@@ -54,7 +54,7 @@ describe('Transpiler E2E', () => {
     appBuilder.registerModule('query', async () => [])
 
     app = appBuilder.build()
-    manager = new WorkflowManager(app)
+    _manager = new WorkflowManager(app)
 
     allSteps = extractAllSteps()
   })

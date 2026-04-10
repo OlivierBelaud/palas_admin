@@ -1,12 +1,7 @@
 // Layer 6: Step classifier tests — verifies CRUD vs action classification
 
-import { beforeAll, describe, expect, it } from 'vitest'
-import {
-  type ClassifiedStep,
-  classificationStats,
-  classifyAllSteps,
-  classifyStep,
-} from '../src/_internal/transpiler/step-classifier'
+import { describe, expect, it } from 'vitest'
+import { classificationStats, classifyAllSteps, classifyStep } from '../src/_internal/transpiler/step-classifier'
 import { extractAllSteps } from '../src/_internal/transpiler/transpile'
 
 describe('layer-6: step classifier', () => {

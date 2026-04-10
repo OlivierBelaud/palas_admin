@@ -10,6 +10,11 @@ export const QueryDefSchema = z.object({
   expand: z.record(z.string(), z.unknown()).optional(),
   fields: z.string().optional(),
   pageSize: z.number().optional(),
+  filters: z.union([z.record(z.string(), z.unknown()), z.object({ $state: z.string() })]).optional(),
+  sort: z.union([z.object({ field: z.string(), direction: z.string() }), z.object({ $state: z.string() })]).optional(),
+  search: z.union([z.string(), z.object({ $state: z.string() })]).optional(),
+  limit: z.union([z.number(), z.object({ $state: z.string() })]).optional(),
+  offset: z.union([z.number(), z.object({ $state: z.string() })]).optional(),
 })
 
 export type QueryDef = z.infer<typeof QueryDefSchema>

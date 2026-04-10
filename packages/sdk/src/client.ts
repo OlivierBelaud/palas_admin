@@ -129,7 +129,10 @@ export class MantaClient {
 }
 
 /** Entity name — autocompletes from codegen when @manta/core types are loaded. */
-type EntityNameArg = keyof MantaGeneratedEntities | (string & {})
+declare global {
+  interface MantaGeneratedEntities {}
+}
+type EntityNameArg = keyof MantaGeneratedEntities extends never ? string : keyof MantaGeneratedEntities | (string & {})
 
 /** Graph query input shape. */
 export interface GraphQueryInput {

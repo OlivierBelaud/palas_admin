@@ -1,5 +1,4 @@
-
-const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+import { formatMoney } from '../../utils/currency'
 
 export default defineQuery({
   name: 'cart-list',
@@ -9,19 +8,26 @@ export default defineQuery({
     const carts = await query.graph({
       entity: 'cart',
       fields: [
-        'email', 'first_name', 'last_name', 'distinct_id',
-        'total_price', 'item_count', 'currency',
-        'last_action', 'highest_stage', 'status', 'last_action_at', 'created_at',
+        'email',
+        'first_name',
+        'last_name',
+        'distinct_id',
+        'total_price',
+        'item_count',
+        'currency',
+        'last_action',
+        'highest_stage',
+        'status',
+        'last_action_at',
+        'created_at',
       ],
       pagination: { limit: 100 },
       sort: { last_action_at: 'desc' },
-    }) as any[]
+    })
 
-    return carts.map((c: any) => {
+    return carts.map((c) => {
       const currency = c.currency ?? 'EUR'
-      const client = c.email
-        ?? (c.distinct_id ? `${c.distinct_id.slice(0, 8)}…` : 'Anonyme')
-      const symbol = SYMBOLS[currency] ?? currency
+      const client = c.email ?? (c.distinct_id ? `${c.distinct_id.slice(0, 8)}…` : 'Anonyme')
       // Durée de vie: diff entre created_at et last_action_at
       let duree = '-'
       if (c.created_at && c.last_action_at) {
@@ -36,7 +42,7 @@ export default defineQuery({
       return {
         ...c,
         client,
-        montant: c.total_price != null ? `${c.total_price} ${symbol}` : '-',
+        montant: formatMoney(c.total_price, currency),
         duree,
       }
     })

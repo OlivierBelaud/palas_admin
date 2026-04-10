@@ -1,5 +1,5 @@
 import { useChat } from '@ai-sdk/react'
-import { cn, IconButton, toast } from '@manta/ui'
+import { cn, toast } from '@manta/ui'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -159,12 +159,24 @@ export const AiChat = ({ centered = false }: { centered?: boolean }) => {
         }
       }
     }
-  }, [messages])
+  }, [
+    messages,
+    navigate,
+    overrideStore.addCustomPage,
+    overrideStore.removeComponentOverride,
+    overrideStore.removeCustomPage,
+    overrideStore.resetNavigationOverride,
+    overrideStore.setComponentOverride,
+    overrideStore.setNavigationOverride,
+    overrideStore.setPageOverride,
+    overrideStore.updateCustomPage,
+    queryClient.invalidateQueries,
+  ])
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [])
 
   // Focus input on mount
   useEffect(() => {
@@ -260,7 +272,7 @@ export const AiChat = ({ centered = false }: { centered?: boolean }) => {
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement
                 target.style.height = 'auto'
-                target.style.height = Math.min(target.scrollHeight, 120) + 'px'
+                target.style.height = `${Math.min(target.scrollHeight, 120)}px`
               }}
             />
             <div className="flex items-center justify-end px-2 pb-2">
@@ -294,8 +306,10 @@ const MessageContent = ({ content }: { content: string }) => {
       {paragraphs.map((p, i) => {
         const lines = p.split('\n')
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static text paragraphs
           <p key={i} className="mb-2 last:mb-0">
             {lines.map((line, j) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static text lines
               <span key={j}>
                 {j > 0 && <br />}
                 <InlineContent text={line} />
@@ -315,6 +329,7 @@ const InlineContent = ({ text }: { text: string }) => {
       {parts.map((part, i) => {
         if (part.startsWith('`') && part.endsWith('`')) {
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static inline text parts
             <code key={i} className="rounded bg-accent px-1 py-0.5 text-xs">
               {part.slice(1, -1)}
             </code>
@@ -322,11 +337,13 @@ const InlineContent = ({ text }: { text: string }) => {
         }
         if (part.startsWith('**') && part.endsWith('**')) {
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static inline text parts
             <strong key={i} className="font-semibold">
               {part.slice(2, -2)}
             </strong>
           )
         }
+        // biome-ignore lint/suspicious/noArrayIndexKey: static inline text parts
         return <span key={i}>{part}</span>
       })}
     </>
@@ -401,11 +418,13 @@ const AssistantMessage = ({ message }: { message: any }) => {
       {renderParts.map((part, i) => {
         if (part.type === 'text') {
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: message parts are immutable per message
             <div key={i} className="max-w-none text-sm text-foreground">
               <MessageContent content={part.content} />
             </div>
           )
         }
+        // biome-ignore lint/suspicious/noArrayIndexKey: message parts are immutable per message
         return <ChatBlockRenderer key={i} result={part.result} />
       })}
     </div>

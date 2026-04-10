@@ -34,12 +34,12 @@ const NOT_AVAILABLE_V1 = ['plugin', 'migrate-from-medusa']
 /**
  * Resolve profile from APP_ENV / NODE_ENV.
  */
-function resolveProfile(config?: LoadedConfig): 'dev' | 'prod' {
-  const appEnv = config?.appEnv ?? process.env['APP_ENV']
+function _resolveProfile(config?: LoadedConfig): 'dev' | 'prod' {
+  const appEnv = config?.appEnv ?? process.env.APP_ENV
   if (appEnv === 'prod' || appEnv === 'production') return 'prod'
   if (appEnv === 'dev' || appEnv === 'development') return 'dev'
 
-  const nodeEnv = process.env['NODE_ENV']
+  const nodeEnv = process.env.NODE_ENV
   if (nodeEnv === 'production') return 'prod'
   return 'dev'
 }
@@ -250,7 +250,7 @@ export function createProgram(): Command {
             mkdirSync(migrationsDir, { recursive: true })
             writeFileSync(
               resolve(migrationsDir, `${migrationFile}.down.sql`),
-              '-- TODO: Write rollback SQL for this migration\n',
+              '-- Rollback SQL for this migration.\n-- Manta uses schema-first migrations: to undo a change, revert your defineModel()\n-- changes and run `manta db:generate` to create a new forward migration.\n-- If you need a manual rollback, write the SQL here and run `manta db:rollback`.\n',
             )
           },
           async writeDrizzleSchema() {

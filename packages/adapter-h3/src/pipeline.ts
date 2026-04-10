@@ -54,7 +54,7 @@ export function extractRequestId(event: H3Event): string {
 /**
  * Step 2 — CORS headers based on namespace
  */
-export function setCorsHeaders(event: H3Event, path: string, allowedOrigins?: string[]): void {
+export function setCorsHeaders(event: H3Event, _path: string, allowedOrigins?: string[]): void {
   const origin = getRequestHeader(event, 'origin')
 
   if (!origin) {

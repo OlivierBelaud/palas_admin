@@ -33,7 +33,7 @@ export const SidebarProvider = ({ children }: PropsWithChildren) => {
 
   useEffect(() => {
     setMobile(false)
-  }, [pathname])
+  }, [])
 
   return <SidebarContext.Provider value={{ desktop, mobile, toggle }}>{children}</SidebarContext.Provider>
 }

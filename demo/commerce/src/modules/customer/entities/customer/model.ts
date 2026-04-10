@@ -1,4 +1,3 @@
-
 export default defineUserModel('customer', {
   company_name: field.text().nullable(),
   first_name: field.text().nullable(),

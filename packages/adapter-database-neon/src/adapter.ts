@@ -43,7 +43,11 @@ export class NeonDrizzleAdapter implements IDatabasePort {
       ])
       return true
     } catch (err) {
-      console.error('[neon] healthCheck FAILED:', (err as Error).message, (err as Error).stack?.split('\n').slice(0, 3).join('\n'))
+      console.error(
+        '[neon] healthCheck FAILED:',
+        (err as Error).message,
+        (err as Error).stack?.split('\n').slice(0, 3).join('\n'),
+      )
       return false
     }
   }
@@ -65,10 +69,9 @@ export class NeonDrizzleAdapter implements IDatabasePort {
     // This bridges the gap between postgres.js API (used by DrizzlePgAdapter) and
     // Neon's HTTP driver (used by NeonDrizzleAdapter).
     const rawSql = this._neonDb.rawSql
-    return Object.assign(
-      (query: string) => rawSql(query),
-      { unsafe: (query: string) => rawSql(query) },
-    )
+    return Object.assign((query: string, params?: unknown[]) => rawSql(query, params), {
+      unsafe: (query: string, params?: unknown[]) => rawSql(query, params),
+    })
   }
 
   async transaction<T>(fn: (tx: unknown) => Promise<T>, _options?: TransactionOptions): Promise<T> {
@@ -76,6 +79,11 @@ export class NeonDrizzleAdapter implements IDatabasePort {
     return await db.transaction(async (tx) => {
       return await fn(tx)
     })
+  }
+
+  async raw<T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> {
+    if (!this._neonDb) throw new MantaError('INVALID_STATE', 'NeonDrizzleAdapter: not initialized')
+    return this._neonDb.rawSql(query, params) as Promise<T[]>
   }
 
   async introspect(): Promise<unknown> {

@@ -9,8 +9,16 @@
 /**
  * Entity name type — strict, only accepts keys from MantaGeneratedEntityRegistry (camelCase).
  * If codegen hasn't run yet, run `manta dev` to generate .manta/generated.d.ts.
+ *
+ * Note: this global interface is declared by @manta/core; we re-declare it here
+ * so dashboard-core can be typechecked standalone (interface merging is a no-op
+ * at runtime, and user apps get the codegen-augmented version from core).
  */
-type EntityName = keyof MantaGeneratedEntityRegistry
+declare global {
+  interface MantaGeneratedEntityRegistry {}
+}
+
+type EntityName = keyof MantaGeneratedEntityRegistry extends never ? string : keyof MantaGeneratedEntityRegistry
 
 export interface GraphQueryDef {
   graph: {

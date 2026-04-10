@@ -232,56 +232,54 @@ PORT=9000
 # JWT_SECRET=change-me-in-production
 # ANTHROPIC_API_KEY=
 `,
-    'package.json':
-      JSON.stringify(
-        {
-          name: projectName,
-          version: '0.1.0',
-          type: 'module',
-          scripts: {
-            dev: 'manta dev',
-            build: 'manta build --preset vercel',
-            start: 'manta start',
-            generate: 'manta generate',
-            'db:generate': 'manta db:generate',
-            'db:migrate': 'manta db:migrate',
-          },
-          dependencies: {
-            '@manta/core': 'workspace:*',
-            '@manta/cli': 'workspace:*',
-            '@manta/host-nitro': 'workspace:*',
-            '@manta/adapter-h3': 'workspace:*',
-            '@manta/adapter-database-pg': 'workspace:*',
-            '@manta/adapter-logger-pino': 'workspace:*',
-            '@manta/dashboard': 'workspace:*',
-            '@manta/dashboard-core': 'workspace:*',
-            '@manta/ui': 'workspace:*',
-            '@manta/sdk': 'workspace:*',
-            zod: '^3.23.0',
-          },
+    'package.json': `${JSON.stringify(
+      {
+        name: projectName,
+        version: '0.1.0',
+        type: 'module',
+        scripts: {
+          dev: 'manta dev',
+          build: 'manta build --preset vercel',
+          start: 'manta start',
+          generate: 'manta generate',
+          'db:generate': 'manta db:generate',
+          'db:migrate': 'manta db:migrate',
         },
-        null,
-        2,
-      ) + '\n',
-    'tsconfig.json':
-      JSON.stringify(
-        {
-          compilerOptions: {
-            target: 'ES2022',
-            module: 'ESNext',
-            moduleResolution: 'bundler',
-            strict: true,
-            esModuleInterop: true,
-            jsx: 'react-jsx',
-            outDir: 'dist',
-            rootDir: '.',
-          },
-          include: ['src/**/*.ts', 'src/**/*.tsx', '.manta/generated.d.ts', 'manta.config.ts'],
-          exclude: ['node_modules', 'tests'],
+        dependencies: {
+          '@manta/core': 'workspace:*',
+          '@manta/cli': 'workspace:*',
+          '@manta/host-nitro': 'workspace:*',
+          '@manta/adapter-h3': 'workspace:*',
+          '@manta/adapter-database-pg': 'workspace:*',
+          '@manta/adapter-logger-pino': 'workspace:*',
+          '@manta/dashboard': 'workspace:*',
+          '@manta/dashboard-core': 'workspace:*',
+          '@manta/ui': 'workspace:*',
+          '@manta/sdk': 'workspace:*',
+          zod: '^3.23.0',
         },
-        null,
-        2,
-      ) + '\n',
+      },
+      null,
+      2,
+    )}\n`,
+    'tsconfig.json': `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'ESNext',
+          moduleResolution: 'bundler',
+          strict: true,
+          esModuleInterop: true,
+          jsx: 'react-jsx',
+          outDir: 'dist',
+          rootDir: '.',
+        },
+        include: ['src/**/*.ts', 'src/**/*.tsx', '.manta/generated.d.ts', 'manta.config.ts'],
+        exclude: ['node_modules', 'tests'],
+      },
+      null,
+      2,
+    )}\n`,
     '.gitignore': `node_modules/
 .manta/
 dist/

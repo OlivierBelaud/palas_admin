@@ -86,6 +86,11 @@ export class SnapshotRepository<T extends Record<string, unknown>> implements Ty
     return this._inner.restore(ids)
   }
 
+  // Bulk upsert — bypasses compensation tracking (mixed create/update not compensable)
+  async upsertWithReplace(data: Partial<T>[], replaceFields?: string[], conflictTarget?: string[]): Promise<T[]> {
+    return this._inner.upsertWithReplace(data, replaceFields, conflictTarget)
+  }
+
   // ── Compensation ────────────────────────────────────────────────────
 
   /** Undo all mutations in reverse order. */

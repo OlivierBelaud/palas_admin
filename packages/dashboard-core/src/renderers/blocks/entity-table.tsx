@@ -1,12 +1,11 @@
 import { Button, cn, DropdownMenu, IconButton, Input, Table, toast } from '@manta/ui'
 import { useQueryClient } from '@tanstack/react-query'
-import type { ColumnDef, PaginationState, Row, SortingState, VisibilityState } from '@tanstack/react-table'
+import type { ColumnDef, PaginationState, Row, VisibilityState } from '@tanstack/react-table'
 import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
 import {
@@ -15,7 +14,6 @@ import {
   ArrowUp,
   Check,
   ChevronsUpDown,
-  ListFilter,
   MoreHorizontal,
   PlusCircle,
   SlidersHorizontal,
@@ -27,7 +25,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { DashboardContext } from '../../context'
 import { resolveDataPath } from '../../data/index'
 import type { BlockRendererProps } from './shared'
-import { getActionIcon, getStatusColor, PlaceholderCell, renderCellByType, Text } from './shared'
+import { getActionIcon, PlaceholderCell, renderCellByType, Text } from './shared'
 
 // ──────────────────────────────────────────────
 // useSelectedParams — URL param management for filters/search
@@ -766,7 +764,7 @@ function FacetedFilter({
 }
 
 export function EntityTableRenderer({ component, data }: BlockRendererProps) {
-  const navigate = useNavigate()
+  const _navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const props = component.props as {
@@ -792,9 +790,17 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
       to?: string
       action?: string
       destructive?: boolean
+      entity?: string
     }>
     orderBy?: Array<{ key: string; label: string }>
-    actions?: Array<{ label: string; icon?: string; to?: string; action?: string; destructive?: boolean }>
+    actions?: Array<{
+      label: string
+      icon?: string
+      to?: string
+      action?: string
+      destructive?: boolean
+      entity?: string
+    }>
     filters?: Array<{
       key: string
       label: string
@@ -811,7 +817,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
   const dashCtx = React.useContext(DashboardContext)
   const queryClient = useQueryClient()
 
-  const items = Array.isArray(data) ? data : (data as any)?.items || []
+  const items: Record<string, unknown>[] = Array.isArray(data) ? data : (data as any)?.items || []
   const count = (data as any)?.count ?? items.length
   const _pageSize = props.pageSize ?? 15
 
@@ -993,7 +999,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
   const handleColumnToggle = useCallback((columnId: string) => {
     setColumnVisibility((prev) => ({
       ...prev,
-      [columnId]: prev[columnId] === false ? true : false,
+      [columnId]: prev[columnId] === false,
     }))
   }, [])
 
@@ -1050,13 +1056,14 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
           : col.label,
         accessorFn: (row) => resolveDataPath(row, col.key),
         enableSorting: isSortable,
-        cell: isFirst && !col.format
-          ? (info) => {
-              const val = resolveDataPath(info.row.original, col.key)
-              if (val == null) return React.createElement(PlaceholderCell, null)
-              return React.createElement('span', { className: 'text-sm font-semibold text-foreground' }, String(val))
-            }
-          : (info) => renderCellByType(col, info.row.original),
+        cell:
+          isFirst && !col.format
+            ? (info) => {
+                const val = resolveDataPath(info.row.original, col.key)
+                if (val == null) return React.createElement(PlaceholderCell, null)
+                return React.createElement('span', { className: 'text-sm font-semibold text-foreground' }, String(val))
+              }
+            : (info) => renderCellByType(col as Parameters<typeof renderCellByType>[0], info.row.original),
       })
     }
 
@@ -1156,7 +1163,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     }
 
     return cols
-  }, [props.columns, rowActions, hasActions])
+  }, [props.columns, rowActions, hasActions, handleRowDelete, props.orderBy, searchParams.get, setSearchParams])
 
   // ── Create table instance ──
 
@@ -1193,7 +1200,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
 
   useEffect(() => {
     scrollableRef.current?.scroll({ top: 0, left: 0 })
-  }, [pageIndex])
+  }, [])
 
   // Column widths
   const hasSelect = false // no row selection for now
@@ -1316,7 +1323,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                       row.getVisibleCells().map((cell, index, arr) => {
                         const isFirstCell = index === 0
                         const isLastCell = index === arr.length - 1
-                        const isSelectCell = false
+                        const _isSelectCell = false
                         const shouldRenderAsLink = !!to && cell.column.id !== 'actions'
 
                         const Inner = flexRender(cell.column.columnDef.cell, cell.getContext())

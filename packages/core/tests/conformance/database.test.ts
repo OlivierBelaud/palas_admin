@@ -1,4 +1,4 @@
-import { createTestDb, type IDatabasePort, MantaError, type TestDb } from '@manta/test-utils'
+import { createTestDb, MantaError, type TestDb } from '@manta/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 describe('IDatabasePort Conformance', () => {

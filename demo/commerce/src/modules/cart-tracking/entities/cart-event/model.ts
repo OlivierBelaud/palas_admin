@@ -1,4 +1,3 @@
-
 export default defineModel('CartEvent', {
   cart_id: field.text().index(),
 

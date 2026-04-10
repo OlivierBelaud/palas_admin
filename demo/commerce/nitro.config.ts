@@ -5,13 +5,14 @@ const adminBuildExists = existsSync('./public/admin')
 export default {
   compatibilityDate: '2025-01-01',
   serverDir: '.manta/server',
-  publicAssets: adminBuildExists
-    ? [{ dir: 'public/admin', baseURL: '/admin' }]
-    : [],
+  publicAssets: adminBuildExists ? [{ dir: 'public/admin', baseURL: '/admin' }] : [],
   externals: {
     inline: [
-      '@manta/core', '@manta/cli', '@manta/adapter-h3',
-      '@manta/adapter-database-pg', '@manta/adapter-logger-pino',
+      '@manta/core',
+      '@manta/cli',
+      '@manta/adapter-h3',
+      '@manta/adapter-database-pg',
+      '@manta/adapter-logger-pino',
       '@manta/host-nitro',
     ],
   },

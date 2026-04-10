@@ -41,7 +41,7 @@ function buildMaintenanceUrl(originalUrl: string): string {
     // Fallback: replace last path segment
     const lastSlash = originalUrl.lastIndexOf('/')
     if (lastSlash === -1) return originalUrl
-    return originalUrl.slice(0, lastSlash) + '/postgres'
+    return `${originalUrl.slice(0, lastSlash)}/postgres`
   }
 }
 

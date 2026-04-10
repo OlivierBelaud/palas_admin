@@ -80,7 +80,7 @@ describe('Plugin Resolution Tests', () => {
     }
 
     class CustomProductService extends ProductServiceBase {
-      async createProducts(data: unknown): Promise<{ id: string }> {
+      async createProducts(_data: unknown): Promise<{ id: string }> {
         // Throw BEFORE calling super
         throw new MantaError('INVALID_DATA', 'Custom validation failed')
         // super.createProducts(data) is never called

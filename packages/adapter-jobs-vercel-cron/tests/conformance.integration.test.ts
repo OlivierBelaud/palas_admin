@@ -37,10 +37,10 @@ function createMockLogger(): ILoggerPort {
 
 describe('VercelCronAdapter — IJobSchedulerPort conformance', () => {
   let adapter: VercelCronAdapter
-  let storedExecutions: JobExecution[]
+  let _storedExecutions: JobExecution[]
 
   beforeEach(() => {
-    storedExecutions = []
+    _storedExecutions = []
     adapter = new VercelCronAdapter(createMockLocking(), createMockLogger())
   })
 

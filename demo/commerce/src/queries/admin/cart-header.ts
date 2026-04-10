@@ -1,4 +1,3 @@
-
 export default defineQuery({
   name: 'cart-header',
   description: 'Cart header: title (email or PostHog ID) + PostHog link',
@@ -11,7 +10,7 @@ export default defineQuery({
       filters: { id: input.id },
       fields: ['email', 'distinct_id'],
       pagination: { limit: 1 },
-    }) as any[]
+    })
 
     const cart = carts[0]
     if (!cart) return { title: 'Panier inconnu', posthog_url: '', posthog_label: '' }

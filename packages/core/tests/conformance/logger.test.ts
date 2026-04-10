@@ -1,4 +1,4 @@
-import { createTestLogger, type ILoggerPort, type TestLogger } from '@manta/test-utils'
+import { createTestLogger, type TestLogger } from '@manta/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 describe('ILoggerPort Conformance', () => {

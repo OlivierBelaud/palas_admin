@@ -191,7 +191,7 @@ export function MantaDashboard({
     return () => {
       cancelled = true
     }
-  }, [apiUrl, inlineRegistry, isAuthenticated])
+  }, [apiUrl, inlineRegistry, isAuthenticated, dataSource.setEntityMaps, overrideStore.initialize])
 
   // Navigation: spaConfig takes priority over registry
   const navigation = useMemo(() => {

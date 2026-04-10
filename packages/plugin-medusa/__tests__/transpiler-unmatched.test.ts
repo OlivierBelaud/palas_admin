@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractAllSteps, transpileAllWorkflows } from '../src/_internal/transpiler/transpile'
+import { transpileAllWorkflows } from '../src/_internal/transpiler/transpile'
 
 describe('Transpiler — unmatched analysis', () => {
   it('lists all unmatched steps with their workflow context', () => {

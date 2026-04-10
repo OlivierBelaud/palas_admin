@@ -12,6 +12,7 @@ export type {
 } from './extend-query-graph'
 export { extendQueryGraph } from './extend-query-graph'
 
+import type { InferEntity } from '../dml/infer'
 import { MantaError } from '../errors/manta-error'
 import type { ILoggerPort } from '../ports/logger'
 import type { IRelationalQueryPort } from '../ports/relational-query'
@@ -33,10 +34,18 @@ export interface EntityRegistry extends MantaGeneratedEntityRegistry {}
 export type EntityName = keyof EntityRegistry extends never ? string : Extract<keyof EntityRegistry, string>
 
 /**
+ * Inferred entity result type — resolves to the DML-inferred shape when codegen is available,
+ * falls back to Record<string, unknown> otherwise.
+ */
+export type InferEntityResult<E extends EntityName> = E extends keyof EntityRegistry
+  ? InferEntity<EntityRegistry[E]>
+  : Record<string, unknown>
+
+/**
  * Configuration for Query.graph().
  */
-export interface GraphQueryConfig {
-  entity: EntityName
+export interface GraphQueryConfig<E extends EntityName = EntityName> {
+  entity: E
   fields?: string[]
   filters?: Record<string, unknown>
   sort?: Record<string, 'asc' | 'desc'>
@@ -208,7 +217,7 @@ export class QueryService {
    * Default limit: 100. Hard limit: 10,000 entities (configurable).
    * Throws INVALID_DATA if entity count exceeds limit.
    */
-  async graph(config: GraphQueryConfig): Promise<Record<string, unknown>[]> {
+  async graph<E extends EntityName>(config: GraphQueryConfig<E>): Promise<InferEntityResult<E>[]> {
     const entityKey = this._normalizeKey(config.entity)
 
     // Apply default pagination
@@ -217,7 +226,7 @@ export class QueryService {
     // Check circuit breaker hook
     if (this._beforeFetch) {
       const cached = await this._beforeFetch(entityKey, config)
-      if (cached !== null) return cached
+      if (cached !== null) return cached as InferEntityResult<E>[]
     }
 
     // Route to query graph extension if an external module owns this entity.
@@ -237,7 +246,7 @@ export class QueryService {
           `Query returned ${rows.length} entities, exceeding maximum of ${this._maxTotalEntities}. Use pagination or reduce scope.`,
         )
       }
-      return rows
+      return rows as InferEntityResult<E>[]
     }
 
     // Delegate to IRelationalQueryPort if available
@@ -262,7 +271,7 @@ export class QueryService {
         )
       }
 
-      return this._applySearch(results, config.q, entityKey)
+      return this._applySearch(results, config.q, entityKey) as InferEntityResult<E>[]
     }
 
     // Fallback to legacy resolver path
@@ -293,7 +302,7 @@ export class QueryService {
       )
     }
 
-    return filtered
+    return filtered as InferEntityResult<E>[]
   }
 
   /**
@@ -315,14 +324,6 @@ export class QueryService {
   }
 
   /**
-   * Check if fields include relation references (dotted paths).
-   */
-  private _hasRelationFields(fields?: string[]): boolean {
-    if (!fields || fields.length === 0) return false
-    return fields.some((f) => f.includes('.'))
-  }
-
-  /**
    * Query.index() — denormalized read via Index module.
    * Requires Index module loaded + entity indexed.
    */
@@ -341,7 +342,7 @@ export class QueryService {
    * Query.graphAndCount() — like graph() but also returns total count for pagination.
    * Delegates to IRelationalQueryPort.findAndCountWithRelations() when available.
    */
-  async graphAndCount(config: GraphQueryConfig): Promise<[Record<string, unknown>[], number]> {
+  async graphAndCount<E extends EntityName>(config: GraphQueryConfig<E>): Promise<[InferEntityResult<E>[], number]> {
     const entityKey = this._normalizeKey(config.entity)
 
     // Apply default pagination
@@ -350,7 +351,7 @@ export class QueryService {
     // Check circuit breaker hook
     if (this._beforeFetch) {
       const cached = await this._beforeFetch(entityKey, config)
-      if (cached !== null) return [cached, cached.length]
+      if (cached !== null) return [cached as InferEntityResult<E>[], cached.length]
     }
 
     // Route to query graph extension if an external module owns this entity.
@@ -368,7 +369,7 @@ export class QueryService {
         )
       }
       // External resolvers don't provide a separate count yet — return rows.length as approximation.
-      return [rows, rows.length]
+      return [rows as InferEntityResult<E>[], rows.length]
     }
 
     if (this._relationalQuery) {
@@ -389,7 +390,7 @@ export class QueryService {
         )
       }
 
-      return [results, count]
+      return [results as InferEntityResult<E>[], count]
     }
 
     // Fallback to legacy resolver path — no native count support
@@ -401,7 +402,7 @@ export class QueryService {
 
     const results = await resolver({
       fields: config.fields,
-      filters,
+      filters: config.filters,
       sort: config.sort,
       pagination,
       withDeleted: config.withDeleted,
@@ -415,7 +416,7 @@ export class QueryService {
     }
 
     // Legacy resolvers don't provide count — return results.length as approximation
-    return [results, results.length]
+    return [results as InferEntityResult<E>[], results.length]
   }
 
   /**

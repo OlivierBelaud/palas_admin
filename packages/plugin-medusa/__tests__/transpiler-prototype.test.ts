@@ -1,6 +1,5 @@
 // Transpiler prototype: extract Medusa step functions and run them via Manta WorkflowManager
 
-import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import {
@@ -55,7 +54,7 @@ describe('Transpiler prototype — createProductsWorkflow', () => {
 
   it('extracts createProductsStep invoke function and runs it', async () => {
     // Load the compiled step module
-    const stepModule = require(join(coreFlowsDist, 'product/steps/create-products.js'))
+    const _stepModule = require(join(coreFlowsDist, 'product/steps/create-products.js'))
 
     // The step is created by Medusa's createStep — it has internal handlers
     // But we can also just read the source and understand the pattern:

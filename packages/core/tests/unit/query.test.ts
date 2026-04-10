@@ -1,6 +1,23 @@
 import type { EntityName, EntityRegistry } from '@manta/core'
-import { MantaError, QueryService } from '@manta/core'
+import { QueryService } from '@manta/core'
 import { beforeEach, describe, expect, it } from 'vitest'
+
+// Augment the generated entity registry with test-only entities so that
+// QueryService.graph<E>() accepts them through the `E extends EntityName` constraint.
+// biome-ignore lint/suspicious/noExplicitAny: test-only fake entities, shape is irrelevant
+type _FakeEntity = any
+declare global {
+  interface MantaGeneratedEntityRegistry {
+    product: _FakeEntity
+    order: _FakeEntity
+    item: _FakeEntity
+    big: _FakeEntity
+    cached: _FakeEntity
+    normal: _FakeEntity
+    nonexistent: _FakeEntity
+    Product: _FakeEntity
+  }
+}
 
 describe('QueryService', () => {
   let query: QueryService
@@ -213,16 +230,17 @@ describe('QueryService', () => {
 
   // QG-18 — EntityName falls back to string without codegen
   it('EntityName is string when EntityRegistry is empty', () => {
-    // Without codegen augmentation, EntityRegistry is empty
-    // so EntityName should fall back to string
-    const entity: EntityName = 'anything-goes'
+    // When codegen populates the registry, EntityName becomes a union of registered keys.
+    // This test file augments the registry with test-only entities, so we cast here.
+    const entity: EntityName = 'anything-goes' as EntityName
     expect(typeof entity).toBe('string')
   })
 
   // QG-19 — EntityRegistry is augmentable
   it('EntityRegistry is an empty interface ready for augmentation', () => {
-    // Verify the type exists and is usable
-    const _registry: EntityRegistry = {}
+    // Verify the type exists and is usable. Registry has augmented members in this file,
+    // so constructing an empty object requires a cast.
+    const _registry: EntityRegistry = {} as EntityRegistry
     expect(_registry).toBeDefined()
   })
 

@@ -85,29 +85,13 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   // Programmatic Nitro v3 dev server
   const { createNitro, createDevServer, prepare, build } = await import('nitro/builder')
 
+  // nitro-dev preset auto-externalizes all node_modules — no manual externals list needed
   const nitro = await createNitro({
     rootDir: cwd,
     dev: true,
     preset: 'nitro-dev',
     scanDirs: [resolve(cwd, '.manta', 'server')],
     ...(Object.keys(devProxy).length > 0 ? { devProxy } : {}),
-    externals: {
-      external: [
-        '@manta/core',
-        '@manta/cli',
-        '@manta/adapter-database-pg',
-        '@manta/adapter-logger-pino',
-        '@manta/adapter-h3',
-        '@manta/host-nitro',
-        'postgres',
-        'drizzle-orm',
-        'drizzle-orm/postgres-js',
-        'pino',
-        'pino-pretty',
-        'jiti',
-        'zod',
-      ],
-    },
   })
 
   const server = createDevServer(nitro)
@@ -126,7 +110,9 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     httpServer.on('upgrade', (req, socket, head) => {
       const spa = allSpas.find((s) => req.url?.startsWith(`/${s.name}`))
       const target = `http://localhost:${(spa ?? allSpas[0]).vitePort}`
-      wsProxy.ws(req, socket, head, { target })
+      // httpxy signature: (req, socket, opts, head?) — target goes in opts.
+      // Cast socket: Node's http 'upgrade' event yields a Duplex subtype; net.Socket is the expected type.
+      wsProxy.ws(req, socket as unknown as import('node:net').Socket, { target }, head as unknown as undefined)
     })
   }
 

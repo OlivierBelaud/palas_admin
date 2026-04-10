@@ -101,7 +101,7 @@ type CommandNamespace = MantaCommands
  * - step.action(name, config) — external action
  * - step.emit(event, data) — fire event
  */
-export type TypedStep<TEntities = MantaEntities> = {
+export type TypedStep<_TEntities = MantaEntities> = {
   service: MantaGeneratedAppModules
   command: CommandNamespace
 } & StepUtilities
@@ -124,7 +124,7 @@ export interface CommandDefinition<TInput = unknown, TOutput = unknown> {
 /** What the developer writes — workflow receives typed { step, log }. */
 // biome-ignore lint/suspicious/noExplicitAny: DmlEntity generics
 export interface TypedCommandConfig<
-  TInput,
+  _TInput,
   TOutput,
   TEntities extends Record<string, DmlEntity<any>> = MantaEntities & Record<string, DmlEntity<any>>,
   TSchema extends z.ZodType = z.ZodType,

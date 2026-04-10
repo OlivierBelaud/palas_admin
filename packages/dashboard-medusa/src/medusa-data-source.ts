@@ -8,7 +8,7 @@ export class MedusaDataSource implements DataSource {
     this.baseUrl = baseUrl || '/'
   }
 
-  async fetch(endpoint: string, params?: Record<string, unknown>): Promise<unknown> {
+  async fetch(endpoint: string, _params?: Record<string, unknown>): Promise<unknown> {
     const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl === '/' ? '' : this.baseUrl}${endpoint}`
     const res = await fetch(url, {
       credentials: 'include',

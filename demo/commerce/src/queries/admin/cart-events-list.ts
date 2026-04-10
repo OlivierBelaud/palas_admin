@@ -1,5 +1,4 @@
-
-const SYMBOLS: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', CHF: 'CHF', CAD: 'CA$', AUD: 'A$' }
+import { formatMoney } from '../../utils/currency'
 
 export default defineQuery({
   name: 'cart-events-list',
@@ -14,18 +13,17 @@ export default defineQuery({
       fields: ['action', 'total_price', 'item_count', 'occurred_at', 'cart_id', 'currency'],
       sort: { occurred_at: 'desc' },
       pagination: { limit: 200 },
-    }) as any[]
+    })
 
-    return events.map((e: any) => {
-      const cleanAction = (e.action as string)
+    return events.map((e) => {
+      const cleanAction = e.action
         .replace(/_info_submitted$/, '')
         .replace(/_submitted$/, '')
         .replace(/_info$/, '')
-      const symbol = SYMBOLS[e.currency ?? 'EUR'] ?? e.currency
       return {
         ...e,
         action: cleanAction,
-        montant: e.total_price != null ? `${e.total_price} ${symbol}` : '-',
+        montant: formatMoney(e.total_price, e.currency ?? 'EUR'),
       }
     })
   },

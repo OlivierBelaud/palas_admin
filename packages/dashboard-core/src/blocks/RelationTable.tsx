@@ -45,7 +45,7 @@ export function RelationTableBlock({ query, ...props }: RelationTableBlockProps)
   const pageSize = props.pageSize ?? 5
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const rowActions = props.rowActions ?? []
   const headerActions = props.actions ?? []
 

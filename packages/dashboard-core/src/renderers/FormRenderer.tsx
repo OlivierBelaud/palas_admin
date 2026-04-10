@@ -4,7 +4,19 @@
 // Infers required fields and validates client-side from command schemas (codegen).
 
 import { useCommand, useGraphQuery, useQuery } from '@manta/sdk'
-import { Button, Input, Label, Select, Switch, Textarea, toast } from '@manta/ui'
+import {
+  Button,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
+  Textarea,
+  toast,
+} from '@manta/ui'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ComponentType } from 'react'
 import React, { useEffect, useMemo, useState } from 'react'
@@ -292,7 +304,7 @@ function renderField(field: FieldDef, value: unknown, onChange: (key: string, va
         React.createElement(Input, {
           id: field.key,
           type: field.type === 'number' || field.type === 'currency' ? 'number' : 'text',
-          value: value ?? '',
+          value: (value as string | number | undefined) ?? '',
           placeholder: field.placeholder ?? '',
           required: field.required,
           className: inputClassName,
@@ -312,7 +324,7 @@ function renderField(field: FieldDef, value: unknown, onChange: (key: string, va
         labelElement,
         React.createElement(Textarea, {
           id: field.key,
-          value: value ?? '',
+          value: (value as string | undefined) ?? '',
           placeholder: field.placeholder ?? '',
           required: field.required,
           className: inputClassName,
@@ -333,17 +345,17 @@ function renderField(field: FieldDef, value: unknown, onChange: (key: string, va
             onValueChange: (v: string) => onChange(field.key, v),
           },
           React.createElement(
-            Select.Trigger,
+            SelectTrigger,
             { className: inputClassName },
-            React.createElement(Select.Value, {
+            React.createElement(SelectValue, {
               placeholder: field.placeholder ?? `Select ${field.label.toLowerCase()}`,
             }),
           ),
           React.createElement(
-            Select.Content,
+            SelectContent,
             null,
             field.options?.map((opt) =>
-              React.createElement(Select.Item, { key: opt, value: opt }, opt.charAt(0).toUpperCase() + opt.slice(1)),
+              React.createElement(SelectItem, { key: opt, value: opt }, opt.charAt(0).toUpperCase() + opt.slice(1)),
             ),
           ),
         ),
@@ -383,7 +395,7 @@ function renderField(field: FieldDef, value: unknown, onChange: (key: string, va
         labelElement,
         React.createElement(Input, {
           id: field.key,
-          value: value ?? '',
+          value: (value as string | number | undefined) ?? '',
           className: inputClassName,
           onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(field.key, e.target.value),
         }),
@@ -451,7 +463,7 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
       if (Array.isArray(row)) return row.map(enrichField)
       return enrichField(row)
     })
-  }, [spec, schemaMeta])
+  }, [spec, enrichField])
 
   // Flat list of all fields (for validation)
   const enrichedFields = useMemo(() => flattenFieldRows(enrichedFieldRows), [enrichedFieldRows])
@@ -462,7 +474,10 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
   const isEditNamed = spec.query && isNamedQuery(spec.query)
 
   const graphConfig = isEditGraph
-    ? { ...spec.query!.graph, filters: { id: params.id, ...(spec.query as any).graph.filters } }
+    ? {
+        ...(spec.query as any).graph,
+        filters: { id: params.id, ...(spec.query as any).graph.filters },
+      }
     : { entity: '__disabled__' }
   const { data: graphData } = useGraphQuery(graphConfig, {
     enabled: !!isEditGraph && !!params.id,
@@ -496,7 +511,7 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
         return merged
       })
     }
-  }, [existingData])
+  }, [existingData, initialData])
 
   const close = () => navigate('..')
 

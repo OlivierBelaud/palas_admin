@@ -34,7 +34,8 @@ export function usePrefetchQueries(blocks: BlockDef[], params?: Record<string, s
 
       if (isGraphQuery(block.query)) {
         const g = block.query.graph
-        const existing = graphByEntity.get(g.entity)
+        const entityKey = String(g.entity)
+        const existing = graphByEntity.get(entityKey)
 
         if (existing) {
           // Merge fields
@@ -54,8 +55,8 @@ export function usePrefetchQueries(blocks: BlockDef[], params?: Record<string, s
           if (g.pagination && !existing.pagination) existing.pagination = g.pagination
           if (g.sort && !existing.sort) existing.sort = g.sort
         } else {
-          graphByEntity.set(g.entity, {
-            entity: g.entity,
+          graphByEntity.set(entityKey, {
+            entity: entityKey,
             fields: [...(g.fields ?? [])],
             relations: [...(g.relations ?? [])],
             filters: g.filters,

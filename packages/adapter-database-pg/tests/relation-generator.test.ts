@@ -177,7 +177,7 @@ describe('generateLinkRelations', () => {
     // Left → many(pivot)
     expect(defs[0]).toEqual({
       sourceEntity: 'product',
-      name: 'link_product_product_collection_collection',
+      name: 'productProductCollectionCollection',
       kind: 'many',
       target: 'product_product_collection_collection',
     })
@@ -185,7 +185,7 @@ describe('generateLinkRelations', () => {
     // Right → many(pivot)
     expect(defs[1]).toEqual({
       sourceEntity: 'collection',
-      name: 'link_product_product_collection_collection',
+      name: 'productProductCollectionCollection',
       kind: 'many',
       target: 'product_product_collection_collection',
     })

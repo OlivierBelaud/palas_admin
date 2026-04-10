@@ -68,14 +68,17 @@ describe('B8 — db:rollback — file validation', () => {
   })
 
   // -------------------------------------------------------------------
-  // ROLLBACK-02 — error if .down.sql is TODO placeholder
+  // ROLLBACK-02 — error if .down.sql is only comments (skeleton)
   // -------------------------------------------------------------------
-  it('ROLLBACK-02 — returns error if file is TODO placeholder', () => {
+  it('ROLLBACK-02 — returns error if file is only comments (skeleton)', () => {
     mkdirSync(join(TMP, 'drizzle/migrations'), { recursive: true })
-    writeFileSync(join(TMP, 'drizzle/migrations/0001.down.sql'), '-- TODO: Write rollback SQL for this migration')
+    writeFileSync(
+      join(TMP, 'drizzle/migrations/0001.down.sql'),
+      '-- Rollback SQL for this migration.\n-- Revert your model.\n',
+    )
     const error = validateRollbackFile('drizzle/migrations/0001.down.sql', TMP)
     expect(error).not.toBeNull()
-    expect(error).toContain('TODO placeholder')
+    expect(error).toContain('no SQL')
   })
 
   // -------------------------------------------------------------------
@@ -151,19 +154,19 @@ describe('B8 — db:rollback — command', () => {
   })
 
   // -------------------------------------------------------------------
-  // ROLLBACK-08 — exit 1 if .down.sql is TODO placeholder
+  // ROLLBACK-08 — exit 1 if .down.sql is only comments (skeleton)
   // -------------------------------------------------------------------
-  it('ROLLBACK-08 — exit 1 if rollback file is TODO placeholder', async () => {
+  it('ROLLBACK-08 — exit 1 if rollback file is only comments', async () => {
     const deps = createMockDeps()
     ;(deps.tracker.getApplied as ReturnType<typeof vi.fn>).mockResolvedValue(['0001.sql'])
     ;(deps.fs.rollbackFileExists as ReturnType<typeof vi.fn>).mockReturnValue(true)
     ;(deps.fs.readRollbackContent as ReturnType<typeof vi.fn>).mockReturnValue(
-      '-- TODO: Write rollback SQL for this migration',
+      '-- Rollback SQL for this migration.\n-- Revert your model.\n',
     )
 
     const result = await rollbackCommand({}, deps)
     expect(result.exitCode).toBe(1)
-    expect(result.errors[0]).toContain('TODO')
+    expect(result.errors[0]).toContain('no SQL')
     expect(result.rolledBack).toHaveLength(0)
   })
 

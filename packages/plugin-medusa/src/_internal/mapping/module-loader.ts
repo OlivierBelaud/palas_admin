@@ -193,7 +193,7 @@ export function registerAllModulesInApp(
   registry.set('logger', infra.logger)
   registry.set('ILockingPort', infra.locking)
   registry.set('IFilePort', infra.file)
-  registry.set('db', (infra as unknown as Record<string, unknown>).db)
+  registry.set('db', infra.db)
   registry.set('configModule', {
     projectConfig: {
       jwt_secret: process.env.JWT_SECRET ?? 'manta-dev-secret',
@@ -304,7 +304,7 @@ export function registerAllModulesInApp(
   return { registered, skipped, failed, errors }
 }
 
-function createProviderRegistryStandalone(name: string) {
+function createProviderRegistryStandalone(_name: string) {
   const providers = new Map<string, unknown>()
   return {
     register: (id: string, provider: unknown) => providers.set(id, provider),

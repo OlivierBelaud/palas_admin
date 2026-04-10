@@ -17,11 +17,27 @@ import { applyRelationPagination, buildDrizzleWith, hasRelationFields, separateF
  * The schema must include both tables and `relations()` definitions.
  */
 /**
- * Relation alias mapping: user-friendly name → Drizzle relation name.
- * e.g. on entity 'customerGroup': { customers: 'customerCustomerGroup' }
+ * Structured alias for M:N and 1:N-with-extras link relations.
+ * Contains the pivot relation name + the "through" target relation on the pivot,
+ * so that `fields: ['*', 'customers.*']` automatically loads through the pivot.
+ */
+export interface RelationAlias {
+  /** Drizzle relation name on the parent entity → pivot table (e.g. 'customerCustomerGroup') */
+  pivot: string
+  /** Drizzle relation name on the pivot → target entity (e.g. 'customer') */
+  through: string
+  /** Extra columns on the pivot table to merge into target entities (e.g. ['type', 'is_default']) */
+  extraColumns?: string[]
+}
+
+/**
+ * Relation alias mapping: user-friendly name → Drizzle relation name or structured alias.
+ * - string value: simple rename (e.g. 'address' → 'customerAddress')
+ * - RelationAlias value: M:N through-pivot with automatic flattening
  * Built from defineLink() definitions at bootstrap.
  */
-export type RelationAliasMap = Map<string, Record<string, string>>
+export type RelationAliasEntry = string | RelationAlias
+export type RelationAliasMap = Map<string, Record<string, RelationAliasEntry>>
 
 export class DrizzleRelationalQuery implements IRelationalQueryPort {
   private _db: PostgresJsDatabase<Record<string, unknown>>
@@ -77,18 +93,28 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       )
     }
 
-    // Resolve relation aliases: 'customers' → 'customerCustomerGroup.*'
+    // Resolve relation aliases: 'customers' → 'customerCustomerGroup.customer.*' (M:N through)
+    // or 'variants' → 'variants.*' (simple alias)
     const entityNorm = config.entity.replace(/[_\s-]/g, '').toLowerCase()
     const aliases = this._relationAliases.get(entityNorm) ?? {}
     const fields = (config.fields ?? ['*']).map((f) => {
-      // Check if the field (or first part of dotted path) is an alias
       const parts = f.split('.')
-      const resolved = aliases[parts[0]]
-      if (resolved) {
-        // Replace alias with Drizzle relation name, keep sub-fields
-        return parts.length > 1 ? `${resolved}.${parts.slice(1).join('.')}` : `${resolved}.*`
+      const aliasEntry = aliases[parts[0]]
+      if (!aliasEntry) return f
+
+      if (typeof aliasEntry === 'string') {
+        // Simple alias: replace name, keep sub-fields
+        return parts.length > 1 ? `${aliasEntry}.${parts.slice(1).join('.')}` : `${aliasEntry}.*`
       }
-      return f
+
+      // RelationAlias: expand through pivot → target
+      // 'customers.*' → 'customerCustomerGroup.customer.*'
+      // 'customers.name' → 'customerCustomerGroup.customer.name'
+      const { pivot, through } = aliasEntry
+      if (parts.length > 1) {
+        return `${pivot}.${through}.${parts.slice(1).join('.')}`
+      }
+      return `${pivot}.${through}.*`
     })
     let withClause = hasRelationFields(fields) ? buildDrizzleWith(fields) : {}
 
@@ -136,23 +162,8 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
     try {
       const results = await queryTarget.findMany(queryOptions)
 
-      // Rename Drizzle relation keys back to user-friendly aliases
-      // e.g. 'customerCustomerGroup' → 'customers'
-      const reverseAliases: Record<string, string> = {}
-      for (const [alias, drizzleName] of Object.entries(aliases)) {
-        reverseAliases[drizzleName] = alias
-      }
-      if (Object.keys(reverseAliases).length > 0) {
-        return (results as Record<string, unknown>[]).map((row) => {
-          const renamed: Record<string, unknown> = {}
-          for (const [key, value] of Object.entries(row)) {
-            renamed[reverseAliases[key] ?? key] = value
-          }
-          return renamed
-        })
-      }
-
-      return results as Record<string, unknown>[]
+      // Flatten M:N through-relations and rename Drizzle keys back to user-friendly aliases
+      return this._flattenResults(results as Record<string, unknown>[], aliases)
     } catch (error) {
       throw new MantaError(
         'DB_ERROR',
@@ -403,5 +414,62 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       }
     }
     return clean
+  }
+
+  /**
+   * Flatten M:N through-relations and rename Drizzle keys to user-friendly aliases.
+   *
+   * For simple aliases (string): rename key (e.g. 'customerCustomerGroup' → 'customers')
+   * For RelationAlias (through): flatten pivot arrays into target entities with extra columns merged.
+   *
+   * Example: pivot rows `[{ customer: { id, name }, type: 'billing' }]`
+   * → flattened to `[{ id, name, type: 'billing' }]` under the alias key `customers`
+   */
+  private _flattenResults(
+    results: Record<string, unknown>[],
+    aliases: Record<string, RelationAliasEntry>,
+  ): Record<string, unknown>[] {
+    const hasAliases = Object.keys(aliases).length > 0
+    if (!hasAliases) return results
+
+    // Build reverse mappings
+    const simpleReverse: Record<string, string> = {} // drizzleName → alias
+    const throughAliases: Record<string, { alias: string; through: string; extraColumns?: string[] }> = {} // pivot → info
+
+    for (const [alias, entry] of Object.entries(aliases)) {
+      if (typeof entry === 'string') {
+        simpleReverse[entry] = alias
+      } else {
+        throughAliases[entry.pivot] = { alias, through: entry.through, extraColumns: entry.extraColumns }
+      }
+    }
+
+    return results.map((row) => {
+      const renamed: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(row)) {
+        // Check for through-alias (M:N flattening)
+        const throughInfo = throughAliases[key]
+        if (throughInfo) {
+          const pivotRows = Array.isArray(value) ? value : []
+          renamed[throughInfo.alias] = pivotRows.map((pivotRow: Record<string, unknown>) => {
+            const target = (pivotRow[throughInfo.through] ?? {}) as Record<string, unknown>
+            // Merge extra columns from pivot into target entity
+            if (throughInfo.extraColumns && throughInfo.extraColumns.length > 0) {
+              const extras: Record<string, unknown> = {}
+              for (const col of throughInfo.extraColumns) {
+                if (col in pivotRow) extras[col] = pivotRow[col]
+              }
+              return { ...target, ...extras }
+            }
+            return { ...target }
+          })
+          continue
+        }
+
+        // Check for simple alias rename
+        renamed[simpleReverse[key] ?? key] = value
+      }
+      return renamed
+    })
   }
 }

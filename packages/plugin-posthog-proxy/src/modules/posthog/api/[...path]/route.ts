@@ -84,7 +84,7 @@ export async function POST(req: Request & { app?: any }) {
         parsed = JSON.parse(jsonText)
         const events = Array.isArray(parsed)
           ? parsed
-          : ((parsed as Record<string, unknown>).batch as unknown[] ?? [parsed])
+          : (((parsed as Record<string, unknown>).batch as unknown[]) ?? [parsed])
         for (const evt of events as Record<string, unknown>[]) {
           const eventName = evt.event as string | undefined
           if (eventName === '$snapshot') continue // skip session recordings
@@ -175,7 +175,7 @@ const CART_TRACKABLE_EVENTS = new Set([
   'checkout:completed',
 ])
 
-const STAGE_ORDER = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
+const _STAGE_ORDER = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
 
 function actionToStage(action: string): string {
   if (action.startsWith('cart:')) return 'cart'
@@ -193,7 +193,7 @@ const esc = (v: any) => {
 }
 
 async function ingestCartEvents(body: unknown, sql: any) {
-  const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
+  const events = Array.isArray(body) ? body : (((body as Record<string, unknown>).batch as unknown[]) ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
     const eventName = event.event as string | undefined
@@ -313,7 +313,9 @@ async function ingestCartEvents(body: unknown, sql: any) {
         `)
       }
 
-      console.log(`[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`)
+      console.log(
+        `[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`,
+      )
     } catch (err) {
       console.error(`[posthog-proxy] cart-tracking: ✗ ${eventName}:`, (err as Error).message)
     }
@@ -331,7 +333,7 @@ const CHECKOUT_EVENTS_WITH_EMAIL = new Set([
 ])
 
 async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig, clientIp?: string | null) {
-  const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch as unknown[] ?? [body])
+  const events = Array.isArray(body) ? body : (((body as Record<string, unknown>).batch as unknown[]) ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
     const eventName = event.event as string | undefined
@@ -384,7 +386,9 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
     // 2. Merge store distinct_id → checkout distinct_id (same person)
     const storeDistinctId = (props?._distinct_id ?? props?._store_distinct_id) as string | undefined
     if (storeDistinctId && storeDistinctId !== distinctId) {
-      console.log(`[posthog-proxy] ${eventName}: merging store ${storeDistinctId} → checkout ${distinctId} via $identify`)
+      console.log(
+        `[posthog-proxy] ${eventName}: merging store ${storeDistinctId} → checkout ${distinctId} via $identify`,
+      )
       // Identify the STORE distinct_id with the same email — PostHog merges both into one person
       await sendPostHogEvent(config, clientIp, {
         api_key: config.publicToken!,
@@ -473,12 +477,14 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
     const exchangeId = extractExchangeId(
       props?.$_kx as string | null,
       props?.$kla_id as string | null,
-      $set?.$_kx as string | null ?? $set?._kx as string | null,
+      ($set?.$_kx as string | null) ?? ($set?._kx as string | null),
       kxFromUrl,
     )
     if (!exchangeId) continue
 
-    console.log(`[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}, exchangeId: ${exchangeId.slice(0, 30)}...`)
+    console.log(
+      `[posthog-proxy] Resolving Klaviyo identity for distinct_id: ${distinctId}, exchangeId: ${exchangeId.slice(0, 30)}...`,
+    )
     try {
       const email = await resolveKlaviyoEmail(exchangeId, config)
       console.log(`[posthog-proxy] Klaviyo result: ${email ?? 'null'}`)
@@ -571,7 +577,11 @@ async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfi
 }
 
 /** Low-level: send a single event to PostHog ingest API */
-async function sendPostHogEvent(config: PostHogProxyConfig, clientIp?: string | null, payload?: Record<string, unknown>) {
+async function sendPostHogEvent(
+  config: PostHogProxyConfig,
+  clientIp?: string | null,
+  payload?: Record<string, unknown>,
+) {
   if (!config.publicToken) {
     console.warn('[posthog-proxy] POSTHOG_TOKEN not set — cannot send event')
     return
@@ -591,7 +601,12 @@ async function sendPostHogEvent(config: PostHogProxyConfig, clientIp?: string | 
 }
 
 /** Klaviyo identity bridge: identify anonymous distinct_id with resolved email */
-async function identifyInPostHog(distinctId: string, email: string, config: PostHogProxyConfig, clientIp?: string | null) {
+async function identifyInPostHog(
+  distinctId: string,
+  email: string,
+  config: PostHogProxyConfig,
+  clientIp?: string | null,
+) {
   await sendPostHogEvent(config, clientIp, {
     api_key: config.publicToken,
     event: '$identify',

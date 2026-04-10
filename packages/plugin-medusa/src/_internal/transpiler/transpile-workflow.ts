@@ -47,7 +47,7 @@ export function extractStepsFromWorkflow(
 
   // Load the workflow-sdk internals to find registered steps
   try {
-    const workflowsSdk = require('@medusajs/workflows-sdk')
+    const _workflowsSdk = require('@medusajs/workflows-sdk')
     const orchestration = require('@medusajs/orchestration')
 
     // Get the workflow name

@@ -1,7 +1,7 @@
 // ComputedProperty — marks a property as computed (no DB column), type becomes T | null.
 
 import { MantaError } from '../../errors/manta-error'
-import { _registerComputedProperty, type BaseProperty, type PropertyMetadata } from './base'
+import type { BaseProperty, PropertyMetadata } from './base'
 
 export class ComputedProperty<T, Schema extends BaseProperty<T>> {
   $dataType!: T | null
@@ -26,6 +26,3 @@ export class ComputedProperty<T, Schema extends BaseProperty<T>> {
     throw new MantaError('INVALID_STATE', 'ComputedProperty: schema has no parse method')
   }
 }
-
-// Register with BaseProperty to break circular dep
-_registerComputedProperty(ComputedProperty)

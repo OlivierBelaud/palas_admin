@@ -218,6 +218,8 @@ export default defineQuery({
 - `query.graph()` for cross-module joins
 - `listParams()` helper adds standard pagination/sort/search fields
 - `retrieveParams()` helper adds `{ id, fields }` for single entity lookups
+- Relation field syntax: use `fields: ['*', 'relation.*']` to eagerly load related entities (e.g., `fields: ['*', 'addresses.*']`). For M:N links with extraColumns, pivot columns are merged into each target entity.
+- `relPagination`: paginate relation results independently, e.g., `relPagination: { orders: { take: 5, skip: 0 } }`
 
 ### defineQueryGraph — Expose query graph to frontend
 
@@ -321,6 +323,7 @@ export default defineLink('product', many('category'))
 - Intra-module (`src/modules/{mod}/links/`): 1:1 and 1:N create FK directly, M:N creates pivot
 - `many()` wraps for 1:N or M:N cardinality
 - Cascade is automatic
+- Extra columns on pivot: `defineLink('customer', many('address'), { type: field.text(), is_default: field.boolean().default(false) })` — extra columns are added to the pivot table schema, included in auto-generated link commands, and merged into target entities when using relation field syntax in queries
 
 ### defineUserModel — Augmented defineModel with auth
 

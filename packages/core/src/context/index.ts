@@ -17,12 +17,14 @@ import { MantaError } from '../errors/manta-error'
  *   }
  * }
  */
-// biome-ignore lint/suspicious/noEmptyInterface: augmented by codegen via declare global
-export interface MantaRegistry extends MantaGeneratedRegistry {
+// Intersection (rather than extends) so codegen-augmented MantaGeneratedRegistry
+// can redefine modules/commands/actors with narrower non-optional types without
+// triggering a structural incompatibility with the base.
+export type MantaRegistry = {
   modules?: Record<string, true>
   commands?: Record<string, true>
   actors?: Record<string, true>
-}
+} & MantaGeneratedRegistry
 
 // Conditional types: use strict union when codegen has populated the registry, else fall back to string.
 type RegistryKeys<K extends keyof MantaRegistry> =

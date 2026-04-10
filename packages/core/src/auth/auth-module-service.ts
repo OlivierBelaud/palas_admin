@@ -196,7 +196,7 @@ export class AuthModuleService {
 
   // --- Internal: create provider service for delegation ---
 
-  private createProviderService(provider: string): IAuthIdentityProviderService {
+  private createProviderService(_provider: string): IAuthIdentityProviderService {
     const self = this
     return {
       async create(data) {

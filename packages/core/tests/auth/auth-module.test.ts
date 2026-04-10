@@ -1,7 +1,7 @@
 // Auth + User module tests — full flow coverage
 
 import { InMemoryCacheAdapter, InMemoryRepository } from '@manta/core'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { AuthModuleService } from '../../src/auth/auth-module-service'
 import { extractAuthContext } from '../../src/auth/middleware'
 import { EmailpassAuthProvider } from '../../src/auth/providers/emailpass'
@@ -195,7 +195,7 @@ describe('AuthModuleService', () => {
       JWT_SECRET,
     )
 
-    const tampered = token.slice(0, -5) + 'XXXXX'
+    const tampered = `${token.slice(0, -5)}XXXXX`
 
     await expect(authService.verifyToken(tampered, JWT_SECRET)).rejects.toThrow('Invalid token')
   })

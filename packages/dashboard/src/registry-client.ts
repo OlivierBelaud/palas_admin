@@ -1,4 +1,12 @@
-import type { DataComponent, INavItem, PageSpec } from '@manta/dashboard-core'
+import type { DataComponent, PageSpec } from '@manta/dashboard-core'
+
+/** JSON-serializable navigation item (icon as string, resolved client-side via resolveIcon). */
+export interface RegistryNavItem {
+  icon?: string
+  label: string
+  to: string
+  items?: Array<{ label: string; to: string }>
+}
 
 /**
  * Registry response from GET /api/admin/registry
@@ -7,9 +15,10 @@ import type { DataComponent, INavItem, PageSpec } from '@manta/dashboard-core'
 export interface RegistryResponse {
   pages: Record<string, PageSpec>
   components: Record<string, DataComponent>
-  navigation: Omit<INavItem, 'pathname'>[]
+  navigation: RegistryNavItem[]
   endpoints?: Record<string, string>
   queryKeys?: Record<string, string>
+  ai?: { enabled?: boolean }
 }
 
 /**
@@ -22,7 +31,7 @@ export async function fetchRegistry(baseUrl: string): Promise<RegistryResponse> 
     'Content-Type': 'application/json',
   }
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+    headers.Authorization = `Bearer ${token}`
   }
 
   const res = await fetch(`${baseUrl}/api/admin/registry`, { headers })

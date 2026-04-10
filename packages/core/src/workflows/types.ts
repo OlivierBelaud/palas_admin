@@ -103,32 +103,6 @@ export interface WorkflowRunResult {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy types — kept for backward compatibility during transition
-// ---------------------------------------------------------------------------
-
-/** @deprecated Use plain return values instead */
-export class StepResponse<TOutput = unknown, TCompensateInput = unknown> {
-  readonly __type = 'StepResponse' as const
-  readonly output: TOutput
-  readonly compensateInput: TCompensateInput | undefined
-
-  constructor(output: TOutput, compensateInput?: TCompensateInput) {
-    this.output = output
-    this.compensateInput = compensateInput
-  }
-}
-
-/** @deprecated Workflows return plain values now */
-export class WorkflowResponse<TResult = unknown> {
-  readonly __type = 'WorkflowResponse' as const
-  readonly result: TResult
-
-  constructor(result: TResult) {
-    this.result = result
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Typed step config types
 // ---------------------------------------------------------------------------
 
@@ -157,7 +131,7 @@ export interface WorkflowResult<T = unknown> {
   result?: T
 }
 
-// Legacy internal types (used by old DAG-style WorkflowManager)
+// Internal types for the workflow step engine
 
 export interface StepDefinition {
   name: string
@@ -183,10 +157,4 @@ export interface StepResolveContext {
   resolve<T>(key: string): T
   _bufferEvent?: (event: Message) => void
   transactionId?: string
-}
-
-/** @deprecated Use StepContext */
-export interface StepExecutionContext {
-  app: MantaApp
-  __bufferEvent?: (event: Message) => void
 }

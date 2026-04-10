@@ -183,6 +183,7 @@ interface IDatabasePort {
   healthCheck(): Promise<boolean>
   getClient(): unknown
   getPool(): unknown
+  raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
   transaction<T>(fn: (tx: unknown) => Promise<T>, options?: TransactionOptions): Promise<T>
 }
 ```

@@ -8,12 +8,7 @@ interface QueryResult {
 }
 
 export function buildQueryParams(
-  query: QueryDef & {
-    filters?: Record<string, unknown> | { $state: string }
-    sort?: { field: string; direction: string } | { $state: string }
-    search?: string | { $state: string }
-    limit?: number | { $state: string }
-    offset?: number | { $state: string }
+  query: Omit<QueryDef, 'expand'> & {
     expand?: Record<string, { fields?: string[]; expand?: Record<string, unknown> }>
   },
   state: Record<string, unknown>,
@@ -62,7 +57,7 @@ export function buildQueryParams(
 
   if (query.sort) {
     const resolvedSort = resolveStateRef(query.sort, state) as { field: string; direction: string } | undefined
-    if (resolvedSort && resolvedSort.field) {
+    if (resolvedSort?.field) {
       params.order = `${resolvedSort.field}:${resolvedSort.direction}`
     }
   }

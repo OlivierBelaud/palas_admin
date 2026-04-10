@@ -2,7 +2,7 @@
 // Uses the 'postgres' library directly (same as adapter-drizzle-pg)
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import postgres from 'postgres'
 import type { CreateDeps, DbClient, MigrationFs, MigrationLock, MigrationTracker } from './types'
 

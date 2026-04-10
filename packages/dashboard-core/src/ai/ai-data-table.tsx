@@ -164,7 +164,11 @@ export function AIDataTable({ items, columns, title, searchable = true, pageSize
                       return <Table.Cell key={col.key}>—</Table.Cell>
                     }
                     try {
-                      return <Table.Cell key={col.key}>{renderCellByType(value, col, item)}</Table.Cell>
+                      return (
+                        <Table.Cell key={col.key}>
+                          {renderCellByType(col as Parameters<typeof renderCellByType>[0], item)}
+                        </Table.Cell>
+                      )
                     } catch {
                       return <Table.Cell key={col.key}>{String(value)}</Table.Cell>
                     }

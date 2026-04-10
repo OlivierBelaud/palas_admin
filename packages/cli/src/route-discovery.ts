@@ -2,7 +2,7 @@
 // Scans src/api/ and maps file paths to HTTP routes
 
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { basename, dirname, relative, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 
 export interface DiscoveredRoute {
   /** HTTP method (GET, POST, PUT, DELETE, PATCH) */
@@ -52,7 +52,7 @@ export async function discoverRoutes(cwd: string): Promise<DiscoveredRoute[]> {
           }
           // [id] → :id
           if (segment.startsWith('[') && segment.endsWith(']')) {
-            return ':' + segment.slice(1, -1)
+            return `:${segment.slice(1, -1)}`
           }
           return segment
         })

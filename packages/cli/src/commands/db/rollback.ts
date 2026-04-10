@@ -14,7 +14,7 @@ export interface RollbackCommandResult {
   rolledBack: string[]
 }
 
-const TODO_PLACEHOLDER = '-- TODO: Write rollback SQL for this migration'
+// Rollback validation uses content inspection (no SQL = skeleton only)
 
 /**
  * Validate a rollback SQL file.
@@ -28,8 +28,13 @@ export function validateRollbackFile(filePath: string, cwd: string = process.cwd
   }
 
   const content = readFileSync(fullPath, 'utf-8').trim()
-  if (content === TODO_PLACEHOLDER || content === '') {
-    return `Rollback file is empty: ${filePath}\nIt contains only the TODO placeholder. Write the rollback SQL and try again.`
+  // Detect unmodified skeleton (all lines are comments or empty)
+  const hasRealSql = content.split('\n').some((line) => {
+    const trimmed = line.trim()
+    return trimmed.length > 0 && !trimmed.startsWith('--')
+  })
+  if (!hasRealSql) {
+    return `Rollback file has no SQL: ${filePath}\nIt contains only comments. Write the rollback SQL or revert your model and run \`manta db:generate\`.`
   }
 
   return null
@@ -66,12 +71,18 @@ export async function rollbackCommand(
       break
     }
 
-    // Check if rollback file is TODO placeholder
+    // Check if rollback file has real SQL (not just comments/skeleton)
     const content = deps.fs.readRollbackContent(name)
-    if (!content || content.trim() === '' || content.trim() === TODO_PLACEHOLDER) {
+    const hasRealSql = content
+      ? content.split('\n').some((line) => {
+          const trimmed = line.trim()
+          return trimmed.length > 0 && !trimmed.startsWith('--')
+        })
+      : false
+    if (!hasRealSql) {
       result.exitCode = 1
       result.errors.push(
-        `Rollback file contains only the TODO placeholder: ${name}\nWrite the rollback SQL and try again.`,
+        `Rollback file has no SQL: ${name}\nIt contains only comments. Write the rollback SQL or revert your model and run \`manta db:generate\`.`,
       )
       break
     }

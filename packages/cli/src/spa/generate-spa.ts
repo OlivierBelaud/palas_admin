@@ -45,7 +45,7 @@ export function generateSpaArtifacts(options: SpaGenerateOptions): string {
 function generateRoutes(spa: DiscoveredSpa, cwd: string): string {
   const lines = [
     '// Auto-generated — do not edit',
-    '// Pages discovered from src/spa/' + spa.name + '/',
+    `// Pages discovered from src/spa/${spa.name}/`,
     '',
     "import { lazy } from 'react'",
     '',
@@ -137,7 +137,7 @@ function generateRoutes(spa: DiscoveredSpa, cwd: string): string {
   return lines.join('\n')
 }
 
-function generateEntry(spa: DiscoveredSpa, cwd: string, outDir: string, dashboard?: string, preset?: string): string {
+function generateEntry(spa: DiscoveredSpa, cwd: string, _outDir: string, dashboard?: string, preset?: string): string {
   // When @manta/dashboard is the dashboard shell, generate an entry that uses MantaDashboard
   // which provides the full admin shell (sidebar, auth, registry, etc.)
   if (dashboard === '@manta/dashboard') {
@@ -231,7 +231,7 @@ function generateViteConfig(
   cwd: string,
   outDir: string,
   dashboard?: string,
-  preset?: string,
+  _preset?: string,
   port = 3000,
 ): string {
   const lines = [

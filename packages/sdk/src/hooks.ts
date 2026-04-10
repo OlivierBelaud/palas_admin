@@ -15,8 +15,13 @@ import { useMantaClient } from './provider'
 // When codegen runs, MantaGeneratedCommands provides autocomplete for command names.
 // When codegen hasn't run, any string is accepted.
 
-type CommandName = keyof MantaGeneratedCommands | (string & {})
-type QueryName = keyof MantaGeneratedQueries | (string & {})
+declare global {
+  interface MantaGeneratedCommands {}
+  interface MantaGeneratedQueries {}
+}
+
+type CommandName = keyof MantaGeneratedCommands extends never ? string : keyof MantaGeneratedCommands | (string & {})
+type QueryName = keyof MantaGeneratedQueries extends never ? string : keyof MantaGeneratedQueries | (string & {})
 
 // ── useCommand ─────────────────────────────────────────
 
@@ -95,14 +100,14 @@ export function useGraphQuery<TOutput = unknown>(
   options?: { enabled?: boolean; staleTime?: number; refetchInterval?: number },
 ): UseQueryResult<TOutput, Error> {
   const client = useMantaClient()
-  return useReactQuery<TOutput, Error>({
+  return useReactQuery({
     queryKey: ['manta', 'graph', config.entity, config],
     queryFn: () => client.graphQuery<TOutput>(config),
     enabled: options?.enabled,
     staleTime: options?.staleTime,
     refetchInterval: options?.refetchInterval,
-    placeholderData: (prev: TOutput | undefined) => prev,
-  })
+    placeholderData: ((prev: TOutput | undefined) => prev) as unknown as undefined,
+  }) as unknown as UseQueryResult<TOutput, Error>
 }
 
 // ── useAuth ────────────────────────────────────────────

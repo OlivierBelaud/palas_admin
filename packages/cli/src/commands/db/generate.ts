@@ -85,8 +85,8 @@ export function detectRenames(
  * Check if running in non-interactive mode (CI, piped stdin).
  */
 export function isNonInteractive(): boolean {
-  if (process.env['CI'] === 'true') return true
-  if (process.env['MANTA_NON_INTERACTIVE'] === 'true') return true
+  if (process.env.CI === 'true') return true
+  if (process.env.MANTA_NON_INTERACTIVE === 'true') return true
   if (typeof process.stdin.isTTY === 'undefined' || !process.stdin.isTTY) return true
   return false
 }
@@ -119,7 +119,7 @@ export function detectDangerousChanges(sql: string): string[] {
  * Accepts injectable deps for testability (hexagonal architecture).
  */
 export async function generateCommand(
-  options: GenerateOptions = {},
+  _options: GenerateOptions = {},
   cwd: string = process.cwd(),
   deps: GenerateDeps,
 ): Promise<GenerateCommandResult> {
