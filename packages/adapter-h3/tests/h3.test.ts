@@ -87,6 +87,80 @@ describe('H3Adapter Conformance', () => {
     expect(body.status).toBe('ready')
   })
 
+  // BC-F22 — readiness probes
+  it('/health/ready runs all configured probes and returns 200 when all pass', async () => {
+    const probedAdapter = new H3Adapter({
+      port: 0,
+      isDev: true,
+      readinessProbes: {
+        db: async () => true,
+        cache: async () => true,
+        eventbus: async () => true,
+      },
+    })
+    const res = await probedAdapter.handleRequest(new Request('http://localhost/health/ready'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.status).toBe('ready')
+    expect(body.checks).toEqual({ db: 'ok', cache: 'ok', eventbus: 'ok' })
+  })
+
+  it('/health/ready returns 503 when any probe fails', async () => {
+    const probedAdapter = new H3Adapter({
+      port: 0,
+      isDev: true,
+      readinessProbes: {
+        db: async () => true,
+        cache: async () => false,
+      },
+    })
+    const res = await probedAdapter.handleRequest(new Request('http://localhost/health/ready'))
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.status).toBe('not_ready')
+    expect(body.checks).toEqual({ db: 'ok', cache: 'error' })
+  })
+
+  it('/health/ready returns 503 when a probe throws', async () => {
+    const probedAdapter = new H3Adapter({
+      port: 0,
+      isDev: true,
+      readinessProbes: {
+        db: async () => {
+          throw new Error('connection refused')
+        },
+      },
+    })
+    const res = await probedAdapter.handleRequest(new Request('http://localhost/health/ready'))
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.checks.db).toBe('error')
+  })
+
+  it('/health/ready reports 503 when a probe exceeds the timeout budget', async () => {
+    const probedAdapter = new H3Adapter({
+      port: 0,
+      isDev: true,
+      readinessTimeoutMs: 20,
+      readinessProbes: {
+        db: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 200)),
+      },
+    })
+    const res = await probedAdapter.handleRequest(new Request('http://localhost/health/ready'))
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.checks.db).toBe('error')
+  })
+
+  it('/health/ready returns 200 with empty checks when no probes are configured', async () => {
+    // A freshly-constructed adapter with no probes should still answer 200.
+    // This preserves backward compatibility with hosts that never wire probes.
+    const res = await adapter.handleRequest(new Request('http://localhost/health/ready'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.checks).toEqual({})
+  })
+
   // Path params
   it('supports path parameters', async () => {
     adapter.registerRoute('GET', '/items/:id', (req) => {

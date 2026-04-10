@@ -1,8 +1,10 @@
 // Integration test — REAL PostgreSQL database
 // Tests Drizzle relational queries with actual SQL JOINs.
 //
-// Requires: PostgreSQL running at TEST_DATABASE_URL or localhost:5432/manta_test_main
+// Requires: PostgreSQL running at TEST_DATABASE_URL (defaults to
+// postgresql://localhost:5432/postgres — see @manta/test-utils/pg).
 
+import { TEST_DB_URL } from '@manta/test-utils/pg'
 import { index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 // Test-local table definitions (NOT imported from core — tables are auto-generated at runtime)
@@ -115,7 +117,7 @@ const schema = {
 
 // ── Test suite ──────────────────────────────────────────────────────
 
-const DB_URL = process.env.TEST_DATABASE_URL ?? 'postgresql://localhost:5432/manta_test_main'
+const DB_URL = TEST_DB_URL
 
 describe('Relational queries with real PostgreSQL', () => {
   let sql: ReturnType<typeof postgres>
@@ -353,6 +355,204 @@ describe('Relational queries with real PostgreSQL', () => {
       expect(tshirt.variants).toBeTruthy()
       expect(Array.isArray(tshirt.variants)).toBe(true)
     }
+  })
+
+  // ── BC-11 — findAndCountWithRelations correctness ─────────────
+
+  it('findAndCountWithRelations correctness: root filter', async () => {
+    const rq = new DrizzleRelationalQuery(db)
+
+    const filters = {
+      status: 'active',
+      id: { $in: ['rqtest_p1', 'rqtest_p2', 'rqtest_p3'] },
+    }
+
+    const [results, count] = await rq.findAndCountWithRelations({
+      entity: 'products',
+      fields: ['*', 'variants.*'],
+      filters,
+      pagination: { limit: 1 },
+    })
+
+    // Ground truth: the same query without pagination
+    const unpaginated = await rq.findWithRelations({
+      entity: 'products',
+      fields: ['*', 'variants.*'],
+      filters,
+    })
+
+    expect(count).toBe(unpaginated.length)
+    expect(results).toHaveLength(1)
+  })
+
+  it('findAndCountWithRelations correctness: relation filter (dotted path)', async () => {
+    const rq = new DrizzleRelationalQuery(db)
+
+    const filters = {
+      'variants.sku': 'rqtest_tshirt-s',
+      id: { $in: ['rqtest_p1', 'rqtest_p2', 'rqtest_p3'] },
+    }
+
+    const [results, count] = await rq.findAndCountWithRelations({
+      entity: 'products',
+      fields: ['*', 'variants.*'],
+      filters,
+      pagination: { limit: 5 },
+    })
+
+    // Only rqtest_p1 has a variant with sku 'rqtest_tshirt-s' among the rqtest_ products.
+    // Pre-fix, the count would be the unfiltered root count (root filters only),
+    // post-fix it must be the correctly filtered count.
+    expect(count).toBe(1)
+    expect(results.length).toBe(Math.min(5, count))
+    expect(results[0].id).toBe('rqtest_p1')
+  })
+
+  // ── BC-F29 regression coverage ────────────────────────────────
+
+  // RQ-15 — operators on relation filter (must land inside EXISTS subquery)
+  it('RQ-15: $in / $gt operators on a relation filter compile to correlated EXISTS', async () => {
+    const rq = new DrizzleRelationalQuery(db)
+
+    const [results, count] = await rq.findAndCountWithRelations({
+      entity: 'products',
+      fields: ['*', 'variants.*'],
+      filters: {
+        id: { $in: ['rqtest_p1', 'rqtest_p2', 'rqtest_p3'] },
+        'variants.price': { $gt: 2500 },
+      },
+      pagination: { limit: 10 },
+    })
+
+    // Among seeded rqtest products:
+    //  - p1 (T-Shirt) has v1/v2 at 2500, v3 at 2700 → v3 matches > 2500 ✓
+    //  - p2 (Hoodie) has v4 at 5500 → matches ✓
+    //  - p3 soft-deleted
+    expect(count).toBe(2)
+    expect(results.map((r) => r.id).sort()).toEqual(['rqtest_p1', 'rqtest_p2'])
+  })
+
+  // RQ-16 — M:N pivot + alias flattening under a relation filter. The schema
+  // here treats product_categories as an intermediate has-many, and we exercise
+  // a dotted filter that traverses through the pivot to the leaf entity.
+  it('RQ-16: M:N traversal via pivot + alias flattening works under filter', async () => {
+    const rq = new DrizzleRelationalQuery(db)
+
+    const results = await rq.findWithRelations({
+      entity: 'products',
+      fields: ['*', 'productCategories.*', 'productCategories.category.*'],
+      filters: {
+        id: { $in: ['rqtest_p1', 'rqtest_p2', 'rqtest_p3'] },
+        'productCategories.category.name': 'Tops',
+      },
+    })
+
+    // p1 is linked to Tops, p2 is linked to Tops AND Outerwear, p3 soft-deleted.
+    expect(results.map((r) => r.id).sort()).toEqual(['rqtest_p1', 'rqtest_p2'])
+  })
+
+  // RQ-17 — >1000 row relation-filtered pagination + count (stress path)
+  it('RQ-17: large relation-filtered count + pagination window is correct', async () => {
+    // Build a schema-aware client with relations for the large fixture.
+    const largeParents = pgTable('rqlarge_parents', {
+      id: text('id').primaryKey(),
+      name: text('name').notNull(),
+    })
+    const largeChildren = pgTable('rqlarge_children', {
+      id: text('id').primaryKey(),
+      parent_id: text('parent_id').notNull(),
+      score: integer('score').notNull(),
+    })
+    const largeParentsRelations = relations(largeParents, ({ many }) => ({
+      children: many(largeChildren),
+    }))
+    const largeChildrenRelations = relations(largeChildren, ({ one }) => ({
+      parent: one(largeParents, { fields: [largeChildren.parent_id], references: [largeParents.id] }),
+    }))
+
+    const largeDb = drizzle(sql, {
+      schema: {
+        rqlarge_parents: largeParents,
+        rqlarge_children: largeChildren,
+        largeParentsRelations,
+        largeChildrenRelations,
+      },
+    })
+
+    // Seed a dedicated large fixture inline so the baseline dataset stays small.
+    await sql`CREATE TABLE IF NOT EXISTS rqlarge_parents (id TEXT PRIMARY KEY, name TEXT NOT NULL)`
+    await sql`CREATE TABLE IF NOT EXISTS rqlarge_children (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, score INTEGER NOT NULL)`
+    await sql`DELETE FROM rqlarge_children`
+    await sql`DELETE FROM rqlarge_parents`
+
+    // 1200 parents, each with 1 child; indices 501..1199 have score > 500.
+    const parentRows = Array.from({ length: 1200 }, (_, i) => ({
+      id: `rql_p${i}`,
+      name: `Parent ${i}`,
+    }))
+    const childRows = Array.from({ length: 1200 }, (_, i) => ({
+      id: `rql_c${i}`,
+      parent_id: `rql_p${i}`,
+      score: i,
+    }))
+
+    const chunk = 500
+    for (let i = 0; i < parentRows.length; i += chunk) {
+      await largeDb.insert(largeParents).values(parentRows.slice(i, i + chunk))
+    }
+    for (let i = 0; i < childRows.length; i += chunk) {
+      await largeDb.insert(largeChildren).values(childRows.slice(i, i + chunk))
+    }
+
+    const rq = new DrizzleRelationalQuery(largeDb)
+
+    const [results, count] = await rq.findAndCountWithRelations({
+      entity: 'rqlarge_parents',
+      fields: ['*'],
+      filters: { 'children.score': { $gt: 500 } },
+      sort: { id: 'asc' },
+      pagination: { limit: 50, offset: 0 },
+    })
+
+    // Children with score > 500 → indices 501..1199 → 699 parents
+    expect(count).toBe(699)
+    expect(results).toHaveLength(50)
+
+    // Cleanup (keep the integration test hermetic)
+    await sql`DELETE FROM rqlarge_children`
+    await sql`DELETE FROM rqlarge_parents`
+  })
+
+  // RQ-18 — logger warn on limit > 10000
+  it('RQ-18: warns via injected logger when limit exceeds recommended maximum', async () => {
+    const warnings: string[] = []
+    const logger = {
+      error: () => {},
+      warn: (msg: string) => warnings.push(msg),
+      info: () => {},
+      http: () => {},
+      verbose: () => {},
+      debug: () => {},
+      silly: () => {},
+      panic: () => {},
+      activity: () => '',
+      progress: () => {},
+      success: () => {},
+      failure: () => {},
+      shouldLog: () => true,
+      setLogLevel: () => {},
+      unsetLogLevel: () => {},
+    }
+    const rq = new DrizzleRelationalQuery(db, { logger })
+
+    await rq.findWithRelations({
+      entity: 'products',
+      fields: ['*'],
+      filters: { id: { $in: ['rqtest_p1', 'rqtest_p2'] } },
+      pagination: { limit: 10001 },
+    })
+
+    expect(warnings.some((w) => w.includes('exceeds recommended maximum'))).toBe(true)
   })
 
   // ── Generated relations match manual ones ─────────────────────

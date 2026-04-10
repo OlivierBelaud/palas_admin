@@ -14,6 +14,10 @@
 /blog-test-spec.md
 /vitest.config.ts
 /vitest.integration.config.ts
+# Session/workflow files — local only, never committed
+/AUDIT.md
+/BACKLOG.md
+/EPIC.md
 
 # ── Root-level directories to IGNORE ──
 /archive/
@@ -78,6 +82,12 @@ coverage/
 # ── Playwright ──
 .playwright-mcp/
 
-# ── Claude Code — local state only (agent memory is per-session, local settings are personal) ──
-.claude/agent-memory/
-.claude/settings.local.json
+# Playwright runtime smoke
+tests/runtime/.state.json
+tests/runtime/playwright-report/
+tests/runtime/test-results/
+/test-results/
+/playwright-report/
+
+# ── Claude Code — entirely local, never committed ──
+.claude/

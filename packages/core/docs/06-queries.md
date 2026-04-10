@@ -285,6 +285,33 @@ return query.graph({
 
 This limits the eagerly loaded `orders` to 5 per customer, without affecting the root pagination.
 
+### Pagination limits and large result sets
+
+`pagination.limit` defaults to **100** when unspecified. There is **no hard cap** — callers may request any limit — but the Drizzle relational query adapter will log a warning when `limit > 10000` for a single page, since paginating by offset across large result sets is inefficient.
+
+```typescript
+// OK: small page
+query.graph({ entity: 'order', pagination: { limit: 100, offset: 200 } })
+
+// Warning logged: "DrizzleRelationalQuery: limit=15000 exceeds recommended
+// maximum (10000) for entity 'order'. Consider cursor pagination."
+query.graph({ entity: 'order', pagination: { limit: 15000 } })
+```
+
+**Why the warning exists**: offset pagination scans all preceding rows on every page, so cost grows linearly with `offset`. For result sets > 10k, switch to keyset (cursor) pagination:
+
+```typescript
+// Keyset: filter by the last seen id, constant time per page
+query.graph({
+  entity: 'order',
+  filters: lastId ? { id: { $gt: lastId } } : undefined,
+  sort: { id: 'asc' },
+  pagination: { limit: 100 },
+})
+```
+
+**Counting large result sets**: `graphAndCount()` computes the exact count by default. For very large tables (> 100k rows), an exact count can be as expensive as the main query. A `countMode: 'exact' | 'capped' | 'estimated'` option is planned — see BACKLOG BC-F30 for the decision rationale. Until then, prefer `graph()` + infinite scrolling over `graphAndCount()` + paginated UIs on large tables.
+
 ## Typed returns with generics
 
 `query.graph()` and `query.graphAndCount()` accept an entity type parameter for end-to-end type safety:

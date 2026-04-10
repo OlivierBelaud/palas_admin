@@ -86,4 +86,11 @@ export interface IEventBusPort {
    * @returns GroupStatus or null if group does not exist
    */
   getGroupStatus?(eventGroupId: string): GroupStatus | null
+
+  /**
+   * Optional readiness probe. Returns true if the event bus backend is reachable.
+   * Used by /health/ready (BC-F22). If the adapter does not implement ping(),
+   * the readiness handler treats the event bus as present but unprobed.
+   */
+  ping?(): Promise<boolean>
 }

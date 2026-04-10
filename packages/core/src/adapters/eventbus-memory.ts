@@ -185,6 +185,11 @@ export class InMemoryEventBusAdapter implements IEventBusPort {
     return { exists: true, eventCount: events.length, createdAt: Date.now() }
   }
 
+  async ping(): Promise<boolean> {
+    // In-memory event bus is always reachable.
+    return true
+  }
+
   /** Configure maxActiveGroups for testing E-13 */
   _setMaxActiveGroups(max: number) {
     this._maxActiveGroups = max

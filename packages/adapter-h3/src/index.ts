@@ -6,6 +6,7 @@ export type {
   AuthVerifier,
   H3AdapterOptions,
   H3AdapterOptions as NitroAdapterOptions,
+  ReadinessProbe,
   RouteOptions,
   SessionVerifier,
 } from './adapter'

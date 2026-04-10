@@ -1,6 +1,8 @@
 // SPEC-070 — manta start command (production)
 // Launches the compiled Nitro output. Bootstrap happens inside the catch-all route.
 
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { loadConfig, validateConfigForCommand } from '../config/load-config'
 import { loadEnv } from '../config/load-env'
 import type { LoadedConfig, StartOptions } from '../types'
@@ -54,6 +56,18 @@ export async function startCommand(
     return result
   }
 
+  // [4b] BC-F18 — Validate build preset. `manta start` launches the Nitro
+  // output produced by `manta build --preset node`. If the last build used a
+  // different preset (vercel, aws-lambda, cloudflare, bun), the .output
+  // directory contains adapter-specific handlers that won't run under plain
+  // Node. Fail fast with an AI-readable how-to-fix message.
+  const presetError = validateBuildPreset(cwd)
+  if (presetError) {
+    result.exitCode = 1
+    result.errors.push(presetError)
+    return result
+  }
+
   // [5] Resolve port
   const port = options.port ?? config.http?.port ?? 9000
 
@@ -85,6 +99,34 @@ export async function startCommand(
   }
 
   return result
+}
+
+/**
+ * BC-F18 — Read .manta/manifest/build-info.json and check the recorded preset.
+ * Returns a message if the build was produced with a preset other than 'node';
+ * returns null if the build is compatible (or if no build-info exists — an older
+ * build predating BC-F18, which we tolerate to avoid breaking existing projects).
+ */
+function validateBuildPreset(cwd: string): string | null {
+  const buildInfoPath = join(cwd, '.manta', 'manifest', 'build-info.json')
+  if (!existsSync(buildInfoPath)) {
+    // No build-info — either the project was built before BC-F18 or never built.
+    // Tolerate silently; the Nitro output directory check below (or the absence
+    // of .output) will surface the real problem.
+    return null
+  }
+
+  let parsed: { preset?: unknown }
+  try {
+    parsed = JSON.parse(readFileSync(buildInfoPath, 'utf-8')) as { preset?: unknown }
+  } catch {
+    return null
+  }
+
+  const actualPreset = typeof parsed.preset === 'string' ? parsed.preset : null
+  if (!actualPreset || actualPreset === 'node') return null
+
+  return `manta start requires a build produced with --preset node, but the current build was produced with --preset ${actualPreset}. Rebuild with 'manta build --preset node' first, or use the native runner for the ${actualPreset} runtime (e.g. 'vercel dev' for vercel).`
 }
 
 function validateProdSecrets(config: LoadedConfig): string[] {

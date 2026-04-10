@@ -1,3 +1,5 @@
+import { CART_EVENT_NAMES } from '../../modules/cart-tracking/events'
+
 const ItemDiscountSchema = z.object({
   title: z.string(),
   amount: z.number(),
@@ -52,26 +54,12 @@ function actionToStage(action: string): (typeof STAGES)[number] {
   return 'checkout_engaged'
 }
 
-const ALL_ACTIONS = [
-  'cart:product_added',
-  'cart:product_removed',
-  'cart:updated',
-  'cart:cleared',
-  'cart:viewed',
-  'checkout:started',
-  'checkout:contact_info_submitted',
-  'checkout:address_info_submitted',
-  'checkout:shipping_info_submitted',
-  'checkout:payment_info_submitted',
-  'checkout:completed',
-] as const
-
 export default defineCommand({
   name: 'ingestCartEvent',
   description: 'Ingest a cart or checkout event from PostHog and update cart tracking tables',
   input: z.object({
     cart_token: z.string(),
-    action: z.enum(ALL_ACTIONS),
+    action: z.enum(CART_EVENT_NAMES),
     occurred_at: z.string().datetime(),
     distinct_id: z.string().nullable().optional(),
     email: z.string().nullable().optional(),

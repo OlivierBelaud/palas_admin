@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["packages/**", "demo/**"]
+    "includes": ["packages/**", "demo/**", "tests/**", "scripts/**", "playwright.config.ts"]
   },
   "formatter": {
     "enabled": true,

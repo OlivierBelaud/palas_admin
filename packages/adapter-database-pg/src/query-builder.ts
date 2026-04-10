@@ -150,3 +150,102 @@ export function hasRelationFields(fields?: string[]): boolean {
   if (!fields || fields.length === 0) return false
   return fields.some((f) => f.includes('.'))
 }
+
+/**
+ * Drizzle operators passed into `where` callbacks by the relational query API
+ * and by raw `db.select()` builders. We only need a structural subset — the
+ * runtime value is whatever Drizzle gives us, so we rely on `unknown[]` return
+ * shapes.
+ */
+export type DrizzleOperators = {
+  and: (...args: unknown[]) => unknown
+  eq: (...args: unknown[]) => unknown
+  ne: (...args: unknown[]) => unknown
+  gt: (...args: unknown[]) => unknown
+  gte: (...args: unknown[]) => unknown
+  lt: (...args: unknown[]) => unknown
+  lte: (...args: unknown[]) => unknown
+  inArray: (...args: unknown[]) => unknown
+  notInArray: (...args: unknown[]) => unknown
+  isNull: (...args: unknown[]) => unknown
+  exists?: (...args: unknown[]) => unknown
+}
+
+/**
+ * Supported field-level operator syntax (Mongo-style) for relational queries.
+ * Re-exported for documentation only — logic lives inline.
+ */
+export const SUPPORTED_FIELD_OPERATORS = ['$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin'] as const
+
+/**
+ * Build an array of Drizzle SQL predicates from a flat `{ field: value | opObj }` map
+ * against a specific table (either a relational-query `fields` object or a drizzle
+ * table with `getTableColumns`-style column accessors).
+ *
+ * Shared by both root-level filters and relation-level filters inside EXISTS
+ * subqueries so that the operator semantics do not diverge between the two
+ * paths (closes BC-F31 by construction).
+ *
+ * - Unknown fields are silently skipped (same behaviour as the legacy
+ *   `_buildWhereConditions`). Callers that need strict validation should check
+ *   upstream.
+ * - `null` value emits `IS NULL`.
+ * - An object value is treated as an operator bag (`{ $eq, $in, … }`).
+ * - A plain scalar is treated as equality.
+ */
+export function buildFieldPredicates(
+  table: Record<string, unknown>,
+  operators: DrizzleOperators,
+  filters: Record<string, unknown>,
+): unknown[] {
+  const conditions: unknown[] = []
+
+  for (const [key, value] of Object.entries(filters)) {
+    const column = table[key]
+    if (!column) continue
+
+    if (value === null) {
+      conditions.push(operators.isNull(column))
+      continue
+    }
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const ops = value as Record<string, unknown>
+      for (const [op, val] of Object.entries(ops)) {
+        switch (op) {
+          case '$eq':
+            conditions.push(operators.eq(column, val))
+            break
+          case '$ne':
+            conditions.push(operators.ne(column, val))
+            break
+          case '$gt':
+            conditions.push(operators.gt(column, val))
+            break
+          case '$gte':
+            conditions.push(operators.gte(column, val))
+            break
+          case '$lt':
+            conditions.push(operators.lt(column, val))
+            break
+          case '$lte':
+            conditions.push(operators.lte(column, val))
+            break
+          case '$in':
+            conditions.push(operators.inArray(column, val))
+            break
+          case '$nin':
+            conditions.push(operators.notInArray(column, val))
+            break
+          // unknown operator keys are ignored on purpose — keeps behaviour
+          // compatible with pre-F31 root filters.
+        }
+      }
+      continue
+    }
+
+    conditions.push(operators.eq(column, value))
+  }
+
+  return conditions
+}

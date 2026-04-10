@@ -7,8 +7,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": ".",
+    "noEmit": true,
     "paths": {
       "@manta/core": ["./packages/core/src/index.ts"],
       "@manta/test-utils": ["./packages/test-utils/src/index.ts"],
@@ -22,5 +21,5 @@
     }
   },
   "include": ["tests/**/*.ts", "packages/**/*.ts", "demo/**/*.ts", "demo/**/*.tsx", "demo/**/.manta/generated.d.ts"],
-  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**"]
+  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "**/dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**"]
 }

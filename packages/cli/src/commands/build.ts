@@ -66,6 +66,14 @@ export async function buildCommand(
   writeFileSync(join(manifestDir, 'links.json'), JSON.stringify({ links }, null, 2))
   writeFileSync(join(manifestDir, 'modules.json'), JSON.stringify({ modules }, null, 2))
 
+  // BC-F18 — Record the preset used so `manta start` can refuse to run a
+  // non-node build. This is a minimal build-metadata file: just the preset and
+  // a timestamp. Not a full manifest system.
+  writeFileSync(
+    join(manifestDir, 'build-info.json'),
+    JSON.stringify({ preset, builtAt: new Date().toISOString() }, null, 2),
+  )
+
   result.manifest = { routes, subscribers, workflows, jobs, links, modules }
 
   // Auto-detect SPAs from src/spa/{name}/ + merge defaults with config overrides

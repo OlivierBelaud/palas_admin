@@ -47,6 +47,17 @@ export class UpstashCacheAdapter implements ICachePort {
     await this._redis.flushdb()
   }
 
+  async ping(): Promise<boolean> {
+    // Upstash Redis exposes PING as a REST command. Any successful response
+    // (typically "PONG") means the backend is reachable.
+    try {
+      const result = await (this._redis as unknown as { ping: () => Promise<unknown> }).ping()
+      return result !== null && result !== undefined
+    } catch {
+      return false
+    }
+  }
+
   _reset() {
     this._redis.flushdb()
   }

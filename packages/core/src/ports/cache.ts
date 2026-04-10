@@ -30,4 +30,11 @@ export interface ICachePort {
    * Clear all cached entries.
    */
   clear(): Promise<void>
+
+  /**
+   * Optional readiness probe. Returns true if the cache backend is reachable.
+   * Used by /health/ready (BC-F22). If the adapter does not implement ping(),
+   * the readiness handler treats the cache as present but unprobed.
+   */
+  ping?(): Promise<boolean>
 }

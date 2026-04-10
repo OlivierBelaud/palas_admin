@@ -82,6 +82,13 @@ export interface RateLimitOptions {
   maxRequests?: number
 }
 
+/**
+ * Readiness probe — a single infrastructure health check (DB, cache, eventbus).
+ * Each probe is awaited with a short timeout by the /health/ready handler.
+ * A probe that throws or resolves to false is reported as 'error'.
+ */
+export type ReadinessProbe = () => Promise<boolean>
+
 export interface H3AdapterOptions {
   port?: number
   host?: string
@@ -89,6 +96,17 @@ export interface H3AdapterOptions {
   allowedOrigins?: string[]
   rateLimit?: RateLimitOptions
   sessionVerifier?: SessionVerifier
+  /**
+   * Optional set of readiness probes wired by the bootstrap layer.
+   * Only configured ports are included — absent infra is simply omitted
+   * from the checks payload, never reported as failing.
+   */
+  readinessProbes?: Record<string, ReadinessProbe>
+  /**
+   * Timeout in ms for each readiness probe (default 500ms).
+   * Probes that exceed this budget are reported as 'error'.
+   */
+  readinessTimeoutMs?: number
 }
 
 export class H3Adapter implements IHttpPort {
@@ -203,7 +221,7 @@ export class H3Adapter implements IHttpPort {
     const path = url.pathname
 
     const healthResponse = this._handleHealthRequest(method, path)
-    if (healthResponse) return healthResponse
+    if (healthResponse) return await healthResponse
 
     return this._internalHandleRequest(req)
   }
@@ -450,7 +468,7 @@ export class H3Adapter implements IHttpPort {
     }
   }
 
-  // Health endpoints -- SPEC-072
+  // Health endpoints -- SPEC-072 / BC-F22
   private _registerHealthRoutes(): void {
     this._app.use(
       '/health/live',
@@ -464,17 +482,15 @@ export class H3Adapter implements IHttpPort {
 
     this._app.use(
       '/health/ready',
-      defineEventHandler(() => {
-        return {
-          status: 'ready',
-          uptime_ms: Date.now() - this._startedAt,
-          checks: {},
-        }
+      defineEventHandler(async (event: H3Event) => {
+        const { status, body } = await this._computeReadiness()
+        setResponseStatus(event, status)
+        return body
       }),
     )
   }
 
-  private _handleHealthRequest(method: string, path: string): Response | null {
+  private _handleHealthRequest(method: string, path: string): Response | Promise<Response> | null {
     if (method !== 'GET') return null
 
     if (path === '/health/live') {
@@ -485,14 +501,49 @@ export class H3Adapter implements IHttpPort {
     }
 
     if (path === '/health/ready') {
-      return Response.json({
-        status: 'ready',
-        uptime_ms: Date.now() - this._startedAt,
-        checks: {},
-      })
+      return this._computeReadiness().then(({ status, body }) => Response.json(body, { status }))
     }
 
     return null
+  }
+
+  /**
+   * BC-F22 — Run all configured readiness probes with a per-probe timeout.
+   * Absent probes are simply omitted from the checks object (never reported
+   * as failures). Returns HTTP 200 when every probe passes, 503 otherwise.
+   */
+  private async _computeReadiness(): Promise<{
+    status: number
+    body: { status: string; uptime_ms: number; checks: Record<string, 'ok' | 'error'> }
+  }> {
+    const probes = this._options?.readinessProbes ?? {}
+    const timeoutMs = this._options?.readinessTimeoutMs ?? 500
+    const checks: Record<string, 'ok' | 'error'> = {}
+
+    const entries = Object.entries(probes)
+    await Promise.all(
+      entries.map(async ([name, probe]) => {
+        try {
+          const result = await Promise.race([
+            probe(),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+          ])
+          checks[name] = result === true ? 'ok' : 'error'
+        } catch {
+          checks[name] = 'error'
+        }
+      }),
+    )
+
+    const allOk = Object.values(checks).every((v) => v === 'ok')
+    return {
+      status: allOk ? 200 : 503,
+      body: {
+        status: allOk ? 'ready' : 'not_ready',
+        uptime_ms: Date.now() - this._startedAt,
+        checks,
+      },
+    }
   }
 
   // Internal route registry for handleRequest() (testing)

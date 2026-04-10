@@ -53,7 +53,14 @@ import { z as _z } from 'zod'
 import type { discoverResources } from '../resource-loader'
 import type { LoadedConfig } from '../types'
 import type { AppRef, BootstrapContext } from './bootstrap-context'
-import { assembleModules, buildApp, discoverResourcesPhase, initializeInfra, wireHttpEndpoints } from './phases'
+import {
+  assembleModules,
+  buildApp,
+  discoverResourcesPhase,
+  initializeInfra,
+  seedDevUsers,
+  wireHttpEndpoints,
+} from './phases'
 
 export interface BootstrapOptions {
   config: LoadedConfig
@@ -245,6 +252,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
     explicitCommandNames: new Set(),
     commandGraphDefs: new Map(),
     queryRegistry: null as any,
+    queryGraphDefs: new Map(),
     queryExtensions: [],
     userDefinitions: [],
     moduleScopedCommandNames: [],
@@ -263,6 +271,7 @@ export async function bootstrapApp(options: BootstrapOptions): Promise<Bootstrap
   await assembleModules(ctx, appRef)
   await buildApp(ctx, appRef)
   await wireHttpEndpoints(ctx, appRef)
+  await seedDevUsers(ctx, appRef)
 
   const app = appRef.current!
   const { logger, db, adapter, resources } = ctx

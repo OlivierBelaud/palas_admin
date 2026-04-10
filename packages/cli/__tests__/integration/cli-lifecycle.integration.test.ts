@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { TEST_DB_URL } from '@manta/test-utils/pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..')
@@ -229,7 +230,7 @@ describe('CLI lifecycle e2e', () => {
   // These tests require PG running locally on port 5432.
   // They use an isolated test database per test.
 
-  const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/manta_test_main'
+  // Canonical TEST_DATABASE_URL source: @manta/test-utils/pg (BC-F21)
   const testDbName = `cli_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const testDbUrl = TEST_DB_URL.replace(/\/[^/]+$/, `/${testDbName}`)
 

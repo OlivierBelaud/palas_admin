@@ -1,3 +1,5 @@
+import { CART_EVENT_NAMES } from '../../events'
+
 export default defineModel('Cart', {
   // ── Identity ──────────────────────────────────────────────────────
   cart_token: field.text().unique(),
@@ -17,21 +19,7 @@ export default defineModel('Cart', {
   currency: field.text().default('EUR'),
 
   // ── Funnel tracking ───────────────────────────────────────────────
-  last_action: field.enum([
-    'cart:product_added',
-    'cart:product_removed',
-    'cart:updated',
-    'cart:cleared',
-    'cart:viewed',
-    'cart:closed',
-    'cart:discount_applied',
-    'checkout:started',
-    'checkout:contact_info_submitted',
-    'checkout:address_info_submitted',
-    'checkout:shipping_info_submitted',
-    'checkout:payment_info_submitted',
-    'checkout:completed',
-  ]),
+  last_action: field.enum(CART_EVENT_NAMES),
   last_action_at: field.dateTime(),
 
   // Plus haute étape jamais atteinte (ne redescend jamais)

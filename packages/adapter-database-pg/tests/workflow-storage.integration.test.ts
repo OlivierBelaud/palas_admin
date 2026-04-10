@@ -1,13 +1,15 @@
 // Integration test — DrizzleWorkflowStorage with real Postgres
 // Verifies checkpoints survive across connections (crash recovery scenario).
 
+import { TEST_DB_URL } from '@manta/test-utils/pg'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { DrizzleWorkflowStorage } from '../src/workflow-storage'
 
-const DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/manta_test_main'
+// Canonical TEST_DATABASE_URL source: @manta/test-utils/pg (BC-F21)
+const DATABASE_URL = TEST_DB_URL
 
 describe('DrizzleWorkflowStorage — Integration', () => {
   // biome-ignore lint/suspicious/noExplicitAny: Drizzle db

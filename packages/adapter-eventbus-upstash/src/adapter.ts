@@ -161,6 +161,28 @@ export class UpstashEventBusAdapter implements IEventBusPort {
     return { exists: true, eventCount: events.length, createdAt: Date.now() }
   }
 
+  async ping(): Promise<boolean> {
+    // Probe both Redis (used for grouped events) and QStash (used for durable
+    // delivery). If neither is configured, the adapter is degraded to
+    // in-memory and is always reachable.
+    if (!this._redis && !this._qstash) return true
+
+    if (this._redis) {
+      try {
+        const result = await (this._redis as unknown as { ping: () => Promise<unknown> }).ping()
+        if (result === null || result === undefined) return false
+      } catch {
+        return false
+      }
+    }
+
+    // QStash has no public ping() method — the absence of a synchronous probe
+    // is intentional. We consider QStash reachable if the client is
+    // constructed (which required a valid token). A real network probe would
+    // have to issue a test publish, which is not appropriate for readiness.
+    return true
+  }
+
   /**
    * Handle incoming QStash webhook. Called by the HTTP route handler.
    * Verifies signature and dispatches to local subscribers.

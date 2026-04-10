@@ -11,22 +11,23 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:conformance": "vitest run packages/core/tests/conformance/",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:all": "vitest run && vitest run --config vitest.integration.config.ts",
+    "test:sanity-dist": "node scripts/test-sanity-dist.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/dashboard-core && tsc --noEmit -p packages/dashboard && tsc --noEmit -p packages/dashboard-medusa && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/ui",
     "lint": "biome check packages/ demo/",
     "lint:fix": "biome check --write packages/ demo/",
     "format": "biome format --write packages/ demo/",
-    "check": "biome check --write packages/ demo/ && tsc --noEmit && vitest run",
+    "check": "biome check --write packages/ demo/ && tsc --noEmit && vitest run && pnpm check:runtime",
     "check:fast": "biome check packages/ demo/ && tsc --noEmit",
+    "check:runtime": "node scripts/check-runtime-preflight.mjs && playwright test --config playwright.config.ts",
     "prepare": "simple-git-hooks",
-    "build": "npm run --workspaces build"
+    "postinstall": "node scripts/postinstall-playwright.mjs"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm check:fast"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.7",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.18.0",

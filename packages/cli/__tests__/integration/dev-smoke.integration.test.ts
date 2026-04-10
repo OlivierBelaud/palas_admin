@@ -8,6 +8,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { TEST_DB_URL } from '@manta/test-utils/pg'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -16,7 +17,8 @@ const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
 const TSX = resolve(ROOT, 'node_modules', '.bin', 'tsx')
 const DEMO_DIR = resolve(ROOT, 'demo')
 
-const BASE_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://olivierbelaud@localhost:5432/postgres'
+// Canonical TEST_DATABASE_URL source: @manta/test-utils/pg (BC-F21)
+const BASE_DB_URL = TEST_DB_URL
 const TEST_DB = `smoke_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 const TEST_PORT = 19000 + Math.floor(Math.random() * 1000)
 

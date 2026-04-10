@@ -189,6 +189,7 @@ export async function loadResources(ctx: BootstrapContext, appRef: AppRef): Prom
   const queryRegistry = new QR()
   ctx.queryRegistry = queryRegistry
   const queryGraphDefs = new Map<string, { entities: '*' | string[] }>()
+  ctx.queryGraphDefs = queryGraphDefs
   if (resources.queries.length > 0) {
     for (const queryInfo of resources.queries) {
       try {

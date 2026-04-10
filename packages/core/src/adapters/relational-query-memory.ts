@@ -102,14 +102,74 @@ export class InMemoryRelationalQuery implements IRelationalQueryPort {
           if (!relMeta) return false
 
           const relRecords = this._getRelatedRecords(record, entityKey, relName, relMeta, false)
-          const matches = relRecords.some((r) => r[relField] === value)
+          const matches = relRecords.some((r) => InMemoryRelationalQuery._matchValue(r[relField], value))
           if (!matches) return false
         } else {
-          if (record[key] !== value) return false
+          if (!InMemoryRelationalQuery._matchValue(record[key], value)) return false
         }
       }
       return true
     })
+  }
+
+  /**
+   * Evaluate whether a concrete record field `actual` matches the user's
+   * `filter` spec. Supports:
+   *  - scalar equality (`filter: 'x'`)
+   *  - `null` → exact null
+   *  - operator bags: `{ $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin }`
+   *
+   * Mirrors the operators honored by the Drizzle adapter's buildFieldPredicates,
+   * so that conformance tests exercise the same semantics across adapters.
+   */
+  private static _matchValue(actual: unknown, filter: unknown): boolean {
+    if (filter === null) return actual == null
+    if (typeof filter === 'object' && !Array.isArray(filter)) {
+      const ops = filter as Record<string, unknown>
+      for (const [op, val] of Object.entries(ops)) {
+        switch (op) {
+          case '$eq':
+            if (actual !== val) return false
+            break
+          case '$ne':
+            if (actual === val) return false
+            break
+          case '$gt':
+            if (!(InMemoryRelationalQuery._compare(actual, val) > 0)) return false
+            break
+          case '$gte':
+            if (!(InMemoryRelationalQuery._compare(actual, val) >= 0)) return false
+            break
+          case '$lt':
+            if (!(InMemoryRelationalQuery._compare(actual, val) < 0)) return false
+            break
+          case '$lte':
+            if (!(InMemoryRelationalQuery._compare(actual, val) <= 0)) return false
+            break
+          case '$in':
+            if (!Array.isArray(val) || !val.includes(actual)) return false
+            break
+          case '$nin':
+            if (!Array.isArray(val) || val.includes(actual)) return false
+            break
+          default:
+            // Unknown operator keys are ignored (matches Drizzle adapter behaviour).
+            break
+        }
+      }
+      return true
+    }
+    return actual === filter
+  }
+
+  private static _compare(a: unknown, b: unknown): number {
+    if (a == null && b == null) return 0
+    if (a == null) return -1
+    if (b == null) return 1
+    if (typeof a === 'number' && typeof b === 'number') return a - b
+    const as = String(a)
+    const bs = String(b)
+    return as < bs ? -1 : as > bs ? 1 : 0
   }
 
   private _applySort(

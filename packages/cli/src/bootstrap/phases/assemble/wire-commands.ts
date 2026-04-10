@@ -178,7 +178,10 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
         `Relation aliases: ${[...relationAliases.entries()].map(([e, a]) => `${e}: ${JSON.stringify(a)}`).join(', ')}`,
       )
 
-      const rqAdapter = new DrizzleRelationalQuery((db as DrizzlePgAdapter).getClient(), relationAliases)
+      const rqAdapter = new DrizzleRelationalQuery((db as DrizzlePgAdapter).getClient(), {
+        relationAliases,
+        logger,
+      })
       builder.registerInfra('IRelationalQueryPort', rqAdapter)
       logger.info(`IRelationalQueryPort → DrizzleRelationalQuery (${allDefs.length} relations, native SQL JOINs)`)
     }
@@ -215,7 +218,7 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
 
         queryService.registerResolver(entityCamel, async (config) => {
           try {
-            const repo = repoFactory.createRepository(repoKey)
+            const repo = repoFactory.createRepository<Record<string, unknown>>(repoKey)
             const order = config.sort
               ? Object.fromEntries(Object.entries(config.sort).map(([k, v]) => [k, (v as string).toUpperCase()]))
               : undefined
@@ -260,7 +263,7 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
           const pivotName = linkDef.tableName.replace(/-/g, '_')
           queryService.registerResolver(pivotName, async (config) => {
             try {
-              const repo = repoFactory.createRepository(pivotName)
+              const repo = repoFactory.createRepository<Record<string, unknown>>(pivotName)
               return repo.find({
                 where: config.filters,
                 limit: config.pagination?.limit,
@@ -282,7 +285,7 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
       const tableName = `${entityLower}s`
       queryService.registerResolver(entityLower, async (config) => {
         try {
-          const repo = repoFactory.createRepository(tableName)
+          const repo = repoFactory.createRepository<Record<string, unknown>>(tableName)
           const order = config.sort
             ? Object.fromEntries(Object.entries(config.sort).map(([k, v]) => [k, (v as string).toUpperCase()]))
             : undefined

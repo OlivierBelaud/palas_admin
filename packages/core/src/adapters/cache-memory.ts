@@ -28,6 +28,11 @@ export class InMemoryCacheAdapter implements ICachePort {
     this._store.clear()
   }
 
+  async ping(): Promise<boolean> {
+    // In-memory cache is always reachable (the backing Map is process-local).
+    return true
+  }
+
   _reset() {
     this._store.clear()
   }

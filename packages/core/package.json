@@ -10,6 +10,7 @@
     "./ports": "./src/ports/index.ts",
     "./errors": "./src/errors/manta-error.ts",
     "./db": "./src/db/index.ts",
+    "./testing/relational-query-suite": "./src/testing/relational-query-suite.ts",
     "./package.json": "./package.json",
     "./docs/*": "./docs/*"
   },

@@ -1,7 +1,16 @@
 // Test utility for PostgreSQL integration tests
-// Creates isolated databases per test file for parallel execution
+// Creates isolated databases per test file for parallel execution.
+//
+// TEST_DATABASE_URL is the BOOTSTRAP connection used to CREATE/DROP per-test
+// databases — not the test database itself. It must point to a DB that always
+// exists on the target server. `postgres` is the conventional admin DB on any
+// PostgreSQL install, so we default to that.
+//
+// Consumers of this module (integration tests, runtime smoke, build-start smoke)
+// MUST import from here and MUST NOT redeclare their own TEST_DATABASE_URL
+// default — see BACKLOG BC-F21 for the rationale.
 
-const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/manta_test_main'
+export const TEST_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/postgres'
 
 /**
  * Creates an isolated test database.

@@ -4,12 +4,18 @@
 // start: boots in prod mode (JSON logs, requires JWT_SECRET, no auto-migrate)
 //
 // Requires PG running locally. Uses an isolated test database.
+//
+// Scope note (BC-F17, BC-F19): CRUD coverage is NOT duplicated here.
+// The Playwright runtime smoke (`tests/runtime/admin-smoke.spec.ts`) boots
+// the full demo and exercises the admin SPA end-to-end. This file covers
+// only the build/start lifecycle: manifest generation, JWT_SECRET gating,
+// prod log format, DB-unreachable failure, and no-auto-create-in-prod.
 
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import postgres from 'postgres'
+import { createTestDatabase, waitForPg } from '@manta/test-utils/pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const ROOT = resolve(__dirname, '..', '..', '..', '..')
@@ -17,11 +23,10 @@ const BIN = resolve(ROOT, 'packages', 'cli', 'bin', 'manta.ts')
 const TSX = resolve(ROOT, 'node_modules', '.bin', 'tsx')
 const DEMO_DIR = resolve(ROOT, 'demo')
 
-const BASE_DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://olivierbelaud@localhost:5432/postgres'
-const TEST_DB = `build_start_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 const START_PORT = 19500 + Math.floor(Math.random() * 500)
 
 let testDbUrl: string
+let cleanupTestDb: () => Promise<void>
 let projectDir: string
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -98,45 +103,18 @@ async function fetchRetry(url: string, init?: RequestInit, retries = 3): Promise
 // ── Setup / Teardown ─────────────────────────────────────────────────
 
 beforeAll(async () => {
-  // Create isolated test database
-  const adminSql = postgres(BASE_DB_URL, { max: 1 })
-  try {
-    await adminSql.unsafe(`CREATE DATABASE "${TEST_DB}"`)
-  } finally {
-    await adminSql.end()
-  }
-  testDbUrl = BASE_DB_URL.replace(/\/[^/]+$/, `/${TEST_DB}`)
-
-  // Create product table (start in prod mode does NOT auto-create)
-  const testSql = postgres(testDbUrl, { max: 1 })
-  try {
-    await testSql.unsafe(`
-      DO $$ BEGIN
-        CREATE TYPE product_status AS ENUM ('draft', 'published', 'archived');
-      EXCEPTION WHEN duplicate_object THEN null;
-      END $$
-    `)
-    await testSql.unsafe(`
-      CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT,
-        price INTEGER NOT NULL,
-        status product_status NOT NULL DEFAULT 'draft',
-        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        deleted_at TIMESTAMP
-      )
-    `)
-  } finally {
-    await testSql.end()
-  }
+  // Bootstrap PG + create isolated test DB via the shared helper (BC-F19).
+  await waitForPg()
+  const testDb = await createTestDatabase(`build_start_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+  testDbUrl = testDb.url
+  cleanupTestDb = testDb.cleanup
 
   // Copy demo into temp dir
   projectDir = mkdtempSync(join(tmpdir(), 'manta-build-start-'))
   cpSync(DEMO_DIR, projectDir, {
     recursive: true,
-    filter: (src) => !src.includes('node_modules'),
+    // Skip node_modules (symlinked below) and never copy .env secrets (BC-F10).
+    filter: (src) => !src.includes('node_modules') && !src.endsWith('/.env') && !src.endsWith('/.env.local'),
   })
 
   // Symlink node_modules
@@ -151,17 +129,12 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-  // Drop test database
-  const adminSql = postgres(BASE_DB_URL, { max: 1 })
-  try {
-    await adminSql.unsafe(
-      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${TEST_DB}' AND pid <> pg_backend_pid()`,
-    )
-    await adminSql.unsafe(`DROP DATABASE IF EXISTS "${TEST_DB}"`)
-  } catch {
-    /* best effort */
-  } finally {
-    await adminSql.end()
+  if (cleanupTestDb) {
+    try {
+      await cleanupTestDb()
+    } catch {
+      /* best effort */
+    }
   }
   if (projectDir) rmSync(projectDir, { recursive: true, force: true })
 }, 15_000)
@@ -184,13 +157,15 @@ describe('manta build', () => {
     expect(routesManifest.routes.length).toBeGreaterThan(0)
 
     const paths = routesManifest.routes.map((r: { path: string }) => r.path)
-    expect(paths).toContain('/admin/products')
+    // BC-F17: demo/commerce modules are address, admin, cart-tracking, customer — no product.
+    // Admin SPA pages that actually exist: /admin/customers, /admin/paniers, /admin/customer-groups, /admin/activite-site.
+    expect(paths).toContain('/admin/customers')
     expect(paths.some((p: string) => p.includes('[id]') || p.includes(':id'))).toBe(true)
 
     // Modules manifest
     const modulesManifest = JSON.parse(readFileSync(join(manifestDir, 'modules.json'), 'utf-8'))
     expect(modulesManifest.modules.length).toBeGreaterThan(0)
-    expect(modulesManifest.modules.some((m: { name: string }) => m.name === 'product')).toBe(true)
+    expect(modulesManifest.modules.some((m: { name: string }) => m.name === 'customer')).toBe(true)
 
     // Other manifests exist (may be empty)
     expect(existsSync(join(manifestDir, 'subscribers.json'))).toBe(true)
@@ -256,7 +231,11 @@ describe('manta start', () => {
     expect(output).toContain('JWT_SECRET')
   })
 
-  it('START-02 — starts in prod mode with JWT_SECRET, serves CRUD', async () => {
+  it('START-02 — starts in prod mode with JWT_SECRET, serves /health/live', async () => {
+    // BC-F17 scope note: this test used to exercise a full CRUD flow against
+    // /admin/products, which no longer exists in demo/commerce. CRUD coverage
+    // now lives in tests/runtime/admin-smoke.spec.ts (Playwright). This test
+    // is intentionally narrow: prod mode boots, logs in JSON, answers /health/live.
     const port = START_PORT + 1
     const BASE = `http://localhost:${port}`
 
@@ -290,27 +269,11 @@ describe('manta start', () => {
       // Pino JSON lines start with {"level":
       expect(output).toContain('"level"')
 
-      // Health check
+      // Health check — confirms the HTTP layer is wired and responsive
       const healthRes = await fetchRetry(`${BASE}/health/live`)
       expect(healthRes.status).toBe(200)
 
-      // Create product
-      const createRes = await fetchRetry(`${BASE}/admin/products`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Prod Widget', price: 5000, status: 'published' }),
-      })
-      expect(createRes.status).toBe(201)
-      const created = (await createRes.json()) as { product: { id: string; title: string } }
-      expect(created.product.title).toBe('Prod Widget')
-
-      // List products
-      const listRes = await fetchRetry(`${BASE}/admin/products`)
-      expect(listRes.status).toBe(200)
-      const listed = (await listRes.json()) as { products: Array<{ id: string }> }
-      expect(listed.products.some((p) => p.id === created.product.id)).toBe(true)
-
-      // Shutdown
+      // Shutdown cleanly
       proc.kill('SIGTERM')
       const exitCode = await new Promise<number | null>((resolve) => {
         const timer = setTimeout(() => {
@@ -416,16 +379,9 @@ describe('manta start', () => {
   }, 20_000)
 
   it('START-05 — prod mode does NOT auto-create tables', async () => {
-    // Create a separate test DB without the product table
-    const noProdTableDb = `${TEST_DB}_no_table`
-    const adminSql = postgres(BASE_DB_URL, { max: 1 })
-    try {
-      await adminSql.unsafe(`CREATE DATABASE "${noProdTableDb}"`)
-    } finally {
-      await adminSql.end()
-    }
-
-    const noTableUrl = BASE_DB_URL.replace(/\/[^/]+$/, `/${noProdTableDb}`)
+    // Fresh isolated DB via the shared helper (BC-F19)
+    const freshDb = await createTestDatabase(`start05_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+    const noTableUrl = freshDb.url
     const port = START_PORT + 4
 
     writeFileSync(
@@ -453,13 +409,17 @@ describe('manta start', () => {
       // Server should still start (tables are not auto-created in prod)
       await waitForOutput(proc, 'Server listening')
 
-      // Verify the table was NOT auto-created (prod mode skips ensureProductTable)
+      // Verify no user-defined public tables were auto-created.
+      // In prod mode, manta does NOT run DDL — the schema is expected to be
+      // migrated out-of-band. We inspect information_schema directly.
+      const postgres = (await import('postgres')).default
       const checkSql = postgres(noTableUrl, { max: 1 })
       try {
-        const tables = await checkSql`
+        const tables = await checkSql<{ table_name: string }[]>`
           SELECT table_name FROM information_schema.tables
-          WHERE table_schema = 'public' AND table_name = 'products'
+          WHERE table_schema = 'public'
         `
+        // Zero user tables: nothing was auto-created.
         expect(tables).toHaveLength(0)
       } finally {
         await checkSql.end()
@@ -467,18 +427,10 @@ describe('manta start', () => {
     } finally {
       proc.kill('SIGKILL')
       await new Promise<void>((r) => proc.on('exit', () => r()))
-
-      // Cleanup extra DB
-      const cleanSql = postgres(BASE_DB_URL, { max: 1 })
       try {
-        await cleanSql.unsafe(
-          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${noProdTableDb}' AND pid <> pg_backend_pid()`,
-        )
-        await cleanSql.unsafe(`DROP DATABASE IF EXISTS "${noProdTableDb}"`)
+        await freshDb.cleanup()
       } catch {
         /* best effort */
-      } finally {
-        await cleanSql.end()
       }
     }
   }, 20_000)

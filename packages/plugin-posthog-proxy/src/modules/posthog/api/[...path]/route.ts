@@ -114,15 +114,18 @@ export async function POST(req: Request & { app?: any }) {
       })
     }
 
-    // Cart tracking: write directly to DB via raw SQL (no commands/workflows/HTTP)
-    const db = req.app?.resolve?.('IDatabasePort')
-    const pool = db?.getPool?.()
-    if (pool) {
-      ingestCartEvents(parsed, pool).catch((err) => {
-        console.error('[posthog-proxy] Cart tracking error:', err)
+    // Publish an internal framework event. Any subscriber listening to
+    // 'posthog.events.received' (e.g. a demo-side subscriber that routes to
+    // ingestCartEvent) can react. The plugin stays pure — no DB writes,
+    // no command coupling, no demo schema knowledge.
+    //
+    // If the app or event bus is not available, skip silently — the plugin
+    // must work in environments that don't register a Manta app.
+    const app = req.app as { emit?: (event: string, data: unknown) => Promise<void> } | undefined
+    if (app?.emit) {
+      app.emit('posthog.events.received', { body: parsed }).catch((err) => {
+        console.error('[posthog-proxy] emit posthog.events.received error:', err)
       })
-    } else {
-      console.log('[posthog-proxy] cart-tracking: no DB pool available')
     }
   }
 
@@ -153,173 +156,6 @@ function tryDecompress(bytes: Uint8Array): string | null {
 function extractPath(req: Request): string {
   const url = new URL(req.url)
   return url.pathname.replace(/^\/api\/posthog/, '') || '/'
-}
-
-// ── Cart tracking bridge ────────────────────────────────────────
-// Intercepts cart:* and checkout:* events and calls the ingestCartEvent
-// command to persist them in the cart-tracking database tables.
-
-const CART_TRACKABLE_EVENTS = new Set([
-  'cart:product_added',
-  'cart:product_removed',
-  'cart:updated',
-  'cart:cleared',
-  'cart:viewed',
-  'cart:closed',
-  'cart:discount_applied',
-  'checkout:started',
-  'checkout:contact_info_submitted',
-  'checkout:address_info_submitted',
-  'checkout:shipping_info_submitted',
-  'checkout:payment_info_submitted',
-  'checkout:completed',
-])
-
-const _STAGE_ORDER = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
-
-function actionToStage(action: string): string {
-  if (action.startsWith('cart:')) return 'cart'
-  if (action === 'checkout:started') return 'checkout_started'
-  if (action === 'checkout:payment_info_submitted') return 'payment_attempted'
-  if (action === 'checkout:completed') return 'completed'
-  return 'checkout_engaged'
-}
-
-const esc = (v: any) => {
-  if (v === null || v === undefined) return 'NULL'
-  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
-  if (typeof v === 'number') return String(v)
-  return `'${String(v).replace(/'/g, "''")}'`
-}
-
-async function ingestCartEvents(body: unknown, sql: any) {
-  const events = Array.isArray(body) ? body : (((body as Record<string, unknown>).batch as unknown[]) ?? [body])
-
-  for (const event of events as Record<string, unknown>[]) {
-    const eventName = event.event as string | undefined
-    if (!eventName || !CART_TRACKABLE_EVENTS.has(eventName)) continue
-
-    const props = event.properties as Record<string, unknown> | undefined
-    const $set = props?.$set as Record<string, unknown> | undefined
-    const distinctId = (event.distinct_id ?? props?.distinct_id) as string | undefined
-
-    // Resolve cart_token: top-level first (new contract), then nested in cart
-    const cart = props?.cart as Record<string, unknown> | undefined
-    const cartToken = (props?.cart_token ?? cart?.cart_token) as string | undefined
-
-    if (!cartToken) {
-      console.log(`[posthog-proxy] cart-tracking: no cart_token for ${eventName}, skipping`)
-      continue
-    }
-
-    const cartItems = (cart?.items ?? props?.items ?? []) as any[]
-    const changedItems = (props?.changed_items ?? null) as any[] | null
-    const email = ($set?.email ?? props?.email ?? null) as string | null
-    const firstName = ($set?.first_name ?? null) as string | null
-    const lastName = ($set?.last_name ?? null) as string | null
-    const phone = ($set?.phone ?? null) as string | null
-    const city = ($set?.city ?? null) as string | null
-    const countryCode = ($set?.country ?? null) as string | null
-    const totalPrice = Number(cart?.total_price ?? props?.total_price ?? 0)
-    const currency = (cart?.currency ?? props?.currency ?? 'EUR') as string
-    const occurredAt = (event.timestamp as string) ?? new Date().toISOString()
-    const newStage = actionToStage(eventName)
-    const status = eventName === 'checkout:completed' ? 'completed' : 'active'
-
-    try {
-      const id = crypto.randomUUID()
-      const eventId = crypto.randomUUID()
-      const itemsJson = JSON.stringify(cartItems)
-      const changedJson = changedItems ? JSON.stringify(changedItems) : null
-      const discountsJson = props?.discounts ? JSON.stringify(props.discounts) : null
-      const rawJson = JSON.stringify(props)
-      const checkoutToken = (props?.checkout_token ?? null) as string | null
-      const shopifyOrderId = (props?.shopify_order_id ?? null) as string | null
-      const isFirstOrder = (props?.is_first_order ?? null) as boolean | null
-      const shippingMethod = (props?.shipping_method ?? null) as string | null
-      const shippingPrice = props?.shipping_price != null ? Number(props.shipping_price) : null
-      const discountsAmount = props?.discounts_amount != null ? Number(props.discounts_amount) : null
-      const subtotalPrice = props?.subtotal_price != null ? Number(props.subtotal_price) : null
-      const totalTax = props?.total_tax != null ? Number(props.total_tax) : null
-      const shopifyCustId = props?.shopify_customer_id ? String(props.shopify_customer_id) : null
-
-      // postgres.js tagged template — no ::jsonb casts needed, columns handle types
-      const pg = sql as { unsafe: (q: string) => Promise<any[]> }
-
-      // 1. UPSERT the cart head
-      await pg.unsafe(`
-        INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code,
-          shopify_customer_id, items, total_price, item_count, currency, last_action, last_action_at,
-          highest_stage, status, checkout_token, shopify_order_id, is_first_order,
-          shipping_method, shipping_price, discounts_amount, discounts, subtotal_price, total_tax,
-          created_at, updated_at)
-        VALUES (${esc(id)}, ${esc(cartToken)}, ${esc(distinctId ?? null)}, ${esc(email)}, ${esc(firstName)}, ${esc(lastName)}, ${esc(phone)}, ${esc(city)}, ${esc(countryCode)},
-          ${esc(shopifyCustId)}, ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
-          ${esc(eventName)}, ${esc(occurredAt)}, ${esc(newStage)}, ${esc(status)},
-          ${esc(checkoutToken)}, ${esc(shopifyOrderId)}, ${isFirstOrder === null ? 'NULL' : isFirstOrder},
-          ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${subtotalPrice ?? 'NULL'}, ${totalTax ?? 'NULL'},
-          NOW(), NOW())
-        ON CONFLICT (cart_token) DO UPDATE SET
-          distinct_id = COALESCE(EXCLUDED.distinct_id, carts.distinct_id),
-          email = COALESCE(EXCLUDED.email, carts.email),
-          first_name = COALESCE(EXCLUDED.first_name, carts.first_name),
-          last_name = COALESCE(EXCLUDED.last_name, carts.last_name),
-          phone = COALESCE(EXCLUDED.phone, carts.phone),
-          city = COALESCE(EXCLUDED.city, carts.city),
-          country_code = COALESCE(EXCLUDED.country_code, carts.country_code),
-          shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, carts.shopify_customer_id),
-          items = EXCLUDED.items,
-          total_price = EXCLUDED.total_price,
-          item_count = EXCLUDED.item_count,
-          currency = EXCLUDED.currency,
-          last_action = EXCLUDED.last_action,
-          last_action_at = EXCLUDED.last_action_at,
-          highest_stage = CASE
-            WHEN array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], EXCLUDED.highest_stage)
-               > array_position(ARRAY['cart','checkout_started','checkout_engaged','payment_attempted','completed'], carts.highest_stage)
-            THEN EXCLUDED.highest_stage ELSE carts.highest_stage END,
-          status = CASE WHEN EXCLUDED.status = 'completed' THEN 'completed' ELSE carts.status END,
-          checkout_token = COALESCE(EXCLUDED.checkout_token, carts.checkout_token),
-          shopify_order_id = COALESCE(EXCLUDED.shopify_order_id, carts.shopify_order_id),
-          is_first_order = COALESCE(EXCLUDED.is_first_order, carts.is_first_order),
-          shipping_method = COALESCE(EXCLUDED.shipping_method, carts.shipping_method),
-          shipping_price = COALESCE(EXCLUDED.shipping_price, carts.shipping_price),
-          discounts_amount = COALESCE(EXCLUDED.discounts_amount, carts.discounts_amount),
-          discounts = COALESCE(EXCLUDED.discounts, carts.discounts),
-          subtotal_price = COALESCE(EXCLUDED.subtotal_price, carts.subtotal_price),
-          total_tax = COALESCE(EXCLUDED.total_tax, carts.total_tax),
-          updated_at = NOW()
-      `)
-
-      // 2. INSERT the event (append-only)
-      await pg.unsafe(`
-        INSERT INTO cart_events (id, cart_id, action, items_snapshot, total_price, item_count, currency,
-          changed_items, occurred_at, distinct_id, email, checkout_token,
-          shipping_method, shipping_price, discounts_amount, discounts, raw_properties,
-          created_at, updated_at)
-        VALUES (${esc(eventId)}, (SELECT id FROM carts WHERE cart_token = ${esc(cartToken)}), ${esc(eventName)},
-          ${esc(itemsJson)}::jsonb, ${totalPrice}, ${cartItems.length}, ${esc(currency)},
-          ${changedJson ? `${esc(changedJson)}::jsonb` : 'NULL'}, ${esc(occurredAt)}, ${esc(distinctId ?? null)}, ${esc(email)},
-          ${esc(checkoutToken)}, ${esc(shippingMethod)}, ${shippingPrice ?? 'NULL'}, ${discountsAmount ?? 'NULL'}, ${discountsJson ? `${esc(discountsJson)}::jsonb` : 'NULL'}, ${esc(rawJson)}::jsonb,
-          NOW(), NOW())
-      `)
-
-      // 3. Retroactive email propagation: if we now have an email, update ALL carts
-      // from the same distinct_id that don't have an email yet
-      if (email && distinctId) {
-        await pg.unsafe(`
-          UPDATE carts SET email = ${esc(email)}, updated_at = NOW()
-          WHERE distinct_id = ${esc(distinctId)} AND email IS NULL AND cart_token != ${esc(cartToken)}
-        `)
-      }
-
-      console.log(
-        `[posthog-proxy] cart-tracking: ✓ ${eventName} | cart=${cartToken.slice(0, 12)}... | ${email ?? distinctId ?? 'anon'}`,
-      )
-    } catch (err) {
-      console.error(`[posthog-proxy] cart-tracking: ✗ ${eventName}:`, (err as Error).message)
-    }
-  }
 }
 
 // ── Checkout identity bridge ────────────────────────────────────

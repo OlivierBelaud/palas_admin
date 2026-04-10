@@ -1,21 +1,40 @@
-// SPEC-011b — DrizzleRelationalQuery implements IRelationalQueryPort
+// SPEC-011b / BC-F29 — DrizzleRelationalQuery implements IRelationalQueryPort.
 //
-// Uses Drizzle's relational query API for native SQL JOINs.
-// Two modes:
-// 1. Eager loading (db.query.*.findMany with `with`) — when filters are root-level only
-// 2. JOIN fallback (db.select().from().innerJoin()) — when filters touch relations
+// One single code path:
+//   db.query.<root>.findMany({
+//     with: { ... },
+//     where: (fields, ops) => ops.and(
+//       softDelete?,
+//       ...rootFieldPredicates,
+//       ...relationExistsPredicates,
+//     ),
+//     orderBy, limit, offset,
+//   })
+//
+// Relation filters are compiled into correlated `EXISTS (SELECT 1 FROM child
+// WHERE child.fk = outer.pk AND ...)` subqueries, built inside the `where`
+// callback so that `fields.<pk>` resolves to the relational-query outer alias.
+// The experiment at `tests/drizzle-exists-probe.test.ts` locks this invariant
+// in place (Risk #1 in the BC-F29 plan).
+//
+// M:N through pivots are expressed as nested EXISTS: outer EXISTS over pivot,
+// inner EXISTS over the through target. Pivot extraColumn filters (e.g.
+// `customers.type = 'primary'`) route to the pivot table, not the through
+// target.
 
 import { MantaError } from '@manta/core/errors'
-import type { IRelationalQueryPort, RelationalQueryConfig } from '@manta/core/ports'
+import type { ILoggerPort, IRelationalQueryPort, RelationalQueryConfig } from '@manta/core/ports'
+import { getTableColumns, normalizeRelation, and as sqlAnd } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { applyRelationPagination, buildDrizzleWith, hasRelationFields, separateFilters } from './query-builder'
+import {
+  applyRelationPagination,
+  buildDrizzleWith,
+  buildFieldPredicates,
+  type DrizzleOperators,
+  hasRelationFields,
+  separateFilters,
+} from './query-builder'
 
-/**
- * DrizzleRelationalQuery — native SQL JOINs via Drizzle's relational query API.
- *
- * Requires a schema-aware Drizzle client (initialized with `drizzle(sql, { schema })`).
- * The schema must include both tables and `relations()` definitions.
- */
 /**
  * Structured alias for M:N and 1:N-with-extras link relations.
  * Contains the pivot relation name + the "through" target relation on the pivot,
@@ -39,16 +58,68 @@ export interface RelationAlias {
 export type RelationAliasEntry = string | RelationAlias
 export type RelationAliasMap = Map<string, Record<string, RelationAliasEntry>>
 
+/**
+ * Recommended maximum for `limit` before the adapter logs a warning.
+ * There is **no hard cap** — callers that genuinely need large result sets
+ * can still request them. See docs/queries-pagination.md.
+ */
+const RECOMMENDED_MAX_LIMIT = 10000
+
+/**
+ * Optional dependencies injected at construction time.
+ */
+export interface DrizzleRelationalQueryOptions {
+  relationAliases?: RelationAliasMap
+  logger?: ILoggerPort
+}
+
+/**
+ * Minimal shape of the metadata Drizzle attaches to a schema-aware client as
+ * `db._`. We intentionally redeclare it here instead of importing the internal
+ * types — the internal surface is unstable across Drizzle minor versions.
+ */
+interface DrizzleMeta {
+  schema: Record<
+    string,
+    {
+      tsName: string
+      dbName: string
+      columns: Record<string, unknown>
+      relations: Record<string, unknown>
+    }
+  >
+  fullSchema: Record<string, unknown>
+  tableNamesMap: Record<string, string>
+}
+
+/**
+ * DrizzleRelationalQuery — native SQL JOINs via Drizzle's relational query API.
+ *
+ * Requires a schema-aware Drizzle client (initialized with `drizzle(sql, { schema })`).
+ * The schema must include both tables and `relations()` definitions.
+ */
 export class DrizzleRelationalQuery implements IRelationalQueryPort {
   private _db: PostgresJsDatabase<Record<string, unknown>>
   /** Cache of normalized entity name → actual db.query key */
   private _queryKeyCache = new Map<string, string>()
   /** Relation aliases: entity (normalized) → { userFriendlyName → drizzleRelName } */
   private _relationAliases: RelationAliasMap
+  /** Optional logger for non-fatal guidance (pagination, deprecated input) */
+  private _logger: ILoggerPort | undefined
 
-  constructor(db: PostgresJsDatabase<Record<string, unknown>>, relationAliases?: RelationAliasMap) {
+  constructor(
+    db: PostgresJsDatabase<Record<string, unknown>>,
+    relationAliasesOrOptions?: RelationAliasMap | DrizzleRelationalQueryOptions,
+  ) {
     this._db = db
-    this._relationAliases = relationAliases ?? new Map()
+    // Backwards-compat overload: legacy callers pass a RelationAliasMap directly.
+    if (relationAliasesOrOptions instanceof Map) {
+      this._relationAliases = relationAliasesOrOptions
+      this._logger = undefined
+    } else {
+      this._relationAliases = relationAliasesOrOptions?.relationAliases ?? new Map()
+      this._logger = relationAliasesOrOptions?.logger
+    }
   }
 
   /**
@@ -73,6 +144,17 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       }
     }
     return undefined
+  }
+
+  /**
+   * Access the Drizzle schema metadata. Returns undefined if the client was
+   * not built with `drizzle(sql, { schema })` (callers then treat relation
+   * filters as a no-op).
+   */
+  private _meta(): DrizzleMeta | undefined {
+    const meta = (this._db as unknown as { _?: DrizzleMeta })._
+    if (!meta || !meta.schema) return undefined
+    return meta
   }
 
   async findWithRelations(config: RelationalQueryConfig): Promise<Record<string, unknown>[]> {
@@ -123,35 +205,37 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       withClause = applyRelationPagination(withClause, config.relPagination)
     }
 
-    // Separate root vs relation filters
-    const { rootFilters, relationFilters, hasRelationFilters } = config.filters
+    // Separate root vs relation filters. Also rewrite user-friendly relation
+    // filter keys through the alias map so that `customers.type = 'primary'`
+    // lands on the pivot table (when `type` is an extraColumn) or on the
+    // through target (otherwise). The rewrite must preserve grouping: the
+    // alias may expand into `pivot.through.field`.
+    const { rootFilters, relationFilters: rawRelationFilters } = config.filters
       ? separateFilters(config.filters)
-      : { rootFilters: {}, relationFilters: {}, hasRelationFilters: false }
+      : { rootFilters: {}, relationFilters: {} }
+    const relationFilters = this._resolveRelationFilterAliases(rawRelationFilters, aliases)
 
-    if (hasRelationFilters) {
-      // Mode 2: JOIN fallback — relation filters require explicit JOINs
-      return this._queryWithJoins(entityKey, rootFilters, relationFilters, withClause, config)
-    }
-
-    // Mode 1: Eager loading via db.query.*.findMany()
     const queryOptions: Record<string, unknown> = {}
-
-    // Add relation loading
     if (Object.keys(withClause).length > 0) {
       queryOptions.with = withClause
     }
 
-    // Pagination (hard cap at 10000 to prevent runaway queries)
-    const MAX_QUERY_LIMIT = 10000
-    queryOptions.limit = Math.min(config.pagination?.limit ?? 100, MAX_QUERY_LIMIT)
+    // Pagination — no silent cap, warn on excessive limit.
+    const limit = config.pagination?.limit ?? 100
+    if (limit > RECOMMENDED_MAX_LIMIT) {
+      this._logger?.warn(
+        `DrizzleRelationalQuery: limit=${limit} exceeds recommended maximum (${RECOMMENDED_MAX_LIMIT}) for entity '${config.entity}'. Consider cursor pagination (see docs/queries-pagination.md).`,
+      )
+    }
+    queryOptions.limit = limit
     if (config.pagination?.offset) {
       queryOptions.offset = config.pagination.offset
     }
 
-    // Build where conditions (root filters + soft-delete)
-    const whereConditions = this._buildWhereConditions(rootFilters, config.withDeleted ?? false)
-    if (whereConditions) {
-      queryOptions.where = whereConditions
+    // Combined where callback — root filters + soft delete + relation EXISTS.
+    const whereCallback = this._buildCombinedWhere(entityKey, rootFilters, relationFilters, config.withDeleted ?? false)
+    if (whereCallback) {
+      queryOptions.where = whereCallback
     }
 
     // Sort
@@ -161,8 +245,6 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
 
     try {
       const results = await queryTarget.findMany(queryOptions)
-
-      // Flatten M:N through-relations and rename Drizzle keys back to user-friendly aliases
       return this._flattenResults(results as Record<string, unknown>[], aliases)
     } catch (error) {
       throw new MantaError(
@@ -186,18 +268,34 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       )
     }
 
-    // Run count query without pagination
-    const { rootFilters } = config.filters ? separateFilters(config.filters) : { rootFilters: {} }
-    const whereConditions = this._buildWhereConditions(rootFilters, config.withDeleted ?? false)
+    // Resolve aliases once for both the count projection and the results call.
+    const entityNorm = config.entity.replace(/[_\s-]/g, '').toLowerCase()
+    const aliases = this._relationAliases.get(entityNorm) ?? {}
 
-    const countOptions: Record<string, unknown> = {}
-    if (whereConditions) countOptions.where = whereConditions
+    const { rootFilters, relationFilters: rawRelationFilters } = config.filters
+      ? separateFilters(config.filters)
+      : { rootFilters: {}, relationFilters: {} }
+    const relationFilters = this._resolveRelationFilterAliases(rawRelationFilters, aliases)
 
     try {
-      const allResults = await queryTarget.findMany(countOptions)
-      const count = allResults.length
+      // Count path — PK-only projection, same combined where callback as
+      // findWithRelations, no `with` clause, no pagination. This is a single
+      // SQL query regardless of how many relation filters are active.
+      const countOptions: Record<string, unknown> = { columns: { id: true } }
+      const whereCallback = this._buildCombinedWhere(
+        entityKey,
+        rootFilters,
+        relationFilters,
+        config.withDeleted ?? false,
+      )
+      if (whereCallback) countOptions.where = whereCallback
 
-      // Run the actual query with relations and pagination
+      const countRows = await queryTarget.findMany(countOptions)
+      const count = countRows.length
+
+      // Results path — delegate to findWithRelations. This emits its own query
+      // with `with`, pagination, and the same combined where. Two round-trips
+      // total, both using EXISTS-based filtering.
       const results = await this.findWithRelations(config)
       return [results, count]
     } catch (error) {
@@ -208,168 +306,36 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
     }
   }
 
+  // ── Combined where callback ─────────────────────────────────────────
+
   /**
-   * Mode 2: Query with explicit JOINs for relation filtering.
-   * Used when filters contain dotted paths (e.g. 'customer.name').
+   * Build the combined `where` callback used by both findWithRelations and
+   * findAndCountWithRelations. Returns `undefined` when there are no
+   * conditions at all (no filters, `withDeleted=true`).
    */
-  private async _queryWithJoins(
-    _entityKey: string,
+  private _buildCombinedWhere(
+    entityKey: string,
     rootFilters: Record<string, unknown>,
     relationFilters: Record<string, Record<string, unknown>>,
-    _withClause: Record<string, unknown>,
-    config: RelationalQueryConfig,
-  ): Promise<Record<string, unknown>[]> {
-    // For JOIN mode, we fall back to a two-step approach:
-    // 1. Query IDs matching the relation filters via JOINs
-    // 2. Load full entities with relations using those IDs
-    //
-    // This avoids reconstructing nested structures from flat JOIN results
-    // while still getting the performance benefit of SQL-level filtering.
-
-    const resolvedJoinKey = this._resolveQueryKey(_entityKey) ?? _entityKey
-    const queryTarget = (this._db.query as Record<string, unknown>)?.[resolvedJoinKey] as
-      | { findMany: (opts: Record<string, unknown>) => Promise<unknown[]> }
-      | undefined
-    if (!queryTarget) {
-      throw new MantaError('UNKNOWN_MODULES', `No query target for entity "${_entityKey}" in JOIN mode.`)
-    }
-
-    // Build a where function that filters on relations
-    // Drizzle's relational query API supports `where` on nested `with` configs
-    const fields = config.fields ?? ['*']
-    let withClause = hasRelationFields(fields) ? buildDrizzleWith(fields) : {}
-
-    // Inject relation filters into the with clause as where conditions
-    for (const [relName, relFilters] of Object.entries(relationFilters)) {
-      const existingConfig = withClause[relName]
-      const relConfig: Record<string, unknown> =
-        existingConfig === true ? {} : ((existingConfig ?? {}) as Record<string, unknown>)
-      // Store relation filters for post-query filtering
-      relConfig._filters = relFilters
-      withClause[relName] = relConfig
-    }
-
-    if (config.relPagination) {
-      withClause = applyRelationPagination(withClause, config.relPagination)
-    }
-
-    // Clean up _filters before sending to Drizzle
-    const cleanWith = this._cleanWithClause(withClause)
-
-    const MAX_QUERY_LIMIT = 10000
-    const queryOptions: Record<string, unknown> = {
-      with: Object.keys(cleanWith).length > 0 ? cleanWith : undefined,
-      limit: Math.min(config.pagination?.limit ?? 100, MAX_QUERY_LIMIT),
-    }
-
-    if (config.pagination?.offset) {
-      queryOptions.offset = config.pagination.offset
-    }
-
-    const whereConditions = this._buildWhereConditions(rootFilters, config.withDeleted ?? false)
-    if (whereConditions) {
-      queryOptions.where = whereConditions
-    }
-
-    if (config.sort) {
-      queryOptions.orderBy = this._buildOrderBy(config.sort, _entityKey)
-    }
-
-    try {
-      const results = await queryTarget.findMany(queryOptions)
-
-      // Post-filter: only keep records where relation filter matches
-      const filtered = (results as Record<string, unknown>[]).filter((record) => {
-        for (const [relName, relFilters] of Object.entries(relationFilters)) {
-          const relData = record[relName]
-          if (!relData) return false
-
-          const relRecords = Array.isArray(relData) ? relData : [relData]
-          const hasMatch = relRecords.some((r: Record<string, unknown>) => {
-            for (const [field, value] of Object.entries(relFilters)) {
-              if (field.includes('.')) {
-                // Nested relation filter — skip for now (requires deeper resolution)
-                continue
-              }
-              if (r[field] !== value) return false
-            }
-            return true
-          })
-          if (!hasMatch) return false
-        }
-        return true
-      })
-
-      return filtered
-    } catch (error) {
-      throw new MantaError(
-        'DB_ERROR',
-        `JOIN query failed for "${_entityKey}": ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-  }
-
-  /**
-   * Build Drizzle where conditions from root filters + soft-delete.
-   * Returns a function compatible with Drizzle's `where` option.
-   */
-  private _buildWhereConditions(
-    filters: Record<string, unknown>,
     withDeleted: boolean,
-  ):
-    | ((table: Record<string, unknown>, operators: Record<string, (...args: unknown[]) => unknown>) => unknown)
-    | undefined {
-    const hasFilters = Object.keys(filters).length > 0
+  ): ((table: Record<string, unknown>, operators: DrizzleOperators) => unknown) | undefined {
+    const hasRoot = Object.keys(rootFilters).length > 0
+    const hasRelations = Object.keys(relationFilters).length > 0
+    if (!hasRoot && !hasRelations && withDeleted) return undefined
 
-    if (!hasFilters && withDeleted) return undefined
-
-    return (table: Record<string, unknown>, operators: Record<string, (...args: unknown[]) => unknown>) => {
+    return (table: Record<string, unknown>, operators: DrizzleOperators) => {
       const conditions: unknown[] = []
 
-      // Soft-delete filter
       if (!withDeleted && table.deleted_at) {
         conditions.push(operators.isNull(table.deleted_at))
       }
 
-      // Root filters
-      for (const [key, value] of Object.entries(filters)) {
-        if (table[key]) {
-          if (value === null) {
-            conditions.push(operators.isNull(table[key]))
-          } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-            // Operator-based filter
-            const ops = value as Record<string, unknown>
-            for (const [op, val] of Object.entries(ops)) {
-              switch (op) {
-                case '$eq':
-                  conditions.push(operators.eq(table[key], val))
-                  break
-                case '$ne':
-                  conditions.push(operators.ne(table[key], val))
-                  break
-                case '$gt':
-                  conditions.push(operators.gt(table[key], val))
-                  break
-                case '$gte':
-                  conditions.push(operators.gte(table[key], val))
-                  break
-                case '$lt':
-                  conditions.push(operators.lt(table[key], val))
-                  break
-                case '$lte':
-                  conditions.push(operators.lte(table[key], val))
-                  break
-                case '$in':
-                  conditions.push(operators.inArray(table[key], val))
-                  break
-                case '$nin':
-                  conditions.push(operators.notInArray(table[key], val))
-                  break
-              }
-            }
-          } else {
-            conditions.push(operators.eq(table[key], value))
-          }
+      conditions.push(...buildFieldPredicates(table, operators, rootFilters))
+
+      if (hasRelations) {
+        for (const [relName, relFilters] of Object.entries(relationFilters)) {
+          const predicate = this._buildRelationExists(entityKey, relName, relFilters, table, operators, withDeleted)
+          if (predicate !== undefined) conditions.push(predicate)
         }
       }
 
@@ -377,6 +343,190 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
       if (conditions.length === 1) return conditions[0]
       return operators.and(...conditions)
     }
+  }
+
+  /**
+   * Build a correlated `EXISTS (SELECT 1 FROM rel WHERE rel.fk = outer.pk AND …)`
+   * clause for a single relation filter group. Handles:
+   *  - direct has-many / belongs-to (one level)
+   *  - nested dotted paths (e.g. `pivot.through.field`) → recursive EXISTS
+   *
+   * If the relation cannot be resolved against the Drizzle schema metadata the
+   * predicate is silently dropped — the legacy behaviour, preserved so that
+   * clients talking to a schema-less Drizzle client still succeed (the
+   * relation filter becomes a no-op rather than throwing).
+   */
+  private _buildRelationExists(
+    entityKey: string,
+    relName: string,
+    relFilters: Record<string, unknown>,
+    outerTable: Record<string, unknown>,
+    operators: DrizzleOperators,
+    withDeleted: boolean,
+  ): unknown {
+    if (!operators.exists) return undefined
+    const meta = this._meta()
+    if (!meta) return undefined
+
+    // Resolve the outer entity's TS name in the relational config
+    const outerTsName = this._findTsName(meta, entityKey)
+    if (!outerTsName) return undefined
+
+    const relation = meta.schema[outerTsName]?.relations?.[relName] as { referencedTableName: string } | undefined
+    if (!relation) return undefined
+
+    // Find the child table's TS name via the referenced physical table name
+    const childTsName = meta.tableNamesMap[relation.referencedTableName]
+    if (!childTsName) return undefined
+    const childTable = meta.fullSchema[childTsName] as Record<string, unknown> | undefined
+    if (!childTable) return undefined
+
+    // Normalize → join columns (source columns on outer, target columns on child)
+    // biome-ignore lint/suspicious/noExplicitAny: Drizzle relation dynamic type
+    const norm = normalizeRelation(meta.schema as any, meta.tableNamesMap, relation as any)
+
+    // Access child columns via getTableColumns; fall back to the raw table object.
+    const childCols = getTableColumns(childTable as never) as Record<string, unknown>
+
+    // Split the filter map into:
+    //  - nested: `{nestedRel}.{rest}` → recursive EXISTS against child
+    //  - direct: `{field}` → predicate on child directly
+    const nestedGroups: Record<string, Record<string, unknown>> = {}
+    const directFilters: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(relFilters)) {
+      if (key.includes('.')) {
+        const [nestedRelName, ...rest] = key.split('.')
+        const nestedField = rest.join('.')
+        if (!nestedGroups[nestedRelName]) nestedGroups[nestedRelName] = {}
+        nestedGroups[nestedRelName][nestedField] = value
+      } else {
+        directFilters[key] = value
+      }
+    }
+
+    // Inner correlation: child.fk = outer.pk (possibly composite)
+    const joinConditions: unknown[] = []
+    for (let i = 0; i < norm.fields.length; i++) {
+      // biome-ignore lint/suspicious/noExplicitAny: Column instance shape
+      const outerCol = (norm.fields[i] as any).name as string
+      // biome-ignore lint/suspicious/noExplicitAny: Column instance shape
+      const innerCol = (norm.references[i] as any).name as string
+      const outerRef = outerTable[outerCol]
+      const innerRef = childCols[innerCol]
+      if (!outerRef || !innerRef) return undefined
+      joinConditions.push(operators.eq(innerRef, outerRef))
+    }
+
+    // Child-level soft-delete propagation
+    if (!withDeleted && childCols.deleted_at) {
+      joinConditions.push(operators.isNull(childCols.deleted_at))
+    }
+
+    // Direct predicates on the child table
+    const directPredicates = buildFieldPredicates(childCols, operators, directFilters)
+    joinConditions.push(...directPredicates)
+
+    // Nested EXISTS: one level deeper for each nested relation filter group.
+    for (const [nestedRelName, nestedFilters] of Object.entries(nestedGroups)) {
+      const nestedPredicate = this._buildRelationExists(
+        childTsName,
+        nestedRelName,
+        nestedFilters,
+        childCols,
+        operators,
+        withDeleted,
+      )
+      if (nestedPredicate !== undefined) joinConditions.push(nestedPredicate)
+    }
+
+    // Combine the child predicates and wrap into `EXISTS(SELECT 1 FROM child WHERE …)`.
+    const combined =
+      joinConditions.length === 0
+        ? undefined
+        : joinConditions.length === 1
+          ? (joinConditions[0] as unknown)
+          : (sqlAnd(...(joinConditions as never[])) as unknown)
+
+    // biome-ignore lint/suspicious/noExplicitAny: Drizzle select builder dynamic typing
+    const inner = (this._db as any)
+      .select({ one: (childCols.id as unknown) ?? Object.values(childCols)[0] })
+      .from(childTable)
+    if (combined !== undefined) inner.where(combined)
+
+    return operators.exists(inner)
+  }
+
+  /**
+   * Resolve the entityKey (the `db.query.<key>` shape) to the TS name used by
+   * the relational config. In practice these are the same string for all
+   * Drizzle integrations, but the indirection is cheap and future-proofs
+   * against Drizzle versions that normalize table keys differently.
+   */
+  private _findTsName(meta: DrizzleMeta, entityKey: string): string | undefined {
+    if (meta.schema[entityKey]) return entityKey
+    // Fallback: linear scan (cheap: a handful of tables).
+    for (const tsName of Object.keys(meta.schema)) {
+      if (tsName.toLowerCase() === entityKey.toLowerCase()) return tsName
+    }
+    return undefined
+  }
+
+  /**
+   * Apply relation aliases to the user-provided relation filter map.
+   *
+   * - Simple string alias: `{ variants: {...} }` → `{ productVariants: {...} }`
+   * - RelationAlias with `extraColumns`:
+   *    `{ customers: { email: 'x', type: 'primary' } }` where `type` is an
+   *    extraColumn on the pivot becomes
+   *    `{ customerCustomerGroup: { type: 'primary', customer: { email: 'x' } } }`
+   *    — i.e. the pivot filter routes to the pivot, the target filter routes
+   *    to the through target, nested as a dotted sub-path that
+   *    `_buildRelationExists` will pick up and emit as a nested EXISTS.
+   */
+  private _resolveRelationFilterAliases(
+    relationFilters: Record<string, Record<string, unknown>>,
+    aliases: Record<string, RelationAliasEntry>,
+  ): Record<string, Record<string, unknown>> {
+    if (Object.keys(aliases).length === 0) return relationFilters
+
+    const result: Record<string, Record<string, unknown>> = {}
+    for (const [relName, filters] of Object.entries(relationFilters)) {
+      const aliasEntry = aliases[relName]
+      if (!aliasEntry) {
+        result[relName] = { ...(result[relName] ?? {}), ...filters }
+        continue
+      }
+
+      if (typeof aliasEntry === 'string') {
+        // Simple rename
+        result[aliasEntry] = { ...(result[aliasEntry] ?? {}), ...filters }
+        continue
+      }
+
+      const { pivot, through, extraColumns } = aliasEntry
+      const pivotGroup: Record<string, unknown> = { ...(result[pivot] ?? {}) }
+      const throughGroup: Record<string, unknown> = { ...((pivotGroup[through] as Record<string, unknown>) ?? {}) }
+
+      for (const [field, value] of Object.entries(filters)) {
+        if (extraColumns?.includes(field)) {
+          pivotGroup[field] = value
+        } else {
+          throughGroup[field] = value
+        }
+      }
+
+      // Nest the through-target filter under the dotted key shape the
+      // recursive EXISTS builder expects.
+      if (Object.keys(throughGroup).length > 0) {
+        for (const [k, v] of Object.entries(throughGroup)) {
+          pivotGroup[`${through}.${k}`] = v
+        }
+      }
+
+      result[pivot] = pivotGroup
+    }
+
+    return result
   }
 
   /**
@@ -401,22 +551,6 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
   }
 
   /**
-   * Remove internal _filters from with clause before sending to Drizzle.
-   */
-  private _cleanWithClause(withClause: Record<string, unknown>): Record<string, unknown> {
-    const clean: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(withClause)) {
-      if (value === true) {
-        clean[key] = true
-      } else if (typeof value === 'object' && value !== null) {
-        const { _filters, ...rest } = value as Record<string, unknown>
-        clean[key] = Object.keys(rest).length > 0 ? rest : true
-      }
-    }
-    return clean
-  }
-
-  /**
    * Flatten M:N through-relations and rename Drizzle keys to user-friendly aliases.
    *
    * For simple aliases (string): rename key (e.g. 'customerCustomerGroup' → 'customers')
@@ -434,7 +568,7 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
 
     // Build reverse mappings
     const simpleReverse: Record<string, string> = {} // drizzleName → alias
-    const throughAliases: Record<string, { alias: string; through: string; extraColumns?: string[] }> = {} // pivot → info
+    const throughAliases: Record<string, { alias: string; through: string; extraColumns?: string[] }> = {}
 
     for (const [alias, entry] of Object.entries(aliases)) {
       if (typeof entry === 'string') {
@@ -453,7 +587,6 @@ export class DrizzleRelationalQuery implements IRelationalQueryPort {
           const pivotRows = Array.isArray(value) ? value : []
           renamed[throughInfo.alias] = pivotRows.map((pivotRow: Record<string, unknown>) => {
             const target = (pivotRow[throughInfo.through] ?? {}) as Record<string, unknown>
-            // Merge extra columns from pivot into target entity
             if (throughInfo.extraColumns && throughInfo.extraColumns.length > 0) {
               const extras: Record<string, unknown> = {}
               for (const col of throughInfo.extraColumns) {

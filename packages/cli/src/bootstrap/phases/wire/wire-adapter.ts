@@ -1,7 +1,8 @@
 // Phase 5b: H3 adapter creation + auth verifier wiring.
 // Also exports the shared `handleQueryRequest` helper used by context-aware CQRS endpoints.
 
-import { H3Adapter } from '@manta/adapter-h3'
+import { H3Adapter, type ReadinessProbe } from '@manta/adapter-h3'
+import type { ICachePort, IDatabasePort, IEventBusPort } from '@manta/core/ports'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 
 // ── Query handler helper ─────────────────────────────────────────────
@@ -152,10 +153,31 @@ export async function handleQueryRequest(
 }
 
 export async function wireAdapter(ctx: BootstrapContext, _appRef: AppRef): Promise<void> {
-  const { logger, mode, jwtSecret, authService } = ctx
+  const { logger, mode, jwtSecret, authService, infraMap } = ctx
 
   // [13] Create H3 adapter and register CQRS endpoints
-  const adapter = new H3Adapter({ port: 0, isDev: mode === 'dev' })
+  // BC-F22 — Build readiness probes from the ports actually registered in
+  // infraMap. Absent ports are simply omitted (so e.g. a dev project without
+  // an external cache reports only {db, eventbus}). The database port exposes
+  // healthCheck() directly; cache / eventbus ports expose an optional ping().
+  const readinessProbes: Record<string, ReadinessProbe> = {}
+
+  const db = infraMap.get('IDatabasePort') as IDatabasePort | undefined
+  if (db) {
+    readinessProbes.db = () => db.healthCheck()
+  }
+
+  const cache = infraMap.get('ICachePort') as ICachePort | undefined
+  if (cache && typeof cache.ping === 'function') {
+    readinessProbes.cache = () => (cache.ping as () => Promise<boolean>)()
+  }
+
+  const eventBus = infraMap.get('IEventBusPort') as IEventBusPort | undefined
+  if (eventBus && typeof eventBus.ping === 'function') {
+    readinessProbes.eventbus = () => (eventBus.ping as () => Promise<boolean>)()
+  }
+
+  const adapter = new H3Adapter({ port: 0, isDev: mode === 'dev', readinessProbes })
   ctx.adapter = adapter
 
   // Wire auth verifier
