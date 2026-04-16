@@ -11,7 +11,8 @@ export default defineQuery({
       fields: ['email'],
       pagination: { limit: 1 },
     })
-    const email = carts[0]?.email
+    const email = (carts[0] as unknown as Record<string, unknown>)?.email as string | undefined
+    log.info(`[cart-shopify-orders] cart=${input.id} email=${email ?? '(none)'}`)
     if (!email) return []
 
     const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'

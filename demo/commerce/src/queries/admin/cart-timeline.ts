@@ -11,7 +11,10 @@ export default defineQuery({
       fields: ['email', 'distinct_id'],
       pagination: { limit: 1 },
     })
-    const email = carts[0]?.email
+    const email = (carts[0] as unknown as Record<string, unknown>)?.email as string | undefined
+    log.info(
+      `[cart-timeline] cart=${input.id} email=${email ?? '(none)'} carts=${JSON.stringify(carts).substring(0, 200)}`,
+    )
     if (!email) return []
 
     const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
@@ -68,10 +71,12 @@ export default defineQuery({
         }),
       })
       if (!res.ok) {
-        log.warn(`[cart-timeline] PostHog ${res.status}`)
+        const errText = await res.text()
+        log.error(`[cart-timeline] PostHog ${res.status}: ${errText.substring(0, 300)}`)
         return []
       }
       const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
+      log.info(`[cart-timeline] PostHog returned ${data.results?.length ?? 0} rows, columns=${data.columns?.join(',')}`)
       if (!data.results || !data.columns) return []
       return data.results.map((row) => {
         const obj: Record<string, unknown> = {}
