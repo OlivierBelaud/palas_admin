@@ -11,9 +11,11 @@ export default defineQuery({
       fields: ['email', 'distinct_id'],
       pagination: { limit: 1 },
     })
-    const email = (carts[0] as unknown as Record<string, unknown>)?.email as string | undefined
-    log.info(`[cart-timeline] cart=${input.id} email=${email ?? '(none)'}`)
-    if (!email) return []
+    const cart = carts[0] as unknown as Record<string, unknown>
+    const email = cart?.email as string | undefined
+    const distinctId = cart?.distinct_id as string | undefined
+    log.info(`[cart-timeline] cart=${input.id} email=${email ?? '(none)'} distinct_id=${distinctId ?? '(none)'}`)
+    if (!email && !distinctId) return []
 
     const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
     const key = process.env.POSTHOG_API_KEY
@@ -22,7 +24,8 @@ export default defineQuery({
       return []
     }
 
-    const safeEmail = email.replace(/'/g, "''")
+    const safeEmail = email ? email.replace(/'/g, "''") : ''
+    const safeDistinctId = distinctId ? distinctId.replace(/'/g, "''") : ''
 
     try {
       const res = await fetch(`${host}/api/projects/@current/query/`, {
@@ -40,7 +43,7 @@ export default defineQuery({
                   JSONExtractString(e.properties, '$current_url') AS detail,
                   JSONExtractFloat(e.properties, 'total_price') AS amount
                 FROM events e
-                WHERE person.properties.email = '${safeEmail}'
+                WHERE ${safeDistinctId ? `e.distinct_id = '${safeDistinctId}'` : `person.properties.email = '${safeEmail}'`}
                   AND (e.event LIKE 'cart:%' OR e.event LIKE 'checkout:%')
                 UNION ALL
                 SELECT
