@@ -1,7 +1,7 @@
 // Phase 5e: Seed users.
 //
-// 1. INITIAL USER (prod-safe): if MANTA_ADMIN_EMAIL is set and user doesn't exist
-//    in DB, create it via raw SQL. Works on every cold start, idempotent.
+// 1. INITIAL USER (prod-safe): if MANTA_ADMIN_EMAIL + MANTA_ADMIN_PASSWORD are set
+//    and user doesn't exist in DB, create it via raw SQL. Idempotent.
 //    Like Medusa's USER_INITIAL_EMAIL / USER_INITIAL_PASSWORD.
 //
 // 2. DEV SEED (dev only): seed default contextName@manta.local / admin per context.
@@ -16,8 +16,8 @@ function hashPassword(password: string): string {
 }
 
 /**
- * Seed initial admin user via raw SQL — independent of repos/authService.
- * Runs when MANTA_ADMIN_EMAIL is set. Idempotent: skips if email already in provider_identities.
+ * Seed initial admin user via db.raw() — works with both postgres.js and Neon adapters.
+ * Runs when MANTA_ADMIN_EMAIL + MANTA_ADMIN_PASSWORD are set. Idempotent.
  */
 async function seedInitialUser(ctx: BootstrapContext): Promise<void> {
   const email = process.env.MANTA_ADMIN_EMAIL
@@ -26,59 +26,57 @@ async function seedInitialUser(ctx: BootstrapContext): Promise<void> {
 
   const { logger, db } = ctx
   if (!db) {
-    logger.warn('[seed] MANTA_ADMIN_EMAIL set but no database configured — cannot seed initial user')
+    logger.warn('[seed] MANTA_ADMIN_EMAIL set but no database — cannot seed')
     return
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pool is postgres tagged template, typed as unknown from IDatabasePort
-  const pool = db.getPool() as any
-
   try {
     // Check if this email already has an auth identity
-    const existing = await pool`
-      SELECT id FROM provider_identities
-      WHERE entity_id = ${email} AND provider = 'emailpass'
-      LIMIT 1
-    `
+    const existing = await db.raw<{ id: string }>(
+      'SELECT id FROM provider_identities WHERE entity_id = $1 AND provider = $2 LIMIT 1',
+      [email, 'emailpass'],
+    )
     if (existing.length > 0) {
       logger.info(`[seed] Initial user already exists — ${email}`)
       return
     }
 
     // Create auth_identity
-    const [authIdentity] = await pool`
-      INSERT INTO auth_identities (app_metadata)
-      VALUES (${JSON.stringify({ user_type: 'admin' })})
-      RETURNING id
-    `
+    const authRows = await db.raw<{ id: string }>(
+      'INSERT INTO auth_identities (app_metadata) VALUES ($1::jsonb) RETURNING id',
+      [JSON.stringify({ user_type: 'admin' })],
+    )
+    const authIdentityId = authRows[0]?.id
+    if (!authIdentityId) {
+      logger.warn('[seed] Failed to create auth_identity — no id returned')
+      return
+    }
 
     // Create provider_identity with hashed password
     const hashedPassword = hashPassword(password)
-    await pool`
-      INSERT INTO provider_identities (entity_id, provider, auth_identity_id, user_metadata, provider_metadata)
-      VALUES (
-        ${email},
-        'emailpass',
-        ${authIdentity.id},
-        ${JSON.stringify({ email })},
-        ${JSON.stringify({ password: hashedPassword })}
-      )
-    `
+    await db.raw(
+      `INSERT INTO provider_identities (entity_id, provider, auth_identity_id, user_metadata, provider_metadata)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+      [email, 'emailpass', authIdentityId, JSON.stringify({ email }), JSON.stringify({ password: hashedPassword })],
+    )
 
     // Create admin_user record if table exists
     try {
-      const userExists = await pool`SELECT id FROM admin_user WHERE email = ${email} LIMIT 1`
+      const userExists = await db.raw<{ id: string }>('SELECT id FROM admin_user WHERE email = $1 LIMIT 1', [email])
       if (userExists.length === 0) {
-        await pool`INSERT INTO admin_user (email, first_name, last_name) VALUES (${email}, 'Admin', 'User')`
+        await db.raw('INSERT INTO admin_user (email, first_name, last_name) VALUES ($1, $2, $3)', [
+          email,
+          'Admin',
+          'User',
+        ])
       }
     } catch {
-      // admin_user table may not exist yet — auth identity is enough for login
-      logger.warn('[seed] admin_user table not found — auth identity created, user record will be created on boot')
+      logger.warn('[seed] admin_user table not found — auth identity created, user will appear on next boot')
     }
 
     logger.info(`[seed] Initial admin user created — ${email}`)
   } catch (err) {
-    logger.warn(`[seed] Failed to seed initial user: ${err instanceof Error ? err.message : String(err)}`)
+    logger.error(`[seed] Failed to seed initial user: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -132,7 +130,7 @@ async function seedDevContextUsers(ctx: BootstrapContext): Promise<void> {
 }
 
 export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Promise<void> {
-  // 1. Initial user (prod-safe, raw SQL, always runs if env var set)
+  // 1. Initial user (prod-safe, raw SQL, always runs if env vars set)
   await seedInitialUser(ctx)
 
   // 2. Dev seed (dev only, uses repos/authService)
