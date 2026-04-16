@@ -85,10 +85,18 @@ export default defineCommand({
           const newStage = actionToStage(evt.event)
 
           try {
-            const existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
+            // Find by cart_token first, then fall back to distinct_id
+            // (Shopify sends checkout_token as cart_token for checkout:* events)
+            let existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
               'SELECT * FROM carts WHERE cart_token = $1 LIMIT 1',
               [cartToken],
             )
+            if (existing.length === 0 && evt.distinct_id) {
+              existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
+                'SELECT * FROM carts WHERE distinct_id = $1 LIMIT 1',
+                [evt.distinct_id],
+              )
+            }
 
             const currentStage = (existing[0]?.highest_stage as string) ?? 'cart'
             const stageIdx = Math.max(STAGES.indexOf(currentStage as never), STAGES.indexOf(newStage))

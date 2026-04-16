@@ -94,8 +94,13 @@ for (const evt of events) {
   const newStage = actionToStage(evt.event)
 
   try {
-    const existing =
+    // Find by cart_token first, then fall back to distinct_id
+    let existing =
       await sql`SELECT id, highest_stage, status, distinct_id, email, first_name, last_name, phone, city, country_code, shopify_order_id FROM carts WHERE cart_token = ${cartToken} LIMIT 1`
+    if (existing.length === 0 && evt.distinct_id) {
+      existing =
+        await sql`SELECT id, highest_stage, status, distinct_id, email, first_name, last_name, phone, city, country_code, shopify_order_id FROM carts WHERE distinct_id = ${evt.distinct_id} LIMIT 1`
+    }
 
     const currentStage = existing[0]?.highest_stage ?? 'cart'
     const highestStage = STAGES[Math.max(STAGES.indexOf(currentStage), STAGES.indexOf(newStage))] ?? newStage

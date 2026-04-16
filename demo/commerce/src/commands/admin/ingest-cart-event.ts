@@ -123,7 +123,13 @@ export default defineCommand({
     }
 
     // 1. Find or create the Cart head
-    const existingCarts = await svc.cart.list({ cart_token: input.cart_token })
+    // First try by cart_token (exact match). If not found and we have a distinct_id,
+    // fall back to distinct_id match — Shopify sends checkout_token as cart_token
+    // for checkout:* events, so the token won't match the original cart:* event.
+    let existingCarts = await svc.cart.list({ cart_token: input.cart_token })
+    if (existingCarts.length === 0 && input.distinct_id) {
+      existingCarts = await svc.cart.list({ distinct_id: input.distinct_id })
+    }
     const existing: CartRow | undefined = existingCarts[0]
 
     const newStage = actionToStage(input.action)
