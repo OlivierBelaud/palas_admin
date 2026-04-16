@@ -28,11 +28,16 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Tous les paniers',
-      query: { name: 'cart-list' },
-      pageSize: 15,
+      query: {
+        graph: {
+          entity: 'cart',
+          sort: { field: 'last_action_at', order: 'desc' },
+          pagination: { limit: 15 },
+        },
+      },
       columns: [
-        { key: 'client', label: 'Client', format: 'highlight' },
-        { key: 'montant', label: 'Montant', sortable: true },
+        { key: 'email', label: 'Client', format: 'highlight' },
+        { key: 'total_price', label: 'Montant', format: 'number', sortable: true },
         { key: 'item_count', label: 'Articles', format: 'number' },
         {
           key: 'highest_stage',
@@ -47,10 +52,8 @@ export default definePage({
               completed: 'green',
             },
           },
-          filterable: ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'],
         },
         { key: 'last_action', label: 'Dernière action' },
-        { key: 'duree', label: 'Durée' },
         {
           key: 'last_action_at',
           label: 'Date',
