@@ -3,7 +3,7 @@
 // For relation tables in detail pages, use RelationTable instead.
 
 import React, { useMemo, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { Skeleton } from '../components/common/skeleton'
 import type { GraphQueryDef, NamedQueryDef } from '../primitives'
 import { isGraphQuery } from '../primitives'
@@ -45,6 +45,7 @@ export interface DataTableBlockProps {
 
 export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
   const [searchParams] = useSearchParams()
+  const params = useParams()
   const hadDataRef = useRef(false)
 
   // Inject URL search params (q, offset, order) into the graph query
@@ -114,7 +115,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
         count,
-        localPagination: !isGraphQuery(query),
+        localPagination: !!params.id,
       },
     },
     data: { items, count },
