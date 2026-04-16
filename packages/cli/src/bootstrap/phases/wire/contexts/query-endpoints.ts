@@ -112,7 +112,7 @@ export async function queryEndpoints(ctx: BootstrapContext, appRef: AppRef): Pro
 
           // biome-ignore lint/suspicious/noExplicitAny: queryService.graph config shape
           const queryService = appRef.current!.resolve('queryService') as any
-          const result = await queryService.graph({
+          const graphConfig = {
             entity: body.entity,
             filters: Object.keys(mergedFilters).length > 0 ? mergedFilters : undefined,
             pagination: body.pagination ? { limit: body.pagination.limit, offset: body.pagination.offset } : undefined,
@@ -120,8 +120,15 @@ export async function queryEndpoints(ctx: BootstrapContext, appRef: AppRef): Pro
             fields: body.fields,
             relations: allowedRelations.length > 0 ? allowedRelations : undefined,
             q: body.q,
-          })
+          }
 
+          // Use graphAndCount when pagination is requested, to return total count
+          if (body.pagination && typeof queryService.graphAndCount === 'function') {
+            const [data, count] = await queryService.graphAndCount(graphConfig)
+            return Response.json({ data, count })
+          }
+
+          const result = await queryService.graph(graphConfig)
           return Response.json({ data: result })
         } catch (err) {
           const message = (err as Error).message

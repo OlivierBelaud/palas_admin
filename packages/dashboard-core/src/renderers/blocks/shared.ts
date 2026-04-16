@@ -85,7 +85,7 @@ export function formatValue(value: unknown, format?: string): string {
       }
     case 'currency':
       return typeof value === 'number'
-        ? (value / 100).toLocaleString(undefined, { style: 'currency', currency: 'EUR' })
+        ? Number(value).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
         : String(value)
     case 'boolean':
       return value ? 'True' : 'False'
@@ -615,7 +615,7 @@ export function renderCellByType(
       if (value == null) return React.createElement(PlaceholderCell, null)
       const amount =
         typeof value === 'number'
-          ? (value / 100).toLocaleString(undefined, { style: 'currency', currency: 'EUR' })
+          ? Number(value).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
           : String(value)
       return React.createElement(
         'span',
@@ -767,7 +767,7 @@ export function renderCellByFormat(value: unknown, format?: ColumnFormat): React
         if (value == null) return React.createElement(PlaceholderCell, null)
         const amount =
           typeof value === 'number'
-            ? (value / 100).toLocaleString(undefined, { style: 'currency', currency: 'EUR' })
+            ? Number(value).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
             : String(value)
         return React.createElement('span', { className: 'text-sm font-medium tabular-nums text-foreground/70' }, amount)
       }
@@ -827,7 +827,7 @@ export function renderCellByFormat(value: unknown, format?: ColumnFormat): React
       const currency = format.currency ?? 'EUR'
       const amount =
         typeof value === 'number'
-          ? (value / 100).toLocaleString(undefined, { style: 'currency', currency })
+          ? Number(value).toLocaleString('fr-FR', { style: 'currency', currency })
           : String(value)
       return React.createElement('span', { className: 'text-sm font-medium tabular-nums text-foreground/70' }, amount)
     }
