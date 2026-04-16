@@ -30,6 +30,15 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
 
       const seedEmail = process.env.MANTA_ADMIN_EMAIL ?? `${contextName}@manta.local`
       const seedPassword = process.env.MANTA_ADMIN_PASSWORD ?? 'admin'
+
+      // Check if user already exists in the user table
+      const existingUsers = await userRepo.find({ where: { email: seedEmail } })
+      if (existingUsers.length > 0) {
+        logger.info(`[auth:${contextName}] User already exists — ${seedEmail}`)
+        continue
+      }
+
+      // Register auth identity (also checks for existing provider_identity internally)
       const seedResult = await authService.register('emailpass', {
         url: '',
         headers: {},
@@ -42,9 +51,9 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
           app_metadata: { user_type: contextName },
         })
         await userRepo.create({ email: seedEmail, first_name: 'Dev', last_name: 'Admin' })
-        logger.info(`[auth:${contextName}] Dev user seeded — login with: ${seedEmail}`)
+        logger.info(`[auth:${contextName}] User seeded — login with: ${seedEmail}`)
       } else {
-        logger.info(`[auth:${contextName}] Dev user already exists — ${seedEmail}`)
+        logger.info(`[auth:${contextName}] Auth identity already exists — ${seedEmail}`)
       }
     } catch (seedErr) {
       logger.warn(`[auth:${contextName}] Dev seed: ${seedErr instanceof Error ? seedErr.message : String(seedErr)}`)
