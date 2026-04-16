@@ -377,39 +377,48 @@ async function resolveKlaviyoEmail(exchangeId: string, config: PostHogProxyConfi
   if (identityCache.has(exchangeId)) return identityCache.get(exchangeId)!
   if (!config.klaviyoApiKey) return null
 
-  try {
-    const res = await fetch('https://a.klaviyo.com/api/profile-import/', {
-      method: 'POST',
-      headers: {
-        Authorization: `Klaviyo-API-Key ${config.klaviyoApiKey}`,
-        'Content-Type': 'application/json',
-        accept: 'application/json',
-        revision: '2024-10-15',
-      },
-      body: JSON.stringify({
-        data: {
-          type: 'profile',
-          attributes: { _kx: exchangeId },
+  const MAX_RETRIES = 3
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch('https://a.klaviyo.com/api/profile-import/', {
+        method: 'POST',
+        headers: {
+          Authorization: `Klaviyo-API-Key ${config.klaviyoApiKey}`,
+          'Content-Type': 'application/json',
+          accept: 'application/json',
+          revision: '2024-10-15',
         },
-      }),
-    })
+        body: JSON.stringify({
+          data: {
+            type: 'profile',
+            attributes: { _kx: exchangeId },
+          },
+        }),
+      })
 
-    if (!res.ok) {
-      console.error(`[posthog-proxy] Klaviyo API error ${res.status}: ${await res.text()}`)
+      if (!res.ok) {
+        console.error(`[posthog-proxy] Klaviyo API error ${res.status}: ${await res.text()}`)
+        return null
+      }
+
+      const data = (await res.json()) as { data?: { attributes?: { email?: string } } }
+      const email = data.data?.attributes?.email
+      if (email) {
+        identityCache.set(exchangeId, email)
+        console.log(`[posthog-proxy] Klaviyo resolved: ${email}`)
+      }
+      return email ?? null
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[posthog-proxy] Klaviyo fetch failed (attempt ${attempt}/${MAX_RETRIES}), retrying...`)
+        await new Promise((r) => setTimeout(r, 200 * attempt))
+        continue
+      }
+      console.error(`[posthog-proxy] Klaviyo failed after ${MAX_RETRIES} attempts:`, (err as Error).message)
       return null
     }
-
-    const data = (await res.json()) as { data?: { attributes?: { email?: string } } }
-    const email = data.data?.attributes?.email
-    if (email) {
-      identityCache.set(exchangeId, email)
-      console.log(`[posthog-proxy] Klaviyo resolved: ${email}`)
-    }
-    return email ?? null
-  } catch (err) {
-    console.error('[posthog-proxy] resolveKlaviyoEmail error:', err)
-    return null
   }
+  return null
 }
 
 /** Low-level: send a single event to PostHog ingest API */
