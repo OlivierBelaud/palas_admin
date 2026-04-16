@@ -38,7 +38,7 @@ export default defineQuery({
               WITH timeline AS (
                 SELECT
                   e.event AS action,
-                  e.timestamp AS occurred_at,
+                  toString(e.timestamp) AS occurred_at,
                   'navigation' AS source,
                   JSONExtractString(e.properties, '$current_url') AS detail,
                   JSONExtractFloat(e.properties, 'total_price') AS amount
