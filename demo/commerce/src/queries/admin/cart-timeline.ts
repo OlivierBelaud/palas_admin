@@ -38,7 +38,7 @@ export default defineQuery({
                   e.timestamp AS occurred_at,
                   'navigation' AS source,
                   JSONExtractString(e.properties, '$current_url') AS detail,
-                  toFloat64OrNull(JSONExtractRaw(e.properties, 'total_price')) AS amount
+                  JSONExtractFloat(e.properties, 'total_price') AS amount
                 FROM events e
                 WHERE person.properties.email = '${safeEmail}'
                   AND (e.event LIKE 'cart:%' OR e.event LIKE 'checkout:%')
@@ -54,7 +54,7 @@ export default defineQuery({
                     JSONExtractString(ke.event_properties, 'Variant Name'),
                     ''
                   ) AS detail,
-                  toFloat64OrNull(JSONExtractRaw(ke.event_properties, '$value')) AS amount
+                  JSONExtractFloat(ke.event_properties, '$value') AS amount
                 FROM klaviyo_events ke
                 JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
                 JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
