@@ -52,7 +52,25 @@ async function seedInitialUser(ctx: BootstrapContext): Promise<void> {
   }
 
   if (existing.length > 0) {
-    logger.info(`[seed] User ${email} already exists — skipping`)
+    logger.info(`[seed] Auth identity for ${email} already exists`)
+    // Auth exists but admin_user might not (partial seed from previous attempt) — ensure it
+    try {
+      const userExists = await db.raw<{ id: string }>('SELECT id FROM admin_user WHERE email = $1 LIMIT 1', [email])
+      if (userExists.length === 0) {
+        const userId = uuid()
+        await db.raw('INSERT INTO admin_user (id, email, first_name, last_name) VALUES ($1, $2, $3, $4)', [
+          userId,
+          email,
+          'Admin',
+          'User',
+        ])
+        logger.info(`[seed] admin_user created for existing auth identity — ${email}`)
+      } else {
+        logger.info(`[seed] admin_user also exists — nothing to do`)
+      }
+    } catch (err) {
+      logger.warn(`[seed] Could not verify/create admin_user: ${(err as Error).message}`)
+    }
     return
   }
 
