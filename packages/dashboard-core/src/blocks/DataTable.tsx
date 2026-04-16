@@ -114,7 +114,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
         count,
-        localPagination: true,
+        localPagination: !isGraphQuery(query),
       },
     },
     data: { items, count },
