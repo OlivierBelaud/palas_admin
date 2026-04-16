@@ -60,6 +60,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     const proc = await startViteDev(cwd, spa.viteConfigPath, spa.vitePort)
     viteProcesses.push(proc)
   }
+  // Expose Vite port so the catch-all route handler can proxy SPA fallback in dev
+  if (allSpas.length > 0) {
+    process.env.__MANTA_VITE_PORT = String(allSpas[0].vitePort)
+  }
 
   // Copy framework server templates to .manta/server/
   copyServerTemplates(cwd)
@@ -97,11 +101,50 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const server = createDevServer(nitro)
   const listener = await server.listen({ port, hostname: 'localhost' })
 
+  // SPA fallback: intercept SPA sub-routes (e.g. /admin/paniers) at the raw HTTP
+  // level BEFORE Nitro's serveStatic. Proxy to Vite with Accept: text/html so
+  // Vite returns index.html for client-side routing.
+  // biome-ignore lint/suspicious/noExplicitAny: listhen internal
+  const httpServer: import('node:http').Server | undefined = (listener as any)?.node?.server
+  if (httpServer && allSpas.length > 0) {
+    const spaNames = allSpas.map((s) => s.name)
+    const originalListeners = httpServer.listeners('request').slice()
+    httpServer.removeAllListeners('request')
+
+    httpServer.on('request', async (req, res) => {
+      const url = req.url ?? ''
+      const matchedSpa = spaNames.find((name) => url.startsWith(`/${name}/`) && !url.startsWith('/api/'))
+      const isFile = /\.\w{2,5}(\?|$)/.test(url)
+
+      if (matchedSpa && !isFile && req.method === 'GET') {
+        const vitePort = allSpas.find((s) => s.name === matchedSpa)?.vitePort
+        if (vitePort) {
+          try {
+            const viteRes = await fetch(`http://localhost:${vitePort}${url}`, {
+              headers: { Accept: 'text/html' },
+            })
+            if (viteRes.ok) {
+              const html = await viteRes.text()
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+              res.end(html)
+              return
+            }
+          } catch {
+            // Vite not ready — fall through to Nitro
+          }
+        }
+      }
+
+      // Fall through to original Nitro handlers
+      for (const listener of originalListeners) {
+        ;(listener as Function).call(httpServer, req, res)
+      }
+    })
+  }
+
   // Nitro's dev server always registers an `upgrade` handler (crossws) that routes
   // WebSocket upgrades to the catch-all route handler — which crashes because our
   // handler is HTTP-only. Replace it with a proper WS proxy to Vite for HMR.
-  // biome-ignore lint/suspicious/noExplicitAny: listhen internal
-  const httpServer: import('node:http').Server | undefined = (listener as any)?.node?.server
   if (httpServer && allSpas.length > 0) {
     httpServer.removeAllListeners('upgrade')
     const { createProxyServer } = await import('httpxy')
@@ -139,12 +182,19 @@ function copyServerTemplates(cwd: string): void {
   const targetDir = resolve(cwd, '.manta', 'server')
 
   mkdirSync(resolve(targetDir, 'routes'), { recursive: true })
+  mkdirSync(resolve(targetDir, 'middleware'), { recursive: true })
 
   // Copy bootstrap
   copyFileSync(resolve(templatesDir, 'manta-bootstrap.ts'), resolve(targetDir, 'manta-bootstrap.ts'))
 
   // Copy catch-all route
   copyFileSync(resolve(templatesDir, 'routes', '[...].ts'), resolve(targetDir, 'routes', '[...].ts'))
+
+  // Copy SPA fallback middleware (dev-only: proxies /admin/* to Vite for client-side routing)
+  copyFileSync(
+    resolve(templatesDir, 'middleware', 'spa-fallback.ts'),
+    resolve(targetDir, 'middleware', 'spa-fallback.ts'),
+  )
 
   // Copy manta.config.ts so the bootstrap's static import resolves.
   // In dev mode, the manifest doesn't exist → bootstrap falls back to jiti for
