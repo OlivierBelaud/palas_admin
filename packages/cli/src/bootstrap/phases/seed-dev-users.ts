@@ -28,13 +28,14 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
       // biome-ignore lint/suspicious/noExplicitAny: repo type varies between DrizzleRepository and InMemoryRepository
       const userRepo: any = repoFactory.createRepository(userRepoKey)
 
-      const seedEmail = `${contextName}@manta.local`
+      const seedEmail = process.env.MANTA_ADMIN_EMAIL ?? `${contextName}@manta.local`
+      const seedPassword = process.env.MANTA_ADMIN_PASSWORD ?? 'admin'
       const seedResult = await authService.register('emailpass', {
         url: '',
         headers: {},
         query: {},
         protocol: 'http',
-        body: { email: seedEmail, password: process.env.MANTA_ADMIN_PASSWORD ?? 'admin' },
+        body: { email: seedEmail, password: seedPassword },
       })
       if (seedResult?.authIdentity) {
         await authService.updateAuthIdentity(seedResult.authIdentity.id, {
@@ -42,6 +43,8 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
         })
         await userRepo.create({ email: seedEmail, first_name: 'Dev', last_name: 'Admin' })
         logger.info(`[auth:${contextName}] Dev user seeded — login with: ${seedEmail}`)
+      } else {
+        logger.info(`[auth:${contextName}] Dev user already exists — ${seedEmail}`)
       }
     } catch (seedErr) {
       logger.warn(`[auth:${contextName}] Dev seed: ${seedErr instanceof Error ? seedErr.message : String(seedErr)}`)
