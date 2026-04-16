@@ -85,7 +85,7 @@ export default definePage({
         {
           key: 'source',
           label: 'Source',
-          format: { type: 'badge', values: { navigation: 'blue', klaviyo: 'purple' } },
+          format: { type: 'badge', values: { PostHog: 'blue', Klaviyo: 'purple' } },
         },
         { key: 'detail', label: 'Détail' },
         { key: 'amount', label: 'Montant', format: 'number' },

@@ -39,7 +39,7 @@ export default defineQuery({
                 SELECT
                   e.event AS action,
                   toString(e.timestamp) AS occurred_at,
-                  'navigation' AS source,
+                  'PostHog' AS source,
                   JSONExtractString(e.properties, '$current_url') AS detail,
                   JSONExtractFloat(e.properties, 'total_price') AS amount
                 FROM events e
@@ -49,7 +49,7 @@ export default defineQuery({
                 SELECT
                   km.name AS action,
                   ke.datetime AS occurred_at,
-                  'klaviyo' AS source,
+                  'Klaviyo' AS source,
                   coalesce(
                     JSONExtractString(ke.event_properties, 'Subject'),
                     JSONExtractString(ke.event_properties, 'Campaign Name'),
@@ -79,13 +79,24 @@ export default defineQuery({
       const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
       log.info(`[cart-timeline] PostHog returned ${data.results?.length ?? 0} rows, columns=${data.columns?.join(',')}`)
       if (!data.results || !data.columns) return []
-      return data.results.map((row) => {
+      const rows = data.results.map((row) => {
         const obj: Record<string, unknown> = {}
         data.columns!.forEach((col, i) => {
           obj[col] = row[i]
         })
+        // Normalize dates: PostHog "2026-04-16 18:14:15.170000" → ISO, Klaviyo already ISO
+        if (typeof obj.occurred_at === 'string') {
+          obj.occurred_at = obj.occurred_at.replace(' ', 'T').replace(/(\d{6})$/, '$1Z')
+        }
         return obj
       })
+      // Sort by date descending (both formats are now ISO-comparable)
+      rows.sort((a, b) => {
+        const da = String(a.occurred_at ?? '')
+        const db = String(b.occurred_at ?? '')
+        return db.localeCompare(da)
+      })
+      return rows
     } catch (err) {
       log.warn(`[cart-timeline] ${(err as Error).message}`)
       return []
