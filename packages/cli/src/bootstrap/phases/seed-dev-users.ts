@@ -1,12 +1,13 @@
 // Phase 5e: Seed initial admin user.
 //
 // If MANTA_ADMIN_EMAIL + MANTA_ADMIN_PASSWORD are set, create the user
-// in auth_identities, provider_identities, AND admin_user tables.
+// in auth_identities, provider_identities, AND the admin user table.
 // Idempotent: fills any missing table while skipping what already exists.
 // Like Medusa's USER_INITIAL_EMAIL / USER_INITIAL_PASSWORD.
 
 import { randomBytes, scryptSync } from 'node:crypto'
 import type { AppRef, BootstrapContext } from '../bootstrap-context'
+import { entityToTableKey } from '../bootstrap-helpers'
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex')
@@ -25,25 +26,27 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
   const password = process.env.MANTA_ADMIN_PASSWORD
   if (!email || !password) return
 
-  const { logger, db } = ctx
+  const { logger, db, userDefinitions } = ctx
   if (!db) {
     logger.warn('[seed] MANTA_ADMIN_EMAIL set but no database — cannot seed')
     return
   }
 
-  logger.info(`[seed] Initial user: ${email}`)
+  // Resolve the admin user table name from the first userDefinition (e.g. 'Admin' → 'admins')
+  const adminDef = userDefinitions?.find((u) => u.contextName === 'admin')
+  const adminTableName = adminDef?.def?.model?.name ? entityToTableKey(adminDef.def.model.name) : 'admins'
+
+  logger.info(`[seed] Initial user: ${email} (table: ${adminTableName})`)
 
   // --- 1. provider_identities ---
   let hasAuth = false
-  let authIdentityId: string | null = null
   try {
-    const rows = await db.raw<{ id: string; auth_identity_id: string }>(
-      "SELECT id, auth_identity_id FROM provider_identities WHERE entity_id = $1 AND provider = 'emailpass' LIMIT 1",
+    const rows = await db.raw<{ id: string }>(
+      "SELECT id FROM provider_identities WHERE entity_id = $1 AND provider = 'emailpass' LIMIT 1",
       [email],
     )
     if (rows.length > 0) {
       hasAuth = true
-      authIdentityId = rows[0].auth_identity_id
       logger.info('[seed] provider_identity exists — OK')
     }
   } catch (err) {
@@ -52,8 +55,7 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
   }
 
   if (!hasAuth) {
-    // Create auth_identity
-    authIdentityId = uuid()
+    const authIdentityId = uuid()
     try {
       await db.raw('INSERT INTO auth_identities (id, app_metadata) VALUES ($1, $2)', [
         authIdentityId,
@@ -65,7 +67,6 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
       return
     }
 
-    // Create provider_identity
     const providerId = uuid()
     const hashedPassword = hashPassword(password)
     try {
@@ -81,23 +82,23 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
     }
   }
 
-  // --- 2. admin_user — ALWAYS ensure it exists ---
+  // --- 2. User table — ALWAYS ensure the row exists ---
   try {
-    const userRows = await db.raw<{ id: string }>('SELECT id FROM admin_user WHERE email = $1 LIMIT 1', [email])
+    const userRows = await db.raw<{ id: string }>(`SELECT id FROM ${adminTableName} WHERE email = $1 LIMIT 1`, [email])
     if (userRows.length > 0) {
-      logger.info('[seed] admin_user exists — OK')
+      logger.info(`[seed] ${adminTableName} row exists — OK`)
     } else {
       const userId = uuid()
-      await db.raw('INSERT INTO admin_user (id, email, first_name, last_name) VALUES ($1, $2, $3, $4)', [
+      await db.raw(`INSERT INTO ${adminTableName} (id, email, first_name, last_name) VALUES ($1, $2, $3, $4)`, [
         userId,
         email,
         'Admin',
         'User',
       ])
-      logger.info(`[seed] admin_user created: ${userId}`)
+      logger.info(`[seed] ${adminTableName} row created: ${userId}`)
     }
   } catch (err) {
-    logger.error(`[seed] Cannot create admin_user: ${(err as Error).message}`)
+    logger.error(`[seed] Cannot create ${adminTableName} row: ${(err as Error).message}`)
   }
 
   logger.info(`[seed] Done — login with ${email}`)
