@@ -6,6 +6,7 @@ export default definePage({
     actions: [
       { label: 'Consolider', command: '/api/cart-tracking/consolidate' },
       { label: 'Purger paniers vides', command: '/api/cart-tracking/purge-empty', destructive: true },
+      { label: 'Reconstruire depuis PostHog', command: '/api/admin/command/rebuildCarts', destructive: true },
     ],
   },
   main: [

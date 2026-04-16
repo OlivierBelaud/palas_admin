@@ -20,6 +20,14 @@ export default defineSubscriber({
     for (const evt of events) {
       const input = toIngestInput(evt)
       if (!input) continue
+
+      // Skip bots: storebotmail, joonix, known test patterns
+      const email = input.email as string | null
+      if (email && /storebotmail|joonix\.net|mailinator\.com|guerrillamail/i.test(email)) {
+        log.info(`[posthog-cart-tracker] Skipped bot: ${email}`)
+        continue
+      }
+
       try {
         // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed (ingestCartEvent is discovered at boot)
         await (command as any).ingestCartEvent(input)
