@@ -37,7 +37,7 @@ export default definePage({
       },
       columns: [
         { key: 'email', label: 'Client', format: 'highlight' },
-        { key: 'total_price', label: 'Montant', format: 'number', sortable: true },
+        { key: 'total_price', label: 'Montant', format: 'currency', sortable: true },
         { key: 'item_count', label: 'Articles', format: 'number' },
         {
           key: 'highest_stage',

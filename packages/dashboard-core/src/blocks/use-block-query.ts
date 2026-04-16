@@ -11,6 +11,7 @@ import { isGraphQuery, isHogQLQuery, isNamedQuery } from '../primitives'
 export interface UseBlockQueryResult {
   data: Record<string, unknown> | unknown[]
   items: unknown[]
+  count?: number
   isLoading: boolean
   error: Error | null
   refetch: () => void
@@ -138,13 +139,16 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
 
   const result = isGraph ? graphResult : namedResult
   let rawData = result.data as unknown
+  let totalCount: number | undefined
 
-  // Named queries may return { data: [...], count: N } or { items: [...], count: N } — unwrap
+  // Named/graph queries may return { data: [...], count: N } or { items: [...], count: N } — unwrap
   if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
-    if (Array.isArray((rawData as any).data)) {
-      rawData = (rawData as any).data
-    } else if (Array.isArray((rawData as any).items)) {
-      rawData = (rawData as any).items
+    const wrapped = rawData as Record<string, unknown>
+    if (wrapped.count != null) totalCount = Number(wrapped.count)
+    if (Array.isArray(wrapped.data)) {
+      rawData = wrapped.data
+    } else if (Array.isArray(wrapped.items)) {
+      rawData = wrapped.items
     }
   }
 
@@ -166,6 +170,7 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
     return {
       data: {},
       items: rawData,
+      count: totalCount,
       isLoading: result.isLoading,
       error: result.error,
       refetch,

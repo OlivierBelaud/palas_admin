@@ -89,7 +89,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
     return { graph } as GraphQueryDef
   }, [query, searchParams])
 
-  const { items, isLoading } = useBlockQuery(enrichedQuery)
+  const { items, count, isLoading } = useBlockQuery(enrichedQuery)
 
   if (items.length > 0 || !isLoading) hadDataRef.current = true
 
@@ -113,9 +113,10 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         searchable: Array.isArray(props.searchable) ? true : props.searchable,
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
+        count,
         localPagination: true,
       },
     },
-    data: { items },
+    data: { items, count },
   })
 }

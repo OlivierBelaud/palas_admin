@@ -90,6 +90,10 @@ export class MantaClient {
     })
     const data = await res.json()
     if (!res.ok) throw new MantaSDKError(data.type ?? 'ERROR', data.message ?? res.statusText, res.status)
+    // Preserve count for pagination: return { items: [...], count: N } if count is present
+    if (Array.isArray(data.data) && data.count != null) {
+      return { items: data.data, count: data.count } as unknown as TOutput
+    }
     return data.data ?? data
   }
 
