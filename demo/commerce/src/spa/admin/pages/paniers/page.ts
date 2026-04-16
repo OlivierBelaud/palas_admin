@@ -29,6 +29,7 @@ export default definePage({
       type: 'DataTable',
       title: 'Tous les paniers',
       query: { name: 'cart-list' },
+      pageSize: 15,
       columns: [
         { key: 'client', label: 'Client', format: 'highlight' },
         { key: 'montant', label: 'Montant', sortable: true },

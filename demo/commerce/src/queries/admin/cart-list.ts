@@ -21,7 +21,7 @@ export default defineQuery({
         'last_action_at',
         'created_at',
       ],
-      pagination: { limit: 500 },
+      pagination: { limit: 1000 },
       sort: { last_action_at: 'desc' },
     })
 
