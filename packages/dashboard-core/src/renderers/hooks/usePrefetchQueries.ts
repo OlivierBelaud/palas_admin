@@ -105,9 +105,19 @@ export function usePrefetchQueries(blocks: BlockDef[], params?: Record<string, s
     }
 
     for (const nq of consolidated.namedQueries) {
+      // Resolve :param placeholders in named query input
+      const resolvedInput = nq.input
+        ? Object.fromEntries(Object.entries(nq.input).map(([k, v]) => [k, resolveParam(v)]))
+        : undefined
+      // Skip prefetch if any param is still unresolved
+      const hasUnresolved =
+        resolvedInput &&
+        Object.values(resolvedInput).some((v) => typeof v === 'string' && (v as string).startsWith(':'))
+      if (hasUnresolved) continue
+
       queryClient.prefetchQuery({
-        queryKey: ['manta', 'query', nq.name, nq.input],
-        queryFn: () => client.query(nq.name, nq.input),
+        queryKey: ['manta', 'query', nq.name, resolvedInput],
+        queryFn: () => client.query(nq.name, resolvedInput as Record<string, unknown>),
       })
     }
   }, [consolidated, queryClient, client, params])
