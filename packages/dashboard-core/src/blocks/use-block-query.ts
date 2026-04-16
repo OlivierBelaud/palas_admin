@@ -79,6 +79,9 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
   // Don't fire named queries if any :param placeholder is still unresolved
   const hasUnresolvedParams =
     resolvedInput && Object.values(resolvedInput).some((v) => typeof v === 'string' && v.startsWith(':'))
+  if (isNamed && hasUnresolvedParams) {
+    console.warn('[useBlockQuery] Blocked named query — unresolved params:', resolvedInput, 'route params:', params)
+  }
   const namedResult = useQuery(isNamed ? (query as NamedQueryDef).name : '__disabled__', resolvedInput, {
     enabled: isNamed && !hasUnresolvedParams,
   })
