@@ -59,8 +59,8 @@ export function instantiateServiceDescriptor(
 
   // ===== Query helpers (framework-generated for the Query Graph endpoint) =====
 
-  svc.list = async () => {
-    return repo.find({ order: { created_at: 'DESC' } })
+  svc.list = async (filters?: Record<string, unknown>) => {
+    return repo.find({ where: filters, order: { created_at: 'DESC' } })
   }
 
   svc.findById = async (id: string) => {
