@@ -3,7 +3,7 @@
 export default defineQuery({
   name: 'cart-timeline',
   description: 'Unified timeline of PostHog navigation + Klaviyo events for a cart',
-  input: z.object({ id: z.string() }),
+  input: z.object({ id: z.string().uuid() }),
   handler: async (input, { query, log }) => {
     const carts = await query.graph({
       entity: 'cart',
@@ -12,9 +12,7 @@ export default defineQuery({
       pagination: { limit: 1 },
     })
     const email = (carts[0] as unknown as Record<string, unknown>)?.email as string | undefined
-    log.info(
-      `[cart-timeline] cart=${input.id} email=${email ?? '(none)'} carts=${JSON.stringify(carts).substring(0, 200)}`,
-    )
+    log.info(`[cart-timeline] cart=${input.id} email=${email ?? '(none)'}`)
     if (!email) return []
 
     const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'

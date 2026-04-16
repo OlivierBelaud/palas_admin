@@ -76,8 +76,11 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
       : isNamed
         ? (query as NamedQueryDef).input
         : undefined
+  // Don't fire named queries if any :param placeholder is still unresolved
+  const hasUnresolvedParams =
+    resolvedInput && Object.values(resolvedInput).some((v) => typeof v === 'string' && v.startsWith(':'))
   const namedResult = useQuery(isNamed ? (query as NamedQueryDef).name : '__disabled__', resolvedInput, {
-    enabled: isNamed,
+    enabled: isNamed && !hasUnresolvedParams,
   })
 
   // ── HogQL query path ───────────────────────────────

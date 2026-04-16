@@ -3,7 +3,7 @@
 export default defineQuery({
   name: 'cart-shopify-orders',
   description: 'Shopify order history for a cart customer',
-  input: z.object({ id: z.string() }),
+  input: z.object({ id: z.string().uuid() }),
   handler: async (input, { query, log }) => {
     const carts = await query.graph({
       entity: 'cart',
