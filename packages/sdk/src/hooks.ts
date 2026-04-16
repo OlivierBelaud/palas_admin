@@ -70,10 +70,14 @@ export function useQuery<TOutput = unknown>(
   options?: { enabled?: boolean; staleTime?: number; refetchInterval?: number },
 ): UseQueryResult<TOutput, Error> {
   const client = useMantaClient()
+  // Block queries with unresolved :param placeholders (e.g., id=":id" before useParams resolves)
+  const hasUnresolved =
+    params && Object.values(params).some((v) => typeof v === 'string' && (v as string).startsWith(':'))
+  const enabled = (options?.enabled ?? true) && !hasUnresolved
   return useReactQuery<TOutput, Error>({
     queryKey: ['manta', 'query', name, params],
     queryFn: () => client.query<TOutput>(name, params),
-    enabled: options?.enabled,
+    enabled,
     staleTime: options?.staleTime,
     refetchInterval: options?.refetchInterval,
   })
