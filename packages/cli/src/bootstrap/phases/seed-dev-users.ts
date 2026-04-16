@@ -1,12 +1,12 @@
-// Phase 5e (dev-only): Seed a default user per context so developers can log in
-// immediately without going through the register flow. Extracted from user-routes
-// so the wiring phase only wires routes and this data-population concern lives on
-// its own and is skipped in prod.
+// Phase 5e: Seed a default user per context.
+// In dev mode: always seeds (fallback admin@manta.local / admin).
+// In prod mode: seeds only if MANTA_ADMIN_EMAIL is explicitly set (first-deploy flow).
 
 import type { AppRef, BootstrapContext } from '../bootstrap-context'
 
 export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Promise<void> {
-  if (ctx.mode !== 'dev') return
+  const hasExplicitAdmin = !!process.env.MANTA_ADMIN_EMAIL
+  if (ctx.mode !== 'dev' && !hasExplicitAdmin) return
 
   const { logger, repoFactory, userDefinitions, authService, generatePgTableFromDml, db } = ctx
 
