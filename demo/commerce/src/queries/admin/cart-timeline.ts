@@ -38,7 +38,7 @@ export default defineQuery({
               WITH timeline AS (
                 SELECT
                   e.event AS action,
-                  formatDateTime(e.timestamp, '%Y-%m-%dT%H:%i:%S+00:00') AS occurred_at,
+                  formatDateTime(e.timestamp, '%Y-%m-%dT%H:%i:%S+00:00', 'UTC') AS occurred_at,
                   'PostHog' AS source,
                   JSONExtractString(e.properties, '$current_url') AS detail,
                   JSONExtractFloat(e.properties, 'total_price') AS amount
