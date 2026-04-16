@@ -15,8 +15,15 @@ export interface NeonDatabaseOptions {
 export interface NeonDatabase {
   /** Drizzle db instance — use this for all queries */
   db: PostgresJsDatabase | ReturnType<typeof drizzleNeonHttp>
-  /** Raw SQL function for DDL (CREATE TABLE etc.) */
+  /** Raw SQL: (query, params) style — for IDatabasePort.raw() */
   rawSql: (query: string, params?: unknown[]) => Promise<unknown>
+  /**
+   * Tagged template SQL — for getPool() consumers that use tagged templates
+   * (ensureFrameworkTables, ensureEntityTables, NeonLockingAdapter).
+   * On Neon HTTP: the neon() function itself (supports both tagged + regular).
+   * On postgres.js: the postgres() instance (supports both tagged + .unsafe()).
+   */
+  pool: unknown
   /** Close connections */
   close: () => Promise<void>
 }
@@ -36,15 +43,17 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
     const httpSql = neon(options.url)
     const db = drizzleNeonHttp(httpSql)
 
+    // httpSql supports both tagged templates (sql`...`) AND regular calls (sql(query, params)).
+    // Add .unsafe() for ensureEntityTables compatibility.
+    const pool = Object.assign(httpSql, {
+      unsafe: (query: string, params?: unknown[]) => httpSql(query, params ?? []),
+    })
+
     return {
       db: db as unknown as PostgresJsDatabase,
-      rawSql: async (query: string, params?: unknown[]) => {
-        const result = await httpSql(query, params ?? [])
-        return result
-      },
-      close: async () => {
-        // HTTP driver is stateless — nothing to close
-      },
+      rawSql: async (query: string, params?: unknown[]) => httpSql(query, params ?? []),
+      pool,
+      close: async () => {},
     }
   }
 
@@ -60,6 +69,7 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
   return {
     db,
     rawSql: async (query: string, params?: unknown[]) => pgSql.unsafe(query, (params ?? []) as never[]),
+    pool: pgSql, // postgres.js supports tagged templates + .unsafe()
     close: () => pgSql.end(),
   }
 }
