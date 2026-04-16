@@ -40,6 +40,7 @@ export interface DataTableBlockProps {
     entity?: string
   }>
   pageSize?: number
+  pagination?: boolean
 }
 
 export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
@@ -110,7 +111,9 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         ...props,
         columns,
         searchable: Array.isArray(props.searchable) ? true : props.searchable,
-        pagination: true,
+        pagination: props.pagination !== false,
+        pageSize: props.pageSize,
+        localPagination: true,
       },
     },
     data: { items },

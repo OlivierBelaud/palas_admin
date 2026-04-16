@@ -936,22 +936,30 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     }
   }, [deleteTarget, dashCtx, queryClient])
 
-  // ── URL-based pagination ──
-  const offset = searchParams.get('offset')
+  // ── Pagination ──
+  // localPagination: state-based (no URL params) — used by named query DataTables
+  // URL-based: offset/order in search params — used by graph query list pages
+  const useLocalPagination = !!(props as Record<string, unknown>).localPagination
+  const offset = useLocalPagination ? null : searchParams.get('offset')
   const [paginationState, setPaginationState] = useState<PaginationState>({
     pageIndex: offset ? Math.ceil(Number(offset) / _pageSize) : 0,
     pageSize: _pageSize,
   })
 
   useEffect(() => {
+    if (useLocalPagination) return
     const index = offset ? Math.ceil(Number(offset) / _pageSize) : 0
     if (index === paginationState.pageIndex) return
     setPaginationState((prev) => ({ ...prev, pageIndex: index }))
-  }, [offset, _pageSize, paginationState.pageIndex])
+  }, [offset, _pageSize, paginationState.pageIndex, useLocalPagination])
 
   const onPaginationChange = useCallback(
     (updater: ((old: PaginationState) => PaginationState) | PaginationState) => {
       const state = typeof updater === 'function' ? updater(paginationState) : updater
+      if (useLocalPagination) {
+        setPaginationState(state)
+        return
+      }
       const { pageIndex, pageSize } = state
       setSearchParams((prev) => {
         if (!pageIndex) {
@@ -963,7 +971,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
       })
       setPaginationState(state)
     },
-    [paginationState, setSearchParams],
+    [paginationState, setSearchParams, useLocalPagination],
   )
 
   // ── Column visibility state ──
@@ -1167,17 +1175,18 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
 
   // ── Create table instance ──
 
+  const noPagination = props.pagination === false
   const table = useReactTable({
     data: filteredItems,
     columns,
     state: {
-      pagination: paginationState,
+      pagination: noPagination ? { pageIndex: 0, pageSize: filteredItems.length || 1000 } : paginationState,
       columnVisibility,
     },
     onColumnVisibilityChange: setColumnVisibility,
-    pageCount: Math.ceil((filteredItems.length || count || 0) / _pageSize),
+    pageCount: noPagination ? 1 : Math.ceil((filteredItems.length || count || 0) / _pageSize),
     getRowId: (row) => (row.id as string) || String(items.indexOf(row)),
-    onPaginationChange: onPaginationChange as any,
+    onPaginationChange: noPagination ? ((() => {}) as any) : (onPaginationChange as any),
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),

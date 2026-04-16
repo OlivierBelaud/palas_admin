@@ -29,6 +29,7 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Commandes Shopify',
+      pageSize: 5,
       query: { name: 'cart-shopify-orders', input: { id: ':id' } },
       columns: [
         { key: 'order_name', label: 'Commande', format: 'highlight' },
@@ -49,7 +50,7 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Timeline',
-      pagination: false,
+      pageSize: 50,
       query: { name: 'cart-timeline', input: { id: ':id' } },
       columns: [
         {
@@ -87,9 +88,8 @@ export default definePage({
           label: 'Source',
           format: { type: 'badge', values: { PostHog: 'blue', Klaviyo: 'purple' } },
         },
-        { key: 'detail', label: 'Détail' },
-        { key: 'amount', label: 'Montant', format: 'number' },
         { key: 'occurred_at', label: 'Date', format: { type: 'date', format: 'long' } },
+        { key: 'amount', label: 'Montant', format: 'number' },
       ],
     },
   ],
