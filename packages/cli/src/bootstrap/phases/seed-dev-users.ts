@@ -10,6 +10,10 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
 
   const { logger, repoFactory, userDefinitions, authService, generatePgTableFromDml, db } = ctx
 
+  logger.info(
+    `[seed] mode=${ctx.mode}, MANTA_ADMIN_EMAIL=${process.env.MANTA_ADMIN_EMAIL ?? '(not set)'}, userDefinitions=${userDefinitions?.length ?? 0}`,
+  )
+
   if (!userDefinitions || userDefinitions.length === 0) return
 
   for (const { contextName, def } of userDefinitions) {
@@ -28,8 +32,11 @@ export async function seedDevUsers(ctx: BootstrapContext, _appRef: AppRef): Prom
       // biome-ignore lint/suspicious/noExplicitAny: repo type varies between DrizzleRepository and InMemoryRepository
       const userRepo: any = repoFactory.createRepository(userRepoKey)
 
-      const seedEmail = process.env.MANTA_ADMIN_EMAIL ?? `${contextName}@manta.local`
-      const seedPassword = process.env.MANTA_ADMIN_PASSWORD ?? 'admin'
+      // MANTA_ADMIN_EMAIL / MANTA_ADMIN_PASSWORD override only the first user context (admin).
+      // Other contexts (customer, etc.) always use the default dev seed.
+      const isAdminContext = contextName === 'admin'
+      const seedEmail = (isAdminContext && process.env.MANTA_ADMIN_EMAIL) || `${contextName}@manta.local`
+      const seedPassword = (isAdminContext && process.env.MANTA_ADMIN_PASSWORD) || 'admin'
 
       // Check if user already exists in the user table
       const existingUsers = await userRepo.find({ where: { email: seedEmail } })
