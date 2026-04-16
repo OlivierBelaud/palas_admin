@@ -1,7 +1,8 @@
 import { definePage, type HeaderDef } from '@manta/dashboard-core'
 
-// Enriched cart detail page — all data from PostHog Data Warehouse.
-// Cart snapshot from local DB, customer/orders/emails from PostHog (Shopify + Klaviyo synced).
+// Enriched cart detail page — all external data from PostHog Data Warehouse.
+// Shopify customers/orders, Klaviyo profiles/events, PostHog navigation events.
+// Cart snapshot from local DB (graph queries).
 
 export default definePage({
   header: {
@@ -15,17 +16,14 @@ export default definePage({
   } as HeaderDef,
 
   main: [
-    // ── Customer card (Shopify) — only shows if email is known ────────
-    // Queries shopify_customers for lifetime stats + shopify_orders for recent orders.
+    // ── Customer Shopify — stats lifetime ─────────────────────────────
     {
       type: 'StatsCard',
       title: 'Client Shopify',
-      visibleWhen: { field: 'email', operator: 'isNotEmpty' },
       query: {
         hogql: {
           query: `
             SELECT
-              JSONExtractString(sc.default_email_address, 'emailAddress') AS email,
               sc.first_name,
               sc.last_name,
               sc.number_of_orders,
@@ -47,22 +45,19 @@ export default definePage({
       ],
     },
 
-    // ── Commandes Shopify — historique des orders ─────────────────────
+    // ── Commandes Shopify ─────────────────────────────────────────────
     {
       type: 'DataTable',
       title: 'Commandes Shopify',
-      visibleWhen: { field: 'email', operator: 'isNotEmpty' },
       query: {
         hogql: {
           query: `
             SELECT
               so.name AS order_name,
-              so.email,
               so.display_financial_status AS status,
               JSONExtractString(so.total_price_set, 'shopMoney', 'amount') AS total,
               JSONExtractString(so.total_price_set, 'shopMoney', 'currencyCode') AS currency,
-              so.created_at,
-              so.cancelled_at
+              so.created_at
             FROM shopify_orders so
             WHERE so.email = ':email'
             ORDER BY so.created_at DESC
@@ -80,15 +75,14 @@ export default definePage({
             values: { PAID: 'green', PENDING: 'orange', REFUNDED: 'red', PARTIALLY_REFUNDED: 'orange' },
           },
         },
-        { key: 'total', label: 'Total' },
-        { key: 'currency', label: 'Devise' },
+        { key: 'total', label: 'Total (€)' },
         { key: 'created_at', label: 'Date', format: { type: 'date', format: 'short' } },
       ],
     },
 
-    // ── Timeline unifiée — cart events + emails Klaviyo, chronologique ─
-    // Merge les événements PostHog (cart/checkout) et les events Klaviyo (emails)
-    // dans un flux chronologique unique depuis la création du cart.
+    // ── Timeline unifiée — PostHog events + Klaviyo events ────────────
+    // Merge cart/checkout events (PostHog) et Klaviyo events (Viewed Product,
+    // Placed Order, emails reçus, etc.) dans un flux chronologique.
     {
       type: 'DataTable',
       title: 'Timeline',
@@ -96,31 +90,36 @@ export default definePage({
       query: {
         hogql: {
           query: `
-            WITH cart_timeline AS (
+            WITH timeline AS (
               SELECT
                 e.event AS action,
                 e.timestamp AS occurred_at,
-                'posthog' AS source,
+                'navigation' AS source,
                 JSONExtractString(e.properties, '$current_url') AS detail,
-                JSONExtractFloat(e.properties, 'totalPrice', 'amount') AS amount
+                toFloat64OrNull(JSONExtractRaw(e.properties, 'total_price')) AS amount
               FROM events e
-              WHERE e.distinct_id = ':distinct_id'
+              WHERE person.properties.email = ':email'
                 AND (e.event LIKE 'cart:%' OR e.event LIKE 'checkout:%')
-                AND e.timestamp >= ':created_at'
               UNION ALL
               SELECT
-                concat('email:', JSONExtractString(ke.event_properties, 'Campaign Name')) AS action,
+                km.name AS action,
                 ke.datetime AS occurred_at,
                 'klaviyo' AS source,
-                JSONExtractString(ke.event_properties, 'Subject') AS detail,
-                NULL AS amount
+                coalesce(
+                  JSONExtractString(ke.event_properties, 'Subject'),
+                  JSONExtractString(ke.event_properties, 'Campaign Name'),
+                  JSONExtractString(ke.event_properties, 'Product Name'),
+                  JSONExtractString(ke.event_properties, 'Variant Name'),
+                  ''
+                ) AS detail,
+                toFloat64OrNull(JSONExtractRaw(ke.event_properties, '$value')) AS amount
               FROM klaviyo_events ke
               JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
+              JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
               WHERE kp.email = ':email'
-                AND ke.datetime >= ':created_at'
             )
             SELECT action, occurred_at, source, detail, amount
-            FROM cart_timeline
+            FROM timeline
             ORDER BY occurred_at DESC
             LIMIT 100
           `,
@@ -137,17 +136,31 @@ export default definePage({
               'cart:product_removed': 'red',
               'cart:updated': 'blue',
               'cart:viewed': 'gray',
-              'cart:closed': 'gray',
               'checkout:started': 'blue',
               'checkout:contact_info_submitted': 'purple',
               'checkout:address_info_submitted': 'purple',
               'checkout:shipping_info_submitted': 'purple',
               'checkout:payment_info_submitted': 'orange',
               'checkout:completed': 'green',
+              'Viewed Product': 'gray',
+              'Active on Site': 'gray',
+              'Checkout Started': 'blue',
+              'Placed Order': 'green',
+              'Ordered Product': 'green',
+              'Fulfilled Order': 'green',
+              'Received Email': 'purple',
+              'Opened Email': 'purple',
+              'Clicked Email': 'purple',
+              'Subscribed to Email Marketing': 'blue',
+              'Subscribed to List': 'blue',
             },
           },
         },
-        { key: 'source', label: 'Source', format: { type: 'badge', values: { posthog: 'blue', klaviyo: 'purple' } } },
+        {
+          key: 'source',
+          label: 'Source',
+          format: { type: 'badge', values: { navigation: 'blue', klaviyo: 'purple' } },
+        },
         { key: 'detail', label: 'Détail' },
         { key: 'amount', label: 'Montant', format: 'number' },
         { key: 'occurred_at', label: 'Date', format: { type: 'date', format: 'long' } },
@@ -228,7 +241,6 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Profil Klaviyo',
-      visibleWhen: { field: 'email', operator: 'isNotEmpty' },
       query: {
         hogql: {
           query: `
@@ -239,7 +251,6 @@ export default definePage({
               JSONExtractString(kp.location, 'city') AS city,
               JSONExtractString(kp.location, 'country') AS country,
               JSONExtractString(kp.properties, 'Langue') AS langue,
-              JSONExtractBool(kp.properties, 'Accepts Marketing') AS accepts_marketing,
               kp.created AS subscribed_since,
               kp.last_event_date
             FROM klaviyo_profiles kp
@@ -249,13 +260,13 @@ export default definePage({
         },
       },
       fields: [
-        { key: 'email', label: 'Email' },
+        { key: 'first_name', label: 'Prénom' },
+        { key: 'last_name', label: 'Nom' },
         { key: 'langue', label: 'Langue' },
-        { key: 'accepts_marketing', label: 'Marketing opt-in' },
         { key: 'city', label: 'Ville' },
         { key: 'country', label: 'Pays' },
         { key: 'subscribed_since', label: 'Inscrit depuis', display: { type: 'date', format: 'short' } },
-        { key: 'last_event_date', label: 'Dernier event', display: { type: 'date', format: 'long' } },
+        { key: 'last_event_date', label: 'Dernier event', display: { type: 'date', format: 'short' } },
       ],
     },
 
@@ -274,7 +285,6 @@ export default definePage({
             'shipping_method',
             'shipping_price',
             'total_tax',
-            'checkout_token',
             'shopify_order_id',
             'is_first_order',
           ],
