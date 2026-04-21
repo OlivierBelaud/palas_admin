@@ -57,6 +57,10 @@ export default defineModel('Cart', {
   discounts: field.json<CheckoutDiscount[]>().nullable(),
   subtotal_price: field.float().nullable(),
   total_tax: field.float().nullable(),
+
+  // ── Relance idempotence (set by detect-abandoned-carts job) ───────
+  abandon_notified_at: field.dateTime().nullable(),
+  abandon_notified_count: field.number().default(0),
 })
 
 interface ItemDiscount {
