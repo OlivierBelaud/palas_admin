@@ -15,7 +15,7 @@ import type { ICachePort, IFilePort, IRepositoryFactory } from '@manta/core/port
 import { resolveAdapters, resolvePreset } from '../../config/resolve-adapters'
 import { ADAPTER_FACTORIES } from '../bootstrap-app'
 import type { AppRef, BootstrapContext } from '../bootstrap-context'
-import { ensureFrameworkTables } from '../bootstrap-helpers'
+import { ensureFrameworkSchema } from '../bootstrap-helpers'
 
 export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): Promise<void> {
   const { config, mode, verbose } = ctx
@@ -47,10 +47,13 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   if (!healthy) throw new MantaError('INVALID_STATE', 'Database health check failed. Is PostgreSQL running?')
   logger.info('Database connected')
 
-  // [4] Auto-create tables (dev mode only)
-  if (mode === 'dev') {
-    await ensureFrameworkTables(db.getPool(), logger)
-  }
+  // [4] Framework schema — ensured on every boot (dev, prod, serverless).
+  //     Serialized across concurrent boots via a Postgres advisory transaction
+  //     lock and gated by `manta_schema_versions`, so only the first boot of
+  //     a new deploy actually runs DDL. The framework owns these tables
+  //     (workflow_runs, events, job_executions, …), so it MUST be able to
+  //     guarantee their presence — skipping in prod breaks the runtime.
+  await ensureFrameworkSchema(db.getPool(), logger)
 
   // [5] Collect infra adapters, then build app via MantaAppBuilder
   const infraMap = new Map<string, unknown>()
