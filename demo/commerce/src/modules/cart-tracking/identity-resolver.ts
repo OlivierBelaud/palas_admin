@@ -124,7 +124,11 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
       body: JSON.stringify({
         query: {
           kind: 'HogQLQuery',
-          query: `SELECT DISTINCT distinct_id, person.properties.email FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%') AND person.properties.email IS NOT NULL AND person.properties.email != ''`,
+          // LIMIT 100000: PostHog HogQL defaults to 100 rows when no explicit
+          // LIMIT is set, which silently drops 90% of distinct_ids on a real
+          // store. Blow the ceiling high enough that we only have to worry
+          // about pagination once we genuinely cross this count.
+          query: `SELECT DISTINCT distinct_id, person.properties.email FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%') AND person.properties.email IS NOT NULL AND person.properties.email != '' LIMIT 100000`,
         },
       }),
     })
