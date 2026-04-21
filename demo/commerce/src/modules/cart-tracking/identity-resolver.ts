@@ -85,6 +85,10 @@ export async function resolveEmailByDistinctId(
           kind: 'HogQLQuery',
           query: `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
         },
+        // Bypass PostHog's server-side query cache — our single-user lookup
+        // must reflect the latest $identify, otherwise newly-identified users
+        // stay anonymous in our DB for up to the cache TTL.
+        refresh: 'force_blocking',
       }),
     })
     if (!res.ok) {
@@ -130,6 +134,10 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
           // about pagination once we genuinely cross this count.
           query: `SELECT DISTINCT distinct_id, person.properties.email FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%') AND person.properties.email IS NOT NULL AND person.properties.email != '' LIMIT 100000`,
         },
+        // Bypass PostHog's server-side query cache. rebuildCarts is meant to
+        // produce the authoritative snapshot; cached identity maps would
+        // silently miss users who were identified since the last rebuild.
+        refresh: 'force_blocking',
       }),
     })
     if (!res.ok) return map
