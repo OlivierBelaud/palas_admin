@@ -1,21 +1,58 @@
 // PostHog Proxy — catch-all raw route (escape hatch, NOT CQRS)
 // Forwards all requests from the PostHog JS SDK (/capture/, /decide/, /e/, /s/, etc.)
-// + optional Klaviyo identity bridge.
+// + optional Klaviyo identity bridge + inflight identity enrichment.
 //
 // Identity bridge: extracts $_kx (newsletter click) or $kla_id (__kla_id cookie)
 // from event properties, resolves the email via Klaviyo API, and sends $identify to PostHog.
+//
+// Inflight identity enrichment (added 2026-04-21):
+//   Before forwarding any batch to PostHog, we decompress → parse → and for
+//   every event carrying a distinct_id but no $set.email, we look up the
+//   email (cache first, HogQL fallback) and inject `$set.email`. This way
+//   PostHog stores the event WITH the identity on it, so downstream
+//   consumers (our cart tracker, analytics queries, etc.) don't have to
+//   join against person.properties.email.
+//   The cache is populated from three sources:
+//     1. Events that already carry $set.email (pass-through seeding)
+//     2. Klaviyo / checkout identity bridges resolving an email
+//     3. HogQL fallback `person.properties.email` lookup (5 min TTL)
 
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 
 interface PostHogProxyConfig {
   host: string
   publicToken?: string
   klaviyoApiKey?: string
+  apiKey?: string
 }
 
 // ── In-memory caches ────────────────────────────────────────────────
 const identityCache = new Map<string, string>()
 const identifiedIds = new Set<string>()
+
+// distinct_id → { email, expires_at }. Null email is cached too so we don't
+// keep re-querying PostHog for ids with no known identity. Process-local;
+// a cold start just re-populates from HogQL on demand.
+interface EmailCacheEntry {
+  email: string | null
+  expires_at: number
+}
+const EMAIL_CACHE_TTL_MS = 5 * 60 * 1000
+const distinctIdToEmail = new Map<string, EmailCacheEntry>()
+
+function cacheEmail(distinctId: string, email: string | null): void {
+  distinctIdToEmail.set(distinctId, { email, expires_at: Date.now() + EMAIL_CACHE_TTL_MS })
+}
+
+function getCachedEmail(distinctId: string): string | null | undefined {
+  const entry = distinctIdToEmail.get(distinctId)
+  if (!entry) return undefined
+  if (entry.expires_at < Date.now()) {
+    distinctIdToEmail.delete(distinctId)
+    return undefined
+  }
+  return entry.email
+}
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -28,6 +65,7 @@ function getConfig(): PostHogProxyConfig {
     host: process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com',
     publicToken: process.env.POSTHOG_TOKEN,
     klaviyoApiKey: process.env.KLAVIYO_API_KEY,
+    apiKey: process.env.POSTHOG_API_KEY,
   }
 }
 
@@ -71,34 +109,45 @@ export async function POST(req: Request & { app?: any }) {
   const clientIp = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip')
   if (clientIp) headers['x-forwarded-for'] = clientIp
 
-  // Forward raw bytes to PostHog (gzip stays gzip)
-  const resp = await fetch(targetUrl, { method: 'POST', headers, body: rawBytes })
-  const responseBody = await resp.text()
-
-  // ── Log all incoming events ────────────────────────────────────
+  // ── Parse body once (used for log + enrichment + identity bridges) ─
+  // Session recordings arrive as binary bytes — tryDecompress or JSON.parse
+  // fail, we fall through to forward as-is.
   let parsed: unknown = null
+  const isGzipped = rawBytes.length > 1 && rawBytes[0] === 0x1f && rawBytes[1] === 0x8b
   if (rawBytes.length > 0) {
     try {
       const jsonText = tryDecompress(rawBytes)
-      if (jsonText) {
-        parsed = JSON.parse(jsonText)
-        const events = Array.isArray(parsed)
-          ? parsed
-          : (((parsed as Record<string, unknown>).batch as unknown[]) ?? [parsed])
-        for (const evt of events as Record<string, unknown>[]) {
-          const eventName = evt.event as string | undefined
-          if (eventName === '$snapshot') continue // skip session recordings
-          const props = evt.properties as Record<string, unknown> | undefined
-          const distinctId = (evt.distinct_id ?? props?.distinct_id) as string | undefined
-          console.log(
-            `[posthog-proxy] ${path} ← event: ${eventName ?? '?'} | distinct_id: ${distinctId ?? '?'} | url: ${props?.$current_url ?? '-'}`,
-          )
-        }
-      }
+      if (jsonText) parsed = JSON.parse(jsonText)
     } catch {
-      // Not parseable (session recording binary, etc.) — skip
+      // Not parseable (binary session recording, etc.) — parsed stays null
     }
   }
+
+  // ── Inflight identity enrichment ───────────────────────────────
+  // Inject $set.email on events whose distinct_id we already know an
+  // email for. Cache first, HogQL fallback for unknown ids. Blocks the
+  // forward briefly on cold cache (single lookup per distinct_id per TTL).
+  let forwardBytes: Uint8Array = rawBytes
+  if (parsed) {
+    const events = extractEventList(parsed)
+    for (const evt of events) logEvent(path, evt)
+    const modified = await enrichEventsWithEmail(events, config)
+    if (modified) {
+      try {
+        const patchedJson = JSON.stringify(parsed)
+        forwardBytes = isGzipped
+          ? new Uint8Array(gzipSync(Buffer.from(patchedJson)))
+          : new Uint8Array(Buffer.from(patchedJson, 'utf-8'))
+      } catch (err) {
+        console.error('[posthog-proxy] Re-serialize failed — forwarding original:', err)
+        forwardBytes = rawBytes
+      }
+    }
+  }
+
+  // Forward (potentially enriched) bytes to PostHog
+  const resp = await fetch(targetUrl, { method: 'POST', headers, body: forwardBytes as BodyInit })
+  const responseBody = await resp.text()
 
   // ── Identity bridges (fire-and-forget) ──────────────────────────
   if (parsed) {
@@ -133,6 +182,128 @@ export async function POST(req: Request & { app?: any }) {
     status: resp.status,
     headers: { ...CORS_HEADERS, 'Content-Type': resp.headers.get('Content-Type') ?? 'application/json' },
   })
+}
+
+/** Normalize a PostHog batch body into an array of event objects. */
+function extractEventList(body: unknown): Record<string, unknown>[] {
+  if (Array.isArray(body)) return body as Record<string, unknown>[]
+  const obj = body as Record<string, unknown>
+  if (Array.isArray(obj.batch)) return obj.batch as Record<string, unknown>[]
+  return [obj]
+}
+
+function logEvent(path: string, evt: Record<string, unknown>): void {
+  const eventName = evt.event as string | undefined
+  if (eventName === '$snapshot') return
+  const props = evt.properties as Record<string, unknown> | undefined
+  const distinctId = (evt.distinct_id ?? props?.distinct_id) as string | undefined
+  console.log(
+    `[posthog-proxy] ${path} ← event: ${eventName ?? '?'} | distinct_id: ${distinctId ?? '?'} | url: ${props?.$current_url ?? '-'}`,
+  )
+}
+
+/** Known paths where an email could be on a raw event (same spread as extractEmailFromCheckout). */
+function getEventKnownEmail(evt: Record<string, unknown>): string | null {
+  const props = evt.properties as Record<string, unknown> | undefined
+  if (!props) return null
+  const $set = props.$set as Record<string, unknown> | undefined
+  if (typeof $set?.email === 'string') return $set.email
+  const checkout = props.checkout as Record<string, unknown> | undefined
+  if (typeof checkout?.email === 'string') return checkout.email
+  // @legacy-schema-v1 — root-level email paths from pre-unified pixel
+  if (typeof props.email === 'string') return props.email
+  if (typeof props.$email === 'string') return props.$email
+  return null
+}
+
+/**
+ * Enrich events in place: for each event missing $set.email, inject the
+ * known email (cache or HogQL lookup) for its distinct_id. Returns true
+ * if at least one event was modified (= the body must be re-serialized
+ * before forwarding).
+ */
+async function enrichEventsWithEmail(events: Record<string, unknown>[], config: PostHogProxyConfig): Promise<boolean> {
+  // Pass 1: seed the cache from every event that already has an email.
+  // This lets a same-batch cart event without $set.email benefit from the
+  // $identify event sitting right next to it.
+  for (const evt of events) {
+    const props = evt.properties as Record<string, unknown> | undefined
+    const distinctId = (evt.distinct_id ?? props?.distinct_id) as string | undefined
+    if (!distinctId) continue
+    const email = getEventKnownEmail(evt)
+    if (email) cacheEmail(distinctId, email)
+  }
+
+  // Pass 2: collect events that still need enrichment, deduplicate by
+  // distinct_id so a burst of cart events for the same user triggers at
+  // most ONE HogQL lookup.
+  const eventsToEnrich: { evt: Record<string, unknown>; distinctId: string }[] = []
+  const lookupsNeeded = new Set<string>()
+  for (const evt of events) {
+    const eventName = evt.event as string | undefined
+    if (eventName === '$snapshot') continue
+    const props = evt.properties as Record<string, unknown> | undefined
+    const distinctId = (evt.distinct_id ?? props?.distinct_id) as string | undefined
+    if (!distinctId) continue
+    if (getEventKnownEmail(evt)) continue
+
+    eventsToEnrich.push({ evt, distinctId })
+    const cached = getCachedEmail(distinctId)
+    if (cached === undefined) lookupsNeeded.add(distinctId)
+  }
+
+  if (eventsToEnrich.length === 0) return false
+
+  // Parallel HogQL lookups for cold-cache distinct_ids. Cache null results
+  // too to prevent re-querying for ids with no identity.
+  if (lookupsNeeded.size > 0) {
+    await Promise.all(
+      Array.from(lookupsNeeded).map(async (id) => {
+        const email = await lookupEmailFromPostHog(id, config)
+        cacheEmail(id, email)
+      }),
+    )
+  }
+
+  // Apply enrichment
+  let modified = false
+  for (const { evt, distinctId } of eventsToEnrich) {
+    const email = getCachedEmail(distinctId)
+    if (!email) continue
+    if (!evt.properties) evt.properties = {}
+    const props = evt.properties as Record<string, unknown>
+    const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
+    props.$set = { ...$set, email }
+    modified = true
+  }
+  return modified
+}
+
+/**
+ * HogQL lookup for `person.properties.email` by distinct_id. Returns null
+ * when the api key is missing, the request fails, or the person has no
+ * known email.
+ */
+async function lookupEmailFromPostHog(distinctId: string, config: PostHogProxyConfig): Promise<string | null> {
+  if (!config.apiKey) return null
+  const safe = distinctId.replace(/'/g, "''")
+  try {
+    const res = await fetch(`${config.host}/api/projects/@current/query/`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: {
+          kind: 'HogQLQuery',
+          query: `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
+        },
+      }),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { results?: unknown[][] }
+    return (data.results?.[0]?.[0] as string | null | undefined) ?? null
+  } catch {
+    return null
+  }
 }
 
 /** Try to decompress gzip, fall back to raw text */
@@ -221,6 +392,9 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
         },
       },
     })
+    // Warm the email cache so the inflight enrichment on subsequent
+    // cart/checkout events hits without needing a HogQL roundtrip.
+    cacheEmail(distinctId, email)
 
     // 2. Merge store distinct_id → checkout distinct_id (same person)
     const storeDistinctId = (props?._distinct_id ?? props?._store_distinct_id) as string | undefined
@@ -244,6 +418,7 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
         },
       })
       identifiedIds.add(storeDistinctId)
+      cacheEmail(storeDistinctId, email)
     }
 
     // 3. Send $create_alias — link Shopify customer ID to this distinct_id
@@ -332,6 +507,7 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
       if (email) {
         await identifyInPostHog(distinctId, email, config, clientIp)
         identifiedIds.add(distinctId)
+        cacheEmail(distinctId, email)
         console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
       }
     } catch (err) {
