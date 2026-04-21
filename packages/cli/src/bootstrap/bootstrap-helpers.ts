@@ -265,6 +265,14 @@ async function applyFrameworkDdl(pg: TaggedSql): Promise<void> {
   await pg`CREATE TABLE IF NOT EXISTS cron_heartbeats (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT, executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
 }
 
+/**
+ * @deprecated Use `ensureFrameworkSchema` instead. Kept for a transition period.
+ *             Delegates to the new versioned-migration entry point.
+ */
+export async function ensureFrameworkTables(sql: unknown, logger: ILoggerPort): Promise<void> {
+  await ensureFrameworkSchema(sql, logger)
+}
+
 /** DML type → SQL type mapping */
 export const DML_TO_SQL: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',

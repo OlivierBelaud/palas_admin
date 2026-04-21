@@ -19,7 +19,7 @@ export interface NeonDatabase {
   rawSql: (query: string, params?: unknown[]) => Promise<unknown>
   /**
    * Tagged template SQL — for getPool() consumers that use tagged templates
-   * (ensureFrameworkSchema, ensureEntityTables, NeonLockingAdapter).
+   * (ensureFrameworkTables, ensureEntityTables, NeonLockingAdapter).
    * On Neon HTTP: the neon() function itself (supports both tagged + regular).
    * On postgres.js: the postgres() instance (supports both tagged + .unsafe()).
    */
