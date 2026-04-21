@@ -199,7 +199,10 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
 
     const firstName = $set?.first_name as string | undefined
     const lastName = $set?.last_name as string | undefined
-    const shopifyCustomerId = $set?.id as number | undefined
+    // v2 unified schema: shopify_customer_id lives on CheckoutPayload.
+    // @legacy-schema-v1 fallback: v1 put the Shopify customer ID as `$set.id`.
+    const checkout = props?.checkout as Record<string, unknown> | undefined
+    const shopifyCustomerId = (checkout?.shopify_customer_id ?? $set?.id) as string | number | undefined
 
     // 1. Send $identify — keep the original distinct_id, put person data in $set
     console.log(`[posthog-proxy] ${eventName}: found email ${email} for ${distinctId} — sending $identify`)
@@ -260,30 +263,32 @@ async function processCheckoutIdentity(body: unknown, config: PostHogProxyConfig
   }
 }
 
-/** Try every known path where Shopify might put the email */
-function extractEmailFromCheckout(event: Record<string, unknown>, props?: Record<string, unknown>): string | null {
-  // Direct properties
-  if (typeof props?.email === 'string') return props.email
-  if (typeof props?.$email === 'string') return props.$email
-
-  // Nested in $set
+/**
+ * Resolve an email from a checkout event across supported schemas.
+ *
+ * v2 (unified schema): email is at `properties.checkout.email` (canonical)
+ *                      or `properties.$set.email` (after identify)
+ *
+ * Other paths are `@legacy-schema-v1` fallbacks for old events still in
+ * PostHog storage. Safe to remove once retention rolls past the v2 cutover.
+ * → BACKLOG.md: "Remove PostHog legacy schema v1"
+ */
+function extractEmailFromCheckout(_event: Record<string, unknown>, props?: Record<string, unknown>): string | null {
+  // v2 canonical: $set.email (from identify) and checkout.email (Shopify pixel)
   const $set = props?.$set as Record<string, unknown> | undefined
   if (typeof $set?.email === 'string') return $set.email
-  if (typeof $set?.$email === 'string') return $set.$email
 
-  // Shopify checkout object (common in web pixel events)
-  const checkout = (props?.checkout ?? event.checkout) as Record<string, unknown> | undefined
+  const checkout = props?.checkout as Record<string, unknown> | undefined
   if (typeof checkout?.email === 'string') return checkout.email
 
-  // Shopify customer object
-  const customer = (checkout?.customer ?? props?.customer ?? event.customer) as Record<string, unknown> | undefined
+  // @legacy-schema-v1 — root-level email + misc Shopify paths from v1 pixel
+  if (typeof props?.email === 'string') return props.email
+  if (typeof props?.$email === 'string') return props.$email
+  if (typeof $set?.$email === 'string') return $set.$email
+  const customer = (checkout?.customer ?? props?.customer) as Record<string, unknown> | undefined
   if (typeof customer?.email === 'string') return customer.email
-
-  // Billing/shipping address
   const billing = (checkout?.billingAddress ?? props?.billingAddress) as Record<string, unknown> | undefined
   if (typeof billing?.email === 'string') return billing.email
-
-  // $user_email (PostHog convention)
   if (typeof props?.$user_email === 'string') return props.$user_email
 
   return null

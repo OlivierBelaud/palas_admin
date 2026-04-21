@@ -5,6 +5,11 @@ const ItemDiscountSchema = z.object({
   amount: z.number(),
 })
 
+const CartLevelDiscountSchema = z.object({
+  title: z.string(),
+  amount: z.number(),
+})
+
 const CartItemSchema = z.object({
   id: z.string(),
   product_id: z.string(),
@@ -73,6 +78,11 @@ export default defineCommand({
     changed_items: z.array(ChangedItemSchema).nullable().optional(),
     total_price: z.number().default(0),
     currency: z.string().default('EUR'),
+    // Cart-level discount aggregates (from CartPayload — v2 unified schema)
+    total_discount: z.number().nullable().optional(),
+    cart_level_discounts: z.array(CartLevelDiscountSchema).nullable().optional(),
+    // Checkout session identifier (distinct from cart_token, stable per session)
+    checkout_token: z.string().nullable().optional(),
     order_id: z.string().nullable().optional(),
     shopify_order_id: z.string().nullable().optional(),
     is_first_order: z.boolean().nullable().optional(),
@@ -100,6 +110,7 @@ export default defineCommand({
       city?: string | null
       country_code?: string | null
       shopify_customer_id?: string | null
+      checkout_token?: string | null
       order_id?: string | null
       shopify_order_id?: string | null
       is_first_order?: boolean | null
@@ -132,6 +143,16 @@ export default defineCommand({
     }
     const existing: CartRow | undefined = existingCarts[0]
 
+    // Skip creating a fresh cart row when the FIRST event for this cart_token
+    // carries no purchase signal — empty items AND zero total. These are
+    // legitimate noise (cart:viewed on an empty cart page). Existing carts are
+    // still updated below so their history is preserved (e.g. `cart:cleared`
+    // on a real cart correctly sets items to []).
+    const hasPurchaseSignal = input.items.length > 0 || input.total_price > 0
+    if (!existing && !hasPurchaseSignal) {
+      return { cart_id: null, skipped: 'signal-free' as const }
+    }
+
     const newStage = actionToStage(input.action)
     const newStageIdx = STAGES.indexOf(newStage)
     const currentStageIdx = existing ? STAGES.indexOf(existing.highest_stage) : -1
@@ -154,6 +175,7 @@ export default defineCommand({
       city: merge(input.city, existing?.city),
       country_code: merge(input.country_code, existing?.country_code),
       shopify_customer_id: merge(input.shopify_customer_id, existing?.shopify_customer_id),
+      checkout_token: merge(input.checkout_token, existing?.checkout_token),
       items: input.items,
       total_price: input.total_price,
       item_count: input.items.length,
@@ -183,6 +205,11 @@ export default defineCommand({
     }
 
     // 2. Always append the event (append-only log)
+    // `raw_properties` captures the full original payload — the canonical
+    // snapshot of what PostHog delivered, including any fields we don't
+    // break out into dedicated columns (e.g. cart.cart_level_discounts,
+    // cart.total_discount). Queries that need those fields read from
+    // raw_properties via JSONExtract.
     await svc.cartEvent.create({
       cart_id: cartId,
       action: input.action,
@@ -194,6 +221,7 @@ export default defineCommand({
       occurred_at: new Date(input.occurred_at),
       distinct_id: input.distinct_id ?? null,
       email: input.email ?? null,
+      checkout_token: input.checkout_token ?? null,
       order_id: input.order_id ?? null,
       shipping_method: input.shipping_method ?? null,
       shipping_price: input.shipping_price ?? null,
