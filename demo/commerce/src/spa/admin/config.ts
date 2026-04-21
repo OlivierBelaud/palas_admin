@@ -14,6 +14,7 @@ export default defineSpa({
       icon: 'ShoppingCart',
       label: 'Paniers',
       to: '/paniers',
+      items: [{ label: 'Paniers abandonnés', to: '/paniers-abandonnes' }],
     },
     {
       icon: 'Users',
