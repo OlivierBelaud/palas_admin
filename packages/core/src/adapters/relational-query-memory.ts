@@ -124,6 +124,9 @@ export class InMemoryRelationalQuery implements IRelationalQueryPort {
    */
   private static _matchValue(actual: unknown, filter: unknown): boolean {
     if (filter === null) return actual == null
+    // Plain array value → `actual IN (filter)`. Mirrors the pg adapter's
+    // inArray shortcut for multi-select UI filters serialized as arrays.
+    if (Array.isArray(filter)) return filter.includes(actual)
     if (typeof filter === 'object' && !Array.isArray(filter)) {
       const ops = filter as Record<string, unknown>
       for (const [op, val] of Object.entries(ops)) {

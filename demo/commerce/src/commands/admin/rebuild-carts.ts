@@ -15,6 +15,7 @@
 // live subscriber share the exact same read semantics (v2 unified schema +
 // v1 legacy fallback). Never inspect `evt.properties` directly here.
 
+import { enrichEventWithEmail, resolveEmailsBatch } from '../../modules/cart-tracking/identity-resolver'
 import { type NormalizedCartEvent, normalizeCartEvent } from '../../modules/cart-tracking/posthog-adapter'
 
 const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
@@ -141,9 +142,29 @@ export default defineCommand({
       invoke: async (
         input: { events: PosthogEvent[] },
         ctx,
-      ): Promise<{ rebuilt: number; skipped: number; errors: number }> => {
+      ): Promise<{
+        rebuilt: number
+        skipped: number
+        errors: number
+        identities_recovered: number
+      }> => {
         const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database')
+
+        // Identity recovery — single HogQL query returning every known
+        // distinct_id → person.properties.email pair for cart/checkout events.
+        // PostHog's person_id_override_properties_on_events is best-effort; a
+        // substantial fraction of cart events land with an empty $set but a
+        // resolvable Person. We backfill here so the snapshot has the owner.
+        ctx.progress?.(0, input.events.length, 'Resolving PostHog person identities...')
+        const emailMap = await resolveEmailsBatch()
+        log.info(`[rebuildCarts] Identity map: ${emailMap.size} distinct_id → email pairs from PostHog`)
+
+        let identitiesRecovered = 0
+        for (const evt of input.events) {
+          if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
+        }
+        log.info(`[rebuildCarts] Enriched ${identitiesRecovered} events with recovered email`)
 
         // Wipe tables at the start — preserves existing behavior. If the
         // workflow is cancelled or fails mid-flight, the carts table is left
@@ -177,7 +198,7 @@ export default defineCommand({
           },
         )
 
-        return { rebuilt, skipped, errors }
+        return { rebuilt, skipped, errors, identities_recovered: identitiesRecovered }
       },
       compensate: async (output) => {
         // Destructive by design — cannot roll back wiped + rebuilt carts (WP-F13).
@@ -201,13 +222,15 @@ export default defineCommand({
     // ── Step 3: persist-stats — single summary SELECT ──────────────
     const persistStats = step.action('persist-stats', {
       invoke: async (
-        input: { rebuilt: number; skipped: number; errors: number },
+        input: { rebuilt: number; skipped: number; errors: number; identities_recovered: number },
         _ctx,
-      ): Promise<{ rebuilt: number; skipped: number; errors: number }> => {
+      ): Promise<{ rebuilt: number; skipped: number; errors: number; identities_recovered: number }> => {
         // Summary is derived from step 2's output — we simply forward it.
         // A separate step exists to match the plan's structure (fetch/replay/persist)
         // and give the UI a clear "finalisation" checkpoint.
-        log.info(`[rebuildCarts] Done — rebuilt: ${input.rebuilt}, skipped: ${input.skipped}, errors: ${input.errors}`)
+        log.info(
+          `[rebuildCarts] Done — rebuilt: ${input.rebuilt}, skipped: ${input.skipped}, errors: ${input.errors}, identities_recovered: ${input.identities_recovered}`,
+        )
         return input
       },
       compensate: async () => {

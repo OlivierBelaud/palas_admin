@@ -168,6 +168,7 @@ export type DrizzleOperators = {
   inArray: (...args: unknown[]) => unknown
   notInArray: (...args: unknown[]) => unknown
   isNull: (...args: unknown[]) => unknown
+  isNotNull?: (...args: unknown[]) => unknown
   exists?: (...args: unknown[]) => unknown
 }
 
@@ -175,7 +176,18 @@ export type DrizzleOperators = {
  * Supported field-level operator syntax (Mongo-style) for relational queries.
  * Re-exported for documentation only — logic lives inline.
  */
-export const SUPPORTED_FIELD_OPERATORS = ['$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin'] as const
+export const SUPPORTED_FIELD_OPERATORS = [
+  '$eq',
+  '$ne',
+  '$gt',
+  '$gte',
+  '$lt',
+  '$lte',
+  '$in',
+  '$nin',
+  '$null',
+  '$notnull',
+] as const
 
 /**
  * Build an array of Drizzle SQL predicates from a flat `{ field: value | opObj }` map
@@ -209,6 +221,14 @@ export function buildFieldPredicates(
       continue
     }
 
+    // Plain array value → `column IN (...)`. Covers multi-select UI filters
+    // where the URL serializer sends `filter_field=a,b,c` as `field: ['a','b','c']`.
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue
+      conditions.push(operators.inArray(column, value))
+      continue
+    }
+
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const ops = value as Record<string, unknown>
       for (const [op, val] of Object.entries(ops)) {
@@ -236,6 +256,16 @@ export function buildFieldPredicates(
             break
           case '$nin':
             conditions.push(operators.notInArray(column, val))
+            break
+          case '$null':
+            // `{ $null: true }` → IS NULL; `{ $null: false }` → IS NOT NULL.
+            if (val === true) conditions.push(operators.isNull(column))
+            else if (val === false && operators.isNotNull) conditions.push(operators.isNotNull(column))
+            break
+          case '$notnull':
+            // `{ $notnull: true }` → IS NOT NULL; `{ $notnull: false }` → IS NULL.
+            if (val === true && operators.isNotNull) conditions.push(operators.isNotNull(column))
+            else if (val === false) conditions.push(operators.isNull(column))
             break
           // unknown operator keys are ignored on purpose — keeps behaviour
           // compatible with pre-F31 root filters.
