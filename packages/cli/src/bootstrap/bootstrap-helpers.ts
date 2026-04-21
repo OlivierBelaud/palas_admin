@@ -162,115 +162,25 @@ export async function generateMantaTypes(
   logger.info(`[codegen] .manta/types.ts generated (${entries.length} entities)`)
 }
 
-// ── Framework schema migration system ─────────────────────────────────
-//
-// Bump FRAMEWORK_SCHEMA_VERSION whenever `applyFrameworkDdl` changes in a way
-// that requires an existing deployment to re-run DDL. The version is stored
-// in the `manta_schema_versions` table and gates whether migrations run on
-// boot. Bumping it forces one (and only one) re-application per deployment.
-export const FRAMEWORK_SCHEMA_VERSION = 1
-
-// Advisory lock key — arbitrary int64 unique to Manta. `pg_advisory_xact_lock`
-// serializes parallel boots (serverless cold starts, multi-worker) so exactly
-// one process applies migrations at a time. Auto-released on COMMIT/ROLLBACK.
-const MIGRATION_LOCK_KEY = 0x4d414e544101n // 'MANTA' + version byte
-
-type TaggedSql = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>
-type BeginFn = (cb: (tx: TaggedSql & { begin?: BeginFn }) => Promise<unknown>) => Promise<unknown>
-type TaggedSqlWithBegin = TaggedSql & { begin: BeginFn }
-
 /**
- * Ensure Manta's framework-internal schema is at FRAMEWORK_SCHEMA_VERSION.
- *
- * Safe to call unconditionally on every boot (dev, prod, serverless). Uses
- * a Postgres advisory transaction lock so concurrent boots serialize on the
- * migration, and a version table so only the first boot of a new deploy
- * actually runs DDL. Subsequent boots see the current version and return.
- *
- * Framework tables (workflow_runs, workflow_checkpoints, events, job_executions,
- * workflow_progress, stats, cron_heartbeats) are Manta-owned — the user never
- * writes to them. That's why we manage them here rather than via `manta db:*`
- * migrations, which is the app-level migration surface.
- */
-export async function ensureFrameworkSchema(sql: unknown, logger: ILoggerPort): Promise<void> {
-  const pg = sql as TaggedSqlWithBegin
-
-  // 1. Meta table — CREATE IF NOT EXISTS is atomic in Postgres; safe if
-  //    multiple boots race here before the lock is acquired.
-  await pg`
-    CREATE TABLE IF NOT EXISTS manta_schema_versions (
-      name TEXT PRIMARY KEY,
-      version INTEGER NOT NULL,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `
-
-  // 2. Acquire lock + version-gate + apply DDL in a single transaction.
-  //    pg_advisory_xact_lock blocks until peers release; the lock auto-releases
-  //    at COMMIT/ROLLBACK so we don't track it ourselves.
-  try {
-    await pg.begin(async (tx) => {
-      const txPg = tx as TaggedSql
-      await txPg`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`
-
-      const rows = (await txPg`
-        SELECT version FROM manta_schema_versions WHERE name = 'framework'
-      `) as { version: number }[]
-      const current = rows[0]?.version ?? 0
-
-      if (current >= FRAMEWORK_SCHEMA_VERSION) {
-        logger.info(`[manta-schema] framework v${current} — up to date`)
-        return
-      }
-
-      logger.info(`[manta-schema] migrating framework v${current} → v${FRAMEWORK_SCHEMA_VERSION}`)
-      await applyFrameworkDdl(txPg)
-      await txPg`
-        INSERT INTO manta_schema_versions (name, version)
-        VALUES ('framework', ${FRAMEWORK_SCHEMA_VERSION})
-        ON CONFLICT (name) DO UPDATE
-          SET version = EXCLUDED.version,
-              applied_at = NOW()
-      `
-      logger.info(`[manta-schema] framework v${FRAMEWORK_SCHEMA_VERSION} applied`)
-    })
-  } catch (err) {
-    logger.error('Failed to migrate framework schema', err)
-    throw err
-  }
-}
-
-/**
- * Framework DDL — applied in version order. All statements idempotent
- * (IF NOT EXISTS / IF EXISTS) so a partial failure + retry remains safe.
- */
-async function applyFrameworkDdl(pg: TaggedSql): Promise<void> {
-  // ── Legacy cleanup (WP-F05) ─────────────────────────────────────
-  // `workflow_executions` was superseded by `workflow_runs` in the Workflow
-  // Progress Tracking epic (2026-04-17). Drop it if it lingers from an old boot.
-  await pg`DROP TABLE IF EXISTS workflow_executions`
-  // ────────────────────────────────────────────────────────────────
-  await pg`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`
-  await pg`CREATE TABLE IF NOT EXISTS workflow_checkpoints (id SERIAL PRIMARY KEY, transaction_id TEXT NOT NULL, step_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', data JSONB DEFAULT '{}', error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(transaction_id, step_id))`
-  await pg`CREATE INDEX IF NOT EXISTS idx_wf_checkpoints_tx ON workflow_checkpoints(transaction_id)`
-  await pg`CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, command_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', steps JSONB NOT NULL DEFAULT '[]', input JSONB NOT NULL DEFAULT '{}', output JSONB, error JSONB, started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), completed_at TIMESTAMPTZ, cancel_requested_at TIMESTAMPTZ, heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
-  await pg`CREATE INDEX IF NOT EXISTS idx_workflow_runs_cmd_started ON workflow_runs(command_name, started_at DESC)`
-  // WP-F04 — heartbeat column added for existing deployments (migration-safe).
-  await pg`ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-  // WP-F04 — partial index covering only orphan candidates (status='running').
-  await pg`CREATE INDEX IF NOT EXISTS idx_workflow_runs_heartbeat ON workflow_runs(status, heartbeat_at) WHERE status = 'running'`
-  await pg`CREATE TABLE IF NOT EXISTS workflow_progress (run_id TEXT PRIMARY KEY, step_name TEXT NOT NULL, current INTEGER NOT NULL, total INTEGER, message TEXT, at_ms BIGINT NOT NULL)`
-  await pg`CREATE TABLE IF NOT EXISTS events (id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, data JSONB DEFAULT '{}', metadata JSONB DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, last_error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ)`
-  await pg`CREATE TABLE IF NOT EXISTS job_executions (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', result JSONB, error TEXT, duration_ms INTEGER, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ)`
-  await pg`CREATE TABLE IF NOT EXISTS cron_heartbeats (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT, executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
-}
-
-/**
- * @deprecated Use `ensureFrameworkSchema` instead. Kept for a transition period.
- *             Delegates to the new versioned-migration entry point.
+ * Ensure framework-internal tables exist (workflow, events, jobs, stats).
+ * Application tables (products, inventory, links) are auto-created via ensureEntityTables().
  */
 export async function ensureFrameworkTables(sql: unknown, logger: ILoggerPort): Promise<void> {
-  await ensureFrameworkSchema(sql, logger)
+  const pg = sql as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>
+  try {
+    await pg`CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`
+    await pg`CREATE TABLE IF NOT EXISTS workflow_checkpoints (id SERIAL PRIMARY KEY, transaction_id TEXT NOT NULL, step_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', data JSONB DEFAULT '{}', error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(transaction_id, step_id))`
+    await pg`CREATE INDEX IF NOT EXISTS idx_wf_checkpoints_tx ON workflow_checkpoints(transaction_id)`
+    await pg`CREATE TABLE IF NOT EXISTS workflow_executions (transaction_id TEXT PRIMARY KEY, workflow_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', input JSONB DEFAULT '{}', result JSONB, error TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ)`
+    await pg`CREATE TABLE IF NOT EXISTS events (id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, data JSONB DEFAULT '{}', metadata JSONB DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, last_error TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ)`
+    await pg`CREATE TABLE IF NOT EXISTS job_executions (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', result JSONB, error TEXT, duration_ms INTEGER, started_at TIMESTAMPTZ DEFAULT NOW(), completed_at TIMESTAMPTZ)`
+    await pg`CREATE TABLE IF NOT EXISTS cron_heartbeats (id SERIAL PRIMARY KEY, job_name TEXT NOT NULL, message TEXT, executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
+    logger.info('Framework tables ready')
+  } catch (err) {
+    logger.error('Failed to create framework tables', err)
+    throw err
+  }
 }
 
 /** DML type → SQL type mapping */
