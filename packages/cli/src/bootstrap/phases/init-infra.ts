@@ -15,7 +15,7 @@ import type { ICachePort, IFilePort, IRepositoryFactory } from '@manta/core/port
 import { resolveAdapters, resolvePreset } from '../../config/resolve-adapters'
 import { ADAPTER_FACTORIES } from '../bootstrap-app'
 import type { AppRef, BootstrapContext } from '../bootstrap-context'
-import { ensureFrameworkTables } from '../bootstrap-helpers'
+import { ensureFrameworkSchema } from '../bootstrap-helpers'
 
 export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): Promise<void> {
   const { config, mode, verbose } = ctx
@@ -47,9 +47,20 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   if (!healthy) throw new MantaError('INVALID_STATE', 'Database health check failed. Is PostgreSQL running?')
   logger.info('Database connected')
 
-  // [4] Auto-create tables (dev mode only)
-  if (mode === 'dev') {
-    await ensureFrameworkTables(db.getPool(), logger)
+  // [4] Framework schema — versioned migration, safe on every boot (serverless
+  //     cold starts serialize on a Postgres advisory lock, and a version gate
+  //     skips DDL when already applied).
+  //
+  //     Hardened against serverless weirdness: a migration failure here
+  //     (timeout, pooler quirk, transient DB error) must NOT crash the whole
+  //     app — other endpoints would go dark for cold-start reasons unrelated
+  //     to their own concerns. Log loudly and continue; the migration retries
+  //     on the next cold start, and framework-dependent endpoints surface the
+  //     real problem on their first hit.
+  try {
+    await ensureFrameworkSchema(db.getPool(), logger)
+  } catch (err) {
+    logger.error(`[manta-schema] framework migration failed; continuing boot — ${(err as Error).message}`)
   }
 
   // [5] Collect infra adapters, then build app via MantaAppBuilder
