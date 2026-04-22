@@ -51,6 +51,33 @@ export interface StepContext {
     opts: { batchSize: number; message?: (info: ForEachInfo) => string },
     handler: (batch: T[], info: ForEachInfo) => Promise<void>,
   ) => Promise<void>
+  /**
+   * Yield the workflow before the serverless host kills this invocation. The
+   * framework persists `resumeState` under the current step and enqueues a
+   * continuation via `IQueuePort` — when the queue delivers it, the workflow
+   * resumes and the step handler is re-invoked with `ctx.resumeState === resumeState`.
+   *
+   * Throws a non-retryable `WorkflowYield` error that the manager catches
+   * before the retry loop, so yielding is NOT a failure and compensation is
+   * NOT triggered. Use when a long-running step exceeds a serverless time
+   * budget and has an idempotent way to resume from a cursor.
+   *
+   * The opposite of `throw new MantaError(...)`: pause, don't fail.
+   */
+  yield?: (resumeState: unknown) => never
+  /**
+   * Resume state written by a previous invocation's `ctx.yield(state)`.
+   * `undefined` on the first call; set to the yielded value on every
+   * subsequent invocation of the same step until it completes.
+   */
+  resumeState?: unknown
+  /**
+   * Wall-clock budget (ms) allocated to this step by the manager, computed
+   * from the serverless function's max duration minus safety margin. Read
+   * this to decide when to `yield()` before the host kills the invocation.
+   * `Infinity` when no budget is configured (dev / long-running host).
+   */
+  budgetMs?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +150,20 @@ export interface WorkflowContext {
    * detected at a step boundary (cancel_requested_at set on the run).
    */
   signal?: AbortSignal
+  /**
+   * Map of stepKey → resumeState persisted by a previous invocation that
+   * `ctx.yield(state)`ed. Populated by the manager on resume from
+   * `workflow_runs.steps[*].resume_state`. Consumed by createStep / step.action
+   * via `ctx.resumeState` on the matching step; `undefined` on first run.
+   */
+  resumeStates?: Map<string, unknown>
+  /**
+   * Wall-clock budget (ms) propagated into every step's `ctx.budgetMs`. Set
+   * by the WorkflowManager when serverless host timing is known (`Infinity`
+   * otherwise). Steps self-yield via `ctx.yield(state)` when the budget is
+   * about to expire.
+   */
+  budgetMs?: number
 }
 
 // ---------------------------------------------------------------------------

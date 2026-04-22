@@ -5,6 +5,7 @@ import { createForEach } from './for-each'
 import { workflowContextStorage } from './manager'
 import { CancelledError, createProgress } from './progress-helper'
 import type { StepContext, StepFn, WorkflowContext } from './types'
+import { isWorkflowYield, WorkflowYield } from './yield'
 
 /**
  * Create a workflow step.
@@ -74,13 +75,21 @@ export function createStep<TInput = unknown, TOutput = unknown>(
       }
     }
 
-    // Augment the StepContext with progress / signal / forEach bound to this run.
+    // Augment the StepContext with progress / signal / forEach / yield bound
+    // to this run. `resumeState` is populated only if this step yielded on a
+    // previous invocation and the manager loaded its state for resume.
+    const yieldFn = ((state: unknown) => {
+      throw new WorkflowYield(state)
+    }) as (state: unknown) => never
     const augmentedCtx: StepContext = {
       ...ctx,
       __wfCtx: wfCtx,
       signal: wfCtx.signal ?? ctx.signal,
       progress: createProgress(wfCtx),
       forEach: createForEach(wfCtx),
+      yield: yieldFn,
+      resumeState: wfCtx.resumeStates?.get(stepKey),
+      budgetMs: wfCtx.budgetMs,
     }
 
     // Execute the handler
@@ -88,6 +97,23 @@ export function createStep<TInput = unknown, TOutput = unknown>(
     try {
       output = await handler(input, augmentedCtx)
     } catch (err) {
+      // Yield is NOT a failure — mark the step as paused with its resumeState
+      // and re-throw so the manager can pause the whole run + enqueue a
+      // continuation. Compensation MUST NOT run (no failure occurred).
+      if (isWorkflowYield(err)) {
+        if (wfCtx.store) {
+          try {
+            await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+              status: 'paused',
+              resume_state: err.resumeState,
+            })
+          } catch {
+            /* store errors are non-fatal; manager will retry on resume */
+          }
+        }
+        wfCtx.stepName = previousStepName
+        throw err
+      }
       const cancelled = isCancel(err)
       if (wfCtx.store) {
         try {

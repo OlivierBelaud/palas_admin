@@ -20,6 +20,7 @@ import { createForEach } from './for-each'
 import { workflowContextStorage } from './manager'
 import { CancelledError, createProgress } from './progress-helper'
 import type { StepContext, WorkflowContext } from './types'
+import { isWorkflowYield, WorkflowYield } from './yield'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -163,6 +164,23 @@ async function runStep<T>(
   try {
     output = await handler()
   } catch (err) {
+    // Yield is NOT a failure — the manager catches WorkflowYield above the
+    // retry loop and schedules a continuation. We persist resume_state here
+    // so the next invocation's step can read it via `ctx.resumeState`.
+    if (isWorkflowYield(err)) {
+      if (wfCtx.store) {
+        try {
+          await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+            status: 'paused',
+            resume_state: err.resumeState,
+          })
+        } catch {
+          /* store errors are non-fatal; manager retries on resume */
+        }
+      }
+      wfCtx.stepName = previousStepName
+      throw err
+    }
     if (wfCtx.store) {
       const cancelled =
         (err as { code?: string; name?: string } | null)?.code === 'WORKFLOW_CANCELLED' ||
@@ -873,10 +891,17 @@ function stepAction<TInput = unknown, TOutput = unknown>(
     )
   }
   return async (input: TInput, ctx: StepContext): Promise<TOutput> => {
-    // Inject progress/signal/forEach into the ctx passed to the user's invoke/compensate.
+    // Inject progress/signal/forEach/yield into the ctx passed to the user's invoke/compensate.
     // Without this, `ctx.forEach` stays undefined inside step.action handlers — which
     // breaks any long-running step that relies on it (e.g. rebuildCarts → PostHog replay).
     const wfCtx: WorkflowContext | null = workflowContextStorage.getStore() ?? ctx.__wfCtx ?? null
+    // Unique stepKey for resumeState lookup — mirrors the counter logic in
+    // runStep. Safe to peek ahead: runStep increments the same counter so
+    // our lookup uses the same key runStep will use.
+    const stepKey = wfCtx ? buildStepKey(wfCtx, name) : name
+    const yieldFn = ((state: unknown) => {
+      throw new WorkflowYield(state)
+    }) as (state: unknown) => never
     const augmentedCtx: StepContext = wfCtx
       ? {
           ...ctx,
@@ -884,6 +909,9 @@ function stepAction<TInput = unknown, TOutput = unknown>(
           signal: wfCtx.signal ?? ctx.signal,
           progress: createProgress(wfCtx),
           forEach: createForEach(wfCtx),
+          yield: yieldFn,
+          resumeState: wfCtx.resumeStates?.get(stepKey),
+          budgetMs: wfCtx.budgetMs,
         }
       : ctx
     return runStep(
@@ -893,6 +921,16 @@ function stepAction<TInput = unknown, TOutput = unknown>(
       (output) => config.compensate(output, augmentedCtx),
     )
   }
+}
+
+/**
+ * Compute the stepKey runStep will use for a given step name, WITHOUT
+ * bumping the counter (runStep will bump it itself). Lets the action wrapper
+ * look up `resumeState` by the same key runStep uses.
+ */
+function buildStepKey(wfCtx: WorkflowContext, name: string): string {
+  const count = (wfCtx.stepCounter.get(name) ?? 0) + 1
+  return count === 1 ? name : `${name}-${count}`
 }
 
 /**

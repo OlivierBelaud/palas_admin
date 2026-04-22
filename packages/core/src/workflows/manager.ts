@@ -8,6 +8,7 @@ import type { IEventBusPort } from '../ports/event-bus'
 import type { ILockingPort } from '../ports/locking'
 import type { ILoggerPort } from '../ports/logger'
 import type { IProgressChannelPort } from '../ports/progress-channel'
+import type { IQueuePort } from '../ports/queue'
 import type { IWorkflowStorePort, StepState, WorkflowError } from '../ports/workflow-store'
 import { CancelledError } from './progress-helper'
 import type {
@@ -15,10 +16,12 @@ import type {
   StepContext,
   WorkflowContext,
   WorkflowDefinition,
+  WorkflowResult,
   WorkflowRunOptions,
   WorkflowRunResult,
 } from './types'
 import { RETRY_POLICY } from './types'
+import { isWorkflowYield } from './yield'
 
 export const workflowContextStorage = new AsyncLocalStorage<WorkflowContext>()
 
@@ -70,6 +73,24 @@ export interface WorkflowManagerOptions {
    * See WORKFLOW_PROGRESS.md §5.2 / §9.2.
    */
   progressChannel?: IProgressChannelPort
+  /**
+   * Queue adapter used to schedule serverless continuations after a step
+   * calls `ctx.yield(state)`. When absent, paused workflows stay paused
+   * until someone calls `manager.resume(runId)` manually (tests / CLI).
+   */
+  queue?: IQueuePort
+  /**
+   * Builds the URL the queue should POST to resume a run. Typically wired
+   * in init-infra: `(runId) => \`${baseUrl}/api/${ctx}/_workflow/${runId}/resume\``.
+   * Called on every yield — cheap. When absent, queue.enqueue is skipped.
+   */
+  resumeEndpoint?: (runId: string) => string
+  /**
+   * Wall-clock budget (ms) propagated to every step via `ctx.budgetMs`.
+   * On Vercel Hobby this should be ~7000 (10s cap − 3s safety). On
+   * long-running Node hosts leave `undefined` (treated as Infinity).
+   */
+  stepBudgetMs?: number
 }
 
 /**
@@ -84,6 +105,9 @@ export class WorkflowManager {
   private _storage: WorkflowStorage
   private _store: IWorkflowStorePort | undefined
   private _progressChannel: IProgressChannelPort | undefined
+  private _queue: IQueuePort | undefined
+  private _resumeEndpoint: ((runId: string) => string) | undefined
+  private _stepBudgetMs: number | undefined
   private _app: MantaApp
   /** Per-run AbortControllers. Keyed by transactionId / runId. */
   private _controllers = new Map<string, AbortController>()
@@ -93,6 +117,9 @@ export class WorkflowManager {
     this._storage = options?.storage ?? new MemoryStorage()
     this._store = options?.store
     this._progressChannel = options?.progressChannel
+    this._queue = options?.queue
+    this._resumeEndpoint = options?.resumeEndpoint
+    this._stepBudgetMs = options?.stepBudgetMs
 
     this._logger = app.infra.logger ?? null
     this._eventBus = app.infra.eventBus ?? null
@@ -180,6 +207,43 @@ export class WorkflowManager {
           }
           return result
         } catch (error) {
+          // ctx.yield() is a non-error control flow — NEVER retry, NEVER
+          // compensate. The step already persisted its resume_state via
+          // createStep / runStep. We transition the run to 'paused' (pre-terminal)
+          // and ask the queue port to schedule a continuation. The outer
+          // finally releases the lock + cancel subscriber; no explicit
+          // cleanup() call needed here.
+          if (isWorkflowYield(error)) {
+            if (this._store) {
+              try {
+                await this._store.updateStatus(transactionId, 'paused')
+              } catch (err) {
+                this._logger?.warn(
+                  `[workflow:${workflowId}] store.updateStatus(paused) failed: ${(err as Error)?.message ?? err}`,
+                )
+              }
+            }
+            // Ask the queue adapter to schedule a continuation. If no queue
+            // is wired, the run stays paused until a manual
+            // `manager.resume(runId)` is called (tests / CLI).
+            if (this._queue && this._resumeEndpoint) {
+              try {
+                await this._queue.enqueue({
+                  url: this._resumeEndpoint(transactionId),
+                  payload: { runId: transactionId },
+                  idempotencyKey: `resume:${transactionId}`,
+                })
+              } catch (err) {
+                this._logger?.warn(
+                  `[workflow:${workflowId}] queue.enqueue(resume) failed: ${(err as Error)?.message ?? err}`,
+                )
+              }
+            }
+            return {
+              transaction: { transactionId, state: 'invoking' },
+              result: undefined,
+            } as WorkflowRunResult
+          }
           lastError = error as Error
 
           // Cancellation short-circuits retries.
@@ -241,6 +305,41 @@ export class WorkflowManager {
   }
 
   /**
+   * Resume a paused workflow run. Invoked by the HTTP handler for
+   * `POST /api/<ctx>/_workflow/:runId/resume` when the queue adapter
+   * delivers a continuation.
+   *
+   * Loads the run's original `command_name` and `input` from the store, then
+   * re-enters `run()` with the same `transactionId`. The normal resume
+   * machinery picks up:
+   *  - completed steps (from workflow_checkpoints) — skipped at zero cost
+   *  - paused steps (from workflow_runs.steps[].resume_state) — re-invoked
+   *    with ctx.resumeState populated
+   *
+   * Idempotent: safe to call multiple times — if the run is already terminal,
+   * returns early without re-executing.
+   */
+  async resume(runId: string): Promise<WorkflowRunResult> {
+    if (!this._store) {
+      throw new MantaError('UNEXPECTED_STATE', 'resume requires an IWorkflowStorePort')
+    }
+    const run = await this._store.get(runId)
+    if (!run) {
+      throw new MantaError('NOT_FOUND', `Workflow run "${runId}" not found`)
+    }
+    if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') {
+      this._logger?.info(`[workflow:${run.command_name}] resume(${runId}) skipped — already ${run.status}`)
+      return { transaction: { transactionId: runId, state: 'done' } }
+    }
+    // Re-enter the workflow with the same transactionId. checkpoints + resumeStates
+    // are loaded from the store inside _execute.
+    return this.run(run.command_name, {
+      transactionId: runId,
+      input: (run.input as Record<string, unknown>) ?? {},
+    })
+  }
+
+  /**
    * Execute a single attempt. Throws on failure — the retry loop in run() handles retries.
    * On the final attempt, compensates before re-throwing.
    */
@@ -272,6 +371,25 @@ export class WorkflowManager {
       )
     }
 
+    // Load resume states (for steps that ctx.yield()ed on a previous invocation).
+    // Empty on a fresh run; populated when the queue delivers a POST to the
+    // `/resume` endpoint and `manager.resume(runId)` re-enters _execute.
+    const resumeStates = new Map<string, unknown>()
+    if (this._store) {
+      try {
+        const run = await this._store.get(transactionId)
+        if (run) {
+          for (const step of run.steps ?? []) {
+            if (step.status === 'paused' && step.resume_state !== undefined) {
+              resumeStates.set(step.name, step.resume_state)
+            }
+          }
+        }
+      } catch (err) {
+        this._logger?.warn(`[workflow:${workflowId}] store.get(resumeStates) failed: ${(err as Error)?.message ?? err}`)
+      }
+    }
+
     // Event buffering
     const eventGroupId = `wf:${transactionId}`
 
@@ -299,6 +417,8 @@ export class WorkflowManager {
       progressChannel: this._progressChannel,
       stepName: undefined,
       signal: controller.signal,
+      resumeStates: resumeStates.size > 0 ? resumeStates : undefined,
+      budgetMs: this._stepBudgetMs,
     }
 
     // Attach an internal abort hook so step wrappers can fire the per-run

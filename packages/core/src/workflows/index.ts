@@ -36,3 +36,4 @@ export type {
   WorkflowRunOptions,
   WorkflowRunResult,
 } from './types'
+export { isWorkflowYield, WorkflowYield } from './yield'

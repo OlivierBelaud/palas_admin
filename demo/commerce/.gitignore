@@ -5,3 +5,4 @@ dist/
 public/*
 !public/favicon.webp
 .env
+.vercel

@@ -2,9 +2,13 @@
 // Powers the `/admin/_runs/:runId` page, `useCommand` polling, and cancellation.
 // See WORKFLOW_PROGRESS.md §5.1 and §9.1 for the full design.
 
-export type WorkflowStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+// 'paused' is a pre-terminal status set when a step yields via `ctx.yield(state)`
+// — the workflow is waiting for a queued continuation (QStash / in-memory queue)
+// to re-invoke `manager.resume(runId)`. Reaper treats it the same as 'pending' /
+// 'running' for orphan detection.
+export type WorkflowStatus = 'pending' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled'
 
-export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'compensated'
+export type StepStatus = 'pending' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled' | 'compensated'
 
 export interface StepState {
   name: string
@@ -12,6 +16,12 @@ export interface StepState {
   started_at?: Date
   completed_at?: Date
   error?: { message: string; code?: string }
+  /**
+   * Resume state written by `ctx.yield(state)`. Populated only when the step
+   * is paused mid-execution; consumed by the next invocation's handler via
+   * `ctx.resumeState` on resume, and cleared on successful completion.
+   */
+  resume_state?: unknown
 }
 
 export interface WorkflowError {
