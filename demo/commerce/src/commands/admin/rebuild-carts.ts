@@ -589,6 +589,15 @@ async function bulkInsertCarts(db: RawDb, carts: CartAccumulator[]): Promise<voi
       c.total_tax,
     )
   }
-  const sql = `INSERT INTO carts (id, ${CART_COLUMNS.join(', ')}, created_at, updated_at) VALUES ${placeholders.join(', ')}`
+  // ON CONFLICT: between the WIPE and the bulk INSERT the live
+  // posthog-cart-tracker subscriber may have written a fresh cart row for a
+  // cart_token that's also in our fold. Our fold reflects the full event
+  // history up to the log sync point and is authoritative for the rebuild —
+  // overwrite. The `carts_cart_token_key` unique index on cart_token is the
+  // conflict target.
+  const updateSet = CART_COLUMNS.filter((c) => c !== 'cart_token')
+    .map((c) => `${c} = EXCLUDED.${c}`)
+    .join(', ')
+  const sql = `INSERT INTO carts (id, ${CART_COLUMNS.join(', ')}, created_at, updated_at) VALUES ${placeholders.join(', ')} ON CONFLICT (cart_token) DO UPDATE SET ${updateSet}, updated_at = NOW()`
   await db.raw(sql, params)
 }
