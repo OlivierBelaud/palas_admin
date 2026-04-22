@@ -12,14 +12,28 @@ export default definePage({
       columns: [
         { key: 'email', label: 'Client', format: 'highlight' },
         {
-          key: 'recovery_category',
+          key: 'activity_state',
           label: 'État',
+          format: {
+            type: 'badge',
+            values: {
+              browsing: 'blue',
+              dormant: 'orange',
+              dead: 'red',
+              completed: 'green',
+            },
+          },
+        },
+        {
+          key: 'recovery_category',
+          label: 'Recovery',
           format: {
             type: 'badge',
             values: {
               recovered: 'green',
               pending_recovery: 'blue',
-              not_picked_up: 'red',
+              assisted_dead: 'red',
+              not_picked_up: 'gray',
             },
           },
         },

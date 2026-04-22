@@ -139,27 +139,46 @@ export default defineQuery({
         // All abandonment-related emails per customer, with checkout_token
         // extracted from checkout_url when present. Returns one row per event
         // so downstream can pick the best match per cart.
+        //
+        // Metrics included:
+        //   - Shopify_Checkout_Abandonned — Klaviyo's native Shopify-triggered
+        //     event, carries checkout_url (→ checkout_token).
+        //   - Checkout Abandoned / Ops Cart Abandoned — our own custom metrics
+        //     sent by notifyAbandonedCarts, carry cart_token/checkout_token
+        //     directly in event_properties.
+        //   - Received Email — delivered Klaviyo emails whose subject matches
+        //     one of our abandonment flow templates. Subjects change over time;
+        //     use loose substrings on the distinctive words ("oubli", "attend",
+        //     "pense") to catch variants without over-matching marketing blasts.
         hogql(`
           SELECT
             lower(kp.email) AS email,
             ke.datetime AS sent_at,
-            extract(
-              JSONExtractString(ke.event_properties, 'checkout_url'),
-              'checkouts/ac/([^/?"]+)'
+            coalesce(
+              extract(
+                JSONExtractString(ke.event_properties, 'checkout_url'),
+                'checkouts/ac/([^/?"]+)'
+              ),
+              JSONExtractString(ke.event_properties, 'checkout_token'),
+              ''
             ) AS checkout_token
           FROM klaviyo_events ke
           JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
           JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
           WHERE lower(kp.email) IN (${emailsList})
-            AND ke.datetime >= now() - INTERVAL 90 DAY
             AND (
               km.name = 'Shopify_Checkout_Abandonned'
+              OR km.name = 'Checkout Abandoned'
+              OR km.name = 'Ops Cart Abandoned'
               OR (
                 km.name = 'Received Email'
                 AND (
-                  positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oublié quelque chose') > 0
+                  positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
                   OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
                   OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
                 )
               )
             )

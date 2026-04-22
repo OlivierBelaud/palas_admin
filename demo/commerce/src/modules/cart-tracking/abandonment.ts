@@ -62,38 +62,37 @@ export function computeSubStage(highest_stage: string): SubStage {
 /**
  * Is a Klaviyo abandon email attributable to this cart?
  *
- * Two timestamps define the influence window:
- *   - lower bound: cart.created_at (or last_action_at - 7d if created_at is
- *     missing — a best-effort fallback since created_at is the DB row insert
- *     time, not the real cart start)
- *   - upper bound (completed carts): completed_at (i.e. last_action_at)
- *   - upper bound (open carts): last_action_at + ATTRIBUTION_WINDOW_DAYS
+ * Heuristic (see docs/cart-abandonment-rules.md §3):
+ *   - Completed cart: the email must land in [completed_at - 2d, completed_at].
+ *     Tight window because attribution is the strongest claim — "this email
+ *     drove the conversion".
+ *   - Open cart (dormant or dead): the email must land within the 7-day
+ *     dormant window of last_action_at, i.e. |email - last_action| ≤ 7d.
+ *     Loose because our own recovery flow legitimately fires emails at 2h /
+ *     J+1 / J+3 *after* last action, and an email sent *before* last action
+ *     can have triggered the user coming back (= also attributable).
  *
- * The email must fall in that window. For completed carts we additionally
- * require `completed_at - email <= ATTRIBUTION_WINDOW_DAYS` so a 4-month-old
- * email from a prior cart doesn't get credited.
+ * Intentionally does NOT use `cart.created_at` as a lower bound — the column
+ * stores the DB-row insertion time, which gets rewritten on every
+ * `rebuildCarts` run and is therefore unreliable as a cart-birth proxy.
  */
 export function isEmailAttributed(
   cart: CartFacts,
   lastEmailAtMs: number | null,
-  nowMs: number = Date.now(),
+  _nowMs: number = Date.now(),
 ): boolean {
   if (lastEmailAtMs === null) return false
   const lastActionMs = toMs(cart.last_action_at) ?? 0
-  const createdMs = toMs(cart.created_at ?? null) ?? lastActionMs - DEAD_AFTER_DAYS * DAY_MS
   const isCompleted = cart.highest_stage === 'completed'
-
-  if (lastEmailAtMs < createdMs) return false
 
   if (isCompleted) {
     const completedMs = lastActionMs
-    if (lastEmailAtMs > completedMs) return false
-    return completedMs - lastEmailAtMs <= ATTRIBUTION_WINDOW_DAYS * DAY_MS
+    const delta = completedMs - lastEmailAtMs
+    return delta >= 0 && delta <= ATTRIBUTION_WINDOW_DAYS * DAY_MS
   }
 
-  // Open cart — email must be in the 2-day influence window from last action
-  const upperMs = lastActionMs + ATTRIBUTION_WINDOW_DAYS * DAY_MS
-  return lastEmailAtMs <= upperMs && lastEmailAtMs <= nowMs
+  // Open cart — email within the dormant-window radius of last_action_at
+  return Math.abs(lastEmailAtMs - lastActionMs) <= DEAD_AFTER_DAYS * DAY_MS
 }
 
 export function computeCategory(
