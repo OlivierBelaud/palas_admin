@@ -76,11 +76,7 @@ export function computeSubStage(highest_stage: string): SubStage {
  * stores the DB-row insertion time, which gets rewritten on every
  * `rebuildCarts` run and is therefore unreliable as a cart-birth proxy.
  */
-export function isEmailAttributed(
-  cart: CartFacts,
-  lastEmailAtMs: number | null,
-  _nowMs: number = Date.now(),
-): boolean {
+export function isEmailAttributed(cart: CartFacts, lastEmailAtMs: number | null, _nowMs: number = Date.now()): boolean {
   if (lastEmailAtMs === null) return false
   const lastActionMs = toMs(cart.last_action_at) ?? 0
   const isCompleted = cart.highest_stage === 'completed'

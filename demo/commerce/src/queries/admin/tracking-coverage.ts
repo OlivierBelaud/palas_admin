@@ -11,8 +11,8 @@
 // (schema introspection done 2026-04-22). To cover Flow we'll need to
 // self-instrument the workflows (tag / metafield / HTTP webhook).
 
-import { paginateConnection, ShopifyAdminClient } from '../../modules/shopify-admin/client'
 import { computeActivityState } from '../../modules/cart-tracking/abandonment'
+import { paginateConnection, ShopifyAdminClient } from '../../modules/shopify-admin/client'
 
 type CartRow = {
   id: string
@@ -71,23 +71,28 @@ export default defineQuery({
     const emails = Array.from(new Set(windowed.map((c) => c.email.toLowerCase())))
 
     // ── 2. Parallel fetches: Shopify (live) + Klaviyo (DW) ─────────────
-    const [shopifyOrderByEmail, shopifyAbandonedByEmail, shopifyCustomerByEmail, klaviyoProfiles, klaviyoAbandonEmails] =
-      await Promise.all([
-        fetchShopifyOrders(emails, log).catch((err) => {
-          log.warn(`[tracking-coverage] shopify orders: ${(err as Error).message}`)
-          return new Map<string, ShopifyOrderNode>()
-        }),
-        fetchShopifyAbandoned(emails, days, log).catch((err) => {
-          log.warn(`[tracking-coverage] shopify abandoned: ${(err as Error).message}`)
-          return new Map<string, ShopifyAbandonedNode>()
-        }),
-        fetchShopifyCustomers(emails, log).catch((err) => {
-          log.warn(`[tracking-coverage] shopify customers: ${(err as Error).message}`)
-          return new Map<string, ShopifyCustomerNode>()
-        }),
-        fetchKlaviyoProfiles(emails, log),
-        fetchKlaviyoAbandonEmails(emails, log),
-      ])
+    const [
+      shopifyOrderByEmail,
+      shopifyAbandonedByEmail,
+      shopifyCustomerByEmail,
+      klaviyoProfiles,
+      klaviyoAbandonEmails,
+    ] = await Promise.all([
+      fetchShopifyOrders(emails, log).catch((err) => {
+        log.warn(`[tracking-coverage] shopify orders: ${(err as Error).message}`)
+        return new Map<string, ShopifyOrderNode>()
+      }),
+      fetchShopifyAbandoned(emails, days, log).catch((err) => {
+        log.warn(`[tracking-coverage] shopify abandoned: ${(err as Error).message}`)
+        return new Map<string, ShopifyAbandonedNode>()
+      }),
+      fetchShopifyCustomers(emails, log).catch((err) => {
+        log.warn(`[tracking-coverage] shopify customers: ${(err as Error).message}`)
+        return new Map<string, ShopifyCustomerNode>()
+      }),
+      fetchKlaviyoProfiles(emails, log),
+      fetchKlaviyoAbandonEmails(emails, log),
+    ])
 
     // ── 3. Merge into one row per cart ─────────────────────────────────
     const now = Date.now()

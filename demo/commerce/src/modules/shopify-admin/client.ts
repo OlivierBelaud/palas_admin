@@ -23,8 +23,8 @@ export class ShopifyAdminClient {
     const domain = opts?.domain ?? process.env.SHOPIFY_SHOP_DOMAIN
     const token = opts?.token ?? process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
     const apiVersion = opts?.apiVersion ?? process.env.SHOPIFY_ADMIN_API_VERSION ?? DEFAULT_API_VERSION
-    if (!domain) throw new Error('[shopify-admin] SHOPIFY_SHOP_DOMAIN not set')
-    if (!token) throw new Error('[shopify-admin] SHOPIFY_ADMIN_ACCESS_TOKEN not set')
+    if (!domain) throw new MantaError('INVALID_DATA', '[shopify-admin] SHOPIFY_SHOP_DOMAIN not set')
+    if (!token) throw new MantaError('INVALID_DATA', '[shopify-admin] SHOPIFY_ADMIN_ACCESS_TOKEN not set')
     this.endpoint = `https://${domain}/admin/api/${apiVersion}/graphql.json`
     this.token = token
   }
@@ -44,13 +44,16 @@ export class ShopifyAdminClient {
       signal,
     })
     if (!res.ok) {
-      throw new Error(`[shopify-admin] HTTP ${res.status} ${await res.text().catch(() => '')}`)
+      throw new MantaError('UNEXPECTED_STATE', `[shopify-admin] HTTP ${res.status} ${await res.text().catch(() => '')}`)
     }
     const body = (await res.json()) as { data?: T; errors?: ShopifyGraphQLError[] }
     if (body.errors && body.errors.length > 0) {
-      throw new Error(`[shopify-admin] GraphQL error: ${body.errors.map((e) => e.message).join(' | ')}`)
+      throw new MantaError(
+        'UNEXPECTED_STATE',
+        `[shopify-admin] GraphQL error: ${body.errors.map((e) => e.message).join(' | ')}`,
+      )
     }
-    if (!body.data) throw new Error('[shopify-admin] empty response')
+    if (!body.data) throw new MantaError('UNEXPECTED_STATE', '[shopify-admin] empty response')
     return body.data
   }
 }
