@@ -8,8 +8,8 @@
 // UX degrades gracefully.
 
 import { UpstashCacheAdapter } from '@manta/adapter-cache-upstash'
-import { resolveKlaviyoProfile } from '../../../utils/klaviyo-resolve'
-import { codifyDate, codifyTier, nowEpochSec, type Tier } from '../../../utils/visitor-codes'
+import { resolveKlaviyoProfile } from '../../../../utils/klaviyo-resolve'
+import { codifyDate, codifyTier, nowEpochSec, type Tier } from '../../../../utils/visitor-codes'
 
 interface VisitorPayload {
   t: Tier
