@@ -811,6 +811,14 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     inCard?: boolean
     /** Override page size (default: 15) */
     pageSize?: number
+    /**
+     * Per-row highlight. Applies `className` to the `<tr>` when `row[field]`
+     * is truthy. Lets page definitions (JSON) flag a subset without a predicate fn.
+     */
+    rowHighlight?: {
+      field: string
+      className?: string
+    }
   }
 
   const rowActions = props.rowActions || props.actions || []
@@ -821,14 +829,18 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
   const count = (data as any)?.count ?? items.length
   const _pageSize = props.pageSize ?? 15
 
-  // Auto-generate filters from columns with filterable: true
-  // Cache auto-generated filters — only compute once when items first load
+  // Build filters: column-level `filterable` auto-generates chips, merged with
+  // any user-provided block-level `filters`. Block-level filters take precedence
+  // on key collision (user override wins over auto-discover).
   const autoFiltersRef = useRef<typeof props.filters | null>(null)
   const autoFilters = useMemo(() => {
-    if (props.filters && props.filters.length > 0) return props.filters
-    if (autoFiltersRef.current) return autoFiltersRef.current
+    const userFilters = props.filters ?? []
+    const userKeys = new Set(userFilters.map((f) => f.key))
 
-    if (items.length === 0) return undefined
+    // If columns haven't been analyzed yet and we have cached results, reuse them.
+    if (items.length === 0 && autoFiltersRef.current) {
+      return autoFiltersRef.current
+    }
 
     const generated: Array<{
       key: string
@@ -838,6 +850,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     }> = []
     for (const col of props.columns) {
       if (!col.filterable) continue
+      if (userKeys.has(col.key)) continue // user-provided filter wins
       if (Array.isArray(col.filterable)) {
         generated.push({
           key: col.key,
@@ -850,6 +863,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
         })
         continue
       }
+      if (items.length === 0) continue
       const values = new Set<string>()
       for (const item of items) {
         const v = resolveDataPath(item, col.key)
@@ -864,7 +878,8 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
         })
       }
     }
-    const result = generated.length > 0 ? generated : props.filters
+    const merged = [...userFilters, ...generated]
+    const result = merged.length > 0 ? merged : undefined
     if (result) autoFiltersRef.current = result
     return result
   }, [props.columns, props.filters, items])
@@ -897,10 +912,18 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     [setSearchParams],
   )
 
-  // Items are NOT filtered client-side — filters go through the URL → DataTableBlock → graph query
-  // But until the backend supports these filters, we filter client-side as a fallback
+  // Filters travel URL → DataTableBlock → graph.filters → server. The server
+  // returns already-filtered rows, so client-side filtering is only a fallback
+  // for plain scalar values. Magic tokens (__null / __notnull) are translated
+  // to SQL predicates server-side and must NOT be matched client-side (no row
+  // has literal 'email = "__notnull"').
   const filteredItems = useMemo(() => {
-    const activeFilters = Object.entries(columnFilters).filter(([, values]) => values.size > 0)
+    const activeFilters = Object.entries(columnFilters)
+      .map(([key, values]) => {
+        const plain = new Set([...values].filter((v) => !v.startsWith('__')))
+        return [key, plain] as const
+      })
+      .filter(([, values]) => values.size > 0)
     if (activeFilters.length === 0) return items
     return items.filter((item) =>
       activeFilters.every(([key, values]) => {
@@ -1223,14 +1246,16 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
     null,
     React.createElement(
       'div',
-      { className: props.inCard ? 'flex flex-col gap-y-4' : 'flex flex-col gap-y-4 -mx-6' },
+      { className: props.inCard ? 'flex flex-col gap-y-0' : 'flex flex-col gap-y-4 -mx-6' },
 
       // ── Row 1: DataTableQuery — filters left, search + orderBy right ──
       props.searchable !== false || props.orderBy || (autoFilters && autoFilters.length > 0)
         ? React.createElement(
             'div',
             {
-              className: 'flex items-start justify-between gap-x-4 px-6 pb-2',
+              className: props.inCard
+                ? 'flex items-start justify-between gap-x-4 px-6 py-3 bg-muted/40'
+                : 'flex items-start justify-between gap-x-4 px-6 pb-2',
             },
             // Left side: faceted filters
             React.createElement(
@@ -1286,7 +1311,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
             { className: 'relative w-full' },
             React.createElement(
               Table.Header,
-              { className: 'border-t-0' },
+              { className: props.inCard ? 'border-t-0 bg-muted/40' : 'border-t-0' },
               table.getHeaderGroups().map((headerGroup) =>
                 React.createElement(
                   Table.Row,
@@ -1319,6 +1344,9 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                   { className: 'border-b-0' },
                   table.getRowModel().rows.map((row) => {
                     const to = getNavigateTo(row)
+                    const rowHighlight = props.rowHighlight
+                    const isHighlighted =
+                      !!rowHighlight && !!(row.original as Record<string, unknown>)?.[rowHighlight.field]
                     return React.createElement(
                       Table.Row,
                       {
@@ -1327,6 +1355,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                           'transition-colors group/row',
                           '[&_td:last-of-type]:w-[1%] [&_td:last-of-type]:whitespace-nowrap',
                           { 'cursor-pointer': !!to },
+                          isHighlighted && (rowHighlight?.className ?? 'bg-muted/40'),
                         ),
                       },
                       row.getVisibleCells().map((cell, index, arr) => {

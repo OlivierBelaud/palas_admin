@@ -8,27 +8,59 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/patterns'
 import type { GraphQueryDef, HeaderAction, NamedQueryDef } from '../primitives'
 import { Heading, statusColors, Text } from '../renderers/blocks/shared'
+import { toastWorkflowRun } from '../workflow'
 import { useBlockQuery } from './use-block-query'
+
+/**
+ * Extract a command name from a URL of the form `/api/<ctx>/command/<name>`.
+ * Returns `null` for other URLs (which are treated as plain custom HTTP routes).
+ */
+function extractCommandNameFromUrl(url: string): string | null {
+  // Match /api/<ctx>/command/<name> — any context (admin, store, etc.)
+  const m = url.match(/^\/api\/[^/]+\/command\/([^/?#]+)/)
+  return m ? m[1] : null
+}
 
 /** Button that executes a command or custom action with confirmation dialog */
 function CommandButton({ command, label, destructive }: { command: string; label: string; destructive?: boolean }) {
+  // Two command shapes:
+  //  - Named: 'rebuildCarts' → use useCommand (auth + 300ms race + navigate on async).
+  //  - URL to a command endpoint: '/api/admin/command/rebuildCarts' → extract
+  //    the name and also use useCommand, so we don't lose auth or the async path.
+  //  - Custom URL (e.g. '/api/cart-tracking/consolidate'): plain authenticated
+  //    fetch — these are custom routes, not commands.
   const isUrl = command.startsWith('/')
-  // biome-ignore lint/correctness/useHookAtTopLevel: command is stable for component lifetime
-  const cmd = isUrl ? null : useCommand(command)
+  const extractedName = isUrl ? extractCommandNameFromUrl(command) : null
+  const resolvedName = extractedName ?? (isUrl ? '' : command)
+  const isPlainUrl = isUrl && extractedName === null
+  // useCommand is always called (Hooks rule) — for plain URLs we just never use it.
+  const cmd = useCommand(resolvedName)
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleConfirm = async () => {
     setLoading(true)
     try {
-      if (isUrl) {
-        await fetch(command, { method: 'POST' })
+      if (isPlainUrl) {
+        await fetch(command, { method: 'POST', credentials: 'include' })
+        window.location.reload()
       } else {
-        await (cmd as any).mutateAsync({})
+        // See WORKFLOW_PROGRESS.md §7 — run() returns a discriminated union so
+        // we can route long workflows to the runs page while short ones stay inline.
+        const r = await cmd.run({})
+        if (r.status === 'running') {
+          toastWorkflowRun(r.runId, { commandName: resolvedName, commandLabel: label })
+          setOpen(false)
+          return
+        } else if (r.status === 'succeeded') {
+          window.location.reload()
+        } else {
+          console.error('[CommandButton] command failed', r.error)
+        }
       }
-      window.location.reload()
-    } catch {
-      // Error handled
+    } catch (err) {
+      console.error('[CommandButton] unexpected error', err)
     } finally {
       setLoading(false)
       setOpen(false)
@@ -112,13 +144,18 @@ export function PageHeaderBlock({ query, actions, ...props }: PageHeaderBlockPro
 
   const handleDelete = async () => {
     if (!params.id) return
-    try {
-      await (deleteCmd as any).mutateAsync({ id: params.id })
-      // Navigate to parent listing
-      navigate('..')
-    } catch {
-      // Error handled by the command
+    const r = await deleteCmd.run({ id: params.id })
+    if (r.status === 'running') {
+      toastWorkflowRun(r.runId, { commandName: `delete-${location}`, commandLabel: 'Suppression' })
+      setDeleteOpen(false)
+      return
     }
+    if (r.status === 'succeeded') {
+      navigate('..')
+      return
+    }
+    // failed — error already mirrored into deleteCmd.error for UI consumers.
+    console.error('[PageHeader] delete failed', r.error)
   }
 
   // Build action buttons

@@ -8,7 +8,7 @@ import {
   generateIntraModuleRelations,
   generateLinkRelations,
 } from '@manta/adapter-database-pg'
-import type { WorkflowStorage } from '@manta/core'
+import type { IProgressChannelPort, IWorkflowStorePort, WorkflowStorage } from '@manta/core'
 import { getRegisteredLinks, MantaError, parseDmlEntity, QueryService, toCamel, WorkflowManager } from '@manta/core'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 import { entityToTableKey, isDmlEntity } from '../../bootstrap-helpers'
@@ -32,22 +32,78 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
   ctx.cmdRegistry = cmdRegistry
   if (cmdRegistry) {
     const wfStorageInstance = infraMap.get('IWorkflowStoragePort') as WorkflowStorage | undefined
+    const wfStoreInstance = infraMap.get('IWorkflowStorePort') as IWorkflowStorePort | undefined
+    const progressChannelInstance = infraMap.get('IProgressChannelPort') as IProgressChannelPort | undefined
+    // 300ms short-circuit: the callable awaits the workflow up to 300ms. If it
+    // finishes fast → return the inline envelope. Otherwise → return
+    // { runId, status: 'running' } immediately while the workflow continues in
+    // the background. See WORKFLOW_PROGRESS.md §6.1.
+    const SHORT_CIRCUIT_MS = 300
     for (const entry of cmdRegistry.list()) {
       builder.registerCommandCallable(
         entry.name,
         async (input: unknown, httpCtx?: { auth?: unknown; headers?: Record<string, string | undefined> }) => {
+          let parsed: unknown
           try {
-            const parsed = entry.inputSchema.parse(input)
-            const wm = new WorkflowManager(appRef.current!, { storage: wfStorageInstance })
-            wm.register({ name: `cmd:${entry.name}`, fn: entry.workflow })
-            const { result } = await wm.run(`cmd:${entry.name}`, {
-              input: parsed as Record<string, unknown>,
-              ...(httpCtx ? { __httpCtx: httpCtx } : {}),
-            })
-            return result
+            parsed = entry.inputSchema.parse(input)
           } catch (err) {
             throw MantaError.wrap(err, `command:${entry.name}`)
           }
+
+          // Pre-generate the runId so we can surface it in the async branch
+          // without awaiting the full run. WorkflowRunOptions already supports
+          // a caller-supplied transactionId.
+          const runId = `tx_${crypto.randomUUID().replace(/-/g, '')}`
+
+          const wm = new WorkflowManager(appRef.current!, {
+            storage: wfStorageInstance,
+            store: wfStoreInstance,
+            progressChannel: progressChannelInstance,
+          })
+          wm.register({ name: `cmd:${entry.name}`, fn: entry.workflow })
+
+          const runPromise = wm.run(`cmd:${entry.name}`, {
+            input: parsed as Record<string, unknown>,
+            transactionId: runId,
+            ...(httpCtx ? { __httpCtx: httpCtx } : {}),
+          })
+
+          // Race the workflow against a 300ms timer. The host process stays
+          // alive (nitro / node long-running) so the background continuation
+          // can finish after the callable returns.
+          let timer: ReturnType<typeof setTimeout> | null = null
+          const raced = await Promise.race([
+            runPromise
+              .then((value) => ({ __kind: 'inline' as const, value }))
+              .catch((err) => {
+                return { __kind: 'error' as const, err }
+              }),
+            new Promise<{ __kind: 'async' }>((resolve) => {
+              timer = setTimeout(() => resolve({ __kind: 'async' }), SHORT_CIRCUIT_MS)
+            }),
+          ])
+          if (timer) clearTimeout(timer)
+
+          if (raced.__kind === 'error') {
+            throw MantaError.wrap(raced.err, `command:${entry.name}`)
+          }
+
+          if (raced.__kind === 'inline') {
+            return { status: 'succeeded' as const, result: raced.value.result, runId }
+          }
+
+          // Timer won — schedule background continuation. Errors are logged
+          // (terminal state is already written to the durable store by
+          // WorkflowManager). Swallow here to avoid unhandled rejections.
+          runPromise.catch((err) => {
+            try {
+              logger.warn(`[workflow:cmd:${entry.name}] background run failed: ${(err as Error)?.message ?? err}`)
+            } catch {
+              /* logger may be disposed on shutdown */
+            }
+          })
+
+          return { runId, status: 'running' as const }
         },
       )
     }

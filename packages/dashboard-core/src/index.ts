@@ -2,6 +2,11 @@
 
 // Blocks — autonomous components with internal queries
 export { resolveBlock } from './blocks/block-registry'
+export type { CardBlockProps } from './blocks/Card'
+export { CardBlock } from './blocks/Card'
+export type { DataListBlockProps, DataListColumn } from './blocks/DataList'
+export { buildDataListBody, DataListBlock, resolveDataListItems } from './blocks/DataList'
+export type { DataTableBlockProps } from './blocks/DataTable'
 export { DataTableBlock } from './blocks/DataTable'
 export { InfoCardBlock } from './blocks/InfoCard'
 export { MediaCardBlock } from './blocks/MediaCard'
@@ -65,6 +70,17 @@ export {
   MultiStepForm,
   useFocusModal,
 } from './components/patterns'
+export type { WorkflowStatusProps } from './components/WorkflowStatus'
+export {
+  ErrorPanel,
+  ProgressPanel,
+  progressPercentage,
+  ResultPreview,
+  StepTimeline,
+  statusBadgeVariant,
+  stepStatusIcon,
+  WorkflowStatus,
+} from './components/WorkflowStatus'
 export type { DashboardContextValue } from './context'
 // Context
 export { DashboardContext, useDashboardContext } from './context'

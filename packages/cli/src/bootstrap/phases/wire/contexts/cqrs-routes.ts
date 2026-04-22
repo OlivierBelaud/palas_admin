@@ -40,6 +40,23 @@ export async function cqrsRoutes(ctx: BootstrapContext, appRef: AppRef): Promise
         })
 
         const result = await callable(body, { auth: cmdAuth, headers: reqHeaders })
+        // Running-envelope detection: the command callable may return
+        // { runId, status: 'running' } when the workflow lost the 300ms race
+        // in wire-commands.ts. Surface this with HTTP 202 so clients know
+        // to start polling /api/admin/_workflow/:id. See WORKFLOW_PROGRESS.md
+        // §6.1 and §6.5.
+        if (
+          result &&
+          typeof result === 'object' &&
+          (result as { status?: unknown }).status === 'running' &&
+          typeof (result as { runId?: unknown }).runId === 'string'
+        ) {
+          const runId = (result as { runId: string }).runId
+          return Response.json(
+            { data: { runId, status: 'running', href: `/api/admin/_workflow/${runId}` } },
+            { status: 202 },
+          )
+        }
         return Response.json({ data: result })
       } catch (err) {
         if ((err as { name?: string }).name === 'ZodError') {

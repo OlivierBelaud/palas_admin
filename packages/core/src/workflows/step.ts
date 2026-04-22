@@ -16,7 +16,9 @@ import type { ResolvedLink } from '../link'
 import { getRegisteredLinks } from '../link'
 import { pluralize } from '../naming'
 import type { SnapshotRepository } from '../service/snapshot-repository'
+import { createForEach } from './for-each'
 import { workflowContextStorage } from './manager'
+import { CancelledError, createProgress } from './progress-helper'
 import type { StepContext, WorkflowContext } from './types'
 
 // ---------------------------------------------------------------------------
@@ -107,6 +109,8 @@ function resolveService(ctx: StepContext, entity: string): Record<string, Functi
 
 /**
  * Run a step within the workflow context: checkpoint, execute, register compensation.
+ * Also reports step lifecycle to `wfCtx.store` (durable run store) on a best-effort
+ * basis — store errors MUST NOT fail the workflow.
  */
 async function runStep<T>(
   name: string,
@@ -136,7 +140,46 @@ async function runStep<T>(
     return cached as T
   }
 
-  const output = await handler()
+  // Cooperative cancel check at step boundary (see WORKFLOW_PROGRESS.md §10.3).
+  if (wfCtx.signal?.aborted) {
+    throw new CancelledError(`Workflow ${wfCtx.runId} cancelled before step "${stepKey}"`)
+  }
+
+  const previousStepName = wfCtx.stepName
+  wfCtx.stepName = stepKey
+
+  if (wfCtx.store) {
+    try {
+      await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+        status: 'running',
+        started_at: new Date(),
+      })
+    } catch {
+      /* store errors are non-fatal */
+    }
+  }
+
+  let output: T
+  try {
+    output = await handler()
+  } catch (err) {
+    if (wfCtx.store) {
+      const cancelled =
+        (err as { code?: string; name?: string } | null)?.code === 'WORKFLOW_CANCELLED' ||
+        (err as { name?: string } | null)?.name === 'CancelledError'
+      try {
+        await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+          status: cancelled ? 'cancelled' : 'failed',
+          completed_at: new Date(),
+          error: cancelled ? undefined : { message: (err as Error)?.message ?? String(err) },
+        })
+      } catch {
+        /* non-fatal */
+      }
+    }
+    wfCtx.stepName = previousStepName
+    throw err
+  }
 
   if (compensate) {
     wfCtx.completedSteps.push({
@@ -150,6 +193,19 @@ async function runStep<T>(
 
   wfCtx.checkpoints.set(stepKey, output)
   if (wfCtx.saveCheckpoint) await wfCtx.saveCheckpoint(stepKey, output)
+
+  if (wfCtx.store) {
+    try {
+      await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+        status: 'succeeded',
+        completed_at: new Date(),
+      })
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  wfCtx.stepName = previousStepName
   return output
 }
 
@@ -817,11 +873,24 @@ function stepAction<TInput = unknown, TOutput = unknown>(
     )
   }
   return async (input: TInput, ctx: StepContext): Promise<TOutput> => {
+    // Inject progress/signal/forEach into the ctx passed to the user's invoke/compensate.
+    // Without this, `ctx.forEach` stays undefined inside step.action handlers — which
+    // breaks any long-running step that relies on it (e.g. rebuildCarts → PostHog replay).
+    const wfCtx: WorkflowContext | null = workflowContextStorage.getStore() ?? ctx.__wfCtx ?? null
+    const augmentedCtx: StepContext = wfCtx
+      ? {
+          ...ctx,
+          __wfCtx: wfCtx,
+          signal: wfCtx.signal ?? ctx.signal,
+          progress: createProgress(wfCtx),
+          forEach: createForEach(wfCtx),
+        }
+      : ctx
     return runStep(
       name,
-      ctx,
-      () => config.invoke(input, ctx),
-      (output) => config.compensate(output, ctx),
+      augmentedCtx,
+      () => config.invoke(input, augmentedCtx),
+      (output) => config.compensate(output, augmentedCtx),
     )
   }
 }

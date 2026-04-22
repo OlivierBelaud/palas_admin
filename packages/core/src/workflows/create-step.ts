@@ -1,7 +1,9 @@
 // createStep() — imperative, self-checkpointing step factory.
 // Uses AsyncLocalStorage to access workflow context.
 
+import { createForEach } from './for-each'
 import { workflowContextStorage } from './manager'
+import { CancelledError, createProgress } from './progress-helper'
 import type { StepContext, StepFn, WorkflowContext } from './types'
 
 /**
@@ -51,8 +53,56 @@ export function createStep<TInput = unknown, TOutput = unknown>(
       return cached as TOutput
     }
 
+    // Cancel check BEFORE invoking. Cheap when no store is wired.
+    await preStepCancelCheck(wfCtx, stepKey)
+
+    // Tag the current step on wfCtx so ctx.progress / ctx.forEach know which
+    // step is reporting, and so the store's updateStep targets the right row.
+    const previousStepName = wfCtx.stepName
+    wfCtx.stepName = stepKey
+
+    // Durable store — mark step as running (best effort).
+    if (wfCtx.store) {
+      try {
+        await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+          status: 'running',
+          started_at: new Date(),
+        })
+      } catch {
+        // Store failures MUST NOT fail the workflow — swallow. The engine's
+        // logger wrappers in manager.ts handle the visible cases.
+      }
+    }
+
+    // Augment the StepContext with progress / signal / forEach bound to this run.
+    const augmentedCtx: StepContext = {
+      ...ctx,
+      __wfCtx: wfCtx,
+      signal: wfCtx.signal ?? ctx.signal,
+      progress: createProgress(wfCtx),
+      forEach: createForEach(wfCtx),
+    }
+
     // Execute the handler
-    const output = await handler(input, ctx)
+    let output: TOutput
+    try {
+      output = await handler(input, augmentedCtx)
+    } catch (err) {
+      const cancelled = isCancel(err)
+      if (wfCtx.store) {
+        try {
+          await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+            status: cancelled ? 'cancelled' : 'failed',
+            completed_at: new Date(),
+            error: cancelled ? undefined : { message: (err as Error)?.message ?? String(err) },
+          })
+        } catch {
+          /* store errors are non-fatal */
+        }
+      }
+      wfCtx.stepName = previousStepName
+      throw err
+    }
 
     // Register for compensation (only if explicit compensate provided)
     if (compensate) {
@@ -69,6 +119,19 @@ export function createStep<TInput = unknown, TOutput = unknown>(
     wfCtx.checkpoints.set(stepKey, output)
     if (wfCtx.saveCheckpoint) await wfCtx.saveCheckpoint(stepKey, output)
 
+    // Durable store — mark step as succeeded (best effort).
+    if (wfCtx.store) {
+      try {
+        await wfCtx.store.updateStep(wfCtx.runId, stepKey, {
+          status: 'succeeded',
+          completed_at: new Date(),
+        })
+      } catch {
+        /* store errors are non-fatal */
+      }
+    }
+
+    wfCtx.stepName = previousStepName
     return output
   }
 
@@ -76,4 +139,39 @@ export function createStep<TInput = unknown, TOutput = unknown>(
   Object.defineProperty(stepFn, '__isStep', { value: true })
 
   return stepFn
+}
+
+function isCancel(err: unknown): boolean {
+  if (err instanceof CancelledError) return true
+  if (err && typeof err === 'object') {
+    const e = err as { name?: string; code?: string }
+    if (e.code === 'WORKFLOW_CANCELLED' || e.name === 'CancelledError') return true
+  }
+  return false
+}
+
+/**
+ * Before a step runs, if the store is wired AND we have a runId, check whether
+ * cancellation has been requested. If so, abort the controller and throw.
+ *
+ * Rationale: at PR-3 we don't yet have eventbus-based cancel propagation (that's
+ * PR-4). Step-boundary checks are the best we can do; long single steps must
+ * cooperate via `ctx.signal` + `ctx.forEach`.
+ *
+ * Note: `store.get` MAY throw — if it does we let it bubble so an actionable
+ * failure is visible, per the plan's resilience invariant.
+ */
+async function preStepCancelCheck(wfCtx: WorkflowContext, stepKey: string): Promise<void> {
+  // Already aborted? Throw immediately.
+  if (wfCtx.signal?.aborted) throw new CancelledError(`Workflow ${wfCtx.runId} cancelled before step "${stepKey}"`)
+  if (!wfCtx.store) return
+  const run = await wfCtx.store.get(wfCtx.runId)
+  if (run?.cancel_requested_at) {
+    // Abort the per-run controller so any in-flight I/O that listens to
+    // `ctx.signal` notices immediately, then throw — the engine catches and
+    // transitions the run to `cancelled`.
+    const abort = (wfCtx as WorkflowContext & { __abort?: (reason?: string) => void }).__abort
+    if (typeof abort === 'function') abort('cancel_requested_at set on run')
+    throw new CancelledError(`Workflow ${wfCtx.runId} cancelled`)
+  }
 }

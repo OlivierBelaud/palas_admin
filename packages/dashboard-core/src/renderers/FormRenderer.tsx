@@ -19,12 +19,13 @@ import {
 } from '@manta/ui'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ComponentType } from 'react'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { resolveBlock } from '../blocks/block-registry'
 import { FocusModal } from '../components/patterns/focus-modal'
 import type { FieldDef, FieldRow, FormDef } from '../primitives'
 import { isGraphQuery, isNamedQuery } from '../primitives'
+import { toastWorkflowRun } from '../workflow'
 
 /** Command field metadata from codegen (optional — falls back to spec-defined required). */
 export interface CommandFieldMeta {
@@ -37,7 +38,7 @@ export interface CommandFieldMeta {
 
 export interface FormRendererProps {
   spec: FormDef
-  customBlocks?: Record<string, ComponentType<any>>
+  customBlocks?: Record<string, ComponentType<Record<string, unknown>>>
   /** Command schemas from codegen (.manta/command-schemas.ts) — injected by the CLI entry. */
   commandSchemas?: Record<string, CommandFieldMeta[]>
 }
@@ -449,12 +450,15 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
   const schemaMeta = commandSchemas?.[spec.command]
 
   // Enrich a single FieldDef with required/type from command schema
-  const enrichField = (field: FieldDef): FieldDef => {
-    if (!schemaMeta) return field
-    const meta = schemaMeta.find((m) => m.key === field.key)
-    if (!meta) return field
-    return { ...field, required: field.required ?? meta.required }
-  }
+  const enrichField = useCallback(
+    (field: FieldDef): FieldDef => {
+      if (!schemaMeta) return field
+      const meta = schemaMeta.find((m) => m.key === field.key)
+      if (!meta) return field
+      return { ...field, required: field.required ?? meta.required }
+    },
+    [schemaMeta],
+  )
 
   // Enrich field rows (preserving row grouping structure)
   const enrichedFieldRows = useMemo(() => {
@@ -470,32 +474,39 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
 
   // Edit mode: fetch existing data if query is defined
   // Supports both graph queries and named queries
-  const isEditGraph = spec.query && isGraphQuery(spec.query)
-  const isEditNamed = spec.query && isNamedQuery(spec.query)
+  const isEditGraph = !!spec.query && isGraphQuery(spec.query)
+  const isEditNamed = !!spec.query && isNamedQuery(spec.query)
 
-  const graphConfig = isEditGraph
-    ? {
-        ...(spec.query as any).graph,
-        filters: { id: params.id, ...(spec.query as any).graph.filters },
-      }
-    : { entity: '__disabled__' }
+  const graphConfig =
+    spec.query && isGraphQuery(spec.query)
+      ? {
+          ...spec.query.graph,
+          filters: { id: params.id, ...spec.query.graph.filters },
+        }
+      : { entity: '__disabled__' }
   const { data: graphData } = useGraphQuery(graphConfig, {
-    enabled: !!isEditGraph && !!params.id,
+    enabled: isEditGraph && !!params.id,
   })
 
   // Named query for edit pre-fill — resolve :param placeholders
-  const editNamedInput = isEditNamed
-    ? Object.fromEntries(
-        Object.entries((spec.query as any).input ?? {}).map(([k, v]: [string, unknown]) =>
-          typeof v === 'string' && v.startsWith(':') && params[v.slice(1)] ? [k, params[v.slice(1)]] : [k, v],
-        ),
-      )
-    : undefined
-  const { data: namedData } = useQuery(isEditNamed ? (spec.query as any).name : '__disabled__', editNamedInput, {
-    enabled: !!isEditNamed && !!params.id,
+  const editNamedInput =
+    spec.query && isNamedQuery(spec.query)
+      ? Object.fromEntries(
+          Object.entries(spec.query.input ?? {}).map(([k, v]: [string, unknown]) =>
+            typeof v === 'string' && v.startsWith(':') && params[v.slice(1)] ? [k, params[v.slice(1)]] : [k, v],
+          ),
+        )
+      : undefined
+  const namedQueryName = spec.query && isNamedQuery(spec.query) ? spec.query.name : '__disabled__'
+  const { data: namedData } = useQuery(namedQueryName, editNamedInput, {
+    enabled: isEditNamed && !!params.id,
   })
 
-  const existingData = isEditGraph ? graphData : isEditNamed ? ((namedData as any)?.data ?? namedData) : null
+  const existingData = isEditGraph
+    ? graphData
+    : isEditNamed
+      ? ((namedData as { data?: unknown } | undefined)?.data ?? namedData)
+      : null
 
   // Pre-fill form with existing data
   useEffect(() => {
@@ -644,9 +655,24 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
       }
 
       const payload = params.id && !spec.hiddenFields ? { id: params.id, ...cleanData } : cleanData
-      await (command as any).mutateAsync(payload)
+      // Use the new run() API so async workflows surface a runId instead of
+      // swallowing the response. See WORKFLOW_PROGRESS.md §7.
+      const r = await command.run(payload)
+      if (r.status === 'failed') {
+        const err = r.error
+        console.error('[FormRenderer] submit failed:', err)
+        const errors = parseErrorToFields(err, enrichedFields)
+        setFieldErrors(errors)
+        toast.error('Failed to save', { description: err.message || 'Unknown error' })
+        return
+      }
       // Invalidate all queries so the parent page refreshes with new data
       queryClient.invalidateQueries()
+      if (r.status === 'running') {
+        toastWorkflowRun(r.runId, { commandName: spec.command, commandLabel: spec.title })
+        close()
+        return
+      }
       close()
     } catch (err) {
       console.error('[FormRenderer] submit failed:', err)
@@ -672,8 +698,8 @@ export function FormRenderer({ spec, customBlocks, commandSchemas }: FormRendere
     React.createElement(Button, { variant: 'ghost', onClick: close }, 'Cancel'),
     React.createElement(
       Button,
-      { onClick: handleSubmit, disabled: (command as any).isPending },
-      (command as any).isPending ? 'Saving...' : 'Save',
+      { onClick: handleSubmit, disabled: command.isPending },
+      command.isPending ? 'Saving...' : 'Save',
     ),
   )
 

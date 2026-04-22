@@ -1,7 +1,7 @@
 // Phase 3c: Load resources — workflows, subscribers, jobs, agents, commands, queries, user defs.
 
-import type { IEventBusPort, Message } from '@manta/core'
-import { MantaError, QueryRegistry } from '@manta/core'
+import type { IEventBusPort, IWorkflowStorePort, Message } from '@manta/core'
+import { createOrphanReaperJob, MantaError, QueryRegistry } from '@manta/core'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 
 export async function loadResources(ctx: BootstrapContext, appRef: AppRef): Promise<void> {
@@ -57,45 +57,55 @@ export async function loadResources(ctx: BootstrapContext, appRef: AppRef): Prom
     }
   }
 
-  // [10] Load jobs
-  if (resources.jobs.length > 0) {
-    let scheduler: {
-      register: (name: string, schedule: string, handler: (...args: unknown[]) => unknown) => void
-    } | null = null
-    try {
-      const s = infraMap.get('IJobSchedulerPort')
-      if (s)
-        scheduler = s as {
-          register: (name: string, schedule: string, handler: (...args: unknown[]) => unknown) => void
-        }
-    } catch {
-      logger.warn('IJobSchedulerPort not registered — skipping job loading')
-    }
-
-    if (scheduler) {
-      for (const jobInfo of resources.jobs) {
-        try {
-          const imported = await doImport(jobInfo.path)
-          const job = imported.default as {
-            name: string
-            schedule: string
-            handler: (scope: { command: unknown; log: unknown }) => Promise<unknown>
-          }
-          if (job?.name && job.schedule && typeof job.handler === 'function') {
-            scheduler.register(job.name, job.schedule, async () => {
-              try {
-                const result = await job.handler({ command: appRef.current!.commands, log: logger })
-                return { status: 'success' as const, data: result, duration_ms: 0 }
-              } catch (err) {
-                throw MantaError.wrap(err, `job:${job.name}`)
-              }
-            })
-            logger.info(`  Job: ${job.name} (${job.schedule})`)
-          }
-        } catch (err) {
-          logger.warn(`Failed to load job '${jobInfo.id}': ${err instanceof Error ? err.message : String(err)}`)
-        }
+  // [10] Load jobs + register framework-owned jobs (WP-F04 orphan reaper).
+  let scheduler: {
+    register: (name: string, schedule: string, handler: (...args: unknown[]) => unknown) => void
+  } | null = null
+  try {
+    const s = infraMap.get('IJobSchedulerPort')
+    if (s)
+      scheduler = s as {
+        register: (name: string, schedule: string, handler: (...args: unknown[]) => unknown) => void
       }
+  } catch {
+    logger.warn('IJobSchedulerPort not registered — skipping job loading')
+  }
+
+  if (scheduler && resources.jobs.length > 0) {
+    for (const jobInfo of resources.jobs) {
+      try {
+        const imported = await doImport(jobInfo.path)
+        const job = imported.default as {
+          name: string
+          schedule: string
+          handler: (scope: { command: unknown; log: unknown }) => Promise<unknown>
+        }
+        if (job?.name && job.schedule && typeof job.handler === 'function') {
+          scheduler.register(job.name, job.schedule, async () => {
+            try {
+              const result = await job.handler({ command: appRef.current!.commands, log: logger })
+              return { status: 'success' as const, data: result, duration_ms: 0 }
+            } catch (err) {
+              throw MantaError.wrap(err, `job:${job.name}`)
+            }
+          })
+          logger.info(`  Job: ${job.name} (${job.schedule})`)
+        }
+      } catch (err) {
+        logger.warn(`Failed to load job '${jobInfo.id}': ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  }
+
+  // [10b] WP-F04 — register the framework-owned orphan reaper job when both
+  // IJobSchedulerPort AND IWorkflowStorePort are wired. Silent no-op otherwise
+  // (no scheduler = no reaper; no store = nothing to reap).
+  if (scheduler) {
+    const workflowStore = infraMap.get('IWorkflowStorePort') as IWorkflowStorePort | undefined
+    if (workflowStore) {
+      const reaper = createOrphanReaperJob({ store: workflowStore, logger })
+      scheduler.register(reaper.name, reaper.schedule, reaper.handler)
+      logger.info(`  Job: ${reaper.name} (${reaper.schedule}) [framework]`)
     }
   }
 

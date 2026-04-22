@@ -99,6 +99,20 @@ const StatusRefSchema = z.object({
   label: z.string().optional(),
 })
 
+// Generic block reference — used by composition primitives (Card, …) to
+// describe nested children. Validated permissively here; deeper validation is
+// applied when each child reaches its own block component.
+export const NestedBlockSchema: z.ZodType = z.lazy(() => z.object({ type: z.string() }).catchall(z.unknown()))
+
+export const CardSchema = z.object({
+  title: z.string().optional(),
+  hideHeader: z.boolean().optional(),
+  description: z.string().optional(),
+  actions: z.array(BlockActionSchema).optional(),
+  children: z.array(NestedBlockSchema).min(1),
+  separator: z.enum(['divider', 'none']).optional(),
+})
+
 // Block schemas
 
 export const EntityTableSchema = z.object({
@@ -108,6 +122,33 @@ export const EntityTableSchema = z.object({
   pagination: z.boolean().optional(),
   navigateTo: z.string().optional(),
   actions: z.array(BlockActionSchema).optional(),
+})
+
+const DataListColumnSchema = z.object({
+  key: z.string(),
+  label: z.string().optional(),
+  type: z.string().optional(),
+  format: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+  thumbnailKey: z.string().optional(),
+  subKeys: z.array(z.string()).optional(),
+  width: z.string().optional(),
+  align: z.enum(['start', 'center', 'end']).optional(),
+  className: z.string().optional(),
+  suffix: z.string().optional(),
+})
+
+export const DataListSchema = z.object({
+  title: z.string().optional(),
+  card: z.union([z.boolean(), z.object({ description: z.string().optional() })]).optional(),
+  hideHeader: z.boolean().optional(),
+  showHeaders: z.boolean().optional(),
+  actions: z.array(BlockActionSchema).optional(),
+  itemsKey: z.string().optional(),
+  columns: z.array(DataListColumnSchema).min(1),
+  emptyLabel: z.string().optional(),
+  rowKey: z.string().optional(),
+  density: z.enum(['normal', 'compact']).optional(),
+  dividers: z.boolean().optional(),
 })
 
 const ActionGroupSchema = z.object({
@@ -192,6 +233,8 @@ export const ReactBridgeSchema = z.object({
 // Blocks catalog
 
 export const blocksCatalog: Record<string, z.ZodType> = {
+  Card: CardSchema,
+  DataList: DataListSchema,
   EntityTable: EntityTableSchema,
   InfoCard: InfoCardSchema,
   RelationTable: RelationTableSchema,
@@ -206,6 +249,7 @@ export const blocksCatalog: Record<string, z.ZodType> = {
 
 // Types
 
+export type DataList = z.infer<typeof DataListSchema>
 export type EntityTable = z.infer<typeof EntityTableSchema>
 export type InfoCard = z.infer<typeof InfoCardSchema>
 export type RelationTable = z.infer<typeof RelationTableSchema>

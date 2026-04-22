@@ -6,6 +6,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <SonnerToaster
       className="toaster group"
+      // Widen the default 356px so persistent workflow toasts (progress bar +
+      // Annuler + Détails) fit without overflowing off-screen.
+      style={{ ['--width' as string]: '440px' }}
       toastOptions={{
         classNames: {
           toast:

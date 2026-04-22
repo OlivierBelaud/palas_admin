@@ -13,6 +13,7 @@ import { createResolver } from './override/create-resolver'
 import type { DashboardConfig } from './override/define-config'
 import { defineConfig } from './override/define-config'
 import type { DataComponent, PageSpec } from './pages/types'
+import { WorkflowStatusPage } from './pages/workflow-status-page'
 import type { FormDef, PageDef } from './primitives'
 import type { ExtensionAPI } from './providers/extension-provider'
 import { Providers } from './providers/providers'
@@ -27,6 +28,7 @@ import { MainLayout } from './shell/main-layout'
 import type { INavItem } from './shell/nav-item'
 import { buildBreadcrumbHandle } from './shell/page-breadcrumb'
 import { buildRouteMap } from './shell/route-builder'
+import { ActiveRunsBridge } from './workflow'
 
 // Import renderers to trigger registration
 import './renderers/index'
@@ -370,18 +372,26 @@ export function DashboardApp({
           children: [
             {
               element: (
-                <MainLayout
-                  navigation={navigation}
-                  headerSlot={headerSlot}
-                  userMenuSlot={userMenuSlot}
-                  iconMap={iconMap}
-                />
+                <>
+                  <ActiveRunsBridge />
+                  <MainLayout
+                    navigation={navigation}
+                    headerSlot={headerSlot}
+                    userMenuSlot={userMenuSlot}
+                    iconMap={iconMap}
+                  />
+                </>
               ),
               errorElement: <ErrorBoundary />,
               children: [
                 {
                   index: true,
                   element: <Navigate to={defaultRedirect} replace />,
+                },
+                {
+                  path: '_runs/:runId',
+                  element: <WorkflowStatusPage />,
+                  errorElement: <ErrorBoundary />,
                 },
                 ...childRoutes,
                 ...specRoutes,

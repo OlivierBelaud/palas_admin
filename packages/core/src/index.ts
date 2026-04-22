@@ -195,19 +195,28 @@ export type {
   ILockingPort,
   ILoggerPort,
   INotificationPort,
+  IProgressChannelPort,
   IRelationalQueryPort,
   IRepository,
   IRepositoryFactory,
   ISchemaGenerator,
   ISearchProvider,
+  IWorkflowStorePort,
   JobExecution,
   JobResult,
+  NewWorkflowRun,
+  ProgressSnapshot,
   RelationalQueryConfig,
   SessionOptions,
+  StepState,
+  StepStatus,
   TransactionOptions,
+  WorkflowError,
   WorkflowLifecycleEvent,
+  WorkflowRun,
+  WorkflowStatus,
 } from './ports'
-export { ContainerRegistrationKeys } from './ports'
+export { ContainerRegistrationKeys, InMemoryProgressChannel } from './ports'
 export type {
   EntityAccessMap,
   EntityAccessRule,
@@ -269,32 +278,46 @@ export type { UserDefinition } from './user'
 export { defineUserModel } from './user'
 export type { AutoRouteDeps, RouteEntry } from './user/auto-routes'
 export { generateAllUserRoutes, getPublicPaths } from './user/auto-routes'
-export type {
-  ActionStepConfig,
-  CrudStepConfig,
-  EmitEventStepInput,
-  StepContext,
-  StepDefinition,
-  StepHandlerContext,
-  StepResolveContext,
-  WorkflowDefinition,
-  WorkflowResult,
-  WorkflowRunOptions,
-  WorkflowRunResult,
-  WorkflowStorage,
-} from './workflows'
 // ── Step (workflow unit — fundamental primitive) ──
 // step.MODULE.create/update/delete — CRUD auto-compensé
 // step.MODULE.METHOD — service method compensé
 // step.MODULE.link.OTHER — link auto-résolu
 // step.action() — action externe avec compensation obligatoire
 // step.emit() — événement fire-and-forget bufferisé
+export type {
+  ActionStepConfig,
+  CrudStepConfig,
+  EmitEventStepInput,
+  ForEachInfo,
+  OrphanReaperJobDescriptor,
+  OrphanReaperOptions,
+  OrphanReaperResult,
+  StepContext,
+  StepDefinition,
+  StepHandlerContext,
+  StepResolveContext,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowResult,
+  WorkflowRunOptions,
+  WorkflowRunResult,
+  WorkflowStorage,
+} from './workflows'
 export {
+  CancelledError,
+  createForEach,
+  createOrphanReaperJob,
+  createProgress,
   createStep,
   createWorkflow,
+  DEFAULT_ORPHAN_REAP_LIMIT,
+  DEFAULT_ORPHAN_THRESHOLD_MS,
   defineWorkflow,
   ENTITY_TAG,
   emitEventStep,
+  ORPHAN_REAPER_JOB_NAME,
+  ORPHAN_REAPER_SCHEDULE,
   step,
+  WORKFLOW_ORPHANED_CODE,
   WorkflowManager,
 } from './workflows'

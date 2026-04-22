@@ -1,6 +1,7 @@
 // DrizzleWorkflowStorage — persists workflow checkpoints to Postgres via Drizzle.
 // Implements the WorkflowStorage interface from @manta/core WorkflowManager.
 
+import type { WorkflowStorage } from '@manta/core'
 import { workflowCheckpoints } from '@manta/core/db'
 import { and, eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
@@ -13,7 +14,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
  * const storage = new DrizzleWorkflowStorage(drizzleDb)
  * const manager = new WorkflowManager(app, { storage })
  */
-export class DrizzleWorkflowStorage {
+export class DrizzleWorkflowStorage implements WorkflowStorage {
   constructor(private _db: PostgresJsDatabase) {}
 
   async save(transactionId: string, stepId: string, data: unknown): Promise<void> {

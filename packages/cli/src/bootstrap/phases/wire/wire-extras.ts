@@ -4,6 +4,7 @@
 import { getRequestBody } from '../../../server-bootstrap'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 import { isDmlEntity } from '../../bootstrap-helpers'
+import { wireWorkflowRoutes } from './wire-workflow-routes'
 
 export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise<void> {
   const {
@@ -167,6 +168,9 @@ export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise
       ai: { enabled: aiEnabled },
     })
   })
+
+  // Framework-owned workflow introspection endpoints (GET/DELETE /_workflow/:id)
+  await wireWorkflowRoutes(ctx, appRef)
 
   // [14b] Register custom API routes (plugins + local src/api/)
   {

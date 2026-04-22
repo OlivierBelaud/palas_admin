@@ -2,6 +2,7 @@
 
 export { DrizzlePgAdapter } from './adapter'
 export { isPgError, mapPgError } from './error-mapper'
+export { DbProgressChannel } from './progress-channel'
 export type { DrizzleWithClause, DrizzleWithConfig, SeparatedFilters } from './query-builder'
 export {
   applyRelationPagination,
@@ -26,3 +27,4 @@ export type { GeneratedSchema } from './schema-generator'
 export { DrizzleSchemaGenerator, generateDrizzleSchema } from './schema-generator'
 export { generateLinkPgTable, generatePgTableFromDml } from './table-generator'
 export { DrizzleWorkflowStorage } from './workflow-storage'
+export { DrizzleWorkflowStore } from './workflow-store'

@@ -113,24 +113,45 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
     httpServer.on('request', async (req, res) => {
       const url = req.url ?? ''
-      const matchedSpa = spaNames.find((name) => url.startsWith(`/${name}/`) && !url.startsWith('/api/'))
-      const isFile = /\.\w{2,5}(\?|$)/.test(url)
+      const matchedSpa = spaNames.find((name) => url.startsWith(`/${name}/`) || url === `/${name}`)
 
-      if (matchedSpa && !isFile && req.method === 'GET') {
-        const vitePort = allSpas.find((s) => s.name === matchedSpa)?.vitePort
-        if (vitePort) {
+      // Proxy ALL SPA requests to Vite (HTML pages, .tsx, .js, .css, assets)
+      // Only skip /api/* routes which are handled by Nitro
+      if (matchedSpa && !url.startsWith('/api/') && req.method === 'GET') {
+        const spaVitePort = allSpas.find((s) => s.name === matchedSpa)?.vitePort
+        if (spaVitePort) {
           try {
-            const viteRes = await fetch(`http://localhost:${vitePort}${url}`, {
-              headers: { Accept: 'text/html' },
-            })
+            const isHtmlRoute = !url.match(/\.\w+(\?|$)/)
+            const headers: Record<string, string> = isHtmlRoute ? { Accept: 'text/html' } : {}
+            const viteRes = await fetch(`http://localhost:${spaVitePort}${url}`, { headers })
             if (viteRes.ok) {
-              const html = await viteRes.text()
-              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-              res.end(html)
+              const contentType = viteRes.headers.get('content-type') ?? 'application/octet-stream'
+              const body = Buffer.from(await viteRes.arrayBuffer())
+              res.writeHead(200, { 'Content-Type': contentType })
+              res.end(body)
               return
             }
           } catch {
             // Vite not ready — fall through to Nitro
+          }
+        }
+      }
+
+      // Also proxy Vite internal paths (HMR, source maps, etc.)
+      if (url.startsWith('/@vite/') || url.startsWith('/@fs/') || url.startsWith('/node_modules/.vite/')) {
+        const spaVitePort = allSpas[0]?.vitePort
+        if (spaVitePort) {
+          try {
+            const viteRes = await fetch(`http://localhost:${spaVitePort}${url}`)
+            if (viteRes.ok) {
+              const contentType = viteRes.headers.get('content-type') ?? 'application/javascript'
+              const body = Buffer.from(await viteRes.arrayBuffer())
+              res.writeHead(200, { 'Content-Type': contentType })
+              res.end(body)
+              return
+            }
+          } catch {
+            // fall through
           }
         }
       }

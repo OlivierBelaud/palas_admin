@@ -23,3 +23,16 @@ export { MantaProvider, useMantaClient } from './provider'
 
 // Query helpers (for defineQuery input composition)
 export { listParams, retrieveParams } from './query-helpers'
+export type {
+  ProgressSnapshot,
+  RunResult,
+  StepState,
+  StepStatus,
+  UseCommandResult,
+  UseCommandStatus,
+  WorkflowError,
+  WorkflowRunSnapshot,
+  WorkflowStatus,
+} from './workflow-types'
+// Workflow types — shared with the backend via HTTP (shapes match @manta/core)
+export { isTerminalStatus } from './workflow-types'

@@ -2,7 +2,7 @@
 // Application tables (products, inventory, etc.) are AUTO-GENERATED from DML entities at boot.
 // NEVER define application tables here.
 
-import { index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { bigint, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 // ──────────────────────────────────────────────
 // Workflow checkpoints (for crash recovery)
@@ -27,18 +27,50 @@ export const workflowCheckpoints = pgTable(
 )
 
 // ──────────────────────────────────────────────
-// Workflow executions (top-level tracking)
+// Workflow runs (progress tracking — WORKFLOW_PROGRESS.md §5.1)
 // ──────────────────────────────────────────────
 
-export const workflowExecutions = pgTable('workflow_executions', {
-  transaction_id: text('transaction_id').primaryKey(),
-  workflow_name: text('workflow_name').notNull(),
-  status: text('status').notNull().default('running'),
-  input: jsonb('input').$type<Record<string, unknown>>().default({}),
-  result: jsonb('result'),
-  error: text('error'),
-  started_at: timestamp('started_at', { withTimezone: true }).defaultNow(),
-  completed_at: timestamp('completed_at', { withTimezone: true }),
+export const workflowRuns = pgTable(
+  'workflow_runs',
+  {
+    id: text('id').primaryKey(),
+    command_name: text('command_name').notNull(),
+    status: text('status').notNull().default('pending'),
+    steps: jsonb('steps').notNull().default([]),
+    input: jsonb('input').notNull().default({}),
+    output: jsonb('output'),
+    error: jsonb('error'),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    cancel_requested_at: timestamp('cancel_requested_at', { withTimezone: true }),
+    // Bumped on every step lifecycle transition (updateStep). Used by the orphan
+    // reaper on serverless hosts to detect runs whose host disappeared mid-flight.
+    heartbeat_at: timestamp('heartbeat_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    idx_workflow_runs_cmd_started: index('idx_workflow_runs_cmd_started').on(
+      table.command_name,
+      table.started_at.desc(),
+    ),
+  }),
+)
+
+// ──────────────────────────────────────────────
+// Workflow progress (ephemeral liveness fallback — WORKFLOW_PROGRESS.md §9.2)
+// ──────────────────────────────────────────────
+
+/**
+ * Fallback table for workflow progress when no Upstash cache is configured.
+ * Writes are throttled (500ms) by the DbProgressChannel adapter. The primary
+ * key on run_id makes `set()` idempotent via INSERT ... ON CONFLICT.
+ */
+export const workflowProgress = pgTable('workflow_progress', {
+  run_id: text('run_id').primaryKey(),
+  step_name: text('step_name').notNull(),
+  current: integer('current').notNull(),
+  total: integer('total'),
+  message: text('message'),
+  at_ms: bigint('at_ms', { mode: 'number' }).notNull(),
 })
 
 // ──────────────────────────────────────────────

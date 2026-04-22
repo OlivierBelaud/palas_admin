@@ -1,6 +1,8 @@
 // Manta SDK — HTTP client for CQRS endpoints
 // Handles context resolution, JWT injection, and response parsing.
 
+import type { RunResult, WorkflowRunSnapshot } from './workflow-types'
+
 export interface MantaClientOptions {
   /** Context name (e.g. 'admin', 'store'). Determines the API base path. */
   context: string
@@ -55,15 +57,95 @@ export class MantaClient {
     return res
   }
 
-  /** Execute a command (POST /api/{ctx}/command/{name}). */
-  async command<TInput = unknown, TOutput = unknown>(name: string, input: TInput): Promise<TOutput> {
+  /**
+   * Execute a command (POST /api/{ctx}/command/{name}).
+   *
+   * Returns the bare result for inline success.
+   * For async responses (HTTP 202), returns `undefined` — callers that care
+   * about the runId should use {@link runCommand} which returns a
+   * discriminated {@link RunResult} instead.
+   *
+   * Throws {@link MantaSDKError} on HTTP failure.
+   */
+  async command<TInput = unknown, TOutput = unknown>(name: string, input: TInput): Promise<TOutput | undefined> {
+    const run = await this.runCommand<TInput, TOutput>(name, input)
+    if (run.status === 'succeeded') return run.result
+    if (run.status === 'failed') throw run.error
+    // 'running' — inline-only callers can't wait; see runCommand for runId-aware usage.
+    return undefined
+  }
+
+  /**
+   * Execute a command and return the full {@link RunResult} envelope.
+   *
+   * See WORKFLOW_PROGRESS.md §6.1:
+   *  - `{ status: 'succeeded', result, runId? }` — workflow finished within the
+   *    300ms inline window (HTTP 200).
+   *  - `{ status: 'failed', error }`             — workflow failed inline.
+   *  - `{ status: 'running', runId }`            — workflow still running; poll
+   *    `GET /api/admin/_workflow/:runId` (HTTP 202).
+   *
+   * This method does NOT throw on inline failure — the error is returned as
+   * part of the discriminated union. Transport-level failures (network errors,
+   * non-JSON bodies) still throw.
+   */
+  async runCommand<TInput = unknown, TOutput = unknown>(name: string, input: TInput): Promise<RunResult<TOutput>> {
     const res = await this._fetch(`${this.basePath}/command/${name}`, {
       method: 'POST',
       body: JSON.stringify(input),
     })
-    const data = await res.json()
-    if (!res.ok) throw new MantaSDKError(data.type ?? 'ERROR', data.message ?? res.statusText, res.status)
-    return data.result ?? data.data ?? data
+    const body = await res.json()
+    if (!res.ok) {
+      return {
+        status: 'failed',
+        error: new MantaSDKError(body?.type ?? 'ERROR', body?.message ?? res.statusText, res.status),
+      }
+    }
+    // Envelope shapes (set by packages/cli/.../cqrs-routes.ts):
+    //   inline success: { data: { status: 'succeeded', result, runId } }
+    //                   OR legacy: { data: <bareResult> } for sync commands that
+    //                   didn't go through the workflow manager.
+    //   async:          { data: { runId, status: 'running', href } }
+    const envelope = body?.data
+    if (envelope && typeof envelope === 'object') {
+      const { status, result, runId } = envelope as { status?: string; result?: unknown; runId?: string }
+      if (status === 'succeeded') {
+        return { status: 'succeeded', result: result as TOutput, runId }
+      }
+      if (status === 'running' && typeof runId === 'string') {
+        return { status: 'running', runId }
+      }
+    }
+    // Legacy or unwrapped shape — treat `body.data` as the bare result.
+    return { status: 'succeeded', result: envelope as TOutput }
+  }
+
+  /**
+   * Fetch the merged snapshot for a workflow run.
+   * GET /api/admin/_workflow/:runId — see WORKFLOW_PROGRESS.md §6.5.
+   */
+  async getWorkflowRun(runId: string): Promise<WorkflowRunSnapshot> {
+    const res = await this._fetch(`${this._baseUrl}/api/admin/_workflow/${runId}`, { method: 'GET' })
+    const body = await res.json()
+    if (!res.ok) throw new MantaSDKError(body?.type ?? 'ERROR', body?.message ?? res.statusText, res.status)
+    return body?.data as WorkflowRunSnapshot
+  }
+
+  /**
+   * Request cancellation of a running workflow.
+   * DELETE /api/admin/_workflow/:runId — idempotent (server-side no-op on
+   * terminal runs). See WORKFLOW_PROGRESS.md §6.5.
+   */
+  async cancelWorkflowRun(runId: string): Promise<void> {
+    const res = await this._fetch(`${this._baseUrl}/api/admin/_workflow/${runId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}) as Record<string, unknown>)
+      throw new MantaSDKError(
+        (body as { type?: string })?.type ?? 'ERROR',
+        (body as { message?: string })?.message ?? res.statusText,
+        res.status,
+      )
+    }
   }
 
   /** Execute a named query (GET /api/{ctx}/{queryName}?params). */

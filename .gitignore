@@ -55,6 +55,7 @@ dist/
 # ── Environment ──
 .env
 .env.local
+.env.production
 .env.*.local
 .env.test
 
@@ -81,13 +82,6 @@ coverage/
 
 # ── Playwright ──
 .playwright-mcp/
-
-# Playwright runtime smoke
-tests/runtime/.state.json
-tests/runtime/playwright-report/
-tests/runtime/test-results/
-/test-results/
-/playwright-report/
 
 # ── Claude Code — entirely local, never committed ──
 .claude/

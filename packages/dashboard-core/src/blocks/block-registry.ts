@@ -2,6 +2,8 @@
 // Used by PageRenderer to resolve blocks from definePage() specs.
 
 import type { ComponentType } from 'react'
+import { CardBlock } from './Card'
+import { DataListBlock } from './DataList'
 import { DataTableBlock } from './DataTable'
 import { InfoCardBlock } from './InfoCard'
 import { MediaCardBlock } from './MediaCard'
@@ -10,6 +12,8 @@ import { RelationTableBlock } from './RelationTable'
 import { StatsCardBlock } from './StatsCard'
 
 const frameworkBlocks: Record<string, ComponentType<any>> = {
+  Card: CardBlock,
+  DataList: DataListBlock,
   DataTable: DataTableBlock,
   EntityTable: DataTableBlock, // alias for backward compat
   InfoCard: InfoCardBlock,
