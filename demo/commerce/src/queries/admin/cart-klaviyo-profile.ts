@@ -30,6 +30,7 @@ export default defineQuery({
             kind: 'HogQLQuery',
             query: `
               SELECT
+                kp.id,
                 kp.email, kp.first_name, kp.last_name,
                 JSONExtractString(kp.location, 'city') AS city,
                 JSONExtractString(kp.location, 'country') AS country,
@@ -53,6 +54,13 @@ export default defineQuery({
       data.columns.forEach((col, i) => {
         row[col] = data.results![0][i]
       })
+
+      // Klaviyo profile URL — resolved server-side.
+      const klaviyoId = row.id as string | undefined
+      if (klaviyoId) {
+        row.klaviyo_profile_url = `https://www.klaviyo.com/profile/${klaviyoId}`
+      }
+
       return row
     } catch (err) {
       log.warn(`[cart-klaviyo-profile] ${(err as Error).message}`)

@@ -31,6 +31,7 @@ export default defineQuery({
             kind: 'HogQLQuery',
             query: `
               SELECT
+                sc.id,
                 sc.first_name, sc.last_name, sc.number_of_orders,
                 JSONExtractString(sc.amount_spent, 'amount') AS lifetime_revenue,
                 sc.lifetime_duration,
@@ -53,6 +54,16 @@ export default defineQuery({
       data.columns.forEach((col, i) => {
         row[col] = data.results![0][i]
       })
+
+      // Shopify admin URL — resolved server-side so the dashboard link stays static.
+      // Numeric ID is the trailing segment of the GID `gid://shopify/Customer/<id>`.
+      const store = process.env.SHOPIFY_ADMIN_STORE ?? 'fancy-palas'
+      const gid = (row.id as string | undefined) ?? ''
+      const numericId = gid.split('/').pop() ?? ''
+      if (numericId) {
+        row.shopify_admin_url = `https://admin.shopify.com/store/${store}/customers/${numericId}`
+      }
+
       return row
     } catch (err) {
       log.warn(`[cart-shopify-customer] ${(err as Error).message}`)

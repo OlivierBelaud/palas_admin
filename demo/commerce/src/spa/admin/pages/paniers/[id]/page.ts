@@ -12,6 +12,43 @@ export default definePage({
   } as HeaderDef,
 
   main: [
+    // ── Résumé panier — articles + totaux dans une seule Card ─────────
+    {
+      type: 'Card',
+      title: 'Résumé',
+      children: [
+        {
+          type: 'DataList',
+          query: { graph: { entity: 'cart', fields: ['items', 'currency'] } },
+          itemsKey: 'items',
+          emptyLabel: 'Panier vide',
+          columns: [
+            {
+              key: 'title',
+              type: 'thumbnail',
+              thumbnailKey: 'image_url',
+              subKeys: ['sku', 'variant_title'],
+              width: 'minmax(0,1fr)',
+            },
+            { key: 'price', format: 'currency', width: 'minmax(80px,auto)', align: 'end' },
+            { key: 'quantity', format: 'number', suffix: 'x', width: 'minmax(40px,auto)', align: 'center' },
+            { key: 'line_price', format: 'currency', width: 'minmax(80px,auto)', align: 'end' },
+          ],
+        },
+        {
+          type: 'DataList',
+          density: 'compact',
+          dividers: false,
+          query: { name: 'cart-totals', input: { id: ':id' } },
+          emptyLabel: 'Totaux indisponibles',
+          columns: [
+            { key: 'label', width: 'minmax(0,1fr)' },
+            { key: 'value', format: 'currency', width: 'auto', align: 'end' },
+          ],
+        },
+      ],
+    },
+
     // ── Client Shopify — stats lifetime ───────────────────────────────
     {
       type: 'StatsCard',
@@ -29,8 +66,17 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Commandes Shopify',
+      card: true,
       pageSize: 5,
       query: { name: 'cart-shopify-orders', input: { id: ':id' } },
+      rowActions: [],
+      actions: [
+        {
+          label: 'Voir le client sur Shopify ↗',
+          kind: 'link',
+          source: { name: 'cart-shopify-customer', input: { id: ':id' }, field: 'shopify_admin_url' },
+        },
+      ],
       columns: [
         { key: 'order_name', label: 'Commande', format: 'highlight' },
         {
@@ -50,8 +96,22 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Timeline',
+      card: true,
       pageSize: 50,
       query: { name: 'cart-timeline', input: { id: ':id' } },
+      rowActions: [],
+      actions: [
+        {
+          label: 'Voir dans PostHog ↗',
+          kind: 'link',
+          source: { name: 'cart-header', input: { id: ':id' }, field: 'posthog_url' },
+        },
+        {
+          label: 'Voir dans Klaviyo ↗',
+          kind: 'link',
+          source: { name: 'cart-klaviyo-profile', input: { id: ':id' }, field: 'klaviyo_profile_url' },
+        },
+      ],
       columns: [
         {
           key: 'action',
@@ -97,6 +157,7 @@ export default definePage({
         {
           key: 'source',
           label: 'Source',
+          filterable: ['PostHog', 'Klaviyo'],
           format: { type: 'badge', values: { PostHog: 'blue', Klaviyo: 'purple' } },
         },
         { key: 'occurred_at', label: 'Date', format: { type: 'date', format: 'long' } },

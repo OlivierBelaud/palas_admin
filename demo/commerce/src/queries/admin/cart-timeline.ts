@@ -41,7 +41,14 @@ export default defineQuery({
                   e.timestamp AS occurred_at,
                   'PostHog' AS source,
                   JSONExtractString(e.properties, '$current_url') AS detail,
-                  JSONExtractFloat(e.properties, 'total_price') AS amount
+                  -- Some pixel events nest the cart under \`properties.cart\`, others
+                  -- put total_price at the top level. Falls back to NULL so the UI
+                  -- renders "—" instead of a misleading 0 when absent.
+                  CASE
+                    WHEN JSONHas(e.properties, 'total_price') THEN JSONExtractFloat(e.properties, 'total_price')
+                    WHEN JSONHas(e.properties, 'cart', 'total_price') THEN JSONExtractFloat(e.properties, 'cart', 'total_price')
+                    ELSE NULL
+                  END AS amount
                 FROM events e
                 WHERE ${safeDistinctId ? `e.distinct_id = '${safeDistinctId}'` : `person.properties.email = '${safeEmail}'`}
                   AND (e.event LIKE 'cart:%' OR e.event LIKE 'checkout:%')

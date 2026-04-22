@@ -8,14 +8,16 @@ export default defineQuery({
     const carts = await query.graph({
       entity: 'cart',
       filters: { id: input.id },
-      fields: ['email', 'distinct_id'],
+      fields: ['email', 'first_name', 'last_name', 'distinct_id'],
       pagination: { limit: 1 },
     })
 
     const cart = carts[0]
     if (!cart) return { title: 'Panier inconnu', posthog_url: '', posthog_label: '' }
 
-    const title = cart.email ?? cart.distinct_id ?? 'Anonyme'
+    // Prefer "Prénom Nom" when available; fall back to email, then PostHog ID.
+    const fullName = [cart.first_name, cart.last_name].filter(Boolean).join(' ').trim()
+    const title = fullName || cart.email || cart.distinct_id || 'Anonyme'
     const posthogUrl = cart.distinct_id
       ? `https://eu.posthog.com/project/153280/person/${encodeURIComponent(cart.distinct_id)}`
       : ''

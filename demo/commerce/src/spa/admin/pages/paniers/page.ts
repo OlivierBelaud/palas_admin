@@ -42,6 +42,7 @@ export default definePage({
         {
           key: 'highest_stage',
           label: 'Étape max',
+          filterable: ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'],
           format: {
             type: 'badge',
             values: {
@@ -59,6 +60,17 @@ export default definePage({
           label: 'Date',
           format: { type: 'date', format: 'long' },
           sortable: true,
+        },
+      ],
+      filters: [
+        {
+          key: 'email',
+          label: 'Client',
+          type: 'select',
+          options: [
+            { label: 'Défini', value: '__notnull' },
+            { label: 'Anonyme', value: '__null' },
+          ],
         },
       ],
       searchable: true,
