@@ -26,6 +26,25 @@ interface OrderStats {
 const CACHE_TTL_OK = 600
 const CACHE_TTL_TRANSIENT = 60
 
+/**
+ * Origin allow-list with subdomain wildcard support.
+ * Each entry is either an exact origin (`https://fancypalas.com`) or a subdomain
+ * wildcard (`https://*.fancypalas.com`). A wildcard matches both the apex host
+ * and any single subdomain: `https://fancypalas.com`, `https://uk.fancypalas.com`,
+ * `https://www.fancypalas.com`. It does NOT match `https://evilfancypalas.com`.
+ */
+function isOriginAllowed(origin: string, patterns: string[]): boolean {
+  for (const p of patterns) {
+    if (p === origin) return true
+    const m = p.match(/^(https?:\/\/)\*\.(.+)$/)
+    if (!m) continue
+    const [, scheme, rootHost] = m
+    if (origin === `${scheme}${rootHost}`) return true
+    if (origin.startsWith(scheme) && origin.slice(scheme.length).endsWith(`.${rootHost}`)) return true
+  }
+  return false
+}
+
 function corsHeaders(origin: string | null): Record<string, string> {
   const allowed = (process.env.ALLOWED_CORS_ORIGIN ?? '')
     .split(',')
@@ -39,7 +58,7 @@ function corsHeaders(origin: string | null): Record<string, string> {
     Vary: 'Origin',
     'Cache-Control': 'private, no-store',
   }
-  if (origin && allowed.includes(origin)) {
+  if (origin && isOriginAllowed(origin, allowed)) {
     headers['Access-Control-Allow-Origin'] = origin
   }
   return headers
