@@ -213,25 +213,76 @@ export default defineCommand({
         const emailMap = await resolveEmailsBatch()
         log.info(`[rebuildCarts] Identity map: ${emailMap.size} distinct_id → email pairs from PostHog`)
 
-        // Wipe cart snapshot tables. The durable event log is the source of
-        // truth — this just tears down the derived view so we can rebuild it.
-        await db.raw('DELETE FROM cart_events')
-        await db.raw('DELETE FROM carts')
-        log.info('[rebuildCarts] Snapshot tables wiped')
+        // Resume state for ctx.yield continuations. On first invocation
+        // `ctx.resumeState` is undefined → start fresh. On re-entry after a
+        // yield it's `{ lastTs, lastUuid, rebuilt, skipped, errors,
+        // identitiesRecovered, done, wiped }`.
+        interface ReplayResume {
+          lastTs: string | null
+          lastUuid: string | null
+          rebuilt: number
+          skipped: number
+          errors: number
+          identitiesRecovered: number
+          done: number
+          wiped: boolean
+        }
+        const resume = (ctx.resumeState as ReplayResume | undefined) ?? {
+          lastTs: null,
+          lastUuid: null,
+          rebuilt: 0,
+          skipped: 0,
+          errors: 0,
+          identitiesRecovered: 0,
+          done: 0,
+          wiped: false,
+        }
 
-        let rebuilt = 0
-        let skipped = 0
-        let errors = 0
-        let identitiesRecovered = 0
-        let done = 0
+        // Wipe cart snapshot tables ONLY on the first invocation. The durable
+        // event log is the source of truth — this just tears down the derived
+        // view so we can rebuild it. On resume, the already-rebuilt carts
+        // from prior slices stay as-is and we continue appending.
+        if (!resume.wiped) {
+          await db.raw('DELETE FROM cart_events')
+          await db.raw('DELETE FROM carts')
+          log.info('[rebuildCarts] Snapshot tables wiped')
+          resume.wiped = true
+        } else {
+          log.info(`[rebuildCarts] Resuming from cursor (ts=${resume.lastTs ?? 'genesis'}, done=${resume.done})`)
+        }
+
+        // Budget: on serverless (Vercel Hobby = 10s cap), ctx.budgetMs is set
+        // by the framework (7s typical). We yield before hitting it so the
+        // host doesn't kill us mid-write. On long-running Node, budget is
+        // Infinity and the loop runs until complete.
+        const budgetMs = ctx.budgetMs ?? Number.POSITIVE_INFINITY
+        const sliceDeadline = Date.now() + budgetMs
+
+        let { lastTs, lastUuid, rebuilt, skipped, errors, identitiesRecovered, done } = resume
 
         // Keyset-paginate through the entire event log in timestamp order.
         // `event_timestamp` is indexed; posthog_uuid is the tiebreaker.
-        let lastTs: string | null = null
-        let lastUuid: string | null = null
         while (true) {
           if (ctx.signal?.aborted) {
             throw new MantaError('CONFLICT', 'Cancelled during replay', { code: 'WORKFLOW_CANCELLED' })
+          }
+          // Yield before budget expires so the next page starts in a fresh
+          // invocation. Checked between pages so we never abandon a page
+          // half-processed.
+          if (Date.now() > sliceDeadline && ctx.yield) {
+            log.info(
+              `[rebuildCarts] Budget hit — yielding at ${done}/${input.total} (ts=${lastTs}) for serverless continuation`,
+            )
+            ctx.yield({
+              lastTs,
+              lastUuid,
+              rebuilt,
+              skipped,
+              errors,
+              identitiesRecovered,
+              done,
+              wiped: true,
+            } satisfies ReplayResume)
           }
           const params: unknown[] = [LOG_READ_BATCH]
           let where = ''
