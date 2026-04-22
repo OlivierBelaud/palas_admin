@@ -15,7 +15,7 @@ import type {
 } from '@manta/core'
 import { workflowRuns } from '@manta/core/db'
 import { MantaError } from '@manta/core/errors'
-import { and, eq, isNull, lt, notInArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, notInArray, sql } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 
 const TERMINAL_STATUSES: WorkflowStatus[] = ['succeeded', 'failed', 'cancelled']
@@ -140,10 +140,14 @@ export class DrizzleWorkflowStore implements IWorkflowStorePort {
 
   async listOrphans(opts: { olderThan: Date; limit?: number }): Promise<WorkflowRun[]> {
     const limit = opts.limit ?? 50
+    // Workflows live as 'pending' from `store.create` through every step until
+    // a terminal `updateStatus`. A host killed mid-run (serverless timeout,
+    // crash) leaves the row frozen at 'pending' — we must reap those too, not
+    // just 'running', otherwise the UI polls forever. WP-F04 + hotfix.
     const rows = await this._db
       .select()
       .from(workflowRuns)
-      .where(and(eq(workflowRuns.status, 'running'), lt(workflowRuns.heartbeat_at, opts.olderThan)))
+      .where(and(inArray(workflowRuns.status, ['pending', 'running']), lt(workflowRuns.heartbeat_at, opts.olderThan)))
       .limit(limit)
 
     return rows.map((row) => ({
@@ -161,9 +165,10 @@ export class DrizzleWorkflowStore implements IWorkflowStorePort {
   }
 
   async markOrphanFailed(runId: string, error: WorkflowError): Promise<void> {
-    // Idempotent: the WHERE clause constrains the update to status='running' rows.
-    // If the run is already terminal (succeeded/failed/cancelled), no rows are
-    // touched — no error is raised, matching the contract in IWorkflowStorePort.
+    // Idempotent: only flips runs still in a pre-terminal state. If the run
+    // already reached succeeded/failed/cancelled, no rows are touched — matches
+    // the contract in IWorkflowStorePort. Both 'pending' and 'running' are
+    // pre-terminal (see listOrphans for the rationale).
     await this._db
       .update(workflowRuns)
       .set({
@@ -171,6 +176,6 @@ export class DrizzleWorkflowStore implements IWorkflowStorePort {
         error: error as unknown as Record<string, unknown>,
         completed_at: sql`NOW()`,
       })
-      .where(and(eq(workflowRuns.id, runId), eq(workflowRuns.status, 'running')))
+      .where(and(eq(workflowRuns.id, runId), inArray(workflowRuns.status, ['pending', 'running'])))
   }
 }

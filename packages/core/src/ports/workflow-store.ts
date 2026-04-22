@@ -95,17 +95,20 @@ export interface IWorkflowStorePort {
   get(runId: string): Promise<WorkflowRun | null>
 
   /**
-   * List runs that are status='running' with heartbeat_at older than the threshold.
-   * Used by the orphan-reaper job on serverless hosts (WP-F04). The host no longer
-   * has the process alive — the reaper marks the run failed so it stops being
-   * reported as running indefinitely.
+   * List runs in a pre-terminal state ('pending' or 'running') with
+   * heartbeat_at older than the threshold. Used by the orphan-reaper job on
+   * serverless hosts (WP-F04): the host is no longer alive so the reaper
+   * flips the run to failed. Covers both statuses because workflows live as
+   * 'pending' from create() through every step until a terminal updateStatus;
+   * a crash before the first step leaves the row frozen at 'pending'.
    */
   listOrphans(opts: { olderThan: Date; limit?: number }): Promise<WorkflowRun[]>
 
   /**
    * Mark a run as failed because its host disappeared (WP-F04). Sets status='failed',
-   * error, and completed_at. Idempotent on non-running rows — a row that is already
-   * terminal (succeeded/failed/cancelled) is not touched.
+   * error, and completed_at. Idempotent on terminal rows — a row already
+   * succeeded/failed/cancelled is not touched. Flips both 'pending' and
+   * 'running' (see listOrphans for the rationale).
    */
   markOrphanFailed(runId: string, error: WorkflowError): Promise<void>
 }
