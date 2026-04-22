@@ -30,8 +30,9 @@
 // live subscriber share the exact same read semantics (v2 unified schema +
 // v1 legacy fallback). Never inspect `evt.properties` directly here.
 
-import { applyEvent, type PosthogEvent, type RawDb } from '../../modules/cart-tracking/apply-event'
+import { type PosthogEvent, type RawDb, SPAM_EMAIL_RE, STAGES } from '../../modules/cart-tracking/apply-event'
 import { enrichEventWithEmail, resolveEmailsBatch } from '../../modules/cart-tracking/identity-resolver'
+import { normalizeCartEvent } from '../../modules/cart-tracking/posthog-adapter'
 
 const POSTHOG_PAGE_SIZE = 1000
 const LOG_INSERT_BATCH = 200 // rows per multi-values INSERT — keeps payload well under Neon's 64 MB cap
@@ -190,7 +191,20 @@ export default defineCommand({
       },
     })
 
-    // ── Step 2: replay-events — apply events to carts table ────────
+    // ── Step 2: replay-events — in-memory fold + bulk UPSERT ───────
+    //
+    // Why bulk: on serverless (Vercel ↔ Neon) per-event SQL is dominated by
+    // ~80ms network roundtrips. 3–4k events × 3 queries/event = 1000s, busts
+    // every timeout. Folding all events in memory first, then emitting ONE
+    // INSERT per ~100 carts, cuts the real work to a handful of seconds and
+    // keeps us well inside a single lambda invocation.
+    //
+    // Correctness: we replicate the exact merge semantics of
+    // `src/modules/cart-tracking/apply-event.ts` (wipe + fold in timestamp
+    // order, skip signal-free carts on first event, keep earliest non-null
+    // identity fields, take latest `cart_has_payload` snapshot, highest
+    // stage never decreases, status=completed only on checkout:completed).
+    // Kept inline so the subscriber's per-event path stays untouched.
     const replayEvents = step.action('replay-events', {
       invoke: async (
         input: { total: number; newlyInserted: number },
@@ -204,141 +218,83 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database')
 
-        // Identity recovery — single HogQL query returning every known
-        // distinct_id → person.properties.email pair for cart/checkout events.
-        // PostHog's person_id_override_properties_on_events is best-effort; a
-        // substantial fraction of cart events land with an empty $set but a
-        // resolvable Person. We backfill here so the snapshot has the owner.
         ctx.progress?.(0, input.total, 'Resolving PostHog person identities...')
         const emailMap = await resolveEmailsBatch()
         log.info(`[rebuildCarts] Identity map: ${emailMap.size} distinct_id → email pairs from PostHog`)
 
-        // Resume state for ctx.yield continuations. On first invocation
-        // `ctx.resumeState` is undefined → start fresh. On re-entry after a
-        // yield it's `{ lastTs, lastUuid, rebuilt, skipped, errors,
-        // identitiesRecovered, done, wiped }`.
-        interface ReplayResume {
-          lastTs: string | null
-          lastUuid: string | null
-          rebuilt: number
-          skipped: number
-          errors: number
-          identitiesRecovered: number
-          done: number
-          wiped: boolean
-        }
-        const resume = (ctx.resumeState as ReplayResume | undefined) ?? {
-          lastTs: null,
-          lastUuid: null,
-          rebuilt: 0,
-          skipped: 0,
-          errors: 0,
-          identitiesRecovered: 0,
-          done: 0,
-          wiped: false,
-        }
+        // Load the whole log in one shot. For ~4k events at ~5KB each this is
+        // ~20MB — fits easily in a Vercel function. If the log ever approaches
+        // hundreds of MB we revisit and page (ctx.yield is ready for it).
+        ctx.progress?.(0, input.total, `Loading ${input.total} events from log...`)
+        const rows = await db.raw<{
+          posthog_uuid: string
+          event_name: string
+          distinct_id: string | null
+          event_timestamp: Date
+          properties: Record<string, unknown> | string
+        }>(
+          `SELECT posthog_uuid, event_name, distinct_id, event_timestamp, properties
+             FROM posthog_event_log
+            ORDER BY event_timestamp ASC, posthog_uuid ASC`,
+        )
+        log.info(`[rebuildCarts] Loaded ${rows.length} events from log`)
 
-        // Wipe cart snapshot tables ONLY on the first invocation. The durable
-        // event log is the source of truth — this just tears down the derived
-        // view so we can rebuild it. On resume, the already-rebuilt carts
-        // from prior slices stay as-is and we continue appending.
-        if (!resume.wiped) {
-          await db.raw('DELETE FROM cart_events')
-          await db.raw('DELETE FROM carts')
-          log.info('[rebuildCarts] Snapshot tables wiped')
-          resume.wiped = true
-        } else {
-          log.info(`[rebuildCarts] Resuming from cursor (ts=${resume.lastTs ?? 'genesis'}, done=${resume.done})`)
-        }
+        ctx.progress?.(0, input.total, `Folding ${rows.length} events in memory...`)
+        const carts = new Map<string, CartAccumulator>()
+        const tokenByDistinctId = new Map<string, string>()
+        let skipped = 0
+        let errors = 0
+        let identitiesRecovered = 0
+        let done = 0
 
-        // Budget: on serverless (Vercel Hobby = 10s cap), ctx.budgetMs is set
-        // by the framework (7s typical). We yield before hitting it so the
-        // host doesn't kill us mid-write. On long-running Node, budget is
-        // Infinity and the loop runs until complete.
-        const budgetMs = ctx.budgetMs ?? Number.POSITIVE_INFINITY
-        const sliceDeadline = Date.now() + budgetMs
-
-        let { lastTs, lastUuid, rebuilt, skipped, errors, identitiesRecovered, done } = resume
-
-        // Keyset-paginate through the entire event log in timestamp order.
-        // `event_timestamp` is indexed; posthog_uuid is the tiebreaker.
-        while (true) {
-          if (ctx.signal?.aborted) {
-            throw new MantaError('CONFLICT', 'Cancelled during replay', { code: 'WORKFLOW_CANCELLED' })
+        for (const row of rows) {
+          // postgres.js with `prepare: false` returns JSONB as raw string.
+          const parsedProps =
+            typeof row.properties === 'string'
+              ? (JSON.parse(row.properties) as Record<string, unknown>)
+              : ((row.properties ?? {}) as Record<string, unknown>)
+          const evt: PosthogEvent = {
+            uuid: row.posthog_uuid,
+            event: row.event_name,
+            distinct_id: row.distinct_id,
+            timestamp:
+              row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp),
+            properties: parsedProps,
           }
-          // Yield before budget expires so the next page starts in a fresh
-          // invocation. Checked between pages so we never abandon a page
-          // half-processed.
-          if (Date.now() > sliceDeadline && ctx.yield) {
-            log.info(
-              `[rebuildCarts] Budget hit — yielding at ${done}/${input.total} (ts=${lastTs}) for serverless continuation`,
-            )
-            ctx.yield({
-              lastTs,
-              lastUuid,
-              rebuilt,
-              skipped,
-              errors,
-              identitiesRecovered,
-              done,
-              wiped: true,
-            } satisfies ReplayResume)
+          if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
+          try {
+            const outcome = foldCartEvent(evt, carts, tokenByDistinctId)
+            if (outcome === 'skipped') skipped += 1
+          } catch (err) {
+            if (errors < 10) log.warn(`[rebuildCarts] fold error on ${evt.event}: ${(err as Error).message}`)
+            errors += 1
           }
-          const params: unknown[] = [LOG_READ_BATCH]
-          let where = ''
-          if (lastTs !== null && lastUuid !== null) {
-            where = ' WHERE (event_timestamp, posthog_uuid) > ($2::timestamptz, $3)'
-            params.push(lastTs, lastUuid)
-          }
-          const page = await db.raw<{
-            posthog_uuid: string
-            event_name: string
-            distinct_id: string | null
-            event_timestamp: Date
-            // JSONB: parsed object when the driver decodes it, raw string when
-            // `prepare: false` is set on postgres.js (Neon pooler config).
-            properties: Record<string, unknown> | string
-          }>(
-            `SELECT posthog_uuid, event_name, distinct_id, event_timestamp, properties
-               FROM posthog_event_log${where}
-              ORDER BY event_timestamp ASC, posthog_uuid ASC
-              LIMIT $1`,
-            params,
-          )
-          if (page.length === 0) break
-
-          for (const row of page) {
-            // Some Postgres driver configs (Neon pooler + `prepare: false`)
-            // return JSONB columns as raw strings instead of parsed objects.
-            // `enrichEventWithEmail` mutates `properties.$set` and will crash
-            // on a string — parse defensively here.
-            const parsedProps =
-              typeof row.properties === 'string'
-                ? (JSON.parse(row.properties) as Record<string, unknown>)
-                : ((row.properties ?? {}) as Record<string, unknown>)
-            const evt: PosthogEvent = {
-              uuid: row.posthog_uuid,
-              event: row.event_name,
-              distinct_id: row.distinct_id,
-              timestamp:
-                row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp),
-              properties: parsedProps,
-            }
-            if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
-            const outcome = await applyEvent(db, evt, log, errors)
-            if (outcome === 'rebuilt') rebuilt += 1
-            else if (outcome === 'skipped') skipped += 1
-            else errors += 1
-            lastTs = evt.timestamp
-            lastUuid = evt.uuid ?? row.posthog_uuid
-            done += 1
-          }
-
-          ctx.progress?.(done, input.total, `Replayed ${done}/${input.total} events`)
+          done += 1
+          if (done % 500 === 0) ctx.progress?.(done, input.total, `Folded ${done}/${input.total}`)
         }
+        log.info(
+          `[rebuildCarts] Fold done — carts=${carts.size} skipped=${skipped} errors=${errors} identities_recovered=${identitiesRecovered}`,
+        )
 
-        log.info(`[rebuildCarts] Enriched ${identitiesRecovered} events with recovered email`)
-        return { rebuilt, skipped, errors, identities_recovered: identitiesRecovered }
+        // Wipe + bulk insert. Order: wipe FIRST so a partial crash leaves an
+        // empty snapshot (admin shows zero carts, clear signal) rather than a
+        // stale half-populated one.
+        await db.raw('DELETE FROM cart_events')
+        await db.raw('DELETE FROM carts')
+        log.info('[rebuildCarts] Snapshot tables wiped')
+
+        const cartArray = Array.from(carts.values())
+        const BULK_CHUNK = 100
+        let inserted = 0
+        for (let i = 0; i < cartArray.length; i += BULK_CHUNK) {
+          const chunk = cartArray.slice(i, i + BULK_CHUNK)
+          await bulkInsertCarts(db, chunk)
+          inserted += chunk.length
+          ctx.progress?.(inserted, cartArray.length, `Wrote ${inserted}/${cartArray.length} carts`)
+        }
+        log.info(`[rebuildCarts] Inserted ${inserted} carts in ${Math.ceil(cartArray.length / BULK_CHUNK)} batches`)
+
+        return { rebuilt: cartArray.length, skipped, errors, identities_recovered: identitiesRecovered }
       },
       compensate: async (output) => {
         // Destructive by design — cannot roll back wiped + rebuilt carts (WP-F13).
@@ -385,3 +341,254 @@ export default defineCommand({
     return result
   },
 })
+
+// ─── Bulk replay helpers ────────────────────────────────────────────────
+//
+// In-memory fold + bulk UPSERT for the rebuildCarts replay step. Mirrors
+// apply-event.ts semantics but avoids per-event SQL roundtrips.
+
+interface CartAccumulator {
+  cart_token: string
+  distinct_id: string | null
+  email: string | null
+  first_name: string | null
+  last_name: string | null
+  phone: string | null
+  city: string | null
+  country_code: string | null
+  shopify_customer_id: string | null
+  items: unknown[]
+  total_price: number
+  item_count: number
+  currency: string
+  last_action: string
+  last_action_at: string
+  highest_stage: (typeof STAGES)[number]
+  status: string
+  checkout_token: string | null
+  shopify_order_id: string | null
+  is_first_order: boolean | null
+  shipping_method: string | null
+  shipping_price: number | null
+  discounts_amount: number | null
+  subtotal_price: number | null
+  total_tax: number | null
+}
+
+function actionToStage(action: string): (typeof STAGES)[number] {
+  if (action.startsWith('cart:')) return 'cart'
+  if (action === 'checkout:started') return 'checkout_started'
+  if (action === 'checkout:payment_info_submitted') return 'payment_attempted'
+  if (action === 'checkout:completed') return 'completed'
+  return 'checkout_engaged'
+}
+
+function firstNonNull<T>(existing: T | null | undefined, incoming: T | null | undefined): T | null {
+  if (existing !== null && existing !== undefined) return existing
+  if (incoming !== null && incoming !== undefined) return incoming
+  return null
+}
+
+/**
+ * Fold one event into the cart accumulator Map. Returns 'skipped' when the
+ * event carries no cart token / is spam / would have created a fresh
+ * signal-free cart. Throws on unexpected shapes so the caller can count
+ * errors and keep going.
+ *
+ * Correctness mirrors apply-event.ts:
+ *  - cart_token match first; distinct_id fallback used only to REDIRECT a
+ *    new cart_token to an existing accumulator (Shopify v1 quirk where
+ *    checkout:* uses checkout_token as cart_token).
+ *  - highest_stage is monotonic.
+ *  - status becomes 'completed' only on checkout:completed.
+ *  - items/total_price/currency/item_count from events with cart_has_payload
+ *    overwrite; other events preserve the previous snapshot.
+ *  - Identity fields (email, first_name, etc.) use first-seen non-null.
+ */
+function foldCartEvent(
+  evt: PosthogEvent,
+  carts: Map<string, CartAccumulator>,
+  tokenByDistinctId: Map<string, string>,
+): 'folded' | 'skipped' {
+  const n = normalizeCartEvent(evt)
+  if (!n) return 'skipped'
+  if (n.email && SPAM_EMAIL_RE.test(n.email)) return 'skipped'
+
+  // Canonical token resolution — redirect to the existing accumulator via
+  // distinct_id if the incoming cart_token doesn't match any known cart yet.
+  let token = n.cart_token
+  if (!carts.has(token) && n.distinct_id) {
+    const canonical = tokenByDistinctId.get(n.distinct_id)
+    if (canonical && carts.has(canonical)) token = canonical
+  }
+
+  const existing = carts.get(token)
+  const newStage = actionToStage(n.event)
+
+  if (!existing) {
+    // First event for this token — require a purchase signal to avoid
+    // polluting the carts table with cart:viewed on empty pages.
+    const hasSignal = n.cart_has_payload && (n.items.length > 0 || n.total_price > 0)
+    if (!hasSignal) return 'skipped'
+    const acc: CartAccumulator = {
+      cart_token: token,
+      distinct_id: n.distinct_id ?? null,
+      email: n.email ?? null,
+      first_name: n.first_name ?? null,
+      last_name: n.last_name ?? null,
+      phone: n.phone ?? null,
+      city: n.city ?? null,
+      country_code: n.country_code ?? null,
+      shopify_customer_id: n.shopify_customer_id ?? null,
+      items: n.cart_has_payload ? n.items : [],
+      total_price: n.cart_has_payload ? n.total_price : 0,
+      item_count: n.cart_has_payload ? n.item_count : 0,
+      currency: n.cart_has_payload ? n.currency : 'EUR',
+      last_action: n.event,
+      last_action_at: n.occurred_at,
+      highest_stage: newStage,
+      status: n.event === 'checkout:completed' ? 'completed' : 'active',
+      checkout_token: n.checkout_token ?? null,
+      shopify_order_id: n.shopify_order_id ?? null,
+      is_first_order: n.is_first_order ?? null,
+      shipping_method: n.shipping_method ?? null,
+      shipping_price: n.shipping_price ?? null,
+      discounts_amount: n.discounts_amount ?? null,
+      subtotal_price: n.subtotal_price ?? null,
+      total_tax: n.total_tax ?? null,
+    }
+    carts.set(token, acc)
+    if (n.distinct_id) tokenByDistinctId.set(n.distinct_id, token)
+    return 'folded'
+  }
+
+  // Monotonic stage
+  const curIdx = STAGES.indexOf(existing.highest_stage)
+  const newIdx = STAGES.indexOf(newStage)
+  if (newIdx > curIdx) existing.highest_stage = newStage
+
+  // Completed sticks; otherwise keep whatever status we already had
+  if (n.event === 'checkout:completed') existing.status = 'completed'
+
+  // Identity — first-seen wins so later "anonymous" events don't clobber
+  // values we already collected.
+  existing.distinct_id = firstNonNull(existing.distinct_id, n.distinct_id)
+  existing.email = firstNonNull(existing.email, n.email)
+  existing.first_name = firstNonNull(existing.first_name, n.first_name)
+  existing.last_name = firstNonNull(existing.last_name, n.last_name)
+  existing.phone = firstNonNull(existing.phone, n.phone)
+  existing.city = firstNonNull(existing.city, n.city)
+  existing.country_code = firstNonNull(existing.country_code, n.country_code)
+  existing.shopify_customer_id = firstNonNull(existing.shopify_customer_id, n.shopify_customer_id)
+
+  // Cart state — only events that carry a payload overwrite totals/items.
+  if (n.cart_has_payload) {
+    existing.items = n.items
+    existing.total_price = n.total_price
+    existing.item_count = n.item_count
+    existing.currency = n.currency
+  }
+
+  // Checkout details — first-seen non-null wins (same reasoning as identity)
+  existing.checkout_token = firstNonNull(existing.checkout_token, n.checkout_token)
+  existing.shopify_order_id = firstNonNull(existing.shopify_order_id, n.shopify_order_id)
+  existing.is_first_order = firstNonNull(existing.is_first_order, n.is_first_order)
+  existing.shipping_method = firstNonNull(existing.shipping_method, n.shipping_method)
+  existing.shipping_price = firstNonNull(existing.shipping_price, n.shipping_price)
+  existing.discounts_amount = firstNonNull(existing.discounts_amount, n.discounts_amount)
+  existing.subtotal_price = firstNonNull(existing.subtotal_price, n.subtotal_price)
+  existing.total_tax = firstNonNull(existing.total_tax, n.total_tax)
+
+  // Last action always the most recent event seen (events arrive in ts order)
+  existing.last_action = n.event
+  existing.last_action_at = n.occurred_at
+
+  // Register distinct_id → token mapping so future events with a new token
+  // but same distinct_id (v1 legacy) route back here.
+  if (n.distinct_id && !tokenByDistinctId.has(n.distinct_id)) {
+    tokenByDistinctId.set(n.distinct_id, token)
+  }
+
+  return 'folded'
+}
+
+const CART_COLUMNS = [
+  'cart_token',
+  'distinct_id',
+  'email',
+  'first_name',
+  'last_name',
+  'phone',
+  'city',
+  'country_code',
+  'shopify_customer_id',
+  'items',
+  'total_price',
+  'item_count',
+  'currency',
+  'last_action',
+  'last_action_at',
+  'highest_stage',
+  'status',
+  'checkout_token',
+  'shopify_order_id',
+  'is_first_order',
+  'shipping_method',
+  'shipping_price',
+  'discounts_amount',
+  'subtotal_price',
+  'total_tax',
+] as const
+
+/**
+ * Single multi-row INSERT: `INSERT INTO carts (id, ...) VALUES
+ * (gen_random_uuid(), $1, $2, ..., $N::jsonb, ...), (..., ...), ...`.
+ * `items` is jsonb, everything else is plain scalar. `created_at` and
+ * `updated_at` default to NOW() via the table schema.
+ */
+async function bulkInsertCarts(db: RawDb, carts: CartAccumulator[]): Promise<void> {
+  if (carts.length === 0) return
+  const valuesPerRow = CART_COLUMNS.length // 25 scalars per row
+  const placeholders: string[] = []
+  const params: unknown[] = []
+  for (let row = 0; row < carts.length; row += 1) {
+    const base = row * valuesPerRow
+    const slots: string[] = []
+    for (let col = 0; col < valuesPerRow; col += 1) {
+      const idx = base + col + 1
+      // items column → jsonb; everything else plain
+      slots.push(CART_COLUMNS[col] === 'items' ? `$${idx}::jsonb` : `$${idx}`)
+    }
+    placeholders.push(`(gen_random_uuid(), ${slots.join(', ')}, NOW(), NOW())`)
+    const c = carts[row]
+    params.push(
+      c.cart_token,
+      c.distinct_id,
+      c.email,
+      c.first_name,
+      c.last_name,
+      c.phone,
+      c.city,
+      c.country_code,
+      c.shopify_customer_id,
+      JSON.stringify(c.items ?? []),
+      c.total_price ?? 0,
+      c.item_count ?? 0,
+      c.currency ?? 'EUR',
+      c.last_action,
+      c.last_action_at,
+      c.highest_stage,
+      c.status,
+      c.checkout_token,
+      c.shopify_order_id,
+      c.is_first_order,
+      c.shipping_method,
+      c.shipping_price,
+      c.discounts_amount,
+      c.subtotal_price,
+      c.total_tax,
+    )
+  }
+  const sql = `INSERT INTO carts (id, ${CART_COLUMNS.join(', ')}, created_at, updated_at) VALUES ${placeholders.join(', ')}`
+  await db.raw(sql, params)
+}
