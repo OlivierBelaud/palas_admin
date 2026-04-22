@@ -8,8 +8,16 @@ import {
   generateIntraModuleRelations,
   generateLinkRelations,
 } from '@manta/adapter-database-pg'
-import type { IProgressChannelPort, IWorkflowStorePort, WorkflowStorage } from '@manta/core'
-import { getRegisteredLinks, MantaError, parseDmlEntity, QueryService, toCamel, WorkflowManager } from '@manta/core'
+import type { IProgressChannelPort, IQueuePort, IWorkflowStorePort, WorkflowStorage } from '@manta/core'
+import {
+  getRegisteredLinks,
+  InMemoryQueueAdapter,
+  MantaError,
+  parseDmlEntity,
+  QueryService,
+  toCamel,
+  WorkflowManager,
+} from '@manta/core'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 import { entityToTableKey, isDmlEntity } from '../../bootstrap-helpers'
 
@@ -34,6 +42,54 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
     const wfStorageInstance = infraMap.get('IWorkflowStoragePort') as WorkflowStorage | undefined
     const wfStoreInstance = infraMap.get('IWorkflowStorePort') as IWorkflowStorePort | undefined
     const progressChannelInstance = infraMap.get('IProgressChannelPort') as IProgressChannelPort | undefined
+    // Queue adapter for serverless continuations (WORKFLOW_PROGRESS addendum —
+    // ctx.yield). Resolution order:
+    //   1. Explicit `IQueuePort` registered by init-infra (future QStash wiring)
+    //   2. `InMemoryQueueAdapter` fallback — fire-and-forget fetch to self,
+    //      fine for a long-running Node host, NOT for serverless cold-starts
+    //      (messages are lost if the process dies).
+    // Stash it on ctx so wire-workflow-routes.ts can re-use the same adapter
+    // for the `/resume` handler.
+    // Queue resolution:
+    //   1. explicit IQueuePort registered by init-infra (e.g. user-wired)
+    //   2. QStash if QSTASH_TOKEN + QSTASH_URL are set (prod / Vercel Upstash integration)
+    //   3. InMemoryQueueAdapter fallback (dev / long-running Node)
+    let queueInstance = infraMap.get('IQueuePort') as IQueuePort | undefined
+    if (!queueInstance && process.env.QSTASH_TOKEN && process.env.QSTASH_URL) {
+      try {
+        const { QStashQueueAdapter } = await import('@manta/adapter-queue-qstash')
+        queueInstance = new QStashQueueAdapter({
+          url: process.env.QSTASH_URL,
+          token: process.env.QSTASH_TOKEN,
+          logger: {
+            warn: (m: string) => logger.warn(m),
+            error: (m: string, err: unknown) => logger.error(m, err),
+          },
+        })
+        logger.info('[workflow] Queue adapter: QStash (Upstash)')
+      } catch (err) {
+        logger.warn(`[workflow] QStash adapter failed to load: ${(err as Error).message} — falling back to in-memory`)
+      }
+    }
+    if (!queueInstance) {
+      queueInstance = new InMemoryQueueAdapter({
+        logger: {
+          warn: (m: string) => logger.warn(m),
+          error: (m: string, err: unknown) => logger.error(m, err),
+        },
+      })
+      logger.info('[workflow] Queue adapter: InMemoryQueueAdapter (dev / no QStash configured)')
+    }
+    const baseUrl = process.env.MANTA_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+    const resumeEndpoint = (runId: string) => `${baseUrl}/api/admin/_workflow/${runId}/resume`
+    // Serverless time budget: on Vercel Hobby a function caps at 10s, so we
+    // give steps 7s before they should yield (3s safety for TCP + response).
+    // Detect Vercel via env; leave undefined otherwise so long-running Node
+    // hosts don't force steps to yield unnecessarily.
+    const stepBudgetMs = process.env.VERCEL ? 7_000 : undefined
+    ctx.workflowQueue = queueInstance
+    ctx.workflowResumeEndpoint = resumeEndpoint
+    ctx.workflowStepBudgetMs = stepBudgetMs
     // 300ms short-circuit: the callable awaits the workflow up to 300ms. If it
     // finishes fast → return the inline envelope. Otherwise → return
     // { runId, status: 'running' } immediately while the workflow continues in
@@ -59,6 +115,9 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
             storage: wfStorageInstance,
             store: wfStoreInstance,
             progressChannel: progressChannelInstance,
+            queue: queueInstance,
+            resumeEndpoint,
+            stepBudgetMs,
           })
           wm.register({ name: `cmd:${entry.name}`, fn: entry.workflow })
 

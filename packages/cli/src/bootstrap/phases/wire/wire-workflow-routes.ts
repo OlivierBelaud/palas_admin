@@ -12,11 +12,12 @@
 //                                     one is wired, so running WorkflowManager
 //                                     subscriptions abort immediately.
 
-import type { IEventBusPort, IProgressChannelPort, IWorkflowStorePort } from '@manta/core'
+import type { IEventBusPort, IProgressChannelPort, IWorkflowStorePort, WorkflowStorage } from '@manta/core'
+import { WorkflowManager } from '@manta/core'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 
 export async function wireWorkflowRoutes(ctx: BootstrapContext, appRef: AppRef): Promise<void> {
-  const { logger, adapter } = ctx
+  const { logger, adapter, infraMap, cmdRegistry } = ctx
 
   function parseRunId(req: Request): string | null {
     const url = new URL(req.url, 'http://localhost')
@@ -151,5 +152,93 @@ export async function wireWorkflowRoutes(ctx: BootstrapContext, appRef: AppRef):
     }
   })
 
-  logger.info('[workflow] Framework routes: GET|DELETE /api/admin/_workflow/:id')
+  // POST /api/admin/_workflow/:id/resume
+  //   Called by the queue adapter (QStash / InMemoryQueueAdapter) to
+  //   continue a paused workflow. Verifies the QStash signature when
+  //   `QSTASH_CURRENT_SIGNING_KEY` is configured — otherwise accepts any
+  //   caller (dev / localhost / in-memory queue).
+  adapter.registerRoute('POST', '/api/admin/_workflow/:id/resume', async (req: Request) => {
+    try {
+      const runId = parseRunId(req)
+      if (!runId) {
+        return Response.json({ type: 'INVALID_DATA', message: 'runId is required in URL' }, { status: 400 })
+      }
+
+      const store = resolveStore()
+      if (!store) {
+        return Response.json(
+          { type: 'NOT_IMPLEMENTED', message: 'IWorkflowStorePort is not configured' },
+          { status: 501 },
+        )
+      }
+
+      // Signature verification: QStash signs every delivery with HMAC-SHA256
+      // over the body. Read the raw body once, verify, then parse.
+      const body = await req.text()
+      const signingKey = process.env.QSTASH_CURRENT_SIGNING_KEY
+      if (signingKey) {
+        // Lazy import so this runs only when the env var is set (avoids
+        // bundling the adapter in dev images that don't use it).
+        const { verifyQStashSignature } = await import('@manta/adapter-queue-qstash')
+        const signature = req.headers.get('Upstash-Signature')
+        const ok = verifyQStashSignature(body, signature, {
+          currentSigningKey: signingKey,
+          nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY,
+        })
+        if (!ok) {
+          logger.warn(`[workflow-resume] signature mismatch for runId=${runId}`)
+          return Response.json({ type: 'UNAUTHORIZED', message: 'invalid QStash signature' }, { status: 401 })
+        }
+      }
+
+      const run = await store.get(runId)
+      if (!run) {
+        return Response.json({ type: 'NOT_FOUND', message: `workflow run "${runId}" not found` }, { status: 404 })
+      }
+      if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') {
+        return Response.json({ data: { runId, status: run.status, noop: true } })
+      }
+
+      // Resolve the command entry from the run's command_name (`cmd:<name>`).
+      const commandName = run.command_name.startsWith('cmd:') ? run.command_name.slice(4) : run.command_name
+      const entry = cmdRegistry?.list().find((e) => e.name === commandName)
+      if (!entry) {
+        return Response.json(
+          { type: 'NOT_FOUND', message: `command "${commandName}" not registered — cannot resume ${runId}` },
+          { status: 404 },
+        )
+      }
+
+      // Rebuild a WorkflowManager with the same adapters used at dispatch time.
+      // The queue + resumeEndpoint are re-attached so a step that yields
+      // again during this invocation schedules its own next continuation.
+      const wfStorageInstance = infraMap.get('IWorkflowStoragePort') as WorkflowStorage | undefined
+      const wfStoreInstance = infraMap.get('IWorkflowStorePort') as IWorkflowStorePort | undefined
+      const progressChannelInstance = infraMap.get('IProgressChannelPort') as IProgressChannelPort | undefined
+
+      const wm = new WorkflowManager(appRef.current!, {
+        storage: wfStorageInstance,
+        store: wfStoreInstance,
+        progressChannel: progressChannelInstance,
+        queue: ctx.workflowQueue,
+        resumeEndpoint: ctx.workflowResumeEndpoint,
+        stepBudgetMs: ctx.workflowStepBudgetMs,
+      })
+      wm.register({ name: `cmd:${commandName}`, fn: entry.workflow })
+
+      // Fire the resume. Don't await the full completion — return 202
+      // immediately so the queue (QStash) can mark delivery as successful.
+      // The workflow may yield again, in which case the manager enqueues
+      // another continuation; or it may terminate, in which case the next
+      // `useCommand` poll sees 'succeeded'.
+      void wm.resume(runId).catch((err) => {
+        logger.error(`[workflow-resume:${commandName}] run failed: ${(err as Error)?.message ?? err}`)
+      })
+      return Response.json({ data: { runId, status: 'resumed' } }, { status: 202 })
+    } catch (err) {
+      return Response.json({ type: 'UNEXPECTED_STATE', message: (err as Error).message }, { status: 500 })
+    }
+  })
+
+  logger.info('[workflow] Framework routes: GET|DELETE /api/admin/_workflow/:id + POST …/:id/resume')
 }

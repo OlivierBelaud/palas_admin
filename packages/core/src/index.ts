@@ -196,6 +196,7 @@ export type {
   ILoggerPort,
   INotificationPort,
   IProgressChannelPort,
+  IQueuePort,
   IRelationalQueryPort,
   IRepository,
   IRepositoryFactory,
@@ -206,6 +207,7 @@ export type {
   JobResult,
   NewWorkflowRun,
   ProgressSnapshot,
+  QueueMessage,
   RelationalQueryConfig,
   SessionOptions,
   StepState,
@@ -216,7 +218,7 @@ export type {
   WorkflowRun,
   WorkflowStatus,
 } from './ports'
-export { ContainerRegistrationKeys, InMemoryProgressChannel } from './ports'
+export { ContainerRegistrationKeys, InMemoryProgressChannel, InMemoryQueueAdapter } from './ports'
 export type {
   EntityAccessMap,
   EntityAccessRule,

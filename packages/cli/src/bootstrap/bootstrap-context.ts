@@ -15,7 +15,12 @@ import type {
   UserDefinition,
 } from '@manta/core'
 import type { AuthModuleService } from '@manta/core/auth'
-import type { IDatabasePort, IRepositoryFactory } from '@manta/core/ports'
+import type { IDatabasePort, IQueuePort, IRepositoryFactory } from '@manta/core/ports'
+
+// Re-export alias — `IQueuePort` lives in core/ports and is referenced
+// below via the bootstrap-context's workflow continuation wiring.
+type IQueuePortRef = IQueuePort
+
 import type { DiscoveredResources } from '../resource-loader'
 import type { LoadedConfig } from '../types'
 import type { BootstrapOptions } from './bootstrap-app'
@@ -64,6 +69,22 @@ export interface BootstrapContext {
   userDefinitions: Array<{ contextName: string; def: UserDefinition }>
   moduleScopedCommandNames: string[]
   cmdRegistry: CommandRegistry | null
+  /**
+   * Queue adapter used for workflow continuations (ctx.yield). Set by
+   * wire-commands so the resume route can share the same instance.
+   */
+  workflowQueue?: IQueuePortRef
+  /**
+   * Builder fn `(runId) => url` for the queue's resume POST target. Must
+   * produce a URL the queue adapter can reach (= public internet URL on
+   * Vercel / serverless). Set by wire-commands.
+   */
+  workflowResumeEndpoint?: (runId: string) => string
+  /**
+   * Wall-clock budget (ms) steps get before they must `ctx.yield(state)`.
+   * Defaults to 7s on Vercel, undefined (unbounded) on long-running Node.
+   */
+  workflowStepBudgetMs?: number
   /** Agents are user-defined step definitions — shape is intentionally open. */
   agentRegistry: Map<string, OpaqueDefinition>
 
