@@ -10,7 +10,8 @@
     "start": "manta start",
     "generate": "manta generate",
     "db:generate": "manta db:generate",
-    "db:migrate": "manta db:migrate"
+    "db:migrate": "manta db:migrate",
+    "rebuild:production": "tsx scripts/rebuild-production.ts"
   },
   "dependencies": {
     "@manta/core": "workspace:*",
