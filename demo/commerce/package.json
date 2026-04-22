@@ -21,6 +21,7 @@
     "@manta/adapter-database-pg": "workspace:*",
     "@manta/adapter-logger-pino": "workspace:*",
     "@manta/adapter-queue-qstash": "workspace:*",
+    "@manta/adapter-cache-upstash": "workspace:*",
     "@manta/plugin-posthog-proxy": "workspace:*",
     "@manta/dashboard": "workspace:*",
     "@manta/dashboard-core": "workspace:*",

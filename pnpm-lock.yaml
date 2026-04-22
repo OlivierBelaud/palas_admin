@@ -38,6 +38,9 @@ importers:
 
   demo/commerce:
     dependencies:
+      '@manta/adapter-cache-upstash':
+        specifier: workspace:*
+        version: link:../../packages/adapter-cache-upstash
       '@manta/adapter-database-pg':
         specifier: workspace:*
         version: link:../../packages/adapter-database-pg
