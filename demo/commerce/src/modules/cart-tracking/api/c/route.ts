@@ -1,8 +1,12 @@
 // Visitor identification endpoint — called from the Shopify theme.
 //
-// Shape: GET /api/_/c?k=<klaviyo_exchange_id>
+// Shape: GET /api/cart-tracking/c?k=<klaviyo_exchange_id>
 // Returns a short codified JSON payload { t, n?, o?, v } that the theme
 // stores in sessionStorage. See src/utils/visitor-codes.ts for the mapping.
+//
+// Lives inside `cart-tracking` because v1 personalization targets the cart
+// drawer, and Manta's build manifest only collects api routes from modules
+// that have at least one entity (see BACKLOG VIS-04).
 //
 // Never throws — every failure path falls back to { t: 'a', v } so the theme
 // UX degrades gracefully.
