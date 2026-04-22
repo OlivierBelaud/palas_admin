@@ -123,32 +123,27 @@ export async function queryEndpoints(ctx: BootstrapContext, appRef: AppRef): Pro
           }
 
           const debug = new URL(req.url).searchParams.get('_debug') === '1'
+          const logs: string[] = []
           if (debug) {
-            return Response.json({
-              _debug: true,
-              receivedBody: body,
-              mergedFilters,
-              graphConfig,
-              filtersType: typeof body.filters,
-              filtersKeys: body.filters ? Object.keys(body.filters) : null,
-              filtersValue0:
-                body.filters && Object.keys(body.filters).length > 0
-                  ? {
-                      type: typeof body.filters[Object.keys(body.filters)[0]],
-                      isArray: Array.isArray(body.filters[Object.keys(body.filters)[0]]),
-                      value: body.filters[Object.keys(body.filters)[0]],
-                    }
-                  : null,
-            })
+            process.env.MANTA_DEBUG_FILTERS_CAPTURE = '1'
+            ;(globalThis as unknown as { __mantaDebugLogs?: string[] }).__mantaDebugLogs = logs
           }
 
           // Use graphAndCount when pagination is requested, to return total count
           if (body.pagination && typeof queryService.graphAndCount === 'function') {
             const [data, count] = await queryService.graphAndCount(graphConfig)
+            if (debug) {
+              delete process.env.MANTA_DEBUG_FILTERS_CAPTURE
+              return Response.json({ data, count, _logs: logs, _graphConfig: graphConfig })
+            }
             return Response.json({ data, count })
           }
 
           const result = await queryService.graph(graphConfig)
+          if (debug) {
+            delete process.env.MANTA_DEBUG_FILTERS_CAPTURE
+            return Response.json({ data: result, _logs: logs, _graphConfig: graphConfig })
+          }
           return Response.json({ data: result })
         } catch (err) {
           const message = (err as Error).message
