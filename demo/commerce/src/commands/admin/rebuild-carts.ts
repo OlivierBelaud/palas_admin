@@ -222,55 +222,73 @@ export default defineCommand({
         const emailMap = await resolveEmailsBatch()
         log.info(`[rebuildCarts] Identity map: ${emailMap.size} distinct_id → email pairs from PostHog`)
 
-        // Load the whole log in one shot. For ~4k events at ~5KB each this is
-        // ~20MB — fits easily in a Vercel function. If the log ever approaches
-        // hundreds of MB we revisit and page (ctx.yield is ready for it).
-        ctx.progress?.(0, input.total, `Loading ${input.total} events from log...`)
-        const rows = await db.raw<{
-          posthog_uuid: string
-          event_name: string
-          distinct_id: string | null
-          event_timestamp: Date
-          properties: Record<string, unknown> | string
-        }>(
-          `SELECT posthog_uuid, event_name, distinct_id, event_timestamp, properties
-             FROM posthog_event_log
-            ORDER BY event_timestamp ASC, posthog_uuid ASC`,
-        )
-        log.info(`[rebuildCarts] Loaded ${rows.length} events from log`)
-
-        ctx.progress?.(0, input.total, `Folding ${rows.length} events in memory...`)
+        // Stream the log in keyset-paged chunks rather than one big SELECT.
+        // A single 33 MB result over Neon's TCP pooler from a Vercel lambda
+        // reliably hangs (observed 4+ minutes, lambda dies before completion)
+        // whereas chunked SELECTs of 500 rows return in ~200 ms each and
+        // transfer the same total volume without choking the pooler. Fold
+        // happens incrementally so memory stays bounded to O(unique carts).
+        ctx.progress?.(0, input.total, `Loading events from log...`)
         const carts = new Map<string, CartAccumulator>()
         const tokenByDistinctId = new Map<string, string>()
         let skipped = 0
         let errors = 0
         let identitiesRecovered = 0
         let done = 0
+        let lastTs: string | null = null
+        let lastUuid: string | null = null
 
-        for (const row of rows) {
-          // postgres.js with `prepare: false` returns JSONB as raw string.
-          const parsedProps =
-            typeof row.properties === 'string'
-              ? (JSON.parse(row.properties) as Record<string, unknown>)
-              : ((row.properties ?? {}) as Record<string, unknown>)
-          const evt: PosthogEvent = {
-            uuid: row.posthog_uuid,
-            event: row.event_name,
-            distinct_id: row.distinct_id,
-            timestamp:
-              row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp),
-            properties: parsedProps,
+        while (true) {
+          const params: unknown[] = [LOG_READ_BATCH]
+          let where = ''
+          if (lastTs !== null && lastUuid !== null) {
+            where = ' WHERE (event_timestamp, posthog_uuid) > ($2::timestamptz, $3)'
+            params.push(lastTs, lastUuid)
           }
-          if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
-          try {
-            const outcome = foldCartEvent(evt, carts, tokenByDistinctId)
-            if (outcome === 'skipped') skipped += 1
-          } catch (err) {
-            if (errors < 10) log.warn(`[rebuildCarts] fold error on ${evt.event}: ${(err as Error).message}`)
-            errors += 1
+          const page = await db.raw<{
+            posthog_uuid: string
+            event_name: string
+            distinct_id: string | null
+            event_timestamp: Date
+            properties: Record<string, unknown> | string
+          }>(
+            `SELECT posthog_uuid, event_name, distinct_id, event_timestamp, properties
+               FROM posthog_event_log${where}
+              ORDER BY event_timestamp ASC, posthog_uuid ASC
+              LIMIT $1`,
+            params,
+          )
+          if (page.length === 0) break
+
+          for (const row of page) {
+            // Track cursor for the next page.
+            lastTs =
+              row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp)
+            lastUuid = row.posthog_uuid
+            // postgres.js with `prepare: false` returns JSONB as raw string.
+            const parsedProps =
+              typeof row.properties === 'string'
+                ? (JSON.parse(row.properties) as Record<string, unknown>)
+                : ((row.properties ?? {}) as Record<string, unknown>)
+            const evt: PosthogEvent = {
+              uuid: row.posthog_uuid,
+              event: row.event_name,
+              distinct_id: row.distinct_id,
+              timestamp:
+                row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp),
+              properties: parsedProps,
+            }
+            if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
+            try {
+              const outcome = foldCartEvent(evt, carts, tokenByDistinctId)
+              if (outcome === 'skipped') skipped += 1
+            } catch (err) {
+              if (errors < 10) log.warn(`[rebuildCarts] fold error on ${evt.event}: ${(err as Error).message}`)
+              errors += 1
+            }
+            done += 1
+            if (done % 500 === 0) ctx.progress?.(done, input.total, `Folded ${done}/${input.total}`)
           }
-          done += 1
-          if (done % 500 === 0) ctx.progress?.(done, input.total, `Folded ${done}/${input.total}`)
         }
         log.info(
           `[rebuildCarts] Fold done — carts=${carts.size} skipped=${skipped} errors=${errors} identities_recovered=${identitiesRecovered}`,
