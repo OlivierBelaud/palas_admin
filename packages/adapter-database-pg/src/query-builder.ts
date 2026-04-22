@@ -212,8 +212,21 @@ export function buildFieldPredicates(
 ): unknown[] {
   const conditions: unknown[] = []
 
+  if (process.env.MANTA_DEBUG_FILTERS === '1') {
+    // biome-ignore lint/suspicious/noConsole: temporary diag
+    console.log('[buildFieldPredicates] tableKeys:', Object.keys(table).slice(0, 30))
+    // biome-ignore lint/suspicious/noConsole: temporary diag
+    console.log('[buildFieldPredicates] operatorsKeys:', Object.keys(operators))
+    // biome-ignore lint/suspicious/noConsole: temporary diag
+    console.log('[buildFieldPredicates] filters:', JSON.stringify(filters))
+  }
+
   for (const [key, value] of Object.entries(filters)) {
     const column = table[key]
+    if (process.env.MANTA_DEBUG_FILTERS === '1') {
+      // biome-ignore lint/suspicious/noConsole: temporary diag
+      console.log(`[buildFieldPredicates] key=${key} column=${column ? 'FOUND' : 'MISSING'} value=${JSON.stringify(value)} typeof=${typeof value} isArr=${Array.isArray(value)}`)
+    }
     if (!column) continue
 
     if (value === null) {
@@ -277,5 +290,9 @@ export function buildFieldPredicates(
     conditions.push(operators.eq(column, value))
   }
 
+  if (process.env.MANTA_DEBUG_FILTERS === '1') {
+    // biome-ignore lint/suspicious/noConsole: temporary diag
+    console.log('[buildFieldPredicates] conditions.length:', conditions.length)
+  }
   return conditions
 }
