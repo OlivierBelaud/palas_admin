@@ -122,6 +122,26 @@ export async function queryEndpoints(ctx: BootstrapContext, appRef: AppRef): Pro
             q: body.q,
           }
 
+          const debug = new URL(req.url).searchParams.get('_debug') === '1'
+          if (debug) {
+            return Response.json({
+              _debug: true,
+              receivedBody: body,
+              mergedFilters,
+              graphConfig,
+              filtersType: typeof body.filters,
+              filtersKeys: body.filters ? Object.keys(body.filters) : null,
+              filtersValue0:
+                body.filters && Object.keys(body.filters).length > 0
+                  ? {
+                      type: typeof body.filters[Object.keys(body.filters)[0]],
+                      isArray: Array.isArray(body.filters[Object.keys(body.filters)[0]]),
+                      value: body.filters[Object.keys(body.filters)[0]],
+                    }
+                  : null,
+            })
+          }
+
           // Use graphAndCount when pagination is requested, to return total count
           if (body.pagination && typeof queryService.graphAndCount === 'function') {
             const [data, count] = await queryService.graphAndCount(graphConfig)

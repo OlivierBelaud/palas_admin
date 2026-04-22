@@ -1,17 +1,20 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "redirects": [
+  "rewrites": [
     {
       "source": "/",
-      "destination": "/admin",
-      "permanent": false
-    }
-  ],
-  "rewrites": [
+      "destination": "/admin"
+    },
     {
       "source": "/admin/:path*",
       "destination": "/admin/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/crons/detect-abandoned-carts",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
