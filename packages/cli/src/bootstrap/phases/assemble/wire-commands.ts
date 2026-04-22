@@ -195,12 +195,9 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
     logger.info(`Entity commands: ${entityCmdCount} auto-generated`)
   }
 
-  // [12] Wire up IRelationalQueryPort for native SQL JOINs
-  logger.info(
-    `[WIRE-RQ] db=${db ? db.constructor?.name ?? typeof db : 'NULL'} hasSetSchema=${
-      db && typeof (db as DrizzlePgAdapter).setSchema === 'function'
-    }`,
-  )
+  // [12] Wire up IRelationalQueryPort for native SQL JOINs. Both DrizzlePgAdapter
+  // (local dev) and NeonDrizzleAdapter (Vercel prod) expose `setSchema()` — the
+  // duck-typing guard keeps @manta/cli free of a hard dep on adapter-database-neon.
   try {
     if (db && typeof (db as DrizzlePgAdapter).setSchema === 'function') {
       let frameworkTables: Record<string, unknown> = {}
@@ -306,8 +303,7 @@ export async function wireCommands(ctx: BootstrapContext, appRef: AppRef): Promi
       logger.info(`IRelationalQueryPort → DrizzleRelationalQuery (${allDefs.length} relations, native SQL JOINs)`)
     }
   } catch (err) {
-    logger.warn(`[WIRE-RQ] Failed to wire IRelationalQueryPort: ${err instanceof Error ? err.message : String(err)}`)
-    logger.warn(`[WIRE-RQ] stack: ${err instanceof Error ? err.stack?.split('\n').slice(0, 3).join(' | ') : ''}`)
+    logger.warn(`Failed to wire IRelationalQueryPort: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   // [12e] Create and register QueryService for defineQueryGraph() support

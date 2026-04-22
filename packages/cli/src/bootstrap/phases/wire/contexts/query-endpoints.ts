@@ -122,44 +122,13 @@ export async function queryEndpoints(ctx: BootstrapContext, appRef: AppRef): Pro
             q: body.q,
           }
 
-          const debug = new URL(req.url).searchParams.get('_debug') === '1'
-          const logs: string[] = []
-          if (debug) {
-            process.env.MANTA_DEBUG_FILTERS_CAPTURE = '1'
-            ;(globalThis as unknown as { __mantaDebugLogs?: string[] }).__mantaDebugLogs = logs
-            logs.push(
-              `ROUTE: debug=1 set, envNow=${process.env.MANTA_DEBUG_FILTERS_CAPTURE} globalSet=${Boolean((globalThis as unknown as { __mantaDebugLogs?: string[] }).__mantaDebugLogs)}`,
-            )
-            // Also try resolving the relationalQuery directly and check class name
-            try {
-              const rq = appRef.current!.resolve('relationalQuery') as unknown as { constructor?: { name?: string } } | null
-              logs.push(`ROUTE: relationalQuery.class=${rq?.constructor?.name ?? 'NULL'}`)
-            } catch (e) {
-              logs.push(`ROUTE: relationalQuery resolve failed: ${(e as Error).message}`)
-            }
-            try {
-              const qs = queryService as unknown as { _relationalQuery?: { constructor?: { name?: string } } }
-              logs.push(`ROUTE: queryService._relationalQuery.class=${qs._relationalQuery?.constructor?.name ?? 'NULL'}`)
-            } catch (e) {
-              logs.push(`ROUTE: queryService inspect failed: ${(e as Error).message}`)
-            }
-          }
-
           // Use graphAndCount when pagination is requested, to return total count
           if (body.pagination && typeof queryService.graphAndCount === 'function') {
             const [data, count] = await queryService.graphAndCount(graphConfig)
-            if (debug) {
-              delete process.env.MANTA_DEBUG_FILTERS_CAPTURE
-              return Response.json({ data, count, _logs: logs, _graphConfig: graphConfig })
-            }
             return Response.json({ data, count })
           }
 
           const result = await queryService.graph(graphConfig)
-          if (debug) {
-            delete process.env.MANTA_DEBUG_FILTERS_CAPTURE
-            return Response.json({ data: result, _logs: logs, _graphConfig: graphConfig })
-          }
           return Response.json({ data: result })
         } catch (err) {
           const message = (err as Error).message

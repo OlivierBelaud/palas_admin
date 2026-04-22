@@ -212,25 +212,8 @@ export function buildFieldPredicates(
 ): unknown[] {
   const conditions: unknown[] = []
 
-  const dbg =
-    process.env.MANTA_DEBUG_FILTERS_CAPTURE === '1'
-      ? ((globalThis as unknown as { __mantaDebugLogs?: string[] }).__mantaDebugLogs ?? null)
-      : null
-
-  if (dbg) {
-    dbg.push(`tableKeys=${JSON.stringify(Object.keys(table).slice(0, 30))}`)
-    dbg.push(`operatorsKeys=${JSON.stringify(Object.keys(operators))}`)
-    dbg.push(`filters=${JSON.stringify(filters)}`)
-  }
-
   for (const [key, value] of Object.entries(filters)) {
     const column = table[key]
-    if (dbg) {
-      const colInfo = column ? `FOUND(${typeof column})` : 'MISSING'
-      dbg.push(
-        `key=${key} column=${colInfo} value=${JSON.stringify(value)} typeof=${typeof value} isArr=${Array.isArray(value)}`,
-      )
-    }
     if (!column) continue
 
     if (value === null) {
@@ -294,6 +277,5 @@ export function buildFieldPredicates(
     conditions.push(operators.eq(column, value))
   }
 
-  if (dbg) dbg.push(`conditions.length=${conditions.length}`)
   return conditions
 }

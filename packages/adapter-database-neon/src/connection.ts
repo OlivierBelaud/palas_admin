@@ -13,8 +13,9 @@ export interface NeonDatabaseOptions {
 }
 
 export interface NeonDatabase {
-  /** Drizzle db instance — use this for all queries */
-  db: PostgresJsDatabase | ReturnType<typeof drizzleNeonHttp>
+  /** Drizzle db instance — use this for all queries. Read-only accessor so the
+   * adapter can swap the underlying client after `withSchema()` re-binds it. */
+  readonly db: PostgresJsDatabase | ReturnType<typeof drizzleNeonHttp>
   /** Raw SQL: (query, params) style — for IDatabasePort.raw() */
   rawSql: (query: string, params?: unknown[]) => Promise<unknown>
   /**
@@ -24,6 +25,13 @@ export interface NeonDatabase {
    * On postgres.js: the postgres() instance (supports both tagged + .unsafe()).
    */
   pool: unknown
+  /**
+   * Rebuild the Drizzle client with the full DML schema. Required to enable
+   * `db.query.*` (relational queries with `with` clauses) — without it, graph
+   * queries fall back to a dumb `eq()` resolver that treats `{ $eq: x }` as a
+   * scalar object, matching nothing.
+   */
+  withSchema: (schema: Record<string, unknown>) => void
   /** Close connections */
   close: () => Promise<void>
 }
@@ -41,7 +49,6 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
   // Serverless + Neon → use HTTP driver for everything (no WebSocket dependency)
   if (isServerless && isNeon) {
     const httpSql = neon(options.url)
-    const db = drizzleNeonHttp(httpSql)
 
     // httpSql supports both tagged templates (sql`...`) AND regular calls (sql(query, params)).
     // Add .unsafe() for ensureEntityTables compatibility.
@@ -49,10 +56,20 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
       unsafe: (query: string, params?: unknown[]) => httpSql(query, params ?? []),
     })
 
+    // Schema-less initial client; re-bound by withSchema() once the DML schema is assembled.
+    const state: { db: PostgresJsDatabase | ReturnType<typeof drizzleNeonHttp> } = {
+      db: drizzleNeonHttp(httpSql) as unknown as PostgresJsDatabase,
+    }
+
     return {
-      db: db as unknown as PostgresJsDatabase,
+      get db() {
+        return state.db
+      },
       rawSql: async (query: string, params?: unknown[]) => httpSql(query, params ?? []),
       pool,
+      withSchema: (schema: Record<string, unknown>) => {
+        state.db = drizzleNeonHttp(httpSql, { schema }) as unknown as PostgresJsDatabase
+      },
       close: async () => {},
     }
   }
@@ -64,12 +81,17 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
     idle_timeout: isServerless ? 0 : 30,
     connect_timeout: 5,
   })
-  const db = drizzlePg(pgSql)
+  const state: { db: PostgresJsDatabase } = { db: drizzlePg(pgSql) as unknown as PostgresJsDatabase }
 
   return {
-    db,
+    get db() {
+      return state.db
+    },
     rawSql: async (query: string, params?: unknown[]) => pgSql.unsafe(query, (params ?? []) as never[]),
     pool: pgSql, // postgres.js supports tagged templates + .unsafe()
+    withSchema: (schema: Record<string, unknown>) => {
+      state.db = drizzlePg(pgSql, { schema }) as unknown as PostgresJsDatabase
+    },
     close: () => pgSql.end(),
   }
 }

@@ -59,6 +59,22 @@ export class NeonDrizzleAdapter implements IDatabasePort {
     return this._neonDb.db
   }
 
+  /**
+   * Rebuild the Drizzle client with the full DML schema. Required for graph
+   * queries (IRelationalQueryPort) that use `db.query.*`. Without this, graph
+   * reads fall back to the legacy resolver that only does scalar `eq()` and
+   * breaks all operator-object filters (`{ $notnull: true }`, `{ $eq: x }`…).
+   *
+   * Mirrors `DrizzlePgAdapter.setSchema()` so wire-commands can call the same
+   * hook regardless of which adapter is active.
+   */
+  setSchema(schema: Record<string, unknown>): void {
+    if (!this._neonDb) {
+      throw new MantaError('INVALID_STATE', 'Database not initialized. Call initialize() first.')
+    }
+    this._neonDb.withSchema(schema)
+  }
+
   getPool(): unknown {
     if (!this._neonDb) {
       throw new MantaError('INVALID_STATE', 'Database not initialized. Call initialize() first.')
