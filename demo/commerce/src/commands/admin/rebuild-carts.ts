@@ -244,7 +244,9 @@ export default defineCommand({
             event_name: string
             distinct_id: string | null
             event_timestamp: Date
-            properties: Record<string, unknown>
+            // JSONB: parsed object when the driver decodes it, raw string when
+            // `prepare: false` is set on postgres.js (Neon pooler config).
+            properties: Record<string, unknown> | string
           }>(
             `SELECT posthog_uuid, event_name, distinct_id, event_timestamp, properties
                FROM posthog_event_log${where}
@@ -255,13 +257,21 @@ export default defineCommand({
           if (page.length === 0) break
 
           for (const row of page) {
+            // Some Postgres driver configs (Neon pooler + `prepare: false`)
+            // return JSONB columns as raw strings instead of parsed objects.
+            // `enrichEventWithEmail` mutates `properties.$set` and will crash
+            // on a string — parse defensively here.
+            const parsedProps =
+              typeof row.properties === 'string'
+                ? (JSON.parse(row.properties) as Record<string, unknown>)
+                : ((row.properties ?? {}) as Record<string, unknown>)
             const evt: PosthogEvent = {
               uuid: row.posthog_uuid,
               event: row.event_name,
               distinct_id: row.distinct_id,
               timestamp:
                 row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp),
-              properties: row.properties ?? {},
+              properties: parsedProps,
             }
             if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
             const outcome = await applyEvent(db, evt, log, errors)
