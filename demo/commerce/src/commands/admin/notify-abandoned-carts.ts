@@ -71,6 +71,11 @@ export default defineCommand({
         const lowerBound = new Date(now - maxAgeMs)
         const upperBound = new Date(now - minIdleMs)
 
+        // Eligible = identified carts, not completed, not yet notified,
+        // inside the [dormant .. maxAge] window. We key on `highest_stage`
+        // rather than `status` — status is only `active`|`completed` now;
+        // the whole "abandoned" taxonomy is derived at read time from
+        // highest_stage + last_action_at (see docs/cart-abandonment-rules.md).
         const carts = await db.raw<EligibleCart>(
           `SELECT id, cart_token, checkout_token, email, first_name, last_name, phone,
                   city, country_code, items, total_price, item_count, currency,
@@ -78,7 +83,7 @@ export default defineCommand({
                   abandon_notified_count
              FROM carts
             WHERE email IS NOT NULL
-              AND status <> 'completed'
+              AND highest_stage <> 'completed'
               AND abandon_notified_at IS NULL
               AND last_action_at >= $1
               AND last_action_at <= $2

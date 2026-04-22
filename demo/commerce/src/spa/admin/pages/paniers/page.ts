@@ -20,6 +20,7 @@ export default definePage({
         { label: 'Paniers abandonnés', key: 'cart_abandoned', format: 'number' },
         { label: 'Checkouts abandonnés', key: 'checkout_abandoned', format: 'number' },
         { label: 'Paiements échoués', key: 'payment_abandoned', format: 'number' },
+        { label: 'Morts (>7j)', key: 'dead', format: 'number' },
         { label: 'CA réalisé', key: 'total_revenue', format: 'number' },
         { label: 'Panier moyen', key: 'avg_cart_value', format: 'number' },
         { label: 'CA perdu (abandons)', key: 'abandoned_revenue', format: 'number' },

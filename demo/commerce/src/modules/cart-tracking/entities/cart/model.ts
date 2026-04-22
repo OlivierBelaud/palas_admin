@@ -33,16 +33,17 @@ export default defineModel('Cart', {
     .enum(['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'])
     .default('cart'),
 
-  // Statut du panier — reflète OÙ l'abandon a eu lieu
+  // Statut du panier — seulement 2 états persistés :
+  //   active    → panier en cours (toutes les variantes d'abandon sont dérivées
+  //               à la lecture depuis last_action_at + highest_stage, cf.
+  //               docs/cart-abandonment-rules.md)
+  //   completed → paiement réussi
   //
-  // active              → panier en cours, pas encore abandonné
-  // cart_abandoned       → a joué avec le panier mais jamais checkout
-  // checkout_abandoned   → a démarré le checkout mais n'a pas payé
-  // payment_abandoned    → a cliqué "Payer" mais paiement échoué/abandonné
-  // completed            → paiement réussi
-  status: field
-    .enum(['active', 'cart_abandoned', 'checkout_abandoned', 'payment_abandoned', 'completed'])
-    .default('active'),
+  // Les anciennes valeurs (cart_abandoned, checkout_abandoned, payment_abandoned)
+  // ne sont plus écrites. Les lignes existantes en DB peuvent encore les porter
+  // — les queries n'utilisent pas `status` pour discriminer les abandons, elles
+  // dérivent tout de highest_stage + last_action_at.
+  status: field.enum(['active', 'completed']).default('active'),
 
   // ── Tokens (three distinct Shopify identifiers) ────────────────────
   // cart_token is already the unique key above

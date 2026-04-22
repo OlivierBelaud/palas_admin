@@ -64,7 +64,9 @@ export async function applyEvent(
     const currentStage = (existing[0]?.highest_stage as string) ?? 'cart'
     const stageIdx = Math.max(STAGES.indexOf(currentStage as never), STAGES.indexOf(newStage))
     const highestStage = STAGES[stageIdx] ?? newStage
-    const status = n.event === 'checkout:completed' ? 'completed' : ((existing[0]?.status as string) ?? 'active')
+    // status is derived: only 'active' or 'completed'. All abandonment
+    // variants are derived at read time from highest_stage + last_action_at.
+    const status = highestStage === 'completed' ? 'completed' : 'active'
     const merge = (next: unknown, prev: unknown) => next ?? prev ?? null
 
     const hasPurchaseSignal = n.items.length > 0 || n.total_price > 0
