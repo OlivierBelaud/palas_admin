@@ -1,23 +1,14 @@
-// Cart drawer email capture endpoint — called from the Shopify theme's
-// "Une surprise t'attend sur ce panier" mini-form.
+// Cart drawer email capture endpoint — public, called from the Shopify
+// theme's "Une surprise t'attend sur ce panier" mini-form.
 //
 // Shape: POST /api/cart-email-capture/e
 // Body:  { email, cartToken?, market?, phDistinctId? }
-// Header: X-Palas-Test: '1'   (test mode — skips external side effects)
+// Header: X-Palas-Test: '1'   (test mode — skips Klaviyo/PostHog fan-out)
 //
-// Flow:
-//   1. Insert row in email_captures (source of truth, drives the admin list).
-//   2. In parallel (unless test): subscribe to Newsletter list in Klaviyo +
-//      fire `cart:email_form_submitted` event to PostHog + Klaviyo.
-//   3. Update sync timestamps on the row.
-//   4. Return { ok: true, discountCode: 'SURPRISE10' } so the theme can
-//      auto-apply it via /discount/SURPRISE10.
-//
-// Never throws — validation failures return 400, other errors 500 with a
-// minimal body the theme can display as a toast.
-
-import { sendKlaviyoEvent, subscribeKlaviyoProfile } from '../../../../utils/klaviyo'
-import { sendPosthogEvent } from '../../../../utils/posthog-ingest'
+// This route is a thin adapter: it validates the HTTP shape + CORS and
+// delegates all business logic (DB persistence + Klaviyo/PostHog dispatch)
+// to the `submitCartEmail` command. Keeping writes behind the service layer
+// means the adapter wiring stays the framework's job.
 
 interface SubmitBody {
   email?: unknown
@@ -26,14 +17,23 @@ interface SubmitBody {
   phDistinctId?: unknown
 }
 
-interface CaptureRow {
+interface SubmitCartEmailResult {
   id: string
+  discount_code: string
 }
 
-const DISCOUNT_CODE = 'SURPRISE10'
-const KLAVIYO_LIST_ID = 'SUtgMh' // Newsletter
-const SOURCE = 'cart_drawer_surprise'
-const EVENT_NAME = 'cart:email_form_submitted'
+type SubmitCommand = (
+  input: {
+    email: string
+    cart_token: string | null
+    market: string | null
+    posthog_distinct_id: string | null
+    is_test: boolean
+    user_agent: string | null
+    remote_ip: string | null
+  },
+  opts?: Record<string, unknown>,
+) => Promise<SubmitCartEmailResult>
 
 // ── CORS (same policy as /api/cart-tracking/c) ──────────────────────
 
@@ -70,8 +70,6 @@ function corsHeaders(origin: string | null): Record<string, string> {
 
 // ── Validation ──────────────────────────────────────────────────────
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
 function sanitize(v: unknown, max = 255): string | null {
   if (typeof v !== 'string') return null
   const trimmed = v.trim()
@@ -95,7 +93,6 @@ export async function POST(req: Request) {
     'Content-Type': 'application/json',
   }
 
-  // Block requests from non-allowed origins early.
   if (!headers['Access-Control-Allow-Origin']) {
     return Response.json({ ok: false, error: 'FORBIDDEN' }, { status: 403, headers })
   }
@@ -108,75 +105,34 @@ export async function POST(req: Request) {
   }
 
   const email = sanitize(body.email)?.toLowerCase() ?? null
-  if (!email || !EMAIL_RE.test(email)) {
+  if (!email) {
     return Response.json({ ok: false, error: 'INVALID_EMAIL' }, { status: 400, headers })
   }
 
-  const cartToken = sanitize(body.cartToken, 64)
-  const market = sanitize(body.market, 8)
-  const phDistinctId = sanitize(body.phDistinctId, 128)
-  const isTest = req.headers.get('x-palas-test') === '1'
-  const userAgent = sanitize(req.headers.get('user-agent'), 512)
-  const remoteIp = sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64)
-
-  // ── 1. Insert DB row ──────────────────────────────────────────────
-  type RawDb = { raw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }
-  const mantaReq = req as Request & { app?: { infra?: { db?: RawDb } } }
-  const db = mantaReq.app?.infra?.db
-
-  let rowId: string | null = null
-  if (db) {
-    try {
-      const rows = await db.raw<CaptureRow>(
-        `INSERT INTO email_captures
-          (email, cart_token, source, market, posthog_distinct_id, is_test, user_agent, remote_ip)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id`,
-        [email, cartToken, SOURCE, market, phDistinctId, isTest, userAgent, remoteIp],
-      )
-      rowId = rows[0]?.id ?? null
-    } catch (err) {
-      console.warn('[email-capture] DB insert failed:', (err as Error).message)
-    }
+  const mantaReq = req as Request & { app?: { commands?: Record<string, SubmitCommand | undefined> } }
+  const cmd = mantaReq.app?.commands?.submitCartEmail
+  if (!cmd) {
+    return Response.json({ ok: false, error: 'COMMAND_UNAVAILABLE' }, { status: 500, headers })
   }
 
-  // ── 2. Side effects (skipped in test mode) ────────────────────────
-  if (!isTest) {
-    const [subRes, klEventRes, phRes] = await Promise.allSettled([
-      subscribeKlaviyoProfile({ email, listId: KLAVIYO_LIST_ID, customSource: SOURCE }),
-      sendKlaviyoEvent({
-        email,
-        metric: EVENT_NAME,
-        properties: { source: SOURCE, market, cart_token: cartToken, discount_code: DISCOUNT_CODE },
-        unique_id: rowId ?? `${email}-${Date.now()}`,
-      }),
-      sendPosthogEvent({
-        event: EVENT_NAME,
-        distinctId: phDistinctId ?? email,
-        email,
-        ip: remoteIp,
-        properties: { source: SOURCE, market, cart_token: cartToken, discount_code: DISCOUNT_CODE },
-      }),
-    ])
-
-    const klOk = subRes.status === 'fulfilled' && subRes.value.ok
-    const klEvOk = klEventRes.status === 'fulfilled' && klEventRes.value.ok
-    const phOk = phRes.status === 'fulfilled' && phRes.value.ok
-
-    // Update sync timestamps. Fire-and-forget — we don't block the response.
-    if (db && rowId) {
-      const now = new Date().toISOString()
-      db.raw(
-        `UPDATE email_captures
-           SET klaviyo_synced_at = COALESCE(klaviyo_synced_at, CASE WHEN $1 THEN $3::timestamp ELSE NULL END),
-               posthog_synced_at = COALESCE(posthog_synced_at, CASE WHEN $2 THEN $3::timestamp ELSE NULL END)
-         WHERE id = $4`,
-        [klOk || klEvOk, phOk, now, rowId],
-      ).catch(() => {
-        /* non-critical */
-      })
+  try {
+    const result = await cmd({
+      email,
+      cart_token: sanitize(body.cartToken, 64),
+      market: sanitize(body.market, 8),
+      posthog_distinct_id: sanitize(body.phDistinctId, 128),
+      is_test: req.headers.get('x-palas-test') === '1',
+      user_agent: sanitize(req.headers.get('user-agent'), 512),
+      remote_ip: sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64),
+    })
+    return Response.json({ ok: true, discountCode: result.discount_code }, { headers })
+  } catch (err) {
+    const name = (err as { name?: string }).name
+    if (name === 'ZodError') {
+      return Response.json({ ok: false, error: 'INVALID_EMAIL' }, { status: 400, headers })
     }
+    const message = (err as Error).message.slice(0, 200)
+    console.error('[cart-email-capture] submitCartEmail failed:', message)
+    return Response.json({ ok: false, error: 'INTERNAL' }, { status: 500, headers })
   }
-
-  return Response.json({ ok: true, discountCode: DISCOUNT_CODE }, { headers })
 }
