@@ -16,6 +16,8 @@
 // Never throws — validation failures return 400, other errors 500 with a
 // minimal body the theme can display as a toast.
 
+import type { Sql } from 'postgres'
+import postgres from 'postgres'
 import { sendKlaviyoEvent, subscribeKlaviyoProfile } from '../../../../utils/klaviyo'
 import { sendPosthogEvent } from '../../../../utils/posthog-ingest'
 
@@ -28,6 +30,19 @@ interface SubmitBody {
 
 interface CaptureRow {
   id: string
+}
+
+// Module-scoped postgres connection pool. The route handler uses a direct
+// connection instead of `app.infra.db` because the serverless manifest
+// doesn't surface `raw()` on the db port (tech-debt tracked in BACKLOG).
+// Warm invocations reuse this; cold starts open a fresh one.
+let _sql: Sql | null = null
+function getSql(): Sql | null {
+  if (_sql) return _sql
+  const url = process.env.DATABASE_URL
+  if (!url) return null
+  _sql = postgres(url, { ssl: 'require', max: 1, idle_timeout: 20, prepare: false })
+  return _sql
 }
 
 const DISCOUNT_CODE = 'SURPRISE10'
@@ -120,31 +135,23 @@ export async function POST(req: Request) {
   const remoteIp = sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64)
 
   // ── 1. Insert DB row ──────────────────────────────────────────────
-  type RawDb = { raw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }
-  const mantaReq = req as Request & { app?: { infra?: { db?: RawDb } } }
-  const db = mantaReq.app?.infra?.db
-
+  const sql = getSql()
   let rowId: string | null = null
-  let dbDiag = 'ok'
-  if (!db) {
-    dbDiag = 'no-db'
-  } else if (typeof (db as { raw?: unknown }).raw !== 'function') {
-    dbDiag = 'no-raw'
-  } else {
+  if (sql) {
     try {
-      const rows = await db.raw<CaptureRow>(
-        `INSERT INTO email_captures
+      const rows = await sql<CaptureRow[]>`
+        INSERT INTO email_captures
           (email, cart_token, source, market, posthog_distinct_id, is_test, user_agent, remote_ip)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id`,
-        [email, cartToken, SOURCE, market, phDistinctId, isTest, userAgent, remoteIp],
-      )
+        VALUES
+          (${email}, ${cartToken}, ${SOURCE}, ${market}, ${phDistinctId}, ${isTest}, ${userAgent}, ${remoteIp})
+        RETURNING id
+      `
       rowId = rows[0]?.id ?? null
-      if (!rowId) dbDiag = 'no-row'
     } catch (err) {
-      dbDiag = `err:${(err as Error).message.slice(0, 80)}`
       console.warn('[email-capture] DB insert failed:', (err as Error).message)
     }
+  } else {
+    console.warn('[email-capture] DATABASE_URL not set — skipping insert')
   }
 
   // ── 2. Side effects (skipped in test mode) ────────────────────────
@@ -171,21 +178,20 @@ export async function POST(req: Request) {
     const phOk = phRes.status === 'fulfilled' && phRes.value.ok
 
     // Update sync timestamps. Fire-and-forget — we don't block the response.
-    if (db && rowId) {
-      const now = new Date().toISOString()
-      db.raw(
-        `UPDATE email_captures
-           SET klaviyo_synced_at = COALESCE(klaviyo_synced_at, CASE WHEN $1 THEN $3::timestamp ELSE NULL END),
-               posthog_synced_at = COALESCE(posthog_synced_at, CASE WHEN $2 THEN $3::timestamp ELSE NULL END)
-         WHERE id = $4`,
-        [klOk || klEvOk, phOk, now, rowId],
-      ).catch(() => {
+    if (sql && rowId) {
+      const now = new Date()
+      const klaviyoTs = klOk || klEvOk ? now : null
+      const posthogTs = phOk ? now : null
+      sql`
+        UPDATE email_captures
+           SET klaviyo_synced_at = COALESCE(klaviyo_synced_at, ${klaviyoTs}),
+               posthog_synced_at = COALESCE(posthog_synced_at, ${posthogTs})
+         WHERE id = ${rowId}
+      `.catch(() => {
         /* non-critical */
       })
     }
   }
 
-  const response: Record<string, unknown> = { ok: true, discountCode: DISCOUNT_CODE }
-  if (isTest) response.db = dbDiag
-  return Response.json(response, { headers })
+  return Response.json({ ok: true, discountCode: DISCOUNT_CODE }, { headers })
 }
