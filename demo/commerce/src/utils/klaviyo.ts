@@ -1,11 +1,13 @@
-// Tiny Klaviyo Events API client.
+// Tiny Klaviyo client — two use cases.
 //
-// Sends one event per call to https://a.klaviyo.com/api/events/ using the
-// Events API v2024-10-15. The profile is associated by email; Klaviyo handles
-// the profile lookup/creation server-side.
+//   1. sendKlaviyoEvent  — POST /api/events/. One event per call. The profile
+//      is associated by email; Klaviyo handles lookup/creation server-side.
+//   2. subscribeKlaviyoProfile — POST /api/profile-subscription-bulk-create-jobs/.
+//      Opts a profile into marketing email on a given list with consent.
 //
-// Never throws — returns { ok, status?, error? } so the caller can decide
-// whether to mark the source record as "sent" (only on ok=true).
+// Both use the Events API v2024-10-15 and never throw — they return
+// { ok, status?, error? } so the caller can decide whether to mark the source
+// record as "sent" (only on ok=true).
 
 export interface KlaviyoEventInput {
   email: string
@@ -62,6 +64,77 @@ export async function sendKlaviyoEvent(event: KlaviyoEventInput): Promise<Klaviy
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       return { ok: false, status: res.status, error: body.slice(0, 300) }
+    }
+    return { ok: true, status: res.status }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
+export interface KlaviyoSubscribeInput {
+  email: string
+  listId: string
+  /** Free-form source tag stored on the subscription (e.g. "cart_drawer_surprise"). */
+  customSource?: string
+}
+
+/**
+ * Opts a profile into marketing email on a Klaviyo list.
+ * Uses the bulk subscription job API (the single-profile subscribe endpoint
+ * requires a company_id which the private API key doesn't expose).
+ *
+ * Consent = SUBSCRIBED ⇒ single opt-in. For double opt-in, configure the list
+ * itself in Klaviyo → no code change needed (Klaviyo will send the confirm).
+ */
+export async function subscribeKlaviyoProfile(input: KlaviyoSubscribeInput): Promise<KlaviyoResult> {
+  const key = process.env.KLAVIYO_API_KEY
+  if (!key) return { ok: false, error: 'KLAVIYO_API_KEY missing' }
+
+  const host = process.env.KLAVIYO_HOST ?? 'https://a.klaviyo.com'
+
+  const body: Record<string, unknown> = {
+    data: {
+      type: 'profile-subscription-bulk-create-job',
+      attributes: {
+        profiles: {
+          data: [
+            {
+              type: 'profile',
+              attributes: {
+                email: input.email,
+                subscriptions: {
+                  email: {
+                    marketing: { consent: 'SUBSCRIBED' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        ...(input.customSource ? { custom_source: input.customSource } : {}),
+      },
+      relationships: {
+        list: {
+          data: { type: 'list', id: input.listId },
+        },
+      },
+    },
+  }
+
+  try {
+    const res = await fetch(`${host}/api/profile-subscription-bulk-create-jobs/`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Klaviyo-API-Key ${key}`,
+        revision: '2024-10-15',
+        'Content-Type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, status: res.status, error: text.slice(0, 300) }
     }
     return { ok: true, status: res.status }
   } catch (err) {
