@@ -24,6 +24,17 @@ interface SubmitCartEmailResult {
   number_of_orders: number
 }
 
+// Framework envelope — see packages/cli/.../wire-commands.ts. Every
+// app.commands[*] callable goes through a WorkflowManager + 300ms race.
+// Under 300ms we get 'succeeded' with the inline result; over 300ms we
+// get 'running' with a runId and the workflow continues in background.
+// The legacy route did `result.discount_code` and got `undefined` — the
+// theme's `json.discountCode || FALLBACK` then silently handed the code
+// to every submitter. We must unwrap `.result` to see the real payload.
+type SubmitEnvelope =
+  | { status: 'succeeded'; result: SubmitCartEmailResult; runId: string }
+  | { status: 'running'; runId: string }
+
 type SubmitCommand = (
   input: {
     email: string
@@ -35,7 +46,7 @@ type SubmitCommand = (
     remote_ip: string | null
   },
   opts?: Record<string, unknown>,
-) => Promise<SubmitCartEmailResult>
+) => Promise<SubmitEnvelope>
 
 // ── CORS (same policy as /api/cart-tracking/c) ──────────────────────
 
@@ -118,7 +129,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await cmd({
+    const envelope = await cmd({
       email,
       cart_token: sanitize(body.cartToken, 64),
       market: sanitize(body.market, 8),
@@ -127,6 +138,18 @@ export async function POST(req: Request) {
       user_agent: sanitize(req.headers.get('user-agent'), 512),
       remote_ip: sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64),
     })
+
+    // The command's critical decision (discount yes/no) depends on a Shopify
+    // customer lookup, so the theme MUST see the real result — it can't fall
+    // back to the default SURPRISE10 just because we crossed 300ms. If the
+    // framework hands us a 'running' envelope, fail the request so the theme
+    // shows an error rather than applying the code to a repeat buyer.
+    if (envelope.status !== 'succeeded') {
+      console.warn(`[cart-email-capture] workflow did not finish inline (runId=${envelope.runId})`)
+      return Response.json({ ok: false, error: 'WORKFLOW_PENDING' }, { status: 503, headers })
+    }
+
+    const result = envelope.result
     return Response.json(
       {
         ok: true,
