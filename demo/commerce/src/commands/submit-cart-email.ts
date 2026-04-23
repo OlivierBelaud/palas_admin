@@ -3,15 +3,16 @@
 //
 // Lives at `src/commands/` (no context folder) → flat, not exposed via
 // `/api/:context/command/:name`. Invoked manually from the public route
-// `modules/cart-email-capture/api/e/route.ts` which handles HTTP shape
-// and CORS.
+// `modules/cart-email-capture/api/e/route.ts` which handles HTTP shape,
+// CORS, AND the Shopify customer lookup (to keep the HTTP response fast
+// even when the fan-out below takes >300ms — the framework's callable
+// would otherwise return { runId, status: 'running' } past that budget).
 //
 // Why a command and not raw DB in the route: routes don't get
 // `step.service` (they'd need direct adapter access), commands do. Keeping
 // writes behind the service layer means the adapter wiring stays the
 // framework's job, not ours.
 
-import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { sendKlaviyoEvent, subscribeKlaviyoProfile } from '../utils/klaviyo'
 import { sendPosthogEvent } from '../utils/posthog-ingest'
 
@@ -32,42 +33,10 @@ interface EntityCrud<Row> {
   update: (id: string, data: Record<string, unknown>) => Promise<Row>
 }
 
-interface ShopifyLookup {
-  number_of_orders: number
-  customer_id: string | null
-}
-
-// Fail-open: if Shopify lookup throws, we treat the submitter as a new
-// visitor (discount granted) rather than denying. Losing the discount to
-// an API hiccup is worse UX than granting one extra to a repeat customer.
-async function lookupShopifyCustomer(email: string, log: { warn: (m: string) => void }): Promise<ShopifyLookup> {
-  try {
-    const client = new ShopifyAdminClient()
-    const data = await client.query<{
-      customers: { edges: Array<{ node: { id: string; numberOfOrders: string | number | null } }> }
-    }>(
-      `query ($q: String!) {
-        customers(first: 1, query: $q) {
-          edges { node { id numberOfOrders } }
-        }
-      }`,
-      { q: `email:"${email.replace(/"/g, '\\"')}"` },
-    )
-    const node = data.customers?.edges?.[0]?.node
-    if (!node) return { number_of_orders: 0, customer_id: null }
-    const raw = node.numberOfOrders
-    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : 0
-    return { number_of_orders: Number.isFinite(n) ? n : 0, customer_id: node.id }
-  } catch (err) {
-    log.warn(`[submitCartEmail] shopify lookup failed for ${email}: ${(err as Error).message}`)
-    return { number_of_orders: 0, customer_id: null }
-  }
-}
-
 export default defineCommand({
   name: 'submitCartEmail',
   description:
-    'Persist a cart-drawer "surprise" email submission and fan out to Klaviyo (subscribe + event) + PostHog (identify + event). Returns the discount code the theme should auto-apply.',
+    'Persist a cart-drawer "surprise" email submission and fan out to Klaviyo (subscribe + event) + PostHog (identify + event). The Shopify customer lookup happens in the route before this is called; the resulting number_of_orders is passed in.',
   input: z.object({
     email: z.string().email(),
     cart_token: z.string().nullable().optional(),
@@ -76,37 +45,32 @@ export default defineCommand({
     is_test: z.boolean().default(false),
     user_agent: z.string().nullable().optional(),
     remote_ip: z.string().nullable().optional(),
+    shopify_number_of_orders: z.number().int().min(0).default(0),
+    shopify_customer_id: z.string().nullable().optional(),
   }),
   workflow: async (input, { step, log }) => {
     const email = input.email.toLowerCase()
-
-    // 1. Persist + Shopify lookup in parallel. DB insert doesn't depend on the
-    //    Shopify result; running them together shaves the Shopify RTT off the
-    //    theme's perceived latency. Service layer handles adapter wiring +
-    //    schema validation. Runtime Proxy resolves `emailCapture` to the
-    //    auto-generated CRUD even though it's not surfaced in
-    //    MantaGeneratedAppModules yet.
-    const svc = step.service as unknown as { emailCapture: EntityCrud<EmailCaptureRow> }
-    const [row, shop] = await Promise.all([
-      svc.emailCapture.create({
-        email,
-        cart_token: input.cart_token ?? null,
-        source: SOURCE,
-        market: input.market ?? null,
-        posthog_distinct_id: input.posthog_distinct_id ?? null,
-        is_test: input.is_test,
-        user_agent: input.user_agent ?? null,
-        remote_ip: input.remote_ip ?? null,
-      }),
-      lookupShopifyCustomer(email, log),
-    ])
-
-    const isExistingCustomer = shop.number_of_orders > 0
+    const isExistingCustomer = input.shopify_number_of_orders > 0
     const discountCode = isExistingCustomer ? null : DISCOUNT_CODE
+
+    // 1. Persist. Service layer handles adapter wiring + schema validation.
+    // Runtime Proxy resolves `emailCapture` to the auto-generated CRUD even
+    // though it's not surfaced in MantaGeneratedAppModules yet.
+    const svc = step.service as unknown as { emailCapture: EntityCrud<EmailCaptureRow> }
+    const row = await svc.emailCapture.create({
+      email,
+      cart_token: input.cart_token ?? null,
+      source: SOURCE,
+      market: input.market ?? null,
+      posthog_distinct_id: input.posthog_distinct_id ?? null,
+      is_test: input.is_test,
+      user_agent: input.user_agent ?? null,
+      remote_ip: input.remote_ip ?? null,
+    })
 
     log.info(
       `[submitCartEmail] captured id=${row.id} email=${email} test=${input.is_test} ` +
-        `orders=${shop.number_of_orders} discount=${discountCode ?? 'none'}`,
+        `orders=${input.shopify_number_of_orders} discount=${discountCode ?? 'none'}`,
     )
 
     // 2. In test mode we stop here — no external noise (Klaviyo / PostHog).
@@ -115,7 +79,7 @@ export default defineCommand({
         id: row.id,
         discount_code: discountCode,
         is_existing_customer: isExistingCustomer,
-        number_of_orders: shop.number_of_orders,
+        number_of_orders: input.shopify_number_of_orders,
       }
     }
 
@@ -129,8 +93,8 @@ export default defineCommand({
       cart_token: input.cart_token ?? null,
       discount_code: discountCode,
       is_existing_customer: isExistingCustomer,
-      number_of_orders: shop.number_of_orders,
-      shopify_customer_id: shop.customer_id,
+      number_of_orders: input.shopify_number_of_orders,
+      shopify_customer_id: input.shopify_customer_id ?? null,
     }
     const [subRes, evtRes, phRes] = await Promise.allSettled([
       subscribeKlaviyoProfile({ email, listId: KLAVIYO_LIST_ID, customSource: SOURCE }),
@@ -174,7 +138,7 @@ export default defineCommand({
       id: row.id,
       discount_code: discountCode,
       is_existing_customer: isExistingCustomer,
-      number_of_orders: shop.number_of_orders,
+      number_of_orders: input.shopify_number_of_orders,
     }
   },
 })

@@ -5,10 +5,18 @@
 // Body:  { email, cartToken?, market?, phDistinctId? }
 // Header: X-Palas-Test: '1'   (test mode — skips Klaviyo/PostHog fan-out)
 //
-// This route is a thin adapter: it validates the HTTP shape + CORS and
-// delegates all business logic (DB persistence + Klaviyo/PostHog dispatch)
-// to the `submitCartEmail` command. Keeping writes behind the service layer
-// means the adapter wiring stays the framework's job.
+// Architecture: the HTTP response MUST carry the correct discountCode
+// within the Vercel serverless function's SLA (~2s felt). The business
+// decision (grant SURPRISE10 yes/no) depends on a Shopify customer
+// lookup — we do that lookup RIGHT HERE in the route, synchronously,
+// and build the response from it. The `submitCartEmail` command handles
+// DB persistence + Klaviyo/PostHog fan-out and can freely exceed the
+// framework's 300ms inline-response window (wire-commands.ts) without
+// affecting the theme's UX.
+
+import { lookupShopifyCustomer } from '../../../../utils/shopify-customer'
+
+const DISCOUNT_CODE = 'SURPRISE10'
 
 interface SubmitBody {
   email?: unknown
@@ -16,24 +24,6 @@ interface SubmitBody {
   market?: unknown
   phDistinctId?: unknown
 }
-
-interface SubmitCartEmailResult {
-  id: string
-  discount_code: string | null
-  is_existing_customer: boolean
-  number_of_orders: number
-}
-
-// Framework envelope — see packages/cli/.../wire-commands.ts. Every
-// app.commands[*] callable goes through a WorkflowManager + 300ms race.
-// Under 300ms we get 'succeeded' with the inline result; over 300ms we
-// get 'running' with a runId and the workflow continues in background.
-// The legacy route did `result.discount_code` and got `undefined` — the
-// theme's `json.discountCode || FALLBACK` then silently handed the code
-// to every submitter. We must unwrap `.result` to see the real payload.
-type SubmitEnvelope =
-  | { status: 'succeeded'; result: SubmitCartEmailResult; runId: string }
-  | { status: 'running'; runId: string }
 
 type SubmitCommand = (
   input: {
@@ -44,9 +34,11 @@ type SubmitCommand = (
     is_test: boolean
     user_agent: string | null
     remote_ip: string | null
+    shopify_number_of_orders: number
+    shopify_customer_id: string | null
   },
   opts?: Record<string, unknown>,
-) => Promise<SubmitEnvelope>
+) => Promise<unknown>
 
 // ── CORS (same policy as /api/cart-tracking/c) ──────────────────────
 
@@ -128,44 +120,51 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: 'COMMAND_UNAVAILABLE' }, { status: 500, headers })
   }
 
+  // Shopify lookup → decision. ~200-500ms on cache miss; the Klaviyo +
+  // PostHog fan-out (happening inside the command) is what easily takes
+  // 1-2s, and that's why we keep the lookup on THIS side of the 300ms
+  // framework race. Fail-open: any Shopify API failure → treat as new
+  // visitor (discount granted) with a log warn.
+  const log = { warn: (m: string) => console.warn(m) }
+  const shop = await lookupShopifyCustomer(email, log)
+  const isExistingCustomer = shop.number_of_orders > 0
+  const discountCode = isExistingCustomer ? null : DISCOUNT_CODE
+
+  const cmdInput = {
+    email,
+    cart_token: sanitize(body.cartToken, 64),
+    market: sanitize(body.market, 8),
+    posthog_distinct_id: sanitize(body.phDistinctId, 128),
+    is_test: req.headers.get('x-palas-test') === '1',
+    user_agent: sanitize(req.headers.get('user-agent'), 512),
+    remote_ip: sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64),
+    shopify_number_of_orders: shop.number_of_orders,
+    shopify_customer_id: shop.customer_id,
+  }
+
+  // Fire the command. We await it so the framework keeps the serverless
+  // function alive for fan-out work, but we IGNORE its return value —
+  // the HTTP response is already decided from the route's Shopify lookup.
+  // If the command goes past 300ms the framework returns a `{runId,
+  // status:'running'}` envelope and the work continues in background.
+  // Either way the response below is correct.
   try {
-    const envelope = await cmd({
-      email,
-      cart_token: sanitize(body.cartToken, 64),
-      market: sanitize(body.market, 8),
-      posthog_distinct_id: sanitize(body.phDistinctId, 128),
-      is_test: req.headers.get('x-palas-test') === '1',
-      user_agent: sanitize(req.headers.get('user-agent'), 512),
-      remote_ip: sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64),
-    })
-
-    // The command's critical decision (discount yes/no) depends on a Shopify
-    // customer lookup, so the theme MUST see the real result — it can't fall
-    // back to the default SURPRISE10 just because we crossed 300ms. If the
-    // framework hands us a 'running' envelope, fail the request so the theme
-    // shows an error rather than applying the code to a repeat buyer.
-    if (envelope.status !== 'succeeded') {
-      console.warn(`[cart-email-capture] workflow did not finish inline (runId=${envelope.runId})`)
-      return Response.json({ ok: false, error: 'WORKFLOW_PENDING' }, { status: 503, headers })
-    }
-
-    const result = envelope.result
-    return Response.json(
-      {
-        ok: true,
-        discountCode: result.discount_code,
-        isExistingCustomer: result.is_existing_customer,
-        numberOfOrders: result.number_of_orders,
-      },
-      { headers },
-    )
+    await cmd(cmdInput)
   } catch (err) {
-    const name = (err as { name?: string }).name
-    if (name === 'ZodError') {
-      return Response.json({ ok: false, error: 'INVALID_EMAIL' }, { status: 400, headers })
-    }
+    // Persistence / fan-out failed. The user's submission is lost, but
+    // the Shopify decision is still valid — we've already determined
+    // whether to grant the discount. Log and continue.
     const message = (err as Error).message.slice(0, 200)
     console.error('[cart-email-capture] submitCartEmail failed:', message)
-    return Response.json({ ok: false, error: 'INTERNAL' }, { status: 500, headers })
   }
+
+  return Response.json(
+    {
+      ok: true,
+      discountCode,
+      isExistingCustomer,
+      numberOfOrders: shop.number_of_orders,
+    },
+    { headers },
+  )
 }
