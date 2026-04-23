@@ -83,6 +83,37 @@ describe('B6 — db:generate — pure functions', () => {
   })
 
   // -------------------------------------------------------------------
+  // GENERATE-03b — scans V2 entities/{name}/model.ts layout
+  // -------------------------------------------------------------------
+  it('GENERATE-03b — finds V2 entities under src/modules/{m}/entities/{e}/model.ts', () => {
+    mkdirSync(join(TMP, 'src/modules/cart/entities/cart'), { recursive: true })
+    writeFileSync(join(TMP, 'src/modules/cart/entities/cart/model.ts'), 'export default {}')
+    mkdirSync(join(TMP, 'src/modules/cart/entities/cart-event'), { recursive: true })
+    writeFileSync(join(TMP, 'src/modules/cart/entities/cart-event/model.ts'), 'export default {}')
+
+    const result = scanDmlModels(TMP)
+    expect(result.entities).toHaveLength(2)
+    expect(result.entities.map((e) => e.name).sort()).toEqual(['cart', 'cart-event'])
+    expect(result.entities.map((e) => e.file).sort()).toEqual([
+      'src/modules/cart/entities/cart-event/model.ts',
+      'src/modules/cart/entities/cart/model.ts',
+    ])
+  })
+
+  // -------------------------------------------------------------------
+  // GENERATE-03c — V1 and V2 layouts coexist in one project
+  // -------------------------------------------------------------------
+  it('GENERATE-03c — merges V1 + V2 layouts when both present', () => {
+    mkdirSync(join(TMP, 'src/modules/legacy/models'), { recursive: true })
+    writeFileSync(join(TMP, 'src/modules/legacy/models/legacy.ts'), 'export default {}')
+    mkdirSync(join(TMP, 'src/modules/modern/entities/modern'), { recursive: true })
+    writeFileSync(join(TMP, 'src/modules/modern/entities/modern/model.ts'), 'export default {}')
+
+    const result = scanDmlModels(TMP)
+    expect(result.entities.map((e) => e.name).sort()).toEqual(['legacy', 'modern'])
+  })
+
+  // -------------------------------------------------------------------
   // GENERATE-04 — detectRenames finds candidates
   // -------------------------------------------------------------------
   it('GENERATE-04 — detects rename candidates by same table + type', () => {

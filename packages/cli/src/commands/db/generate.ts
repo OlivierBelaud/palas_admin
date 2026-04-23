@@ -23,7 +23,11 @@ export interface GenerateCommandResult {
 }
 
 /**
- * Scan src/modules/**\/models/*.ts for DML defineModel() calls.
+ * Scan DML defineModel() entities under src/modules/. Supports both layouts:
+ *   V1 (legacy):  src/modules/{module}/models/{entity}.ts
+ *   V2 (current): src/modules/{module}/entities/{entity}/model.ts
+ * Both are returned so existing V1 modules keep working while V2 modules
+ * produce migrations too.
  */
 export function scanDmlModels(cwd: string): DmlScanResult {
   const entities: Array<{ name: string; file: string }> = []
@@ -37,18 +41,34 @@ export function scanDmlModels(cwd: string): DmlScanResult {
   const moduleEntries = readdirSync(modulesDir, { withFileTypes: true })
   for (const moduleEntry of moduleEntries) {
     if (!moduleEntry.isDirectory()) continue
+    const moduleDir = resolve(modulesDir, moduleEntry.name)
 
-    const modelsDir = resolve(modulesDir, moduleEntry.name, 'models')
-    if (!existsSync(modelsDir)) continue
+    // V1 — src/modules/{module}/models/{entity}.ts
+    const modelsDir = resolve(moduleDir, 'models')
+    if (existsSync(modelsDir)) {
+      for (const modelFile of readdirSync(modelsDir, { withFileTypes: true })) {
+        if (!modelFile.isFile()) continue
+        if (!modelFile.name.endsWith('.ts') && !modelFile.name.endsWith('.js')) continue
 
-    const modelFiles = readdirSync(modelsDir, { withFileTypes: true })
-    for (const modelFile of modelFiles) {
-      if (!modelFile.isFile()) continue
-      if (!modelFile.name.endsWith('.ts') && !modelFile.name.endsWith('.js')) continue
+        const filePath = join('src', 'modules', moduleEntry.name, 'models', modelFile.name)
+        const entityName = modelFile.name.replace(/\.(ts|js)$/, '')
+        entities.push({ name: entityName, file: filePath })
+      }
+    }
 
-      const filePath = join('src', 'modules', moduleEntry.name, 'models', modelFile.name)
-      const entityName = modelFile.name.replace(/\.(ts|js)$/, '')
-      entities.push({ name: entityName, file: filePath })
+    // V2 — src/modules/{module}/entities/{entity}/model.ts
+    const entitiesDir = resolve(moduleDir, 'entities')
+    if (existsSync(entitiesDir)) {
+      for (const entityEntry of readdirSync(entitiesDir, { withFileTypes: true })) {
+        if (!entityEntry.isDirectory()) continue
+        const modelPathTs = resolve(entitiesDir, entityEntry.name, 'model.ts')
+        const modelPathJs = resolve(entitiesDir, entityEntry.name, 'model.js')
+        const modelPath = existsSync(modelPathTs) ? modelPathTs : existsSync(modelPathJs) ? modelPathJs : null
+        if (!modelPath) continue
+        const ext = modelPath.endsWith('.ts') ? '.ts' : '.js'
+        const filePath = join('src', 'modules', moduleEntry.name, 'entities', entityEntry.name, `model${ext}`)
+        entities.push({ name: entityEntry.name, file: filePath })
+      }
     }
   }
 
@@ -131,7 +151,7 @@ export async function generateCommand(
   result.warnings.push(...dmlScan.warnings)
 
   if (dmlScan.entities.length === 0) {
-    result.warnings.push('No DML entities found in src/modules/**/models/')
+    result.warnings.push('No DML entities found in src/modules/**/models/ or src/modules/**/entities/*/model.ts')
     result.noChanges = true
     return result
   }
