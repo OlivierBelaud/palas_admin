@@ -125,12 +125,7 @@ export async function POST(req: Request) {
   const db = mantaReq.app?.infra?.db
 
   let rowId: string | null = null
-  let dbDiag = 'ok'
-  if (!db) {
-    dbDiag = 'no-db'
-  } else if (typeof (db as { raw?: unknown }).raw !== 'function') {
-    dbDiag = 'no-raw'
-  } else {
+  if (db) {
     try {
       const rows = await db.raw<CaptureRow>(
         `INSERT INTO email_captures
@@ -140,9 +135,7 @@ export async function POST(req: Request) {
         [email, cartToken, SOURCE, market, phDistinctId, isTest, userAgent, remoteIp],
       )
       rowId = rows[0]?.id ?? null
-      if (!rowId) dbDiag = 'no-row'
     } catch (err) {
-      dbDiag = `err:${(err as Error).message.slice(0, 80)}`
       console.warn('[email-capture] DB insert failed:', (err as Error).message)
     }
   }
@@ -185,7 +178,5 @@ export async function POST(req: Request) {
     }
   }
 
-  const response: Record<string, unknown> = { ok: true, discountCode: DISCOUNT_CODE }
-  if (isTest) response.db = dbDiag
-  return Response.json(response, { headers })
+  return Response.json({ ok: true, discountCode: DISCOUNT_CODE }, { headers })
 }
