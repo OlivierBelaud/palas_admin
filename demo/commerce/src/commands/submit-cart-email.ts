@@ -11,6 +11,7 @@
 // writes behind the service layer means the adapter wiring stays the
 // framework's job, not ours.
 
+import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { sendKlaviyoEvent, subscribeKlaviyoProfile } from '../utils/klaviyo'
 import { sendPosthogEvent } from '../utils/posthog-ingest'
 
@@ -31,6 +32,38 @@ interface EntityCrud<Row> {
   update: (id: string, data: Record<string, unknown>) => Promise<Row>
 }
 
+interface ShopifyLookup {
+  number_of_orders: number
+  customer_id: string | null
+}
+
+// Fail-open: if Shopify lookup throws, we treat the submitter as a new
+// visitor (discount granted) rather than denying. Losing the discount to
+// an API hiccup is worse UX than granting one extra to a repeat customer.
+async function lookupShopifyCustomer(email: string, log: { warn: (m: string) => void }): Promise<ShopifyLookup> {
+  try {
+    const client = new ShopifyAdminClient()
+    const data = await client.query<{
+      customers: { edges: Array<{ node: { id: string; numberOfOrders: string | number | null } }> }
+    }>(
+      `query ($q: String!) {
+        customers(first: 1, query: $q) {
+          edges { node { id numberOfOrders } }
+        }
+      }`,
+      { q: `email:"${email.replace(/"/g, '\\"')}"` },
+    )
+    const node = data.customers?.edges?.[0]?.node
+    if (!node) return { number_of_orders: 0, customer_id: null }
+    const raw = node.numberOfOrders
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : 0
+    return { number_of_orders: Number.isFinite(n) ? n : 0, customer_id: node.id }
+  } catch (err) {
+    log.warn(`[submitCartEmail] shopify lookup failed for ${email}: ${(err as Error).message}`)
+    return { number_of_orders: 0, customer_id: null }
+  }
+}
+
 export default defineCommand({
   name: 'submitCartEmail',
   description:
@@ -47,40 +80,64 @@ export default defineCommand({
   workflow: async (input, { step, log }) => {
     const email = input.email.toLowerCase()
 
-    // 1. Persist. Service layer handles adapter wiring + schema validation.
-    // The runtime Proxy resolves `emailCapture` to the auto-generated CRUD
-    // even though it's not surfaced in MantaGeneratedAppModules yet.
+    // 1. Persist + Shopify lookup in parallel. DB insert doesn't depend on the
+    //    Shopify result; running them together shaves the Shopify RTT off the
+    //    theme's perceived latency. Service layer handles adapter wiring +
+    //    schema validation. Runtime Proxy resolves `emailCapture` to the
+    //    auto-generated CRUD even though it's not surfaced in
+    //    MantaGeneratedAppModules yet.
     const svc = step.service as unknown as { emailCapture: EntityCrud<EmailCaptureRow> }
-    const row = await svc.emailCapture.create({
-      email,
-      cart_token: input.cart_token ?? null,
-      source: SOURCE,
-      market: input.market ?? null,
-      posthog_distinct_id: input.posthog_distinct_id ?? null,
-      is_test: input.is_test,
-      user_agent: input.user_agent ?? null,
-      remote_ip: input.remote_ip ?? null,
-    })
-    log.info(`[submitCartEmail] captured id=${row.id} email=${email} test=${input.is_test}`)
+    const [row, shop] = await Promise.all([
+      svc.emailCapture.create({
+        email,
+        cart_token: input.cart_token ?? null,
+        source: SOURCE,
+        market: input.market ?? null,
+        posthog_distinct_id: input.posthog_distinct_id ?? null,
+        is_test: input.is_test,
+        user_agent: input.user_agent ?? null,
+        remote_ip: input.remote_ip ?? null,
+      }),
+      lookupShopifyCustomer(email, log),
+    ])
+
+    const isExistingCustomer = shop.number_of_orders > 0
+    const discountCode = isExistingCustomer ? null : DISCOUNT_CODE
+
+    log.info(
+      `[submitCartEmail] captured id=${row.id} email=${email} test=${input.is_test} ` +
+        `orders=${shop.number_of_orders} discount=${discountCode ?? 'none'}`,
+    )
 
     // 2. In test mode we stop here — no external noise (Klaviyo / PostHog).
     if (input.is_test) {
-      return { id: row.id, discount_code: DISCOUNT_CODE }
+      return {
+        id: row.id,
+        discount_code: discountCode,
+        is_existing_customer: isExistingCustomer,
+        number_of_orders: shop.number_of_orders,
+      }
     }
 
     // 3. Fan out. Three independent network calls, no ordering constraints.
     //    Each helper is already never-throw (returns { ok, status, error }).
+    //    We still fire identify/event for existing customers — we want them
+    //    in Klaviyo flows even without a discount grant.
+    const eventProps = {
+      source: SOURCE,
+      market: input.market ?? null,
+      cart_token: input.cart_token ?? null,
+      discount_code: discountCode,
+      is_existing_customer: isExistingCustomer,
+      number_of_orders: shop.number_of_orders,
+      shopify_customer_id: shop.customer_id,
+    }
     const [subRes, evtRes, phRes] = await Promise.allSettled([
       subscribeKlaviyoProfile({ email, listId: KLAVIYO_LIST_ID, customSource: SOURCE }),
       sendKlaviyoEvent({
         email,
         metric: EVENT_NAME,
-        properties: {
-          source: SOURCE,
-          market: input.market ?? null,
-          cart_token: input.cart_token ?? null,
-          discount_code: DISCOUNT_CODE,
-        },
+        properties: eventProps,
         unique_id: row.id,
       }),
       sendPosthogEvent({
@@ -88,12 +145,7 @@ export default defineCommand({
         distinctId: input.posthog_distinct_id ?? email,
         email,
         ip: input.remote_ip ?? null,
-        properties: {
-          source: SOURCE,
-          market: input.market ?? null,
-          cart_token: input.cart_token ?? null,
-          discount_code: DISCOUNT_CODE,
-        },
+        properties: eventProps,
       }),
     ])
 
@@ -118,6 +170,11 @@ export default defineCommand({
       }
     }
 
-    return { id: row.id, discount_code: DISCOUNT_CODE }
+    return {
+      id: row.id,
+      discount_code: discountCode,
+      is_existing_customer: isExistingCustomer,
+      number_of_orders: shop.number_of_orders,
+    }
   },
 })

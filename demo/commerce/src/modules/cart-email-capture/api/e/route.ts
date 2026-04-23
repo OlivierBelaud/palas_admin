@@ -19,7 +19,9 @@ interface SubmitBody {
 
 interface SubmitCartEmailResult {
   id: string
-  discount_code: string
+  discount_code: string | null
+  is_existing_customer: boolean
+  number_of_orders: number
 }
 
 type SubmitCommand = (
@@ -125,7 +127,15 @@ export async function POST(req: Request) {
       user_agent: sanitize(req.headers.get('user-agent'), 512),
       remote_ip: sanitize(req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null, 64),
     })
-    return Response.json({ ok: true, discountCode: result.discount_code }, { headers })
+    return Response.json(
+      {
+        ok: true,
+        discountCode: result.discount_code,
+        isExistingCustomer: result.is_existing_customer,
+        numberOfOrders: result.number_of_orders,
+      },
+      { headers },
+    )
   } catch (err) {
     const name = (err as { name?: string }).name
     if (name === 'ZodError') {
