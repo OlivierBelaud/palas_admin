@@ -1448,6 +1448,19 @@ export function createAiChatHandler(app: MantaApp, moduleNames: string[], linkGr
         // → error recovery → refined query → synthesis → render_component → follow-up.
         // 5 was too tight for anything involving cross-table joins + HogQL syntax iterations.
         maxSteps: 10,
+        // The AI SDK masks stream-time errors as "An error occurred." on the wire (security
+        // default). Without server-side logging here, prod failures are completely invisible
+        // — past incident: a single bad Zod schema killed the whole chat with no signal.
+        onError: ({ error }) => {
+          const e = error as Error & { cause?: unknown; status?: number; statusCode?: number }
+          console.error('[ai/chat][stream-error]', {
+            message: e?.message,
+            name: e?.name,
+            status: e?.status ?? e?.statusCode,
+            cause: e?.cause,
+            stack: e?.stack?.split('\n').slice(0, 8).join('\n'),
+          })
+        },
       })
 
       return result.toDataStreamResponse()
