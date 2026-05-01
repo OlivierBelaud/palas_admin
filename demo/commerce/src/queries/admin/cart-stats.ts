@@ -9,7 +9,7 @@ import { computeActivityState, computeSubStage } from '../../modules/cart-tracki
 export default defineQuery({
   name: 'cart-stats',
   description: 'Aggregated cart statistics (last 30 days) — activity states derived on the fly',
-  input: z.object({}).optional(),
+  input: z.object({}),
   handler: async (_input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',

@@ -3,7 +3,7 @@ import { formatMoney } from '../../utils/currency'
 export default defineQuery({
   name: 'cart-list',
   description: 'List carts with computed client display and formatted amounts',
-  input: z.object({}).optional(),
+  input: z.object({}),
   handler: async (_input, { query }) => {
     const carts = await query.graph({
       entity: 'cart',
