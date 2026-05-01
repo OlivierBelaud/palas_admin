@@ -189,6 +189,22 @@ export const SUPPORTED_FIELD_OPERATORS = [
   '$notnull',
 ] as const
 
+// Drizzle timestamp columns expect Date instances; ISO strings (or numeric epochs)
+// crash with `value.toISOString is not a function`. Filters arriving over HTTP, or
+// tool-call args from the AI assistant, are JSON and never carry Date instances —
+// coerce here so the relational query path stays string-friendly.
+function coerceFilterValue(column: unknown, value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  const dataType = (column as { dataType?: unknown } | null)?.dataType
+  if (dataType !== 'date') return value
+  if (value instanceof Date) return value
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? value : d
+  }
+  return value
+}
+
 /**
  * Build an array of Drizzle SQL predicates from a flat `{ field: value | opObj }` map
  * against a specific table (either a relational-query `fields` object or a drizzle
@@ -225,37 +241,43 @@ export function buildFieldPredicates(
     // where the URL serializer sends `filter_field=a,b,c` as `field: ['a','b','c']`.
     if (Array.isArray(value)) {
       if (value.length === 0) continue
-      conditions.push(operators.inArray(column, value))
+      conditions.push(
+        operators.inArray(
+          column,
+          value.map((v) => coerceFilterValue(column, v)),
+        ),
+      )
       continue
     }
 
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const ops = value as Record<string, unknown>
       for (const [op, val] of Object.entries(ops)) {
+        const v = Array.isArray(val) ? val.map((x) => coerceFilterValue(column, x)) : coerceFilterValue(column, val)
         switch (op) {
           case '$eq':
-            conditions.push(operators.eq(column, val))
+            conditions.push(operators.eq(column, v))
             break
           case '$ne':
-            conditions.push(operators.ne(column, val))
+            conditions.push(operators.ne(column, v))
             break
           case '$gt':
-            conditions.push(operators.gt(column, val))
+            conditions.push(operators.gt(column, v))
             break
           case '$gte':
-            conditions.push(operators.gte(column, val))
+            conditions.push(operators.gte(column, v))
             break
           case '$lt':
-            conditions.push(operators.lt(column, val))
+            conditions.push(operators.lt(column, v))
             break
           case '$lte':
-            conditions.push(operators.lte(column, val))
+            conditions.push(operators.lte(column, v))
             break
           case '$in':
-            conditions.push(operators.inArray(column, val))
+            conditions.push(operators.inArray(column, v))
             break
           case '$nin':
-            conditions.push(operators.notInArray(column, val))
+            conditions.push(operators.notInArray(column, v))
             break
           case '$null':
             // `{ $null: true }` → IS NULL; `{ $null: false }` → IS NOT NULL.
@@ -274,7 +296,7 @@ export function buildFieldPredicates(
       continue
     }
 
-    conditions.push(operators.eq(column, value))
+    conditions.push(operators.eq(column, coerceFilterValue(column, value)))
   }
 
   return conditions
