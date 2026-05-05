@@ -85,3 +85,4 @@ coverage/
 
 # ── Claude Code — entirely local, never committed ──
 .claude/
+.gstack/
