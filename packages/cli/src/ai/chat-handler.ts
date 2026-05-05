@@ -758,13 +758,14 @@ IMPORTANT: Don't create routes that start with the same path as existing pages (
             }
           }) ?? []
 
-        // Page-level query (PageSpec.query) — required by PageSpecSchema with a non-optional `entity`.
-        // PageRenderer fires a top-level fetch based on this even though blocks have their own
-        // queries. For pages whose blocks are entirely hogql or named (no local entity), we'd
-        // have no entity to use — Zod would reject the spec. Strategy: find the FIRST graph block
-        // in main[] and use its entity; if none exists, fall back to a placeholder that won't
-        // 500 (we use 'admin' which always exists when defineUserModel('admin') is declared, and
-        // pageSize: 1 to minimize the wasted fetch).
+        // Page-level query (PageSpec.query) — used by SpecRenderer/useSpecQuery to fire
+        // ONE top-level fetch whose result is fanned out to every block via the `data` prop.
+        // Custom pages (AI-created) are rendered through this legacy path, so block-level
+        // graph.filters / graph.sort are otherwise ignored. We propagate them from the FIRST
+        // graph block to pageQuery so default filtering and sort actually take effect.
+        // Limitation: only the first graph block's filters/sort survive — for pages with
+        // multiple independently-filtered tables, the proper fix is to migrate
+        // CustomPageWrapper from SpecRenderer to PageRenderer (BACKLOG follow-up).
         const firstGraphBlock = (spec.main as Array<Record<string, unknown>>).find((b) => {
           const q = b.query as Record<string, unknown> | undefined
           return q && typeof q.graph === 'object' && q.graph !== null
@@ -773,6 +774,7 @@ IMPORTANT: Don't create routes that start with the same path as existing pages (
           ? ((firstGraphBlock.query as Record<string, unknown>).graph as Record<string, unknown>)
           : undefined
         const firstGraphPagination = firstGraph?.pagination as Record<string, unknown> | undefined
+        const firstGraphSort = firstGraph?.sort as { field?: string; order?: string } | undefined
         const pageQuery = firstGraph?.entity
           ? {
               entity: firstGraph.entity as string,
@@ -784,6 +786,15 @@ IMPORTANT: Don't create routes that start with the same path as existing pages (
                       ? (firstGraph.fields as string[]).join(',')
                       : firstGraph.fields,
                   }
+                : {}),
+              // Propagate default filters from the block-level graph query so the
+              // legacy SpecRenderer fetch includes the WHERE clause.
+              ...(firstGraph.filters && typeof firstGraph.filters === 'object'
+                ? { filters: firstGraph.filters as Record<string, unknown> }
+                : {}),
+              // QueryDef.sort uses { field, direction }, GraphQueryDef.sort uses { field, order }.
+              ...(firstGraphSort?.field
+                ? { sort: { field: firstGraphSort.field, direction: firstGraphSort.order ?? 'asc' } }
                 : {}),
               ...(firstGraphPagination?.limit ? { pageSize: firstGraphPagination.limit as number } : {}),
             }
