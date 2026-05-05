@@ -696,26 +696,12 @@ IMPORTANT: Don't create routes that start with the same path as existing pages (
           return map[t] ?? t
         }
 
-        // Extract and normalize the query for BLOCK-level consumption (passed to useBlockQuery).
-        // Graph queries are unwrapped to the flat shape expected by the legacy EntityTable block;
-        // named + hogql queries are passed through as-is because useBlockQuery inspects them
-        // structurally via isGraphQuery / isNamedQuery / isHogQLQuery type guards.
+        // Pass the query through unchanged. DataTableBlock / useBlockQuery dispatch via
+        // isGraphQuery / isNamedQuery / isHogQLQuery, which all require the original shape
+        // ({ graph: {...} } / { name } / { hogql }). Flattening graph queries silently drops
+        // filters, sort, and relations, and breaks the type guards.
         const normalizeQuery = (block: Record<string, unknown>) => {
-          const rawQuery = block.query as Record<string, unknown> | undefined
-          if (!rawQuery) return undefined
-          // { graph: { entity, fields, ... } } → { entity, fields, list: true, pageSize? }
-          if (rawQuery.graph && typeof rawQuery.graph === 'object') {
-            const graph = rawQuery.graph as Record<string, unknown>
-            return {
-              entity: graph.entity,
-              fields: graph.fields,
-              list: true,
-              ...(graph.pagination ? { pageSize: (graph.pagination as Record<string, unknown>).limit } : {}),
-            }
-          }
-          // { name, input } or { hogql: { query } } — keep the original shape so useBlockQuery's
-          // type guards can route to the right fetcher.
-          return rawQuery
+          return block.query as Record<string, unknown> | undefined
         }
 
         // Auto-create PageHeader component from spec.header
@@ -759,22 +745,23 @@ IMPORTANT: Don't create routes that start with the same path as existing pages (
           const q = b.query as Record<string, unknown> | undefined
           return q && typeof q.graph === 'object' && q.graph !== null
         })
-        const firstGraphQuery = firstGraphBlock
-          ? (normalizeQuery(firstGraphBlock) as Record<string, unknown> | undefined)
+        const firstGraph = firstGraphBlock
+          ? ((firstGraphBlock.query as Record<string, unknown>).graph as Record<string, unknown>)
           : undefined
-        const pageQuery = firstGraphQuery?.entity
+        const firstGraphPagination = firstGraph?.pagination as Record<string, unknown> | undefined
+        const pageQuery = firstGraph?.entity
           ? {
-              entity: firstGraphQuery.entity as string,
+              entity: firstGraph.entity as string,
               list: true,
               // fields is a single string in PageSpec (comma-separated), not an array
-              ...(firstGraphQuery.fields
+              ...(firstGraph.fields
                 ? {
-                    fields: Array.isArray(firstGraphQuery.fields)
-                      ? (firstGraphQuery.fields as string[]).join(',')
-                      : firstGraphQuery.fields,
+                    fields: Array.isArray(firstGraph.fields)
+                      ? (firstGraph.fields as string[]).join(',')
+                      : firstGraph.fields,
                   }
                 : {}),
-              ...(firstGraphQuery.pageSize ? { pageSize: firstGraphQuery.pageSize as number } : {}),
+              ...(firstGraphPagination?.limit ? { pageSize: firstGraphPagination.limit as number } : {}),
             }
           : // No graph block in the page — tiny placeholder fetch that satisfies Zod and renders a no-op.
             // 'admin' is the user table auto-created by defineUserModel('admin') and always exists.
