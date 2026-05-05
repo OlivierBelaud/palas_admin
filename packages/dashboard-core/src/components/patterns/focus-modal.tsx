@@ -15,6 +15,7 @@ import { cn } from '@manta/ui'
 import { X } from 'lucide-react'
 import type React from 'react'
 import { createContext, useContext } from 'react'
+import { useAiSidebarOffset } from '../../ai/ai-provider'
 
 interface FocusModalContextValue {
   onClose: () => void
@@ -43,16 +44,29 @@ export function FocusModal({
   footer,
   maxWidth = 'max-w-[720px]',
 }: FocusModalProps) {
+  // Mirror Shell's paddingRight so the modal doesn't extend behind the AI
+  // sidebar. Fullscreen AI floats above everything, so we leave the modal
+  // alone in that mode (offset = 0).
+  const aiOffset = useAiSidebarOffset()
+
   if (!open) return null
 
   return (
     <FocusModalContext.Provider value={{ onClose }}>
-      {/* Overlay backdrop — page visible behind */}
+      {/* Overlay backdrop — page visible behind. Backdrop also shrinks so it
+          doesn't darken the AI sidebar area. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay, keyboard-accessible via Escape */}
-      <div className="fixed inset-0 z-50 bg-black/40 animate-in fade-in-0" onClick={onClose} />
+      <div
+        className="fixed top-0 left-0 bottom-0 z-50 bg-black/40 animate-in fade-in-0"
+        style={{ right: aiOffset }}
+        onClick={onClose}
+      />
 
       {/* Modal card — inset from edges, rounded, with shadow */}
-      <div className="fixed inset-2 z-50 flex flex-col overflow-hidden rounded-xl bg-background shadow-2xl animate-in fade-in-0 zoom-in-95">
+      <div
+        className="fixed top-2 left-2 bottom-2 z-50 flex flex-col overflow-hidden rounded-xl bg-background shadow-2xl animate-in fade-in-0 zoom-in-95 transition-[right] duration-200"
+        style={{ right: aiOffset + 8 }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>

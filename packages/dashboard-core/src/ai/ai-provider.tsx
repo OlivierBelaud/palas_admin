@@ -54,6 +54,18 @@ export const useAi = () => {
   return ctx
 }
 
+/**
+ * Read the AI sidebar offset for layout-aware components (e.g. modals)
+ * without requiring AiProvider in the tree. Returns 0 when the chat is
+ * closed, in fullscreen, or when no AiProvider is mounted at all.
+ */
+export const useAiSidebarOffset = (): number => {
+  const ctx = useContext(AiContext)
+  if (!ctx) return 0
+  if (!ctx.isOpen || ctx.isFullscreen) return 0
+  return ctx.panelWidth
+}
+
 export { MAX_WIDTH, MIN_WIDTH }
 
 export const AiProvider = ({ children }: PropsWithChildren) => {
