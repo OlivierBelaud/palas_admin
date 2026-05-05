@@ -657,6 +657,30 @@ Example — list page:
   }
 }
 
+DEFAULT FILTERS (always-applied, server-side) — put them under query.graph.filters.
+This is what you want when the user asks for a page that lists "only X" or "X with Y".
+Example — "customers with an account":
+{
+  type: "DataTable",
+  query: {
+    graph: {
+      entity: "customer",
+      fields: ["first_name", "last_name", "email", "has_account", "created_at"],
+      filters: { has_account: true },
+      sort: { field: "created_at", order: "desc" },
+      pagination: { limit: 20 }
+    }
+  },
+  columns: [...]
+}
+Filter values: scalars (string, number, boolean) → equality; arrays → IN; null → IS NULL;
+operator objects → { $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $null, $notnull }.
+Dotted keys filter through relations: { "customer.email": "x@y.com" }.
+
+INTERACTIVE FILTER CHIPS (user clicks to filter) — block-level "filters" prop, NOT query.graph.filters:
+{ type: "DataTable", query: {...}, filters: [{ key: "status", label: "Status", type: "select", options: [...] }] }
+Only use this when the user explicitly wants UI controls. For "show me X with Y", use query.graph.filters instead.
+
 To include relation counts, add the relation name to fields (e.g. "customers" for M:N).
 Arrays are displayed as counts in columns with type: "count".
 
