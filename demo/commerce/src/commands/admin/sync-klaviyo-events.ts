@@ -148,11 +148,14 @@ export default defineCommand({
     if (input.fullRefresh) {
       sinceMs = Date.now() - FALLBACK_LOOKBACK_MS
     } else {
-      // KlaviyoEvent lives in the `contact` module (one service-per-module).
-      const latest = (await step.service.contact.listKlaviyoEvents(
-        {},
-        { order: { occurred_at: 'DESC' }, take: 1 },
-      )) as Array<{ occurred_at?: Date | string | null }>
+      // step.service runtime exposes one service per ENTITY (not per module),
+      // even when the entity lives in a multi-entity module. So KlaviyoEvent
+      // is `(step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>).klaviyoEvent`, not `step.service.contact`.
+      const latest = (await (
+        step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
+      ).klaviyoEvent.listKlaviyoEvents({}, { order: { occurred_at: 'DESC' }, take: 1 })) as Array<{
+        occurred_at?: Date | string | null
+      }>
       const maxAt = latest[0]?.occurred_at ? new Date(latest[0].occurred_at).getTime() : null
       sinceMs = maxAt ? maxAt - OVERLAP_MS : Date.now() - FALLBACK_LOOKBACK_MS
     }
@@ -177,26 +180,21 @@ export default defineCommand({
       return { scanned: 0, inserted: 0, skipped: 0 } satisfies IngestResult
     }
 
-    // ── 3. Filter-then-create via service (no upsertWithReplace on secondary
-    //     entities of a module yet — KlaviyoEvent is the secondary entity of
-    //     the `contact` module, so we read existing IDs and create only new).
-    //     Klaviyo events are immutable so this is functionally an upsert.
-    const ids = events.map((e) => e.klaviyo_event_id)
-    // biome-ignore lint/suspicious/noExplicitAny: $in is a Manta filter operator not in the entity type
-    const existing = (await step.service.contact.listKlaviyoEvents({ klaviyo_event_id: { $in: ids } } as any, {
-      take: ids.length,
-    })) as Array<{ klaviyo_event_id?: string }>
-    const existingSet = new Set(existing.map((r) => r.klaviyo_event_id).filter(Boolean) as string[])
-    const fresh = events.filter((e) => !existingSet.has(e.klaviyo_event_id))
-
-    if (fresh.length > 0) {
-      await step.service.contact.createKlaviyoEvents(fresh as unknown as Record<string, unknown>[])
-    }
+    // ── 3. Bulk upsert via service (klaviyoEvent has its own service +
+    //     custom upsertWithReplace exposed in entities/klaviyo-event/service.ts).
+    //     Klaviyo events are immutable; replaceFields=[] = ON CONFLICT DO
+    //     update only `updated_at` — functionally a DO NOTHING for our reads.
+    const upserted = (await (
+      step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
+    ).klaviyoEvent.upsertWithReplace(
+      events as unknown as Record<string, unknown>[],
+      [],
+      ['klaviyo_event_id'],
+    )) as Array<{ id: string }>
 
     const scanned = events.length
-    const inserted = fresh.length
-    const skipped = scanned - inserted
-    log.info(`[syncKlaviyoEvents] scanned=${scanned} inserted=${inserted} skipped=${skipped}`)
-    return { scanned, inserted, skipped } satisfies IngestResult
+    const inserted = upserted.length
+    log.info(`[syncKlaviyoEvents] scanned=${scanned} inserted≈${inserted} skipped=${scanned - inserted}`)
+    return { scanned, inserted, skipped: scanned - inserted } satisfies IngestResult
   },
 })
