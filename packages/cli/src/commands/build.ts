@@ -314,8 +314,36 @@ function scanJobs(cwd: string): ManifestJobEntry[] {
       .split('/')
       .pop()!,
     file,
-    schedule: '', // Would parse from file
+    schedule: extractJobSchedule(resolve(cwd, file)),
   }))
+}
+
+/**
+ * Extract the cron schedule from a `defineJob('name', 'schedule', handler)` call.
+ *
+ * The signature is stable (defineJob is a global with positional args), so a
+ * regex over the source file is enough — we deliberately avoid an AST parser
+ * for build-time speed and to keep the CLI bundle dep-free.
+ *
+ * Returns the schedule string, or an empty string if not found. The empty
+ * string is the legacy default that `generateVercelConfig` falls back on
+ * (`'0 [slash-star]/6 [slash-star] [slash-star]'`, written here without the
+ * literal slash-star sequence to keep esbuild's JSDoc parser happy).
+ */
+function extractJobSchedule(filePath: string): string {
+  if (!existsSync(filePath)) return ''
+  let source: string
+  try {
+    source = readFileSync(filePath, 'utf-8')
+  } catch {
+    return ''
+  }
+
+  // Match: defineJob(<whitespace> 'name' <whitespace> , <whitespace> 'schedule'
+  // The schedule literal is captured as group 2. Both single and double
+  // quotes (and backticks for the schedule) are supported.
+  const match = source.match(/defineJob\s*\(\s*(?:'[^']*'|"[^"]*"|`[^`]*`)\s*,\s*(['"`])([^'"`]+)\1/)
+  return match?.[2] ?? ''
 }
 
 function scanLinks(cwd: string): ManifestLinkEntry[] {

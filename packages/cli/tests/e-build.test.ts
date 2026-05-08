@@ -101,6 +101,69 @@ describe('E — manta build', () => {
     expect(jobs.jobs[0].id).toBe('cleanup-carts')
   })
 
+  it('E-08b — extracts the cron schedule from defineJob() source', async () => {
+    mkdirSync(join(TMP, 'src/jobs'), { recursive: true })
+    writeFileSync(
+      join(TMP, 'src/jobs/sync-events.ts'),
+      `export default defineJob('sync-events', '*/5 * * * *', async ({ command, log }) => {
+  log.info('hi')
+  return { status: 'success' }
+})`,
+    )
+
+    await buildCommand({}, TMP)
+
+    const jobs = JSON.parse(readFileSync(join(TMP, '.manta/manifest/jobs.json'), 'utf-8'))
+    expect(jobs.jobs).toHaveLength(1)
+    expect(jobs.jobs[0].id).toBe('sync-events')
+    expect(jobs.jobs[0].schedule).toBe('*/5 * * * *')
+  })
+
+  it('E-08c — extracts schedule with whitespace and double quotes', async () => {
+    mkdirSync(join(TMP, 'src/jobs'), { recursive: true })
+    writeFileSync(
+      join(TMP, 'src/jobs/hourly.ts'),
+      `export default defineJob(\n  "hourly",\n  "0 * * * *",\n  async () => ({ status: 'success' })\n)`,
+    )
+
+    await buildCommand({}, TMP)
+
+    const jobs = JSON.parse(readFileSync(join(TMP, '.manta/manifest/jobs.json'), 'utf-8'))
+    expect(jobs.jobs[0].schedule).toBe('0 * * * *')
+  })
+
+  it('E-08d — falls back to empty schedule for unrecognized files', async () => {
+    mkdirSync(join(TMP, 'src/jobs'), { recursive: true })
+    writeFileSync(join(TMP, 'src/jobs/manual.ts'), 'export default {}')
+
+    await buildCommand({}, TMP)
+
+    const jobs = JSON.parse(readFileSync(join(TMP, '.manta/manifest/jobs.json'), 'utf-8'))
+    expect(jobs.jobs[0].schedule).toBe('')
+  })
+
+  it('E-08e — vercel preset generates vercel.json crons[] using the parsed schedule', async () => {
+    mkdirSync(join(TMP, 'src/jobs'), { recursive: true })
+    writeFileSync(
+      join(TMP, 'src/jobs/sync-events.ts'),
+      `export default defineJob('sync-events', '*/5 * * * *', async () => ({ status: 'success' }))`,
+    )
+    writeFileSync(
+      join(TMP, 'src/jobs/sweep.ts'),
+      `export default defineJob('sweep', '0 * * * *', async () => ({ status: 'success' }))`,
+    )
+
+    await buildCommand({ preset: 'vercel' }, TMP)
+
+    const vercel = JSON.parse(readFileSync(join(TMP, 'vercel.json'), 'utf-8')) as {
+      crons: Array<{ path: string; schedule: string }>
+    }
+    expect(vercel.crons).toHaveLength(2)
+    const byPath = Object.fromEntries(vercel.crons.map((c) => [c.path, c.schedule]))
+    expect(byPath['/api/crons/sync-events']).toBe('*/5 * * * *')
+    expect(byPath['/api/crons/sweep']).toBe('0 * * * *')
+  })
+
   it('E-09 — generates modules.json from src/modules/', async () => {
     mkdirSync(join(TMP, 'src/modules/product'), { recursive: true })
     writeFileSync(join(TMP, 'src/modules/product/index.ts'), 'export default {}')
