@@ -1,6 +1,9 @@
 // Visitor identification endpoint — called from the Shopify theme.
 //
-// Shape: GET /api/cart-tracking/c?k=<klaviyo_exchange_id>
+// Shape: GET /api/cart-tracking/c?<one of>
+//   k=<klaviyo_exchange_id>   — historical Klaviyo $exchange_id
+//   u=<manta_uid_token>       — symmetric HMAC token issued by signContactToken
+//   d=<distinct_id>           — direct PostHog distinct_id lookup
 // Returns a short codified JSON payload { t, n?, o?, v } that the theme
 // stores in sessionStorage. See src/utils/visitor-codes.ts for the mapping.
 //
@@ -8,24 +11,23 @@
 // drawer, and Manta's build manifest only collects api routes from modules
 // that have at least one entity (see BACKLOG VIS-04).
 //
+// The hot path reads `Contact.orders_count` / `last_order_at` directly from
+// the local DB — no synchronous HogQL call. Klaviyo API is only consulted
+// when ?k= misses the local klaviyo_exchange_resolved cache.
+//
 // Never throws — every failure path falls back to { t: 'a', v } so the theme
 // UX degrades gracefully.
 
+import { createHash } from 'node:crypto'
 import { UpstashCacheAdapter } from '@manta/adapter-cache-upstash'
-import { resolveKlaviyoProfile } from '../../../../utils/klaviyo-resolve'
-import { codifyDate, codifyTier, nowEpochSec, type Tier } from '../../../../utils/visitor-codes'
-
-interface VisitorPayload {
-  t: Tier
-  n?: number
-  o?: number
-  v: number
-}
-
-interface OrderStats {
-  count: number
-  lastAt: string | null
-}
+import { nowEpochSec } from '../../../../utils/visitor-codes'
+import {
+  type ContactModuleLike,
+  resolveByDistinctId,
+  resolveByKlaviyoExchangeId,
+  resolveByMantaUidToken,
+  type VisitorPayload,
+} from '../../../../utils/visitor-resolver'
 
 const CACHE_TTL_OK = 600
 const CACHE_TTL_TRANSIENT = 60
@@ -111,32 +113,19 @@ async function cacheSet(key: string, payload: VisitorPayload, ttl: number): Prom
   }
 }
 
-async function fetchOrderStats(email: string): Promise<OrderStats> {
-  const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-  const key = process.env.POSTHOG_API_KEY
-  if (!key) return { count: 0, lastAt: null }
+function hashShort(value: string): string {
+  // Cache-key fingerprint only — no secret material, no need for HMAC. Keep
+  // it short to bound the Redis key length.
+  return createHash('sha256').update(value).digest('hex').slice(0, 16)
+}
 
-  try {
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: {
-          kind: 'HogQLQuery',
-          query: `SELECT count() AS n, max(created_at) AS last_at FROM shopify_orders WHERE email = '${email.replace(/'/g, "''")}'`,
-        },
-      }),
-    })
-    if (!res.ok) return { count: 0, lastAt: null }
-    const data = (await res.json()) as { results?: Array<Array<unknown>> }
-    const row = data.results?.[0]
-    if (!row) return { count: 0, lastAt: null }
-    const count = Number(row[0] ?? 0)
-    const lastAt = typeof row[1] === 'string' ? row[1] : null
-    return { count: Number.isFinite(count) ? count : 0, lastAt }
-  } catch {
-    return { count: 0, lastAt: null }
+function getContactModule(req: Request): ContactModuleLike | null {
+  const mantaReq = req as Request & {
+    app?: { modules?: { contact?: unknown } }
   }
+  const mod = mantaReq.app?.modules?.contact
+  if (!mod) return null
+  return mod as ContactModuleLike
 }
 
 export async function OPTIONS(req: Request) {
@@ -154,42 +143,49 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const k = (url.searchParams.get('k') ?? '').trim()
+  const u = (url.searchParams.get('u') ?? '').trim()
+  const d = (url.searchParams.get('d') ?? '').trim()
 
-  if (!k) {
+  if (!k && !u && !d) {
     return Response.json({ t: 'a', v: nowEpochSec() } satisfies VisitorPayload, { headers })
   }
 
-  const cacheKey = `visitor:${k}`
-  const cached = await cacheGet(cacheKey)
-  if (cached) {
-    return Response.json(cached, { headers })
+  const contactModule = getContactModule(req)
+  if (!contactModule) {
+    // Bootstrap race or misconfiguration — degrade to anonymous, do not cache.
+    return Response.json({ t: 'a', v: nowEpochSec() } satisfies VisitorPayload, { headers })
   }
 
-  const profile = await resolveKlaviyoProfile(k)
+  // Priority order: k (live Shopify theme contract) > u (manta token) > d (distinct id).
+  // The current production traffic only sends `k`, so its branch must be hit first
+  // and return identical output to the previous implementation for the same input.
 
-  if (!profile) {
-    const payload: VisitorPayload = { t: 'a', v: nowEpochSec() }
-    await cacheSet(cacheKey, payload, CACHE_TTL_TRANSIENT)
+  if (k) {
+    const cacheKey = `visitor:k:${k}`
+    const cached = await cacheGet(cacheKey)
+    if (cached) return Response.json(cached, { headers })
+
+    const { payload, transient } = await resolveByKlaviyoExchangeId(contactModule, k)
+    await cacheSet(cacheKey, payload, transient ? CACHE_TTL_TRANSIENT : CACHE_TTL_OK)
     return Response.json(payload, { headers })
   }
 
-  if (!profile.identified || !profile.email) {
-    const payload: VisitorPayload = { t: 'a', v: nowEpochSec() }
+  if (u) {
+    const cacheKey = `visitor:u:${hashShort(u)}`
+    const cached = await cacheGet(cacheKey)
+    if (cached) return Response.json(cached, { headers })
+
+    const payload = await resolveByMantaUidToken(contactModule, u)
     await cacheSet(cacheKey, payload, CACHE_TTL_OK)
     return Response.json(payload, { headers })
   }
 
-  const orderStats = await fetchOrderStats(profile.email)
-  const payload: VisitorPayload = {
-    t: codifyTier(orderStats.count > 0, true),
-    v: nowEpochSec(),
-  }
-  if (orderStats.count > 0) {
-    payload.n = orderStats.count
-    const last = codifyDate(orderStats.lastAt)
-    if (last !== null) payload.o = last
-  }
+  // d branch — distinct_id direct lookup.
+  const cacheKey = `visitor:d:${hashShort(d)}`
+  const cached = await cacheGet(cacheKey)
+  if (cached) return Response.json(cached, { headers })
 
+  const payload = await resolveByDistinctId(contactModule, d)
   await cacheSet(cacheKey, payload, CACHE_TTL_OK)
   return Response.json(payload, { headers })
 }
