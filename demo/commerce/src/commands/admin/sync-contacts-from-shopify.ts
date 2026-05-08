@@ -279,44 +279,19 @@ export default defineCommand({
 
     log.info(`[syncContactsFromShopify] starting — since=${sinceIso ?? 'genesis'}`)
 
-    // ── 2. Pull from Shopify Admin GraphQL (compensable network step) ─
-    const pulled = await step.action('pull-from-shopify', {
-      invoke: async (_i: unknown, ctx): Promise<{ customers: CustomerRow[]; orders: OrderRow[] }> => {
-        const client = new ShopifyAdminClient()
-        const [customers, orders] = await Promise.all([
-          pullCustomers(client, searchQuery, ctx.signal),
-          pullOrders(client, searchQuery, ctx.signal),
-        ])
-        if (ctx.signal?.aborted) {
-          throw new MantaError('CONFLICT', 'syncContactsFromShopify cancelled', { code: 'WORKFLOW_CANCELLED' })
-        }
-        return { customers, orders }
-      },
-      compensate: async () => {
-        // Read-only on Shopify; the local upsert is idempotent on the next tick.
-      },
-    })({})
+    // ── 2. Pull from Shopify Admin GraphQL ─────────────────────────────
+    //       Inlined (not wrapped in step.action) — step.action serialises
+    //       its output to workflow_runs.steps as JSON, which strips Date
+    //       prototypes and breaks Drizzle pgTimestamp downstream. The pull
+    //       is read-only on Shopify and idempotent locally, so no
+    //       compensation is needed anyway.
+    const client = new ShopifyAdminClient()
+    const [customersForUpsert, ordersForUpsert] = await Promise.all([
+      pullCustomers(client, searchQuery, undefined),
+      pullOrders(client, searchQuery, undefined),
+    ])
 
-    log.info(`[syncContactsFromShopify] pulled customers=${pulled.customers.length} orders=${pulled.orders.length}`)
-
-    // step.action persists its output as JSON in workflow_runs.steps, so
-    // Date fields come back as ISO strings on resume. Re-hydrate before
-    // handing the rows to the service (Drizzle pgTimestamp expects Date).
-    const reviveDate = (v: Date | string | null | undefined): Date | null => {
-      if (!v) return null
-      return v instanceof Date ? v : new Date(v)
-    }
-    const customersForUpsert = pulled.customers.map((r) => ({
-      ...r,
-      last_order_at: reviveDate(r.last_order_at),
-      shopify_synced_at: reviveDate(r.shopify_synced_at) ?? new Date(),
-    }))
-    const ordersForUpsert = pulled.orders.map((r) => ({
-      ...r,
-      placed_at: reviveDate(r.placed_at),
-      cancelled_at: reviveDate(r.cancelled_at),
-      shopify_synced_at: reviveDate(r.shopify_synced_at) ?? new Date(),
-    }))
+    log.info(`[syncContactsFromShopify] pulled customers=${customersForUpsert.length} orders=${ordersForUpsert.length}`)
 
     // ── 3. Bulk upsert via services (CQRS — no raw SQL) ──────────────
     let contactsWritten = 0

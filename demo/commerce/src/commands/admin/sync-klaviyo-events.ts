@@ -162,31 +162,19 @@ export default defineCommand({
     const sinceIso = new Date(sinceMs).toISOString()
     log.info(`[syncKlaviyoEvents] since=${sinceIso} fullRefresh=${input.fullRefresh}`)
 
-    // ── 2. Pull from PostHog DW (compensable network step) ───────────
-    const events = await step.action('pull-klaviyo-events', {
-      invoke: async (_i: unknown, ctx) =>
-        pullEventsFromHogQL({
-          sinceIso,
-          signal: ctx.signal,
-          warn: (msg) => log.warn(msg),
-        }),
-      compensate: async () => {
-        // Read-only on PostHog, idempotent locally — no compensation.
-      },
-    })({})
+    // ── 2. Pull from PostHog DW (inlined — step.action would serialise
+    //     the output and strip Date prototypes, breaking Drizzle pgTimestamp).
+    const events = await pullEventsFromHogQL({
+      sinceIso,
+      warn: (msg) => log.warn(msg),
+    })
 
     if (events.length === 0) {
       log.info('[syncKlaviyoEvents] no new events')
       return { scanned: 0, inserted: 0, skipped: 0 } satisfies IngestResult
     }
 
-    // step.action persists its output as JSON, so Date fields come back as
-    // ISO strings — re-hydrate before handing them to Drizzle.
-    const eventsForUpsert = events.map((e) => ({
-      ...e,
-      occurred_at: e.occurred_at instanceof Date ? e.occurred_at : new Date(e.occurred_at as unknown as string),
-      synced_at: e.synced_at instanceof Date ? e.synced_at : new Date(e.synced_at as unknown as string),
-    }))
+    const eventsForUpsert = events
 
     // ── 3. Bulk upsert via service (klaviyoEvent has its own service +
     //     custom upsertWithReplace exposed in entities/klaviyo-event/service.ts).
