@@ -2,7 +2,7 @@
 
 import { MantaError } from '@manta/core/errors'
 import type { IRepository, TransactionOptions } from '@manta/core/ports'
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql } from 'drizzle-orm'
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { isPgError, mapPgError } from './error-mapper'
@@ -304,16 +304,6 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
         throw new MantaError('INVALID_DATA', 'No conflict target columns found')
       }
 
-      // TEMP DEBUG: log first row types to diagnose pgTimestamp Date crash
-      if (prepared.length > 0) {
-        const sample = prepared[0]
-        const types: Record<string, string> = {}
-        for (const [k, v] of Object.entries(sample)) {
-          types[k] = v === null ? 'null' : v instanceof Date ? 'Date' : typeof v
-        }
-        console.log('[upsertWithReplace] table=%s row0 types=%j', this._entityName, types)
-      }
-
       const result = await this._db
         .insert(this._table)
         .values(prepared as Record<string, unknown>[])
@@ -361,20 +351,76 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
       }
     }
 
-    // Apply where filters
+    // Apply where filters with Manta operator support.
+    // Manta filter values can be:
+    //   - primitive (string/number/Date/null) → eq
+    //   - object with $-prefixed operator keys: { $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $null, $notnull }
     if (where) {
       for (const [key, value] of Object.entries(where)) {
         const col = this.getColumn(key)
         if (!col) continue
-        if (value === null) {
-          conditions.push(isNull(col))
-        } else {
-          conditions.push(eq(col, value))
-        }
+        const cond = this.buildOperatorCondition(col, value)
+        if (cond) conditions.push(cond)
       }
     }
 
     return conditions
+  }
+
+  /** Translate one Manta filter value (primitive or operator bag) into a Drizzle SQL condition. */
+  private buildOperatorCondition(col: PgColumn, value: unknown): ReturnType<typeof eq> | undefined {
+    if (value === null) return isNull(col)
+    if (value === undefined) return undefined
+
+    // Primitive value → eq
+    if (typeof value !== 'object' || value instanceof Date || Array.isArray(value)) {
+      return eq(col, value)
+    }
+
+    // Operator bag — combine all sub-conditions with AND
+    const subConditions: Array<ReturnType<typeof eq>> = []
+    for (const [op, opValue] of Object.entries(value as Record<string, unknown>)) {
+      switch (op) {
+        case '$eq':
+          if (opValue === null) subConditions.push(isNull(col))
+          else subConditions.push(eq(col, opValue))
+          break
+        case '$ne':
+          if (opValue === null) subConditions.push(isNotNull(col))
+          else subConditions.push(ne(col, opValue))
+          break
+        case '$gt':
+          subConditions.push(gt(col, opValue))
+          break
+        case '$gte':
+          subConditions.push(gte(col, opValue))
+          break
+        case '$lt':
+          subConditions.push(lt(col, opValue))
+          break
+        case '$lte':
+          subConditions.push(lte(col, opValue))
+          break
+        case '$in':
+          if (Array.isArray(opValue) && opValue.length > 0) subConditions.push(inArray(col, opValue))
+          break
+        case '$nin':
+          if (Array.isArray(opValue) && opValue.length > 0) subConditions.push(notInArray(col, opValue))
+          break
+        case '$null':
+          subConditions.push(opValue ? isNull(col) : isNotNull(col))
+          break
+        case '$notnull':
+          subConditions.push(opValue ? isNotNull(col) : isNull(col))
+          break
+        default:
+          // Unknown operator — fall through. Don't crash, just skip.
+          break
+      }
+    }
+    if (subConditions.length === 0) return undefined
+    if (subConditions.length === 1) return subConditions[0]
+    return and(...subConditions) as unknown as ReturnType<typeof eq>
   }
 
   private getColumn(name: string): PgColumn | undefined {
