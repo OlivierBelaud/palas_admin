@@ -47,6 +47,9 @@ importers:
       '@manta/adapter-h3':
         specifier: workspace:*
         version: link:../../packages/adapter-h3
+      '@manta/adapter-jobs-vercel-cron':
+        specifier: workspace:*
+        version: link:../../packages/adapter-jobs-vercel-cron
       '@manta/adapter-logger-pino':
         specifier: workspace:*
         version: link:../../packages/adapter-logger-pino

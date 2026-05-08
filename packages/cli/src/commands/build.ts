@@ -243,7 +243,9 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[]): void {
       schedule: job.schedule || '0 */6 * * *',
     }))
   }
-  writeFileSync(resolve(cwd, 'vercel.json'), JSON.stringify(vercelJson, null, 2))
+  // Trailing newline keeps Biome / EditorConfig formatters happy on
+  // commit-time hooks. JSON.stringify omits it.
+  writeFileSync(resolve(cwd, 'vercel.json'), `${JSON.stringify(vercelJson, null, 2)}\n`)
   console.log('  ✓ vercel.json generated')
 }
 

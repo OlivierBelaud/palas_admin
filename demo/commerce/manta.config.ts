@@ -16,6 +16,12 @@ export default defineConfig({
     IEventBusPort: { adapter: '@manta/core/InMemoryEventBusAdapter' },
     ILockingPort: { adapter: '@manta/core/InMemoryLockingAdapter' },
     IFilePort: { adapter: '@manta/core/InMemoryFileAdapter' },
-    IJobSchedulerPort: { adapter: '@manta/core/InMemoryJobScheduler' },
+    // VercelCronAdapter is registry-based: jobs are registered at boot,
+    // Vercel Cron triggers them via HTTP at /api/crons/<name> (the
+    // framework-owned catch-all wired by wire-cron-routes). The
+    // contract is identical to InMemoryJobScheduler — both implement
+    // IJobSchedulerPort — so user jobs and the framework reaper job
+    // run unchanged.
+    IJobSchedulerPort: { adapter: '@manta/adapter-jobs-vercel-cron' },
   },
 })

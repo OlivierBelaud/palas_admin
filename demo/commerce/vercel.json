@@ -14,7 +14,19 @@
   "crons": [
     {
       "path": "/api/crons/detect-abandoned-carts",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/crons/sync-from-shopify",
+      "schedule": "45 * * * *"
+    },
+    {
+      "path": "/api/crons/sync-klaviyo-events",
+      "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/crons/sync-posthog-events",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

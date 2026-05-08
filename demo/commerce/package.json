@@ -19,6 +19,7 @@
     "@manta/host-nitro": "workspace:*",
     "@manta/adapter-h3": "workspace:*",
     "@manta/adapter-database-pg": "workspace:*",
+    "@manta/adapter-jobs-vercel-cron": "workspace:*",
     "@manta/adapter-logger-pino": "workspace:*",
     "@manta/adapter-queue-qstash": "workspace:*",
     "@manta/adapter-cache-upstash": "workspace:*",
