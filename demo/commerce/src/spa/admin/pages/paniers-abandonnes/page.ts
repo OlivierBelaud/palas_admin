@@ -8,8 +8,8 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'À récupérer',
-      pageSize: 15,
-      query: { name: 'abandoned-carts', input: { limit: 15, days: 30 } },
+      pageSize: 10,
+      query: { name: 'abandoned-carts', input: { limit: 10, days: 30 } },
       columns: [
         { key: 'email', label: 'Client', format: 'highlight' },
         {

@@ -8,12 +8,12 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Toutes les commandes',
-      pageSize: 15,
+      pageSize: 10,
       query: {
         graph: {
           entity: 'order',
           sort: { field: 'placed_at', order: 'desc' },
-          pagination: { limit: 15 },
+          pagination: { limit: 10 },
         },
       },
       columns: [

@@ -5,7 +5,6 @@
 import { Button, Card } from '@manta/ui'
 import React, { useMemo, useRef } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { Skeleton } from '../components/common/skeleton'
 import type { GraphQueryDef, NamedQueryDef } from '../primitives'
 import { isGraphQuery } from '../primitives'
 import { EntityTableRenderer } from '../renderers/blocks/entity-table'
@@ -165,10 +164,6 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
 
   if (items.length > 0 || !isLoading) hadDataRef.current = true
 
-  if (isLoading && !hadDataRef.current) {
-    return React.createElement(Skeleton, { className: 'h-96 w-full' })
-  }
-
   const columns = props.columns.map((col) => ({
     ...col,
     format: col.format ?? undefined,
@@ -186,6 +181,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
         count,
+        isLoading,
         localPagination: !!params.id,
         inCard: !!props.card,
         rowHighlight: props.rowHighlight,
@@ -193,7 +189,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         title: props.card ? undefined : props.title,
       },
     },
-    data: { items, count },
+    data: { items, count, isLoading },
   })
 
   if (!props.card) return tableEl

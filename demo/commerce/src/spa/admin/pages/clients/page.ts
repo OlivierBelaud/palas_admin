@@ -8,12 +8,12 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Tous les clients',
-      pageSize: 15,
+      pageSize: 10,
       query: {
         graph: {
           entity: 'contact',
           sort: { field: 'last_activity_at', order: 'desc' },
-          pagination: { limit: 15 },
+          pagination: { limit: 10 },
         },
       },
       columns: [

@@ -1407,12 +1407,14 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                 )
               : null,
           ),
-          // "No results" message — outside the Table, centered
+          // Empty state — outside the Table, centered. Distinguishes between
+          // loading-from-empty (initial render or pagination from cold cache)
+          // and a settled empty result.
           filteredItems.length === 0
             ? React.createElement(
                 'div',
                 { className: 'flex items-center justify-center py-16 text-muted-foreground text-sm' },
-                'No results found',
+                (props as { isLoading?: boolean }).isLoading ? 'Chargement…' : 'Aucun résultat',
               )
             : null,
         ),

@@ -307,6 +307,8 @@ export function useQuery<TOutput = unknown>(
     enabled,
     staleTime: options?.staleTime,
     refetchInterval: options?.refetchInterval,
+    // Keep previous data while refetching (no flicker on pagination)
+    placeholderData: ((prev: TOutput | undefined) => prev) as unknown as undefined,
   })
 }
 
