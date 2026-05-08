@@ -180,6 +180,14 @@ export default defineCommand({
       return { scanned: 0, inserted: 0, skipped: 0 } satisfies IngestResult
     }
 
+    // step.action persists its output as JSON, so Date fields come back as
+    // ISO strings — re-hydrate before handing them to Drizzle.
+    const eventsForUpsert = events.map((e) => ({
+      ...e,
+      occurred_at: e.occurred_at instanceof Date ? e.occurred_at : new Date(e.occurred_at as unknown as string),
+      synced_at: e.synced_at instanceof Date ? e.synced_at : new Date(e.synced_at as unknown as string),
+    }))
+
     // ── 3. Bulk upsert via service (klaviyoEvent has its own service +
     //     custom upsertWithReplace exposed in entities/klaviyo-event/service.ts).
     //     Klaviyo events are immutable; replaceFields=[] = ON CONFLICT DO
@@ -187,7 +195,7 @@ export default defineCommand({
     const upserted = (await (
       step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
     ).klaviyoEvent.upsertWithReplace(
-      events as unknown as Record<string, unknown>[],
+      eventsForUpsert as unknown as Record<string, unknown>[],
       [],
       ['klaviyo_event_id'],
     )) as Array<{ id: string }>

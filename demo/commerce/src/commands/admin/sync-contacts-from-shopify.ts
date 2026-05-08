@@ -299,12 +299,31 @@ export default defineCommand({
 
     log.info(`[syncContactsFromShopify] pulled customers=${pulled.customers.length} orders=${pulled.orders.length}`)
 
+    // step.action persists its output as JSON in workflow_runs.steps, so
+    // Date fields come back as ISO strings on resume. Re-hydrate before
+    // handing the rows to the service (Drizzle pgTimestamp expects Date).
+    const reviveDate = (v: Date | string | null | undefined): Date | null => {
+      if (!v) return null
+      return v instanceof Date ? v : new Date(v)
+    }
+    const customersForUpsert = pulled.customers.map((r) => ({
+      ...r,
+      last_order_at: reviveDate(r.last_order_at),
+      shopify_synced_at: reviveDate(r.shopify_synced_at) ?? new Date(),
+    }))
+    const ordersForUpsert = pulled.orders.map((r) => ({
+      ...r,
+      placed_at: reviveDate(r.placed_at),
+      cancelled_at: reviveDate(r.cancelled_at),
+      shopify_synced_at: reviveDate(r.shopify_synced_at) ?? new Date(),
+    }))
+
     // ── 3. Bulk upsert via services (CQRS — no raw SQL) ──────────────
     let contactsWritten = 0
     let ordersWritten = 0
-    if (pulled.customers.length > 0) {
+    if (customersForUpsert.length > 0) {
       const result = (await step.service.contact.upsertWithReplace(
-        pulled.customers as unknown as Record<string, unknown>[],
+        customersForUpsert as unknown as Record<string, unknown>[],
         // Replace fields on conflict — keep email-keyed identity but refresh
         // every Shopify-sourced field. Manual edits to klaviyo_* / distinct_id
         // / *_count from other code paths are preserved (not in this list).
@@ -325,9 +344,9 @@ export default defineCommand({
       )) as Array<{ id: string }>
       contactsWritten = result.length
     }
-    if (pulled.orders.length > 0) {
+    if (ordersForUpsert.length > 0) {
       const result = (await step.service.order.upsertWithReplace(
-        pulled.orders as unknown as Record<string, unknown>[],
+        ordersForUpsert as unknown as Record<string, unknown>[],
         [
           'email',
           'order_number',
