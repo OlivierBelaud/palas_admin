@@ -246,15 +246,17 @@ export default defineCommand({
             continue
           }
 
-          // Both events succeeded — mark the cart (idempotence). Failure to
-          // mark is treated as an error: the email was sent but the next
-          // cron tick will try to send again. We accept this over the
-          // opposite risk (mark without sending).
-          await ctx.app.commands.updateCart({
+          // Both events succeeded — mark the cart (idempotence). Use the
+          // step.service direct path so the Date stays a Date (the auto-
+          // generated `updateCart` command serialises input through the
+          // workflow runner which strips Date prototypes).
+          await (
+            step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
+          ).cart.updateCarts({
             id: cart.id,
             abandon_notified_at: new Date(),
             abandon_notified_count: (cart.abandon_notified_count ?? 0) + 1,
-          } as Record<string, unknown>)
+          })
 
           notified++
         }
