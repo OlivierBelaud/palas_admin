@@ -12,10 +12,12 @@
 //     assisted_dead / not_picked_up / normal_conversion. The view excludes
 //     normal_conversion (not part of the abandonment funnel).
 //
-// Enrichments come from two HogQL queries against the PostHog DW:
-//   1. klaviyo_events — last abandonment email per customer (+ its
-//      checkout_token when extractable from checkout_url)
-//   2. shopify_customers — lifetime order count per customer
+// Enrichments:
+//   1. Local `contacts` table — lifetime order count per customer
+//      (orders_count + last_order_at), synced from Shopify by the V1 CRM.
+//   2. klaviyo_events HogQL — last abandonment email per customer (+ its
+//      checkout_token when extractable from checkout_url). The eventual
+//      timestamp comes from Klaviyo, which is not mirrored locally.
 //
 // The checkout_token match is the precise lever we fall back on when the
 // time-based window has ambiguity (several carts per customer in 30d).
@@ -96,16 +98,37 @@ export default defineQuery({
     const emails = Array.from(new Set(windowed.map((c) => c.email.toLowerCase())))
     if (emails.length === 0) return []
 
-    // ── 2. HogQL enrichments in parallel ────────────────────────────────
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
-    const emailsList = emails.map((e) => `'${e.replace(/'/g, "''")}'`).join(',')
-
     const orderCountByEmail = new Map<string, number>()
     // Per (email, checkout_token) → email timestamp. We store the MAX per
     // bucket so the attribution path can still fall back on a time-window
     // match when the checkout_token is null (email from Received Email flow).
     const emailEventsByEmail = new Map<string, EnrichedRow[]>()
+
+    // ── 2a. Local `contacts` lookup — lifetime order count.
+    //        Replaces the previous `shopify_customers` HogQL: contacts are
+    //        kept in sync with Shopify by the V1 CRM (cart-tracking subscriber
+    //        + the 5-min PostHog cron) so this is strictly fresher data with
+    //        no synchronous DW round-trip. last_order_at is fetched alongside
+    //        for future read paths but currently unused in the response.
+    const contactRows = (await query.graph({
+      entity: 'contact',
+      filters: { email: { $in: emails } },
+      fields: ['email', 'orders_count', 'last_order_at'],
+      pagination: { limit: 10000 },
+    })) as unknown as Array<{ email: string; orders_count: number | null; last_order_at: Date | string | null }>
+
+    for (const row of contactRows) {
+      const email = row.email?.toLowerCase()
+      if (!email) continue
+      orderCountByEmail.set(email, Number(row.orders_count ?? 0))
+    }
+
+    // ── 2b. Klaviyo events HogQL — last abandonment email per customer.
+    //        Still needed because the email-sent timestamp lives in the DW;
+    //        we don't mirror Klaviyo events locally.
+    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
+    const key = process.env.POSTHOG_API_KEY
+    const emailsList = emails.map((e) => `'${e.replace(/'/g, "''")}'`).join(',')
 
     if (key) {
       const hogql = async (q: string) => {
@@ -127,71 +150,56 @@ export default defineQuery({
         }
       }
 
-      const [orderRows, emailRows] = await Promise.all([
-        // Order count per customer
-        hogql(`
-          SELECT lower(JSONExtractString(sc.default_email_address, 'emailAddress')) AS email,
-                 sc.number_of_orders
-          FROM shopify_customers sc
-          WHERE lower(JSONExtractString(sc.default_email_address, 'emailAddress')) IN (${emailsList})
-          LIMIT 10000
-        `),
-        // All abandonment-related emails per customer, with checkout_token
-        // extracted from checkout_url when present. Returns one row per event
-        // so downstream can pick the best match per cart.
-        //
-        // Metrics included:
-        //   - Shopify_Checkout_Abandonned — Klaviyo's native Shopify-triggered
-        //     event, carries checkout_url (→ checkout_token).
-        //   - Checkout Abandoned / Ops Cart Abandoned — our own custom metrics
-        //     sent by notifyAbandonedCarts, carry cart_token/checkout_token
-        //     directly in event_properties.
-        //   - Received Email — delivered Klaviyo emails whose subject matches
-        //     one of our abandonment flow templates. Subjects change over time;
-        //     use loose substrings on the distinctive words ("oubli", "attend",
-        //     "pense") to catch variants without over-matching marketing blasts.
-        hogql(`
-          SELECT
-            lower(kp.email) AS email,
-            ke.datetime AS sent_at,
-            coalesce(
-              extract(
-                JSONExtractString(ke.event_properties, 'checkout_url'),
-                'checkouts/ac/([^/?"]+)'
-              ),
-              JSONExtractString(ke.event_properties, 'checkout_token'),
-              ''
-            ) AS checkout_token
-          FROM klaviyo_events ke
-          JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
-          JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
-          WHERE lower(kp.email) IN (${emailsList})
-            AND (
-              km.name = 'Shopify_Checkout_Abandonned'
-              OR km.name = 'Checkout Abandoned'
-              OR km.name = 'Ops Cart Abandoned'
-              OR (
-                km.name = 'Received Email'
-                AND (
-                  positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
-                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
-                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
-                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
-                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
-                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
-                )
+      // All abandonment-related emails per customer, with checkout_token
+      // extracted from checkout_url when present. Returns one row per event
+      // so downstream can pick the best match per cart.
+      //
+      // Metrics included:
+      //   - Shopify_Checkout_Abandonned — Klaviyo's native Shopify-triggered
+      //     event, carries checkout_url (→ checkout_token).
+      //   - Checkout Abandoned / Ops Cart Abandoned — our own custom metrics
+      //     sent by notifyAbandonedCarts, carry cart_token/checkout_token
+      //     directly in event_properties.
+      //   - Received Email — delivered Klaviyo emails whose subject matches
+      //     one of our abandonment flow templates. Subjects change over time;
+      //     use loose substrings on the distinctive words ("oubli", "attend",
+      //     "pense") to catch variants without over-matching marketing blasts.
+      const emailRows = await hogql(`
+        SELECT
+          lower(kp.email) AS email,
+          ke.datetime AS sent_at,
+          coalesce(
+            extract(
+              JSONExtractString(ke.event_properties, 'checkout_url'),
+              'checkouts/ac/([^/?"]+)'
+            ),
+            JSONExtractString(ke.event_properties, 'checkout_token'),
+            ''
+          ) AS checkout_token
+        FROM klaviyo_events ke
+        JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
+        JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
+        WHERE lower(kp.email) IN (${emailsList})
+          AND (
+            km.name = 'Shopify_Checkout_Abandonned'
+            OR km.name = 'Checkout Abandoned'
+            OR km.name = 'Ops Cart Abandoned'
+            OR (
+              km.name = 'Received Email'
+              AND (
+                positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
+                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
+                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
+                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
+                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
+                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
               )
             )
-          ORDER BY ke.datetime DESC
-          LIMIT 20000
-        `),
-      ])
+          )
+        ORDER BY ke.datetime DESC
+        LIMIT 20000
+      `)
 
-      for (const row of orderRows) {
-        const email = row[0] as string | null
-        const count = Number(row[1] ?? 0)
-        if (email) orderCountByEmail.set(email, count)
-      }
       for (const row of emailRows) {
         const email = row[0] as string | null
         const sentAt = row[1] as string | null
@@ -202,7 +210,7 @@ export default defineQuery({
         emailEventsByEmail.set(email, list)
       }
     } else {
-      log.warn('[abandoned-carts] POSTHOG_API_KEY not set — enrichment skipped')
+      log.warn('[abandoned-carts] POSTHOG_API_KEY not set — klaviyo_events enrichment skipped')
     }
 
     // ── 3. Per-cart attribution ─────────────────────────────────────────
