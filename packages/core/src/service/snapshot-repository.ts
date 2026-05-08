@@ -15,6 +15,32 @@ interface Snapshot {
 }
 
 /**
+ * Revive ISO-string timestamp fields back to Date instances.
+ *
+ * Step.action persists its output as JSON in workflow_runs.steps, and
+ * commands serialise their input through the workflow runner — both paths
+ * strip Date prototypes. Drizzle's pgTimestamp.mapToDriverValue then calls
+ * `value.toISOString()` and crashes with `toISOString is not a function`.
+ *
+ * Manta convention is `*_at` for timestamp columns; we revive every such
+ * field that arrived as a string. Single-record and bulk variants share
+ * the same logic.
+ */
+function reviveTimestampFields<T extends Record<string, unknown>>(input: T): T {
+  let mutated: Record<string, unknown> | null = null
+  for (const [key, value] of Object.entries(input)) {
+    if (key.endsWith('_at') && typeof value === 'string') {
+      const d = new Date(value)
+      if (!Number.isNaN(d.getTime())) {
+        mutated ??= { ...input }
+        mutated[key] = d
+      }
+    }
+  }
+  return (mutated ?? input) as T
+}
+
+/**
  * Wraps a TypedRepository with automatic snapshotting of mutations.
  * Every update/delete/softDelete captures the entity state before mutation.
  * Every create captures the created ID for deletion on rollback.
@@ -40,7 +66,10 @@ export class SnapshotRepository<T extends Record<string, unknown>> implements Ty
   // ── Mutations — auto-snapshot before execution ──────────────────────
 
   async create(data: Partial<T> | Partial<T>[]): Promise<T | T[]> {
-    const result = await this._inner.create(data)
+    const revived = Array.isArray(data)
+      ? (data.map((d) => reviveTimestampFields(d as Record<string, unknown>)) as Partial<T>[])
+      : (reviveTimestampFields(data as Record<string, unknown>) as Partial<T>)
+    const result = await this._inner.create(revived)
     // Track created IDs for rollback (delete on compensation)
     const items = Array.isArray(result) ? result : [result]
     for (const item of items) {
@@ -55,7 +84,7 @@ export class SnapshotRepository<T extends Record<string, unknown>> implements Ty
     if (before) {
       this._snapshots.push({ type: 'update', before: before as Record<string, unknown>, id: data.id })
     }
-    return this._inner.update(data)
+    return this._inner.update(reviveTimestampFields(data as Record<string, unknown>) as Partial<T> & { id: string })
   }
 
   async delete(ids: string | string[]): Promise<void> {
@@ -88,7 +117,8 @@ export class SnapshotRepository<T extends Record<string, unknown>> implements Ty
 
   // Bulk upsert — bypasses compensation tracking (mixed create/update not compensable)
   async upsertWithReplace(data: Partial<T>[], replaceFields?: string[], conflictTarget?: string[]): Promise<T[]> {
-    return this._inner.upsertWithReplace(data, replaceFields, conflictTarget)
+    const revived = data.map((d) => reviveTimestampFields(d as Record<string, unknown>)) as Partial<T>[]
+    return this._inner.upsertWithReplace(revived, replaceFields, conflictTarget)
   }
 
   // ── Compensation ────────────────────────────────────────────────────
