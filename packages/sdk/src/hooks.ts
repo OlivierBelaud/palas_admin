@@ -307,8 +307,14 @@ export function useQuery<TOutput = unknown>(
     enabled,
     staleTime: options?.staleTime,
     refetchInterval: options?.refetchInterval,
-    // Keep previous data while refetching (no flicker on pagination)
-    placeholderData: ((prev: TOutput | undefined) => prev) as unknown as undefined,
+    // Keep previous data on pagination/filter changes within the SAME named
+    // query — but NOT when navigating to a different query (we'd display the
+    // old query's rows under the new query's columns until the fetch lands).
+    placeholderData: ((prev: TOutput | undefined, prevQuery: { queryKey?: unknown[] } | undefined) => {
+      if (!prev) return undefined
+      const prevName = prevQuery?.queryKey?.[2]
+      return prevName === name ? prev : undefined
+    }) as unknown as undefined,
   })
 }
 
@@ -339,7 +345,13 @@ export function useGraphQuery<TOutput = unknown>(
     enabled: options?.enabled,
     staleTime: options?.staleTime,
     refetchInterval: options?.refetchInterval,
-    placeholderData: ((prev: TOutput | undefined) => prev) as unknown as undefined,
+    // Same scoping as useQuery: only keep previous when staying on the same
+    // entity (pagination, filters), not when navigating to a different one.
+    placeholderData: ((prev: TOutput | undefined, prevQuery: { queryKey?: unknown[] } | undefined) => {
+      if (!prev) return undefined
+      const prevEntity = prevQuery?.queryKey?.[2]
+      return prevEntity === config.entity ? prev : undefined
+    }) as unknown as undefined,
   }) as unknown as UseQueryResult<TOutput, Error>
 }
 
