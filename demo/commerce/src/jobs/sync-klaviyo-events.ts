@@ -1,0 +1,21 @@
+// Cron — hourly pull of Klaviyo abandonment events from PostHog DW into the
+// local `klaviyo_events` table. The abandoned-carts admin query joins this
+// table instead of running a synchronous HogQL — same data, no DW round-trip.
+
+interface SyncResult {
+  scanned: number
+  inserted: number
+  skipped: number
+}
+
+const EMPTY: SyncResult = { scanned: 0, inserted: 0, skipped: 0 }
+
+export default defineJob('sync-klaviyo-events', '20 * * * *', async ({ command, log }) => {
+  if (process.env.NODE_ENV !== 'production') {
+    log.info(`[sync-klaviyo-events] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
+    return EMPTY
+  }
+  const result = (await command.syncKlaviyoEvents({})) as SyncResult
+  log.info(`[sync-klaviyo-events] scanned=${result.scanned} inserted=${result.inserted} skipped=${result.skipped}`)
+  return result
+})
