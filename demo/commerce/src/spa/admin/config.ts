@@ -6,23 +6,20 @@ export default defineSpa({
 
   navigation: [
     {
-      icon: 'BarChart3',
-      label: 'Activité du site',
-      to: '/activite-site',
-    },
-    {
       icon: 'ShoppingCart',
       label: 'Paniers',
       to: '/paniers',
-      items: [
-        { label: 'Paniers abandonnés', to: '/paniers-abandonnes' },
-        { label: 'Analyse tracking', to: '/analyse-tracking' },
-      ],
+      items: [{ label: 'Paniers abandonnés', to: '/paniers-abandonnes' }],
+    },
+    {
+      icon: 'Package',
+      label: 'Commandes',
+      to: '/orders',
     },
     {
       icon: 'Users',
-      label: 'Customers',
-      to: '/customers',
+      label: 'Clients',
+      to: '/clients',
       items: [{ label: 'Customer Groups', to: '/customer-groups' }],
     },
   ],
