@@ -36,7 +36,11 @@ export default definePage({
         { key: 'created_at', label: 'Joined', format: 'date' },
       ],
       searchable: true,
-      navigateTo: '/customers/:id',
+      // No navigateTo — the legacy /customers detail page was removed in
+      // crm/old-customers-page-removed; customer-groups still manage their
+      // own membership but rows no longer drill into a customer detail.
+      // A future pass can switch this to /clients/:id once the customer ↔
+      // contact bridge is wired (different entities, different IDs today).
     },
   ],
   sidebar: [
