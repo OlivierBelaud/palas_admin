@@ -204,7 +204,38 @@ export default defineCommand({
       cartId = created.id
     }
 
-    // 2. Always append the event (append-only log)
+    // 2. Upsert the Contact + cart -> contact link whenever we know an email.
+    //    The dedicated command is idempotent: rerunning with the same payload
+    //    is a no-op apart from bumping `last_activity_at`. Errors here MUST
+    //    NOT block the cart row write — the cart pipeline is the source of
+    //    truth, the contact mirror is best-effort enrichment.
+    if (input.email) {
+      try {
+        await step.command.upsertContactFromCartSignal({
+          cart_id: cartId,
+          email: input.email,
+          first_name: input.first_name ?? null,
+          last_name: input.last_name ?? null,
+          phone: input.phone ?? null,
+          city: input.city ?? null,
+          country_code: input.country_code ?? null,
+          distinct_id: input.distinct_id ?? null,
+          shopify_customer_id: input.shopify_customer_id ?? null,
+        })
+      } catch (err) {
+        // Swallow the error — the cart_event will still be appended below
+        // and the contact will be retried on the next event for the same
+        // cart. We log via `throw` is too aggressive for a side-channel
+        // mirror; emit a structured event the subscriber can pick up later.
+        await step.emit('contact.upsert_failed', {
+          cart_id: cartId,
+          email: input.email,
+          message: (err as Error).message,
+        })
+      }
+    }
+
+    // 3. Always append the event (append-only log)
     // `raw_properties` captures the full original payload — the canonical
     // snapshot of what PostHog delivered, including any fields we don't
     // break out into dedicated columns (e.g. cart.cart_level_discounts,
