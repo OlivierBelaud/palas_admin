@@ -1,7 +1,7 @@
 import { defineSpa } from '@manta/dashboard-core'
 
 export default defineSpa({
-  title: 'Commerce Admin',
+  title: 'CRM Shopify',
   favicon: '/favicon.webp',
 
   navigation: [
