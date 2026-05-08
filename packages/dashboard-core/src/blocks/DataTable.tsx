@@ -172,7 +172,9 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
         count,
-        localPagination: !!params.id,
+        // Named queries have no server-side offset injection (only graph queries do),
+        // so we slice client-side for them. Detail pages (params.id) keep their existing local mode.
+        localPagination: !!params.id || !isGraphQuery(query),
         inCard: !!props.card,
         rowHighlight: props.rowHighlight,
         // Title rendered by the Card header instead — avoid duplicate heading.
