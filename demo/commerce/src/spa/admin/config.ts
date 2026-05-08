@@ -20,7 +20,11 @@ export default defineSpa({
       icon: 'Users',
       label: 'Clients',
       to: '/clients',
-      items: [{ label: 'Customer Groups', to: '/customer-groups' }],
+    },
+    {
+      icon: 'UserCog',
+      label: 'Customer Groups',
+      to: '/customer-groups',
     },
   ],
 

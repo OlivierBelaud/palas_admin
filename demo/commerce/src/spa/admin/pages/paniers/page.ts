@@ -29,6 +29,7 @@ export default definePage({
     {
       type: 'DataTable',
       title: 'Tous les paniers',
+      pageSize: 15,
       query: {
         graph: {
           entity: 'cart',
