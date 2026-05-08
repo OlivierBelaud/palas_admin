@@ -304,6 +304,16 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
         throw new MantaError('INVALID_DATA', 'No conflict target columns found')
       }
 
+      // TEMP DEBUG: log first row types to diagnose pgTimestamp Date crash
+      if (prepared.length > 0) {
+        const sample = prepared[0]
+        const types: Record<string, string> = {}
+        for (const [k, v] of Object.entries(sample)) {
+          types[k] = v === null ? 'null' : v instanceof Date ? 'Date' : typeof v
+        }
+        console.log('[upsertWithReplace] table=%s row0 types=%j', this._entityName, types)
+      }
+
       const result = await this._db
         .insert(this._table)
         .values(prepared as Record<string, unknown>[])
