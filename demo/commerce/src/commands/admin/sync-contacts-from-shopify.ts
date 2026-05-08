@@ -279,17 +279,25 @@ export default defineCommand({
 
     log.info(`[syncContactsFromShopify] starting — since=${sinceIso ?? 'genesis'}`)
 
-    // ── 2. Pull from Shopify Admin GraphQL ─────────────────────────────
-    //       Inlined (not wrapped in step.action) — step.action serialises
-    //       its output to workflow_runs.steps as JSON, which strips Date
-    //       prototypes and breaks Drizzle pgTimestamp downstream. The pull
-    //       is read-only on Shopify and idempotent locally, so no
-    //       compensation is needed anyway.
-    const client = new ShopifyAdminClient()
-    const [customersForUpsert, ordersForUpsert] = await Promise.all([
-      pullCustomers(client, searchQuery, undefined),
-      pullOrders(client, searchQuery, undefined),
-    ])
+    // ── 2. Pull from Shopify Admin GraphQL (compensable network step) ─
+    const pulled = await step.action('pull-from-shopify', {
+      invoke: async (_i: unknown, ctx): Promise<{ customers: CustomerRow[]; orders: OrderRow[] }> => {
+        const client = new ShopifyAdminClient()
+        const [customers, orders] = await Promise.all([
+          pullCustomers(client, searchQuery, ctx.signal),
+          pullOrders(client, searchQuery, ctx.signal),
+        ])
+        if (ctx.signal?.aborted) {
+          throw new MantaError('CONFLICT', 'syncContactsFromShopify cancelled', { code: 'WORKFLOW_CANCELLED' })
+        }
+        return { customers, orders }
+      },
+      compensate: async () => {
+        // Read-only on Shopify; the local upsert is idempotent on the next tick.
+      },
+    })({})
+    const customersForUpsert = pulled.customers
+    const ordersForUpsert = pulled.orders
 
     log.info(`[syncContactsFromShopify] pulled customers=${customersForUpsert.length} orders=${ordersForUpsert.length}`)
 

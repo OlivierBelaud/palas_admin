@@ -40,33 +40,6 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
     ) as Record<string, PgColumn>
   }
 
-  /**
-   * Revive ISO-string timestamp fields back into Date instances before they
-   * reach Drizzle's pgTimestamp.mapToDriverValue (which calls
-   * `value.toISOString()` and crashes on a string).
-   *
-   * The serialisation gap exists because step.action persists output as JSON
-   * in workflow_runs.steps, and commands serialise input through the workflow
-   * runner — both strip Date prototypes. Manta's convention is `*_at` for
-   * timestamp columns, so we revive any field whose name ends in `_at`.
-   *
-   * Centralising the revive at the adapter boundary means apps don't have to
-   * remember to do it in every command/service.
-   */
-  private reviveTimestamps<T extends Record<string, unknown>>(input: T): T {
-    let mutated: Record<string, unknown> | null = null
-    for (const [key, value] of Object.entries(input)) {
-      if (key.endsWith('_at') && typeof value === 'string') {
-        const d = new Date(value)
-        if (!Number.isNaN(d.getTime())) {
-          mutated ??= { ...input }
-          mutated[key] = d
-        }
-      }
-    }
-    return (mutated ?? input) as T
-  }
-
   async find(options?: {
     where?: Record<string, unknown>
     withDeleted?: boolean
@@ -153,7 +126,7 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
       const now = new Date()
 
       const prepared = items.map((item) => ({
-        ...this.reviveTimestamps(item),
+        ...item,
         id: (item.id as string) ?? this.generateId(),
         created_at: now,
         updated_at: now,
@@ -189,7 +162,7 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
 
         const result = await this._db
           .update(this._table)
-          .set({ ...this.reviveTimestamps(updateData), updated_at: new Date() })
+          .set({ ...updateData, updated_at: new Date() })
           .where(eq(idCol, id))
           .returning()
 
@@ -268,7 +241,7 @@ export class DrizzleRepository implements IRepository<Record<string, unknown>> {
     try {
       const now = new Date()
       const prepared = data.map((item) => ({
-        ...this.reviveTimestamps(item),
+        ...item,
         id: (item.id as string) ?? this.generateId(),
         created_at: now,
         updated_at: now,

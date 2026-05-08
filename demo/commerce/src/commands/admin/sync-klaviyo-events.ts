@@ -162,12 +162,18 @@ export default defineCommand({
     const sinceIso = new Date(sinceMs).toISOString()
     log.info(`[syncKlaviyoEvents] since=${sinceIso} fullRefresh=${input.fullRefresh}`)
 
-    // ── 2. Pull from PostHog DW (inlined — step.action would serialise
-    //     the output and strip Date prototypes, breaking Drizzle pgTimestamp).
-    const events = await pullEventsFromHogQL({
-      sinceIso,
-      warn: (msg) => log.warn(msg),
-    })
+    // ── 2. Pull from PostHog DW (compensable network step) ───────────
+    const events = await step.action('pull-klaviyo-events', {
+      invoke: async (_i: unknown, ctx) =>
+        pullEventsFromHogQL({
+          sinceIso,
+          signal: ctx.signal,
+          warn: (msg) => log.warn(msg),
+        }),
+      compensate: async () => {
+        // Read-only on PostHog, idempotent locally — no compensation.
+      },
+    })({})
 
     if (events.length === 0) {
       log.info('[syncKlaviyoEvents] no new events')
