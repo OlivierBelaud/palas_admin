@@ -22,6 +22,8 @@
 // The checkout_token match is the precise lever we fall back on when the
 // time-based window has ambiguity (several carts per customer in 30d).
 
+import { createHash } from 'node:crypto'
+import { UpstashCacheAdapter } from '@manta/adapter-cache-upstash'
 import {
   type AbandonmentCategory,
   computeActivityState,
@@ -29,6 +31,28 @@ import {
   computeSubStage,
   isEmailAttributed,
 } from '../../modules/cart-tracking/abandonment'
+
+// In-process Redis cache for the slow Klaviyo HogQL lookup. 5 min TTL covers
+// the dashboard's typical refresh cadence; longer would risk staleness on
+// freshly-sent recovery emails.
+const KLAVIYO_HOGQL_TTL_SECS = 300
+
+let _cacheSingleton: UpstashCacheAdapter | null | undefined
+function getCache(): UpstashCacheAdapter | null {
+  if (_cacheSingleton !== undefined) return _cacheSingleton
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+  if (!url || !token) {
+    _cacheSingleton = null
+    return _cacheSingleton
+  }
+  try {
+    _cacheSingleton = new UpstashCacheAdapter({ url, token })
+  } catch {
+    _cacheSingleton = null
+  }
+  return _cacheSingleton
+}
 
 type CartRow = {
   id: string
@@ -164,41 +188,68 @@ export default defineQuery({
       //     one of our abandonment flow templates. Subjects change over time;
       //     use loose substrings on the distinctive words ("oubli", "attend",
       //     "pense") to catch variants without over-matching marketing blasts.
-      const emailRows = await hogql(`
-        SELECT
-          lower(kp.email) AS email,
-          ke.datetime AS sent_at,
-          coalesce(
-            extract(
-              JSONExtractString(ke.event_properties, 'checkout_url'),
-              'checkouts/ac/([^/?"]+)'
-            ),
-            JSONExtractString(ke.event_properties, 'checkout_token'),
-            ''
-          ) AS checkout_token
-        FROM klaviyo_events ke
-        JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
-        JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
-        WHERE lower(kp.email) IN (${emailsList})
-          AND (
-            km.name = 'Shopify_Checkout_Abandonned'
-            OR km.name = 'Checkout Abandoned'
-            OR km.name = 'Ops Cart Abandoned'
-            OR (
-              km.name = 'Received Email'
-              AND (
-                positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
-                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
-                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
-                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
-                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
-                OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
+      // Cache key = SHA-256 of sorted emails (deterministic across requests
+      // with the same audience). 5 min TTL — recovery emails arrive sparsely
+      // enough that staleness on this scale is acceptable.
+      const cacheKey = `abandoned-carts:klaviyo:${createHash('sha256')
+        .update([...emails].sort().join(','))
+        .digest('hex')
+        .slice(0, 24)}`
+      const cache = getCache()
+      let emailRows: unknown[][] | null = null
+      if (cache) {
+        try {
+          const cached = await cache.get(cacheKey)
+          if (cached) emailRows = (typeof cached === 'string' ? JSON.parse(cached) : cached) as unknown[][]
+        } catch {
+          /* miss */
+        }
+      }
+
+      if (!emailRows) {
+        emailRows = await hogql(`
+          SELECT
+            lower(kp.email) AS email,
+            ke.datetime AS sent_at,
+            coalesce(
+              extract(
+                JSONExtractString(ke.event_properties, 'checkout_url'),
+                'checkouts/ac/([^/?"]+)'
+              ),
+              JSONExtractString(ke.event_properties, 'checkout_token'),
+              ''
+            ) AS checkout_token
+          FROM klaviyo_events ke
+          JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
+          JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
+          WHERE lower(kp.email) IN (${emailsList})
+            AND (
+              km.name = 'Shopify_Checkout_Abandonned'
+              OR km.name = 'Checkout Abandoned'
+              OR km.name = 'Ops Cart Abandoned'
+              OR (
+                km.name = 'Received Email'
+                AND (
+                  positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
+                  OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
+                )
               )
             )
-          )
-        ORDER BY ke.datetime DESC
-        LIMIT 20000
-      `)
+          ORDER BY ke.datetime DESC
+          LIMIT 20000
+        `)
+        if (cache && emailRows.length > 0) {
+          try {
+            await cache.set(cacheKey, emailRows, KLAVIYO_HOGQL_TTL_SECS)
+          } catch {
+            /* fire and forget */
+          }
+        }
+      }
 
       for (const row of emailRows) {
         const email = row[0] as string | null
