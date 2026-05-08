@@ -34,9 +34,6 @@ const OVERLAP_MS = 60 * 60 * 1000 // 1h
 // > 5000 customers/orders + upserting them risks timing out. The next
 // tick picks up the leftover via the high-water mark.
 const HARD_CAP = 5000
-const CHUNK = 500
-
-type RawDb = { raw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }
 
 interface CustomerRow {
   shopify_customer_id: string
@@ -246,198 +243,118 @@ async function pullOrders(
   })
 }
 
-async function upsertContacts(db: RawDb, rows: CustomerRow[]): Promise<number> {
-  if (rows.length === 0) return 0
-  let done = 0
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const batch = rows.slice(i, i + CHUNK)
-    // Build a multi-row INSERT … VALUES ($1,$2,…), ($n+1,…) statement.
-    const cols = [
-      'email',
-      'phone',
-      'locale',
-      'first_name',
-      'last_name',
-      'country_code',
-      'city',
-      'shopify_customer_id',
-      'orders_count',
-      'total_spent',
-      'last_order_at',
-      'shopify_synced_at',
-    ]
-    const params: unknown[] = []
-    const tuples: string[] = []
-    for (const r of batch) {
-      const offset = params.length
-      params.push(
-        r.email,
-        r.phone,
-        r.locale ?? 'fr-FR',
-        r.first_name,
-        r.last_name,
-        r.country_code,
-        r.city,
-        r.shopify_customer_id,
-        r.orders_count,
-        r.total_spent,
-        r.last_order_at,
-        r.shopify_synced_at,
-      )
-      tuples.push(`(${cols.map((_, j) => `$${offset + j + 1}`).join(',')})`)
-    }
-    const sqlText = `
-      INSERT INTO contacts (${cols.join(',')})
-      VALUES ${tuples.join(',')}
-      ON CONFLICT (email) DO UPDATE SET
-        phone = COALESCE(EXCLUDED.phone, contacts.phone),
-        locale = COALESCE(EXCLUDED.locale, contacts.locale),
-        first_name = COALESCE(EXCLUDED.first_name, contacts.first_name),
-        last_name = COALESCE(EXCLUDED.last_name, contacts.last_name),
-        country_code = COALESCE(EXCLUDED.country_code, contacts.country_code),
-        city = COALESCE(EXCLUDED.city, contacts.city),
-        shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, contacts.shopify_customer_id),
-        orders_count = GREATEST(EXCLUDED.orders_count, contacts.orders_count),
-        total_spent = GREATEST(EXCLUDED.total_spent, contacts.total_spent),
-        last_order_at = GREATEST(EXCLUDED.last_order_at, contacts.last_order_at),
-        shopify_synced_at = EXCLUDED.shopify_synced_at,
-        updated_at = NOW()
-    `
-    await db.raw(sqlText, params)
-    done += batch.length
-  }
-  return done
-}
-
-async function upsertOrders(db: RawDb, rows: OrderRow[]): Promise<number> {
-  if (rows.length === 0) return 0
-  let done = 0
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const batch = rows.slice(i, i + CHUNK)
-    const cols = [
-      'shopify_order_id',
-      'email',
-      'order_number',
-      'status',
-      'financial_status',
-      'fulfillment_status',
-      'total_price',
-      'currency',
-      'placed_at',
-      'cancelled_at',
-      'shopify_synced_at',
-    ]
-    const params: unknown[] = []
-    const tuples: string[] = []
-    for (const r of batch) {
-      const offset = params.length
-      params.push(
-        r.shopify_order_id,
-        r.email,
-        r.order_number,
-        r.status,
-        r.financial_status,
-        r.fulfillment_status,
-        r.total_price,
-        r.currency,
-        r.placed_at,
-        r.cancelled_at,
-        r.shopify_synced_at,
-      )
-      tuples.push(`(${cols.map((_, j) => `$${offset + j + 1}`).join(',')})`)
-    }
-    const sqlText = `
-      INSERT INTO orders (${cols.join(',')})
-      VALUES ${tuples.join(',')}
-      ON CONFLICT (shopify_order_id) DO UPDATE SET
-        email = COALESCE(EXCLUDED.email, orders.email),
-        order_number = EXCLUDED.order_number,
-        status = EXCLUDED.status,
-        financial_status = EXCLUDED.financial_status,
-        fulfillment_status = EXCLUDED.fulfillment_status,
-        total_price = EXCLUDED.total_price,
-        currency = EXCLUDED.currency,
-        placed_at = EXCLUDED.placed_at,
-        cancelled_at = EXCLUDED.cancelled_at,
-        shopify_synced_at = EXCLUDED.shopify_synced_at,
-        updated_at = NOW()
-    `
-    await db.raw(sqlText, params)
-    done += batch.length
-  }
-  return done
-}
-
 export default defineCommand({
   name: 'syncContactsFromShopify',
   description:
     'Pull customers + orders updated since last run from Shopify Admin and upsert them into `contacts` and `orders` (incremental, idempotent).',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
-    return await step.action('sync-contacts-from-shopify', {
-      invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.infra.db as RawDb | undefined
-        if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
+    const startedAt = Date.now()
 
-        const startedAt = Date.now()
+    // ── 1. High-water mark via services ─────────────────────────────
+    // biome-ignore lint/suspicious/noExplicitAny: $notnull is a Manta filter operator not in the entity type
+    const [latestContact] = (await step.service.contact.listContacts({ shopify_synced_at: { $notnull: true } } as any, {
+      order: { shopify_synced_at: 'DESC' },
+      take: 1,
+    })) as Array<{ shopify_synced_at?: Date | string | null }>
+    // biome-ignore lint/suspicious/noExplicitAny: same as above
+    const [latestOrder] = (await step.service.order.listOrders({ shopify_synced_at: { $notnull: true } } as any, {
+      order: { shopify_synced_at: 'DESC' },
+      take: 1,
+    })) as Array<{ shopify_synced_at?: Date | string | null }>
+    type _StepSvcAny = Record<string, (...args: unknown[]) => Promise<unknown>>
+    const contactMax = latestContact?.shopify_synced_at ? new Date(latestContact.shopify_synced_at) : null
+    const orderMax = latestOrder?.shopify_synced_at ? new Date(latestOrder.shopify_synced_at) : null
+
+    // Use the SMALLER of the two (or null = genesis pull) — we want both
+    // contacts and orders to fully catch up if one lagged.
+    let sinceTs: Date | null = null
+    if (contactMax && orderMax) sinceTs = new Date(Math.min(contactMax.getTime(), orderMax.getTime()))
+    else if (contactMax) sinceTs = contactMax
+    else if (orderMax) sinceTs = orderMax
+
+    const cursorTs = sinceTs ? new Date(sinceTs.getTime() - OVERLAP_MS) : null
+    const sinceIso = cursorTs?.toISOString() ?? null
+    const searchQuery = buildSearchQuery(sinceIso)
+
+    log.info(`[syncContactsFromShopify] starting — since=${sinceIso ?? 'genesis'}`)
+
+    // ── 2. Pull from Shopify Admin GraphQL (compensable network step) ─
+    const pulled = await step.action('pull-from-shopify', {
+      invoke: async (_i: unknown, ctx): Promise<{ customers: CustomerRow[]; orders: OrderRow[] }> => {
         const client = new ShopifyAdminClient()
-
-        // ── 1. Resolve the high-water mark ──────────────────────────
-        const [contactMaxRow] = await db.raw<{ max_at: Date | null }>(
-          'SELECT MAX(shopify_synced_at) AS max_at FROM contacts WHERE shopify_synced_at IS NOT NULL',
-        )
-        const [orderMaxRow] = await db.raw<{ max_at: Date | null }>(
-          'SELECT MAX(shopify_synced_at) AS max_at FROM orders WHERE shopify_synced_at IS NOT NULL',
-        )
-        const contactMax = contactMaxRow?.max_at ?? null
-        const orderMax = orderMaxRow?.max_at ?? null
-
-        // Use the SMALLER of the two (or null = genesis pull) — we want
-        // both contacts and orders to fully catch up if one lagged.
-        let sinceTs: Date | null = null
-        if (contactMax && orderMax) sinceTs = new Date(Math.min(contactMax.getTime(), orderMax.getTime()))
-        else if (contactMax) sinceTs = contactMax
-        else if (orderMax) sinceTs = orderMax
-
-        // Apply 1h overlap to absorb Shopify eventual consistency.
-        const cursorTs = sinceTs ? new Date(sinceTs.getTime() - OVERLAP_MS) : null
-        const sinceIso = cursorTs?.toISOString() ?? null
-        const searchQuery = buildSearchQuery(sinceIso)
-
-        log.info(`[syncContactsFromShopify] starting — since=${sinceIso ?? 'genesis'}`)
-
-        // ── 2. Pull customers + orders ──────────────────────────────
         const [customers, orders] = await Promise.all([
           pullCustomers(client, searchQuery, ctx.signal),
           pullOrders(client, searchQuery, ctx.signal),
         ])
-
         if (ctx.signal?.aborted) {
           throw new MantaError('CONFLICT', 'syncContactsFromShopify cancelled', { code: 'WORKFLOW_CANCELLED' })
         }
-
-        log.info(`[syncContactsFromShopify] pulled customers=${customers.length} orders=${orders.length}`)
-
-        // ── 3. Upsert ───────────────────────────────────────────────
-        const contactsWritten = await upsertContacts(db, customers)
-        const ordersWritten = await upsertOrders(db, orders)
-
-        const durationMs = Date.now() - startedAt
-        log.info(
-          `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} duration_ms=${durationMs}`,
-        )
-
-        return {
-          contacts: contactsWritten,
-          orders: ordersWritten,
-          duration_ms: durationMs,
-          since: sinceIso,
-        }
+        return { customers, orders }
       },
       compensate: async () => {
-        // Idempotent upsert against external system — partial progress
-        // is recovered by the next tick via the high-water mark.
+        // Read-only on Shopify; the local upsert is idempotent on the next tick.
       },
     })({})
+
+    log.info(`[syncContactsFromShopify] pulled customers=${pulled.customers.length} orders=${pulled.orders.length}`)
+
+    // ── 3. Bulk upsert via services (CQRS — no raw SQL) ──────────────
+    let contactsWritten = 0
+    let ordersWritten = 0
+    if (pulled.customers.length > 0) {
+      const result = (await step.service.contact.upsertWithReplace(
+        pulled.customers as unknown as Record<string, unknown>[],
+        // Replace fields on conflict — keep email-keyed identity but refresh
+        // every Shopify-sourced field. Manual edits to klaviyo_* / distinct_id
+        // / *_count from other code paths are preserved (not in this list).
+        [
+          'phone',
+          'locale',
+          'first_name',
+          'last_name',
+          'country_code',
+          'city',
+          'shopify_customer_id',
+          'orders_count',
+          'total_spent',
+          'last_order_at',
+          'shopify_synced_at',
+        ],
+        ['email'],
+      )) as Array<{ id: string }>
+      contactsWritten = result.length
+    }
+    if (pulled.orders.length > 0) {
+      const result = (await step.service.order.upsertWithReplace(
+        pulled.orders as unknown as Record<string, unknown>[],
+        [
+          'email',
+          'order_number',
+          'status',
+          'financial_status',
+          'fulfillment_status',
+          'total_price',
+          'currency',
+          'placed_at',
+          'cancelled_at',
+          'shopify_synced_at',
+        ],
+        ['shopify_order_id'],
+      )) as Array<{ id: string }>
+      ordersWritten = result.length
+    }
+
+    const durationMs = Date.now() - startedAt
+    log.info(
+      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} duration_ms=${durationMs}`,
+    )
+
+    return {
+      contacts: contactsWritten,
+      orders: ordersWritten,
+      duration_ms: durationMs,
+      since: sinceIso,
+    }
   },
 })
