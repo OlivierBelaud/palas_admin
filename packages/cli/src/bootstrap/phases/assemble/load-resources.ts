@@ -82,9 +82,10 @@ export async function loadResources(ctx: BootstrapContext, appRef: AppRef): Prom
         }
         if (job?.name && job.schedule && typeof job.handler === 'function') {
           scheduler.register(job.name, job.schedule, async () => {
+            const startedAt = Date.now()
             try {
               const result = await job.handler({ command: appRef.current!.commands, log: logger })
-              return { status: 'success' as const, data: result, duration_ms: 0 }
+              return { status: 'success' as const, data: result, duration_ms: Date.now() - startedAt }
             } catch (err) {
               throw MantaError.wrap(err, `job:${job.name}`)
             }

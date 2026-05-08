@@ -77,12 +77,18 @@ export async function wireCronRoutes(ctx: BootstrapContext, appRef: AppRef): Pro
     const startMs = Date.now()
     try {
       const result: JobResult = await scheduler.runJob(name)
-      const duration_ms = result.duration_ms ?? Date.now() - startMs
+      // Prefer wall-clock since the registered handler currently hard-codes
+      // duration_ms:0 in load-resources (deferred WP-F15).
+      const duration_ms = result.duration_ms || Date.now() - startMs
       const errMsg = result.error?.message
       const code = result.status === 'failure' ? 500 : 200
-      const body = errMsg
-        ? { status: result.status, duration_ms, error: errMsg }
-        : { status: result.status, duration_ms }
+      const body: Record<string, unknown> = { status: result.status, duration_ms }
+      if (errMsg) body.error = errMsg
+      // Surface handler return value (sync result counts, etc.) so cron callers
+      // can verify a no-op vs an actual sync without inspecting server logs.
+      if ((result as { data?: unknown }).data !== undefined) {
+        body.data = (result as { data?: unknown }).data
+      }
       return Response.json(body, { status: code })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
