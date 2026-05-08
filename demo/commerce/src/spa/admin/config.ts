@@ -12,7 +12,7 @@ export default defineSpa({
       items: [{ label: 'Paniers abandonnés', to: '/paniers-abandonnes' }],
     },
     {
-      icon: 'Package',
+      icon: 'Receipt',
       label: 'Commandes',
       to: '/orders',
     },
@@ -20,11 +20,6 @@ export default defineSpa({
       icon: 'Users',
       label: 'Clients',
       to: '/clients',
-    },
-    {
-      icon: 'UserCog',
-      label: 'Customer Groups',
-      to: '/customer-groups',
     },
   ],
 
