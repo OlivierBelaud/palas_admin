@@ -1207,18 +1207,13 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
       columnVisibility,
     },
     onColumnVisibilityChange: setColumnVisibility,
-    pageCount: noPagination
-      ? 1
-      : useLocalPagination
-        ? Math.ceil(filteredItems.length / _pageSize)
-        : Math.ceil((count || filteredItems.length || 0) / _pageSize),
+    pageCount: noPagination ? 1 : Math.ceil((count || filteredItems.length || 0) / _pageSize),
     getRowId: (row) => (row.id as string) || String(items.indexOf(row)),
     onPaginationChange: noPagination ? ((() => {}) as any) : (onPaginationChange as any),
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    // Local mode = client slices via @tanstack. URL mode = server slices via offset injection.
-    manualPagination: !useLocalPagination,
+    manualPagination: true,
   })
 
   // ── Navigate to row on click ──

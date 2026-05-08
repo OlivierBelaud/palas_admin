@@ -61,13 +61,24 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
     days: z.number().int().positive().max(90).default(30),
   }),
-  handler: async (input, { query, log }) => {
+  handler: async (input, { query, log: _log }) => {
+    const days = input.days ?? 30
+    const nowMs = Date.now()
+    const cutoffMs = nowMs - days * 86400 * 1000
+
     // ── 1. Fetch identified carts (email present) within the window ─────
-    // Over-fetch 2× to leave room for the normal_conversion filter downstream.
-    const fetchLimit = Math.min((input.limit ?? 100) * 2, 500)
-    const carts = (await query.graph({
+    // Server-side pagination: fetch exactly `limit` rows at `offset` plus a
+    // count for the paginator. Over-fetch slightly (1.3×) to absorb the
+    // small normal_conversion filter downstream without leaving holes on
+    // the page; we still slice to `limit` before returning.
+    const limit = input.limit ?? 100
+    const fetchLimit = Math.min(Math.ceil(limit * 1.3), 500)
+    const [carts, totalCount] = (await query.graphAndCount({
       entity: 'cart',
-      filters: { email: { $notnull: true } },
+      filters: {
+        email: { $notnull: true },
+        last_action_at: { $gte: new Date(cutoffMs) },
+      },
       fields: [
         'id',
         'cart_token',
@@ -86,17 +97,13 @@ export default defineQuery({
       ],
       sort: { last_action_at: 'desc' },
       pagination: { limit: fetchLimit, offset: input.offset },
-    })) as unknown as CartRow[]
+    })) as unknown as [CartRow[], number]
 
-    if (carts.length === 0) return []
+    if (carts.length === 0) return { items: [], count: 0 }
 
-    const days = input.days ?? 30
-    const nowMs = Date.now()
-    const cutoffMs = nowMs - days * 86400 * 1000
-    const windowed = carts.filter((c) => new Date(c.last_action_at).getTime() >= cutoffMs)
-
+    const windowed = carts
     const emails = Array.from(new Set(windowed.map((c) => c.email.toLowerCase())))
-    if (emails.length === 0) return []
+    if (emails.length === 0) return { items: [], count: totalCount }
 
     const orderCountByEmail = new Map<string, number>()
     // Per (email, checkout_token) → email timestamp. We store the MAX per
@@ -207,6 +214,9 @@ export default defineQuery({
     })
 
     // Exclude pure organic conversions — they don't belong to the abandonment funnel.
-    return enriched.filter((r) => r.recovery_category !== 'normal_conversion').slice(0, input.limit ?? 100)
+    // Count includes them (acceptable approximation: ~5% overhead in the paginator's
+    // last-page indicator). Slice to `limit` so the page never exceeds its size.
+    const items = enriched.filter((r) => r.recovery_category !== 'normal_conversion').slice(0, limit)
+    return { items, count: totalCount }
   },
 })

@@ -94,13 +94,27 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
   const params = useParams()
   const hadDataRef = useRef(false)
 
-  // Inject URL search params (q, offset, order) into the graph query
+  // Inject URL search params (q, offset, order) into the query.
+  // - Graph queries: into `graph.{q, sort, pagination.offset, filters}`
+  // - Named queries: into `input.{offset, q, ...}` so the handler can paginate
+  //   server-side (the named query must accept `offset` in its zod input).
   const enrichedQuery = useMemo(() => {
-    if (!query || !isGraphQuery(query)) return query
+    if (!query) return query
 
     const q = searchParams.get('q') || undefined
     const offset = searchParams.get('offset')
     const order = searchParams.get('order')
+
+    if (!isGraphQuery(query)) {
+      // Named query — pass URL params through `input` for server-side handling.
+      const input: Record<string, unknown> = {
+        ...((query as { input?: Record<string, unknown> }).input ?? {}),
+      }
+      if (offset) input.offset = Number(offset)
+      if (q) input.q = q
+      if (order) input.order = order
+      return { ...query, input }
+    }
 
     const graph = { ...query.graph }
 
@@ -172,9 +186,7 @@ export function DataTableBlock({ query, ...props }: DataTableBlockProps) {
         pagination: props.pagination !== false,
         pageSize: props.pageSize,
         count,
-        // Named queries have no server-side offset injection (only graph queries do),
-        // so we slice client-side for them. Detail pages (params.id) keep their existing local mode.
-        localPagination: !!params.id || !isGraphQuery(query),
+        localPagination: !!params.id,
         inCard: !!props.card,
         rowHighlight: props.rowHighlight,
         // Title rendered by the Card header instead — avoid duplicate heading.
