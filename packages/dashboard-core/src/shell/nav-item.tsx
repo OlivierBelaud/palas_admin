@@ -110,7 +110,7 @@ export const NavItem = ({ icon, label, to, items, type = 'core', from }: INavIte
             <div className="flex size-6 items-center justify-center">
               <Icon icon={icon} type={type} />
             </div>
-            <span className="text-sm font-medium">{label}</span>
+            <span className="text-[13px] font-medium">{label}</span>
           </RadixCollapsible.Trigger>
           <RadixCollapsible.Content>
             <div className="flex flex-col gap-y-0.5 pb-2 pt-0.5">
@@ -131,7 +131,7 @@ export const NavItem = ({ icon, label, to, items, type = 'core', from }: INavIte
                         )
                       }}
                     >
-                      <span className="text-sm font-medium">{label}</span>
+                      <span className="text-[13px] font-medium">{label}</span>
                     </NavLink>
                   </NavItemTooltip>
                 </li>
@@ -153,7 +153,7 @@ export const NavItem = ({ icon, label, to, items, type = 'core', from }: INavIte
                             )
                           }}
                         >
-                          <span className="text-sm font-medium">{item.label}</span>
+                          <span className="text-xs font-medium">{item.label}</span>
                         </NavLink>
                       </NavItemTooltip>
                     </li>
