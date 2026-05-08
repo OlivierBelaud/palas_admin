@@ -4,6 +4,7 @@
 import { getRequestBody } from '../../../server-bootstrap'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 import { isDmlEntity } from '../../bootstrap-helpers'
+import { wireCronRoutes } from './wire-cron-routes'
 import { wireWorkflowRoutes } from './wire-workflow-routes'
 
 export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise<void> {
@@ -171,6 +172,9 @@ export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise
 
   // Framework-owned workflow introspection endpoints (GET/DELETE /_workflow/:id)
   await wireWorkflowRoutes(ctx, appRef)
+
+  // Framework-owned cron HTTP catch-all (GET|POST /api/crons/:name)
+  await wireCronRoutes(ctx, appRef)
 
   // [14b] Register custom API routes (plugins + local src/api/)
   {
