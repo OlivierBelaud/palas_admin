@@ -22,8 +22,6 @@
 import { sendKlaviyoEvent } from '../../utils/klaviyo'
 import { buildRecoveryUrl } from '../../utils/recovery-url'
 
-type RawDb = { raw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }
-
 interface EligibleCart {
   id: string
   cart_token: string
@@ -58,40 +56,33 @@ export default defineCommand({
   workflow: async (input, { step, log }) => {
     const adminBase = (process.env.ADMIN_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
 
+    // ── 1. Fetch eligible carts via service ─────────────────────────
+    //       Identified carts, not completed, not yet notified, inside the
+    //       [dormant .. maxAge] window. Key on `highest_stage` rather than
+    //       `status` (cf. docs/cart-abandonment-rules.md).
+    const maxAgeMs = input.maxAgeDays * 86400 * 1000
+    const minIdleMs = input.minIdleHours * 3600 * 1000
+    const nowMs = Date.now()
+    const lowerBound = new Date(nowMs - maxAgeMs)
+    const upperBound = new Date(nowMs - minIdleMs)
+    const carts = (await (
+      step.service as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
+    ).cart.listCarts(
+      {
+        // biome-ignore lint/suspicious/noExplicitAny: $-prefixed Manta filter operators not present in Cart entity type
+        email: { $notnull: true } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: same
+        highest_stage: { $ne: 'completed' } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: same
+        abandon_notified_at: { $null: true } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: same
+        last_action_at: { $gte: lowerBound, $lte: upperBound } as any,
+      },
+      { order: { last_action_at: 'ASC' }, take: input.batchLimit },
+    )) as unknown as EligibleCart[]
+
     const result = await step.action('notify-abandoned-carts', {
       invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.infra.db as RawDb | undefined
-        if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
-
-        // ── 1. Fetch eligible carts — same filter as abandoned-carts page
-        //       + idle >= minIdleHours + not yet notified by us.
-        const maxAgeMs = input.maxAgeDays * 86400 * 1000
-        const minIdleMs = input.minIdleHours * 3600 * 1000
-        const now = Date.now()
-        const lowerBound = new Date(now - maxAgeMs)
-        const upperBound = new Date(now - minIdleMs)
-
-        // Eligible = identified carts, not completed, not yet notified,
-        // inside the [dormant .. maxAge] window. We key on `highest_stage`
-        // rather than `status` — status is only `active`|`completed` now;
-        // the whole "abandoned" taxonomy is derived at read time from
-        // highest_stage + last_action_at (see docs/cart-abandonment-rules.md).
-        const carts = await db.raw<EligibleCart>(
-          `SELECT id, cart_token, checkout_token, email, first_name, last_name, phone,
-                  city, country_code, items, total_price, item_count, currency,
-                  highest_stage, status, last_action, last_action_at,
-                  abandon_notified_count
-             FROM carts
-            WHERE email IS NOT NULL
-              AND highest_stage <> 'completed'
-              AND abandon_notified_at IS NULL
-              AND last_action_at >= $1
-              AND last_action_at <= $2
-            ORDER BY last_action_at ASC
-            LIMIT $3`,
-          [lowerBound, upperBound, input.batchLimit],
-        )
-
         if (carts.length === 0) {
           log.info('[notifyAbandonedCarts] no eligible carts')
           return { notified: 0, skipped: 0, errors: 0, scanned: 0 }
@@ -155,7 +146,7 @@ export default defineCommand({
           }
         }
 
-        const recentEmailCutoff = now - SKIP_RECENT_EMAIL_HOURS * 3600 * 1000
+        const recentEmailCutoff = nowMs - SKIP_RECENT_EMAIL_HOURS * 3600 * 1000
 
         // ── 3. Iterate + send + mark
         let notified = 0
@@ -259,14 +250,11 @@ export default defineCommand({
           // mark is treated as an error: the email was sent but the next
           // cron tick will try to send again. We accept this over the
           // opposite risk (mark without sending).
-          await db.raw(
-            `UPDATE carts
-                SET abandon_notified_at = now(),
-                    abandon_notified_count = COALESCE(abandon_notified_count, 0) + 1,
-                    updated_at = now()
-              WHERE id = $1`,
-            [cart.id],
-          )
+          await ctx.app.commands.updateCart({
+            id: cart.id,
+            abandon_notified_at: new Date(),
+            abandon_notified_count: (cart.abandon_notified_count ?? 0) + 1,
+          } as Record<string, unknown>)
 
           notified++
         }
