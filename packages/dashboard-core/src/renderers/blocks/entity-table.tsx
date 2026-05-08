@@ -1371,7 +1371,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                             Table.Cell,
                             {
                               key: cell.id,
-                              className: '!ps-0 !pe-0',
+                              className: '!ps-0 !pe-0 whitespace-nowrap',
                             },
                             React.createElement(
                               Link,
@@ -1383,7 +1383,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                               React.createElement(
                                 'div',
                                 {
-                                  className: cn('flex size-full items-center px-4', {
+                                  className: cn('flex size-full items-center px-4 truncate', {
                                     'ps-6': isFirstCell,
                                     'justify-end': isLastCell,
                                   }),
@@ -1398,6 +1398,7 @@ export function EntityTableRenderer({ component, data }: BlockRendererProps) {
                           Table.Cell,
                           {
                             key: cell.id,
+                            className: 'whitespace-nowrap truncate max-w-[320px]',
                           },
                           Inner,
                         )
