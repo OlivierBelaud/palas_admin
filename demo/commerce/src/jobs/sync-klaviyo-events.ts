@@ -6,9 +6,10 @@ interface SyncResult {
   scanned: number
   inserted: number
   skipped: number
+  carts_marked_klaviyo: number
 }
 
-const EMPTY: SyncResult = { scanned: 0, inserted: 0, skipped: 0 }
+const EMPTY: SyncResult = { scanned: 0, inserted: 0, skipped: 0, carts_marked_klaviyo: 0 }
 
 export default defineJob('sync-klaviyo-events', '20 * * * *', async ({ command, log }) => {
   if (process.env.NODE_ENV !== 'production') {
@@ -16,6 +17,8 @@ export default defineJob('sync-klaviyo-events', '20 * * * *', async ({ command, 
     return EMPTY
   }
   const result = (await command.syncKlaviyoEvents({})) as SyncResult
-  log.info(`[sync-klaviyo-events] scanned=${result.scanned} inserted=${result.inserted} skipped=${result.skipped}`)
+  log.info(
+    `[sync-klaviyo-events] scanned=${result.scanned} inserted=${result.inserted} skipped=${result.skipped} carts_marked_klaviyo=${result.carts_marked_klaviyo}`,
+  )
   return result
 })

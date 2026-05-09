@@ -38,8 +38,8 @@ describe('INotificationPort Conformance', () => {
     const result = await notification.send({
       to: 'user@test.com',
       channel: 'email',
-      template: 'welcome',
-      data: { name: 'Alice' },
+      subject: 'Welcome',
+      html: '<p>Hello Alice</p>',
     })
 
     expect(result.status).toBe('SUCCESS')
@@ -52,12 +52,16 @@ describe('INotificationPort Conformance', () => {
     const first = await notification.send({
       to: 'user@test.com',
       channel: 'email',
+      subject: 'Hello',
+      text: 'Hello',
       idempotency_key: 'idem-1',
     })
 
     const second = await notification.send({
       to: 'user@test.com',
       channel: 'email',
+      subject: 'Hello',
+      text: 'Hello',
       idempotency_key: 'idem-1',
     })
 
@@ -75,13 +79,15 @@ describe('INotificationPort Conformance', () => {
     const emailResult = await notification.send({
       to: 'user@test.com',
       channel: 'email',
-      data: { subject: 'Hello' },
+      subject: 'Hello',
+      text: 'Hello',
     })
 
+    // SMS does not require subject/html — only `email` channel triggers email-specific validation.
     const smsResult = await notification.send({
       to: '+33612345678',
       channel: 'sms',
-      data: { body: 'Hi' },
+      text: 'Hi',
     })
 
     expect(emailResult.status).toBe('SUCCESS')
@@ -99,7 +105,12 @@ describe('INotificationPort Conformance', () => {
     notification.configureChannels(['email'])
 
     // Email should work
-    const emailResult = await notification.send({ to: 'a@test.com', channel: 'email' })
+    const emailResult = await notification.send({
+      to: 'a@test.com',
+      channel: 'email',
+      subject: 'Hi',
+      text: 'Hi',
+    })
     expect(emailResult.status).toBe('SUCCESS')
 
     // Unconfigured 'push' channel should throw
@@ -111,9 +122,9 @@ describe('INotificationPort Conformance', () => {
     if (!notification.sendBatch) return
 
     const results = await notification.sendBatch([
-      { to: 'a@test.com', channel: 'email' },
-      { to: 'b@test.com', channel: 'email' },
-      { to: 'c@test.com', channel: 'email' },
+      { to: 'a@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
+      { to: 'b@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
+      { to: 'c@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
     ])
 
     expect(results).toHaveLength(3)
@@ -130,9 +141,9 @@ describe('INotificationPort Conformance', () => {
     notification.configureFailures(['bad@test.com'])
 
     const results = await notification.sendBatch([
-      { to: 'good@test.com', channel: 'email' },
-      { to: 'bad@test.com', channel: 'email' },
-      { to: 'also-good@test.com', channel: 'email' },
+      { to: 'good@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
+      { to: 'bad@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
+      { to: 'also-good@test.com', channel: 'email', subject: 'Hi', text: 'Hi' },
     ])
 
     expect(results).toHaveLength(3)
@@ -142,13 +153,37 @@ describe('INotificationPort Conformance', () => {
     expect(results[2].status).toBe('SUCCESS')
   })
 
-  // N-07 — SPEC-097: provider failure returns FAILURE status (no exception)
+  // N-07 — SPEC-097: missing subject for email throws INVALID_DATA
+  it('send > email without subject throws', async () => {
+    await expect(
+      notification.send({
+        to: 'user@test.com',
+        channel: 'email',
+        html: '<p>Hello</p>',
+      }),
+    ).rejects.toThrow(/subject/i)
+  })
+
+  // N-08 — SPEC-097: missing both html and text for email throws INVALID_DATA
+  it('send > email without html or text throws', async () => {
+    await expect(
+      notification.send({
+        to: 'user@test.com',
+        channel: 'email',
+        subject: 'Hello',
+      }),
+    ).rejects.toThrow(/html or text/i)
+  })
+
+  // N-09 (was N-07) — SPEC-097: provider failure returns FAILURE status (no exception)
   it('send > provider failure', async () => {
-    // InMemoryNotificationAdapter always succeeds
-    // Real adapter test: provider throws -> status FAILURE, no propagated exception
+    // InMemoryNotificationAdapter always succeeds for valid payloads.
+    // Real adapter test: provider throws -> status FAILURE, no propagated exception.
     const result = await notification.send({
       to: 'user@test.com',
       channel: 'email',
+      subject: 'Hello',
+      text: 'Hello',
     })
 
     // Contract: result has status field

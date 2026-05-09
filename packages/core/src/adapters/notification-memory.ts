@@ -3,10 +3,13 @@
 import { MantaError } from '../errors/manta-error'
 import type { INotificationPort } from '../ports'
 
+type SendInput = Parameters<INotificationPort['send']>[0]
+type SendResult = Awaited<ReturnType<INotificationPort['send']>>
+
 export class InMemoryNotificationAdapter implements INotificationPort {
   private _sent: Array<{
-    notification: Parameters<INotificationPort['send']>[0]
-    result: Awaited<ReturnType<INotificationPort['send']>>
+    notification: SendInput
+    result: SendResult
   }> = []
   private _idempotencyKeys = new Set<string>()
   private _configuredChannels: Set<string> | null = null
@@ -26,16 +29,20 @@ export class InMemoryNotificationAdapter implements INotificationPort {
     this._failRecipients = new Set(recipients)
   }
 
-  async send(notification: {
-    to: string
-    channel: string
-    template?: string
-    data?: Record<string, unknown>
-    idempotency_key?: string
-  }): Promise<{ status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: Error }> {
+  async send(notification: SendInput): Promise<SendResult> {
     // Channel validation (N-04)
     if (this._configuredChannels && !this._configuredChannels.has(notification.channel)) {
       throw new MantaError('INVALID_DATA', `Channel "${notification.channel}" is not configured`)
+    }
+
+    // Email-only payload validation (N-07/N-08)
+    if (notification.channel === 'email') {
+      if (!notification.subject || notification.subject.length === 0) {
+        throw new MantaError('INVALID_DATA', 'Email notifications require a subject')
+      }
+      if (!notification.html && !notification.text) {
+        throw new MantaError('INVALID_DATA', 'Email notifications require html or text body')
+      }
     }
 
     // Idempotency check (N-02)
@@ -49,19 +56,20 @@ export class InMemoryNotificationAdapter implements INotificationPort {
 
     // Simulate failure for configured recipients (N-06)
     if (this._failRecipients.has(notification.to)) {
-      const result = { status: 'FAILURE' as const, error: new Error(`Delivery to ${notification.to} failed`) }
+      const result: SendResult = {
+        status: 'FAILURE',
+        error: new Error(`Delivery to ${notification.to} failed`),
+      }
       this._sent.push({ notification, result })
       return result
     }
 
-    const result = { status: 'SUCCESS' as const, id: crypto.randomUUID() }
+    const result: SendResult = { status: 'SUCCESS', id: crypto.randomUUID() }
     this._sent.push({ notification, result })
     return result
   }
 
-  async sendBatch(
-    notifications: Array<Parameters<INotificationPort['send']>[0]>,
-  ): Promise<Array<Awaited<ReturnType<INotificationPort['send']>>>> {
+  async sendBatch(notifications: Array<SendInput>): Promise<Array<SendResult>> {
     return Promise.all(notifications.map((n) => this.send(n)))
   }
 

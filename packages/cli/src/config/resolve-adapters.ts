@@ -85,6 +85,7 @@ const ALWAYS_AVAILABLE = new Set([
   '@manta/adapter-file-vercel-blob',
   '@manta/adapter-jobs-vercel-cron',
   '@manta/adapter-eventbus-upstash',
+  '@manta/adapter-notification-resend',
 ])
 
 /**

@@ -134,6 +134,10 @@ export const ADAPTER_FACTORIES: Record<
     const { UpstashEventBusAdapter } = await import('@manta/adapter-eventbus-upstash')
     return new UpstashEventBusAdapter(opts)
   },
+  '@manta/adapter-notification-resend': async (opts) => {
+    const { ResendNotificationAdapter } = await import('@manta/adapter-notification-resend')
+    return new ResendNotificationAdapter(opts)
+  },
   '@manta/adapter-database-pg/DrizzleSchemaGenerator': async () => {
     const { DrizzleSchemaGenerator } = await import('@manta/adapter-database-pg')
     return new DrizzleSchemaGenerator()

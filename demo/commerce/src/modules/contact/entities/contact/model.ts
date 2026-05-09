@@ -33,6 +33,11 @@ export default defineModel('Contact', {
   klaviyo_subscribed: field.boolean().default(false),
   klaviyo_suppressed: field.boolean().default(false),
 
+  // ── Marketing consent ─────────────────────────────────────────────
+  // Internal opt-out timestamp set when the contact clicks Unsubscribe in one of
+  // our own emails (distinct from `klaviyo_suppressed` which mirrors Klaviyo's state).
+  email_marketing_opt_out_at: field.dateTime().nullable().index(),
+
   // ── Sync timestamps ───────────────────────────────────────────────
   shopify_synced_at: field.dateTime().nullable(),
   klaviyo_synced_at: field.dateTime().nullable(),

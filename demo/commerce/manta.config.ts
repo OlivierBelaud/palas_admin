@@ -23,5 +23,12 @@ export default defineConfig({
     // IJobSchedulerPort — so user jobs and the framework reaper job
     // run unchanged.
     IJobSchedulerPort: { adapter: '@manta/adapter-jobs-vercel-cron' },
+    INotificationPort: {
+      adapter: '@manta/adapter-notification-resend',
+      options: {
+        defaultFrom: process.env.RESEND_FROM_EMAIL ?? 'PALAS <hello@fancypalas.com>',
+        defaultReplyTo: process.env.RESEND_REPLY_TO,
+      },
+    },
   },
 })

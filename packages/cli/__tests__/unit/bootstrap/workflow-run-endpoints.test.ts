@@ -3,7 +3,6 @@
 
 import { H3Adapter } from '@manta/adapter-h3'
 import type {
-  IEventBusPort,
   IProgressChannelPort,
   IWorkflowStorePort,
   MantaApp,

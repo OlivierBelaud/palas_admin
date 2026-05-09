@@ -8,6 +8,12 @@
 //
 // Single source of truth for the event filter: keep this in sync with the
 // abandoned-carts query when adding new metrics or subject patterns.
+//
+// After ingest, also marks matching carts as `abandon_notified_source =
+// 'klaviyo'` (only when not already notified) so that
+// `cart.abandon_notified_at` is a unified record across Manta + Klaviyo.
+
+import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from './sync-klaviyo-events-mark-helper'
 
 const POSTHOG_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
 const HOGQL_LIMIT = 5000
@@ -18,6 +24,7 @@ interface IngestResult {
   scanned: number
   inserted: number
   skipped: number
+  carts_marked_klaviyo: number
 }
 
 interface KlaviyoEventRow {
@@ -177,7 +184,7 @@ export default defineCommand({
 
     if (events.length === 0) {
       log.info('[syncKlaviyoEvents] no new events')
-      return { scanned: 0, inserted: 0, skipped: 0 } satisfies IngestResult
+      return { scanned: 0, inserted: 0, skipped: 0, carts_marked_klaviyo: 0 } satisfies IngestResult
     }
 
     const eventsForUpsert = events
@@ -196,7 +203,39 @@ export default defineCommand({
 
     const scanned = events.length
     const inserted = upserted.length
-    log.info(`[syncKlaviyoEvents] scanned=${scanned} inserted≈${inserted} skipped=${scanned - inserted}`)
-    return { scanned, inserted, skipped: scanned - inserted } satisfies IngestResult
+
+    // ── 4. Mark matching carts as klaviyo-notified (no-op if already set).
+    //     We pass the FULL event batch (not just the upserted ones) so a
+    //     re-run that finds zero new events for an already-ingested email
+    //     still marks the cart on the first pass after the cart was created.
+    //     The helper's IS-NULL select clause guarantees idempotence.
+    const markRes = await step.action('mark-carts-from-klaviyo', {
+      invoke: async () => {
+        const stepSvcAny = step.service as unknown as Record<
+          string,
+          Record<string, (...args: unknown[]) => Promise<unknown>>
+        >
+        const cartRepo: CartMarkingRepo = {
+          // biome-ignore lint/suspicious/noExplicitAny: $-prefixed Manta filter operators not in entity type
+          list: (where) => stepSvcAny.cart.listCarts(where as any) as Promise<never>,
+          update: (patch) => stepSvcAny.cart.updateCarts(patch),
+        }
+        return markCartsFromKlaviyoEvents(events, cartRepo, log)
+      },
+      compensate: async () => {
+        // Marking is idempotent and a side-effect on our own DB — no useful
+        // compensation. Re-running the command is the natural recovery.
+      },
+    })({})
+
+    log.info(
+      `[syncKlaviyoEvents] scanned=${scanned} inserted≈${inserted} skipped=${scanned - inserted} carts_marked_klaviyo=${markRes.carts_marked_klaviyo} carts_skipped_already_notified=${markRes.carts_skipped_already_notified}`,
+    )
+    return {
+      scanned,
+      inserted,
+      skipped: scanned - inserted,
+      carts_marked_klaviyo: markRes.carts_marked_klaviyo,
+    } satisfies IngestResult
   },
 })

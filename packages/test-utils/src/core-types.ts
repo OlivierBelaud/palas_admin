@@ -353,8 +353,13 @@ export interface INotificationPort {
   send(notification: {
     to: string
     channel: string
-    template?: string
-    data?: Record<string, unknown>
+    from?: string
+    replyTo?: string | string[]
+    subject?: string
+    html?: string
+    text?: string
+    headers?: Record<string, string>
+    tags?: Array<{ name: string; value: string }>
     idempotency_key?: string
   }): Promise<{ status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: Error }>
   sendBatch?(

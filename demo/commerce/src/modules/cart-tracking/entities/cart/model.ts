@@ -62,6 +62,11 @@ export default defineModel('Cart', {
   // ── Relance idempotence (set by detect-abandoned-carts job) ───────
   abandon_notified_at: field.dateTime().nullable(),
   abandon_notified_count: field.number().default(0),
+  // Who sent the last abandonment-flow email for this cart:
+  //   'manta'   → our Resend cron (notify-abandoned-carts)
+  //   'klaviyo' → Klaviyo native flow, ingested via sync-klaviyo-events
+  // Together with abandon_notified_at this is the unified "who notified, when".
+  abandon_notified_source: field.enum(['manta', 'klaviyo']).nullable(),
 })
 
 interface ItemDiscount {

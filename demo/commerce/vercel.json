@@ -13,10 +13,6 @@
   ],
   "crons": [
     {
-      "path": "/api/crons/detect-abandoned-carts",
-      "schedule": "0 * * * *"
-    },
-    {
       "path": "/api/crons/sync-from-shopify",
       "schedule": "45 * * * *"
     },
@@ -27,6 +23,10 @@
     {
       "path": "/api/crons/sync-posthog-events",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/crons/test-abandoned-cart-random",
+      "schedule": "* * * * *"
     }
   ]
 }
