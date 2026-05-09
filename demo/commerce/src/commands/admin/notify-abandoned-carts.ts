@@ -32,7 +32,7 @@ import {
   type ContactReadRepo,
   type KlaviyoEventReadRepo,
   runNotifyAbandonedCarts,
-} from './notify-abandoned-carts-helper'
+} from '../../utils/notify-abandoned-carts-helper'
 
 export default defineCommand({
   name: 'notifyAbandonedCarts',

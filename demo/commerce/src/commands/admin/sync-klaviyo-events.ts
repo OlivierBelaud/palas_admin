@@ -13,7 +13,7 @@
 // 'klaviyo'` (only when not already notified) so that
 // `cart.abandon_notified_at` is a unified record across Manta + Klaviyo.
 
-import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from './sync-klaviyo-events-mark-helper'
+import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from '../../utils/sync-klaviyo-events-mark-helper'
 
 const POSTHOG_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
 const HOGQL_LIMIT = 5000

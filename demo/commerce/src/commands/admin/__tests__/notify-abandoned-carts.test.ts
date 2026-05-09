@@ -26,7 +26,7 @@ import {
   type KlaviyoEventLookupRow,
   type KlaviyoEventReadRepo,
   runNotifyAbandonedCarts,
-} from '../notify-abandoned-carts-helper'
+} from '../../../utils/notify-abandoned-carts-helper'
 
 // ── Fixtures ───────────────────────────────────────────────────────────
 

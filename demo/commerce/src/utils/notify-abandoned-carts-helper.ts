@@ -26,12 +26,12 @@
 // `sendAbandonedCartEmailForCart` → on success, mark the cart
 // (abandon_notified_at + abandon_notified_count++).
 
-import { pickLocale } from '../../emails/abandoned-cart/pick-locale'
+import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import {
   type NotificationSend,
   type SendAbandonedCartEmailResult,
   sendAbandonedCartEmailForCart,
-} from '../../emails/abandoned-cart/send-for-cart'
+} from '../emails/abandoned-cart/send-for-cart'
 
 export interface EligibleCart {
   id: string
@@ -298,7 +298,7 @@ export async function resolveCartContact(
  */
 export async function defaultPosthogCapture(input: PosthogCaptureInput, log: BasicLogger): Promise<void> {
   try {
-    const { sendPosthogEvent } = await import('../../utils/posthog-ingest')
+    const { sendPosthogEvent } = await import('./posthog-ingest')
     const res = await sendPosthogEvent({
       event: input.event,
       distinctId: input.distinctId,

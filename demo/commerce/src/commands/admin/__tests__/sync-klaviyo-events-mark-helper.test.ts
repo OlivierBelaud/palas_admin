@@ -16,7 +16,7 @@ import {
   type CartMarkingRepo,
   type CartMarkingRow,
   markCartsFromKlaviyoEvents,
-} from '../sync-klaviyo-events-mark-helper'
+} from '../../../utils/sync-klaviyo-events-mark-helper'
 
 const NOW = new Date('2026-05-09T12:00:00Z')
 
