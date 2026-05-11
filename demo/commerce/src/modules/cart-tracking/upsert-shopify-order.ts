@@ -58,7 +58,7 @@ export interface ShopifyOrderPayload {
 
 export interface UpsertOutcome {
   /** How the cart row was discovered (or 'inserted' if none matched). */
-  matched_via: 'cart_token' | 'email' | 'inserted' | 'noop'
+  matched_via: 'cart_token' | 'email' | 'shopify_order_id' | 'inserted' | 'noop'
   /** UUID of the affected `carts` row, when known. */
   cart_id: string | null
   /** Was the row already marked complete with this order id? (Shopify replay) */
@@ -138,6 +138,15 @@ interface CartRow {
   highest_stage: string
   status: string
   last_action_at: Date | string | null
+}
+
+async function findCartByShopifyOrderId(sql: SqlClient, shopifyOrderId: string): Promise<CartRow | null> {
+  const rows = (await sql`
+    SELECT id, email, items, currency, shopify_order_id, highest_stage, status, last_action_at
+      FROM carts
+     WHERE shopify_order_id = ${shopifyOrderId}
+     LIMIT 1`) as CartRow[]
+  return rows[0] ?? null
 }
 
 async function findCartByToken(sql: SqlClient, token: string): Promise<CartRow | null> {
@@ -262,9 +271,16 @@ export async function upsertShopifyOrder(
   const lineItems = mapLineItems(order.line_items)
 
   let cart: CartRow | null = null
-  let matchedVia: 'cart_token' | 'email' | null = null
+  let matchedVia: 'cart_token' | 'email' | 'shopify_order_id' | null = null
 
-  if (cartTokenNorm) {
+  // Highest precedence: shopify_order_id direct match. Catches synthetic rows
+  // we inserted on a previous run for POS/admin orders with no Shopify
+  // cart_token — we'd otherwise loop into the INSERT branch and hit the
+  // UNIQUE constraint on cart_token.
+  cart = await findCartByShopifyOrderId(sql, shopifyOrderId)
+  if (cart) matchedVia = 'shopify_order_id'
+
+  if (!cart && cartTokenNorm) {
     cart = await findCartByToken(sql, cartTokenNorm)
     if (cart) matchedVia = 'cart_token'
   }
