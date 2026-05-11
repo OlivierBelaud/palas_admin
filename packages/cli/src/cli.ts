@@ -172,9 +172,47 @@ export function createProgram(): Command {
     .command('build')
     .description('Build for production')
     .option('--preset <preset>', 'Nitro preset (node, vercel, aws-lambda, cloudflare, bun)', 'node')
-    .action(async (opts: { preset?: string }) => {
+    .option('--no-migrate', 'Skip auto-migration (default: migrate before build when DATABASE_URL is set)')
+    .action(async (opts: { preset?: string; migrate?: boolean }) => {
       const startTime = Date.now()
       const cwd = process.cwd()
+
+      // Auto-migrate before build so the deployed code never runs against a
+      // stale schema. Opt out with `--no-migrate`. Silent when DATABASE_URL is
+      // unset (e.g. SSG-only builds where the DB is unreachable at build
+      // time) — the migrate step requires DB connectivity by definition.
+      if (opts.migrate !== false) {
+        const cfg = await loadConfig(cwd).catch(() => null)
+        const dbUrl = cfg?.database?.url
+        if (dbUrl) {
+          const db = createPgClient(dbUrl)
+          try {
+            const migrateResult = await migrateCommand(
+              {},
+              {
+                db,
+                lock: createMigrationLock(db),
+                tracker: createMigrationTracker(db),
+                fs: createMigrationFs(resolve(cwd, 'drizzle', 'migrations')),
+              },
+            )
+            if (migrateResult.exitCode !== 0) {
+              for (const err of migrateResult.errors) console.error(`${red('  ✗')} ${err}`)
+              process.exit(1)
+            }
+            if (migrateResult.appliedCount > 0) {
+              console.log(
+                `${green('  ✓')} Applied ${bold(String(migrateResult.appliedCount))} migration(s) before build`,
+              )
+            }
+          } finally {
+            await db.close()
+          }
+        } else {
+          console.log(`${dim('  •')} Skipping auto-migrate (no DATABASE_URL — pass --no-migrate to silence)`)
+        }
+      }
+
       const result = await buildCommand({ preset: opts.preset }, cwd)
 
       if (result.manifest) {

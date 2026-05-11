@@ -193,7 +193,7 @@ function deriveOrderStatus(payload: ShopifyOrderPayload): 'pending' | 'paid' | '
  * fulfillment, totals) are always refreshed because Shopify mutates them
  * over the order lifecycle.
  */
-async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, createdAt: Date): Promise<void> {
+async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, createdAt: Date): Promise<string> {
   const shopifyOrderId = String(payload.id)
   const email = (payload.email ?? '').trim().toLowerCase() || null
   const orderNumber = payload.name ?? (payload.order_number != null ? String(payload.order_number) : null)
@@ -204,7 +204,7 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
   const items = mapLineItems(payload.line_items)
   const now = new Date()
 
-  await sql`
+  const rows = (await sql`
     INSERT INTO orders
       (id, shopify_order_id, email, order_number, status, financial_status, fulfillment_status,
        total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
@@ -225,7 +225,19 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
       placed_at = COALESCE(orders.placed_at, EXCLUDED.placed_at),
       cancelled_at = EXCLUDED.cancelled_at,
       shopify_synced_at = EXCLUDED.shopify_synced_at,
-      updated_at = EXCLUDED.updated_at`
+      updated_at = EXCLUDED.updated_at
+    RETURNING id`) as Array<{ id: string }>
+  return rows[0]?.id ?? ''
+}
+
+// Populate the cart_order pivot table (defineLink). Manta does not auto-fill
+// link tables — call sites are responsible for inserting pivot rows.
+async function linkCartOrder(sql: SqlClient, cartId: string, orderId: string): Promise<void> {
+  if (!cartId || !orderId) return
+  await sql`
+    INSERT INTO cart_order (id, cart_id, order_id, created_at, updated_at)
+    VALUES (gen_random_uuid(), ${cartId}, ${orderId}, NOW(), NOW())
+    ON CONFLICT DO NOTHING`
 }
 
 /**
@@ -267,7 +279,10 @@ export async function upsertShopifyOrder(
     // mirror because Shopify mutates status fields (fulfilled, refunded)
     // independently of the cart.
     if (cart.shopify_order_id === shopifyOrderId && cart.highest_stage === 'completed') {
-      if (!dryRun) await upsertOrderRow(sql, order, createdAt)
+      if (!dryRun) {
+        const orderId = await upsertOrderRow(sql, order, createdAt)
+        await linkCartOrder(sql, cart.id, orderId)
+      }
       return { matched_via: 'noop', cart_id: cart.id, already_completed: true }
     }
     if (dryRun) {
@@ -294,7 +309,8 @@ export async function upsertShopifyOrder(
              currency = ${nextCurrency},
              updated_at = NOW()
        WHERE id = ${cart.id}`
-    await upsertOrderRow(sql, order, createdAt)
+    const orderIdMatched = await upsertOrderRow(sql, order, createdAt)
+    await linkCartOrder(sql, cart.id, orderIdMatched)
     return { matched_via: matchedVia ?? 'noop', cart_id: cart.id, already_completed: false }
   }
 
@@ -316,6 +332,7 @@ export async function upsertShopifyOrder(
        'checkout:completed', ${createdAt}, ${createdAt}, 'completed', 'completed',
        ${shopifyOrderId}, ${lineItems.length}, NOW(), NOW())
     RETURNING id`) as Array<{ id: string }>
-  await upsertOrderRow(sql, order, createdAt)
+  const orderIdInserted = await upsertOrderRow(sql, order, createdAt)
+  if (inserted[0]?.id) await linkCartOrder(sql, inserted[0].id, orderIdInserted)
   return { matched_via: 'inserted', cart_id: inserted[0]?.id ?? null, already_completed: false }
 }
