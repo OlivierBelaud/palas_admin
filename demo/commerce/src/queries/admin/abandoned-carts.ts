@@ -70,11 +70,11 @@ export default defineQuery({
 
     // ── 1. Fetch identified carts (email present) within the window ─────
     // Server-side pagination: fetch exactly `limit` rows at `offset` plus a
-    // count for the paginator. Over-fetch slightly (1.3×) to absorb the
-    // small normal_conversion filter downstream without leaving holes on
-    // the page; we still slice to `limit` before returning.
+    // count for the paginator. Over-fetch 5× to absorb `normal_conversion`
+    // filtering downstream — completed orders share the same recent window
+    // and routinely drop ~half the batch, leaving the page under-filled.
     const limit = input.limit ?? 100
-    const fetchLimit = Math.min(Math.ceil(limit * 1.3), 500)
+    const fetchLimit = Math.min(Math.ceil(limit * 5), 500)
     const [carts, totalCount] = (await query.graphAndCount({
       entity: 'cart',
       filters: {
