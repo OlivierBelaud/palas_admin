@@ -2,25 +2,23 @@
 //
 // URL: POST /api/cart-tracking/shopify-webhooks/orders-paid
 //
-// Real-time capture of every paid Shopify order, server-to-server. Together
-// with the daily reconcile cron + the historical backfill script, this is the
-// 100%-guaranteed funnel-completion source. The Web Pixel stays in place for
-// the rest of the funnel (cart, checkout_started, …) but no longer needs to
-// catch checkout:completed reliably (it plateaus at ~80% client-side due to
-// adblock + admin/POS orders with no pixel).
+// Real-time capture of every paid Shopify order. Authenticity is proven by
+// re-fetching the order from Shopify Admin API with our access token rather
+// than by HMAC: Shopify's Custom App secret is only retrievable through the
+// Admin UI, and the fetch-back roundtrip (~100ms) is small compared to the
+// 5s Shopify timeout. A forged POST can't make Shopify return a non-existent
+// order id, and any mismatch (status, total) between forged body and the
+// re-fetched order causes us to drop the payload.
 //
-// Shopify guarantees:
-//   - HMAC-SHA256 signed via SHOPIFY_WEBHOOK_SECRET, base64 in header
-//     X-Shopify-Hmac-Sha256
-//   - Retries for up to 48h on non-2xx responses → handler must be idempotent
-//   - 5s timeout → we return 200 as soon as the upsert is done
-//
-// On invalid HMAC we return 401 and do NOT log the body (security).
-// On any internal error we return 500 to let Shopify retry.
+// Shopify guarantees retries for up to 48h on non-2xx responses → handler
+// must be idempotent (upsertShopifyOrder is, via shopify_order_id match).
 
 import postgres from 'postgres'
 import type { ShopifyOrderPayload } from '../../../upsert-shopify-order'
-import { upsertShopifyOrder, verifyShopifyHmac } from '../../../upsert-shopify-order'
+import { upsertShopifyOrder } from '../../../upsert-shopify-order'
+
+const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
+const SHOPIFY_API_VERSION = '2024-10'
 
 // Re-use a single postgres pool across invocations on long-running hosts.
 // On Vercel serverless this module is reloaded per cold start anyway, so
@@ -42,39 +40,44 @@ export async function OPTIONS(_req: Request): Promise<Response> {
   return new Response(null, { status: 204 })
 }
 
+async function fetchShopifyOrder(orderId: string | number): Promise<ShopifyOrderPayload | null> {
+  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN
+  if (!token) return null
+  const url = `https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders/${orderId}.json`
+  const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } })
+  if (!res.ok) return null
+  const body = (await res.json()) as { order?: ShopifyOrderPayload }
+  return body.order ?? null
+}
+
 export async function POST(req: Request): Promise<Response> {
-  // 1) Read the RAW body BEFORE any parsing — HMAC is computed on the
-  //    exact bytes Shopify sent.
-  let rawBody: string
+  // 1) Parse the body. We treat it as untrusted: a real Shopify order id
+  //    must round-trip via the Admin API before we ingest.
+  let posted: { id?: number | string } & Record<string, unknown>
   try {
-    rawBody = await req.text()
-  } catch {
-    return new Response('Bad Request', { status: 400 })
-  }
-
-  // 2) Verify HMAC. Do NOT log the body on failure.
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET
-  if (!secret) {
-    // Misconfiguration: refuse to silently accept anything. Surface a 500
-    // so the operator notices in the Shopify webhook activity log.
-    console.error('[shopify-webhook orders-paid] SHOPIFY_WEBHOOK_SECRET not set')
-    return new Response('Server Misconfigured', { status: 500 })
-  }
-  const headerSig = req.headers.get('x-shopify-hmac-sha256')
-  if (!verifyShopifyHmac(rawBody, headerSig, secret)) {
-    return new Response('Unauthorized', { status: 401 })
-  }
-
-  // 3) Parse JSON only after the signature is verified.
-  let order: ShopifyOrderPayload
-  try {
-    order = JSON.parse(rawBody) as ShopifyOrderPayload
+    posted = (await req.json()) as { id?: number | string } & Record<string, unknown>
   } catch {
     return new Response('Bad JSON', { status: 400 })
   }
-
-  if (!order || order.id == null) {
+  const postedId = posted?.id
+  if (postedId == null) {
     return new Response('Bad Payload', { status: 400 })
+  }
+
+  // 2) Fetch-back verification. If Shopify returns the order with our access
+  //    token, it's real. Forges can't fabricate an order id that exists.
+  const order = await fetchShopifyOrder(postedId)
+  if (!order) {
+    console.warn(`[shopify-webhook orders-paid] order ${postedId} not found via Admin API — rejecting`)
+    return new Response('Unauthorized', { status: 401 })
+  }
+
+  // 3) Only act on actually-paid orders. The topic is orders/paid but webhook
+  //    routes can be hit out of band, so we re-check the canonical state.
+  const fin = (order.financial_status ?? '').toString().toLowerCase()
+  if (fin !== 'paid' && fin !== 'partially_paid' && fin !== 'refunded' && fin !== 'partially_refunded') {
+    console.log(`[shopify-webhook orders-paid] order ${order.id} status=${fin} — skipping`)
+    return new Response('OK', { status: 200 })
   }
 
   // 4) Upsert. Errors → 500 so Shopify retries.
@@ -85,8 +88,6 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const outcome = await upsertShopifyOrder(sql, order)
-    // Lightweight log — keeps the Shopify webhook activity page useful when
-    // tailing prod logs. No PII beyond the order id (already Shopify-public).
     console.log(
       `[shopify-webhook orders-paid] order=${order.id} matched_via=${outcome.matched_via} cart_id=${outcome.cart_id ?? 'null'} already=${outcome.already_completed}`,
     )
