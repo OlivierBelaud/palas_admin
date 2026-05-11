@@ -209,6 +209,9 @@ export function ChartCardBlock(props: ChartCardBlockProps) {
   const rows = items as Record<string, unknown>[]
 
   // ── Build shadcn ChartConfig from series ──────────
+  // Use `var(--chart-N)` directly. Tailwind v4 `@theme inline { --color-chart-N: var(--chart-N) }`
+  // is a *utility-class mapping* — it does NOT emit `--color-chart-N` as a runtime CSS var, so
+  // `var(--color-chart-N)` in inline styles resolves to nothing (SVG fill → black, stroke → none).
   const chartConfig: ChartConfig = React.useMemo(() => {
     const cfg: ChartConfig = {}
     for (let i = 0; i < series.length; i++) {
@@ -216,7 +219,7 @@ export function ChartCardBlock(props: ChartCardBlockProps) {
       const colorToken = s.color ?? (`chart-${(i % 5) + 1}` as ChartSeries['color'])
       cfg[s.key] = {
         label: s.label,
-        color: `var(--color-${colorToken})`,
+        color: `var(--${colorToken})`,
       }
     }
     return cfg
