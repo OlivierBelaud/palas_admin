@@ -63,8 +63,22 @@ if (!SHOPIFY_TOKEN) {
   process.exit(1)
 }
 
-const ENDPOINT = `${ADMIN_BASE}/api/cart-tracking/shopify-webhooks/orders-paid`
+const ORDERS_PAID_ENDPOINT = `${ADMIN_BASE}/api/cart-tracking/shopify-webhooks/orders-paid`
+const CUSTOMERS_ENDPOINT = `${ADMIN_BASE}/api/cart-tracking/shopify-webhooks/customers`
 const GRAPHQL_URL = `https://${SHOPIFY_DOMAIN}/admin/api/${API_VER}/graphql.json`
+
+type WebhookTopic = 'ORDERS_PAID' | 'CUSTOMERS_CREATE' | 'CUSTOMERS_UPDATE'
+
+interface TopicBinding {
+  topic: WebhookTopic
+  endpoint: string
+}
+
+const BINDINGS: TopicBinding[] = [
+  { topic: 'ORDERS_PAID', endpoint: ORDERS_PAID_ENDPOINT },
+  { topic: 'CUSTOMERS_CREATE', endpoint: CUSTOMERS_ENDPOINT },
+  { topic: 'CUSTOMERS_UPDATE', endpoint: CUSTOMERS_ENDPOINT },
+]
 
 interface ShopifyGraphQLError {
   message: string
@@ -114,16 +128,11 @@ interface CreateSubscriptionData {
   }
 }
 
-async function main(): Promise<void> {
-  console.log(`[register-shopify-webhooks] target: ${useProd ? 'PROD' : 'LOCAL'}`)
-  console.log(`[register-shopify-webhooks] shop:   ${SHOPIFY_DOMAIN}`)
-  console.log(`[register-shopify-webhooks] api:    ${API_VER}`)
-  console.log(`[register-shopify-webhooks] endpoint: ${ENDPOINT}`)
-
-  // 1) Inspect existing ORDERS_PAID subscriptions.
+async function ensureSubscription(binding: TopicBinding): Promise<void> {
+  // 1) Inspect existing subscriptions for this topic.
   const existing = await gql<ExistingSubscriptionsData>(
-    `query ListWebhooks {
-       webhookSubscriptions(first: 50, topics: [ORDERS_PAID]) {
+    `query ListWebhooks($topic: WebhookSubscriptionTopic!) {
+       webhookSubscriptions(first: 50, topics: [$topic]) {
          edges {
            node {
              id
@@ -136,47 +145,61 @@ async function main(): Promise<void> {
          }
        }
      }`,
+    { topic: binding.topic },
   )
   const edges = existing.webhookSubscriptions.edges
-  console.log(`[register-shopify-webhooks] existing ORDERS_PAID subscriptions: ${edges.length}`)
+  console.log(`[register-shopify-webhooks] existing ${binding.topic} subscriptions: ${edges.length}`)
   for (const e of edges) {
     console.log(`  - ${e.node.id}  ${e.node.endpoint.callbackUrl ?? '(non-HTTP endpoint)'}`)
   }
 
-  const alreadyBound = edges.find((e) => e.node.endpoint.callbackUrl === ENDPOINT)
+  const alreadyBound = edges.find((e) => e.node.endpoint.callbackUrl === binding.endpoint)
   if (alreadyBound) {
-    console.log(`[register-shopify-webhooks] already subscribed (${alreadyBound.node.id}) — no-op`)
+    console.log(`[register-shopify-webhooks] ${binding.topic} already subscribed (${alreadyBound.node.id}) — no-op`)
     return
   }
 
   // 2) Create the subscription. Shopify will sign deliveries with our app's
   //    API secret — see header comment on the SECRET caveat.
   const created = await gql<CreateSubscriptionData>(
-    `mutation Create($cb: URL!) {
+    `mutation Create($topic: WebhookSubscriptionTopic!, $cb: URL!) {
        webhookSubscriptionCreate(
-         topic: ORDERS_PAID,
+         topic: $topic,
          webhookSubscription: { callbackUrl: $cb, format: JSON }
        ) {
          webhookSubscription { id }
          userErrors { field message }
        }
      }`,
-    { cb: ENDPOINT },
+    { topic: binding.topic, cb: binding.endpoint },
   )
   const result = created.webhookSubscriptionCreate
   if (result.userErrors.length > 0) {
     for (const ue of result.userErrors) {
-      console.error(`  userError: ${ue.field?.join('.') ?? '(no field)'} → ${ue.message}`)
+      console.error(`  ${binding.topic} userError: ${ue.field?.join('.') ?? '(no field)'} → ${ue.message}`)
     }
     process.exitCode = 1
     return
   }
   if (!result.webhookSubscription) {
-    console.error('[register-shopify-webhooks] no subscription returned and no userErrors — unexpected')
+    console.error(`[register-shopify-webhooks] no subscription returned for ${binding.topic} — unexpected`)
     process.exitCode = 1
     return
   }
-  console.log(`[register-shopify-webhooks] subscribed ORDERS_PAID → ${result.webhookSubscription.id}`)
+  console.log(`[register-shopify-webhooks] subscribed ${binding.topic} → ${result.webhookSubscription.id}`)
+}
+
+async function main(): Promise<void> {
+  console.log(`[register-shopify-webhooks] target: ${useProd ? 'PROD' : 'LOCAL'}`)
+  console.log(`[register-shopify-webhooks] shop:   ${SHOPIFY_DOMAIN}`)
+  console.log(`[register-shopify-webhooks] api:    ${API_VER}`)
+  console.log(`[register-shopify-webhooks] orders-paid endpoint: ${ORDERS_PAID_ENDPOINT}`)
+  console.log(`[register-shopify-webhooks] customers endpoint:   ${CUSTOMERS_ENDPOINT}`)
+
+  for (const binding of BINDINGS) {
+    await ensureSubscription(binding)
+  }
+
   console.log('[register-shopify-webhooks] reminder: confirm SHOPIFY_WEBHOOK_SECRET matches the App API secret key')
 }
 

@@ -4,6 +4,7 @@
 // globals) so it can be imported from a standalone Node script.
 
 import { matchContactByEventKeys } from '../contact/match-by-event-keys'
+import { upsertContactFromEvent } from '../contact/upsert-contact-from-event'
 import { type NormalizedCartEvent, normalizeCartEvent } from './posthog-adapter'
 
 export const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
@@ -138,34 +139,69 @@ export async function applyEvent(
       )
     }
 
-    // Best-effort retroactive contact attachment. When the cart we just
-    // wrote has no shopify_customer_id but we can match a known Contact
-    // from any of the event identity keys, stamp the cart so the next
-    // run of sync-contacts-from-shopify (or any join via shopify_customer_id)
-    // can resolve cart → contact without a roundtrip through email.
+    // Best-effort retroactive contact attachment + link maintenance.
+    //
+    // Three concerns, in order:
+    //   (1) When we know an email, ensure a `contacts` row exists, refresh
+    //       identity fields (first-write-wins), and ensure the cart is linked
+    //       via `cart_contact`. This is the bulk-replay twin of the live
+    //       `upsertContactFromCartSignal` command — without it, every cart
+    //       written by `applyEvent` (cron, rebuild) was missing its link.
+    //   (2) First-write-wins backfill of `contacts.distinct_id` so anonymous
+    //       PostHog ids are recovered the moment an email-bearing event
+    //       lands for the same person.
+    //   (3) Backfill `carts.shopify_customer_id` from a matched Contact when
+    //       the cart still has none — already existed, kept verbatim.
     try {
       const refreshed = await db.raw<{ id: string; shopify_customer_id: string | null }>(
         'SELECT id, shopify_customer_id FROM carts WHERE cart_token = $1 LIMIT 1',
         [n.cart_token],
       )
-      const row = refreshed[0]
-      if (row && !row.shopify_customer_id) {
+      const cartRow = refreshed[0]
+      if (cartRow) {
+        // (1) Upsert contact + link whenever we have an email.
+        if (n.email && !SPAM_EMAIL_RE.test(n.email)) {
+          await upsertContactFromEvent(db, {
+            cart_id: cartRow.id,
+            email: n.email,
+            first_name: n.first_name,
+            last_name: n.last_name,
+            phone: n.phone,
+            city: n.city,
+            country_code: n.country_code,
+            distinct_id: n.distinct_id,
+            shopify_customer_id: n.shopify_customer_id,
+          })
+        }
+
+        // (2) (3) Match by ANY key — covers events that carry a distinct_id
+        // without an email (anonymous browse session merged later).
         const matched = await matchContactByEventKeys(db, {
           email: n.email,
           distinct_id: n.distinct_id,
-          shopify_customer_id: null,
+          shopify_customer_id: n.shopify_customer_id,
         })
         if (matched) {
-          const contactRow = await db.raw<{ shopify_customer_id: string | null }>(
-            'SELECT shopify_customer_id FROM contacts WHERE id = $1 LIMIT 1',
+          const contactRow = await db.raw<{ shopify_customer_id: string | null; distinct_id: string | null }>(
+            'SELECT shopify_customer_id, distinct_id FROM contacts WHERE id = $1 LIMIT 1',
             [matched.id],
           )
-          const custId = contactRow[0]?.shopify_customer_id
-          if (custId) {
-            await db.raw('UPDATE carts SET shopify_customer_id = $1 WHERE id = $2 AND shopify_customer_id IS NULL', [
-              custId,
-              row.id,
-            ])
+          const contact = contactRow[0]
+          if (contact) {
+            // (3) Backfill cart.shopify_customer_id from contact.
+            if (!cartRow.shopify_customer_id && contact.shopify_customer_id) {
+              await db.raw('UPDATE carts SET shopify_customer_id = $1 WHERE id = $2 AND shopify_customer_id IS NULL', [
+                contact.shopify_customer_id,
+                cartRow.id,
+              ])
+            }
+            // (2) Backfill contact.distinct_id from event (first-write-wins).
+            if (!contact.distinct_id && n.distinct_id) {
+              await db.raw(
+                'UPDATE contacts SET distinct_id = $1, updated_at = NOW() WHERE id = $2 AND distinct_id IS NULL',
+                [n.distinct_id, matched.id],
+              )
+            }
           }
         }
       }
