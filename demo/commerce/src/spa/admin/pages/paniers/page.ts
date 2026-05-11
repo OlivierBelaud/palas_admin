@@ -63,6 +63,23 @@ export default definePage({
           format: { type: 'date', format: 'long' },
           sortable: true,
         },
+        {
+          key: 'abandon_notified_source',
+          label: 'Relance',
+          format: {
+            type: 'badge',
+            values: {
+              manta: 'green',
+              klaviyo: 'blue',
+            },
+          },
+        },
+        {
+          key: 'abandon_notified_at',
+          label: 'Relancé le',
+          format: { type: 'date', format: 'relative' },
+          sortable: true,
+        },
       ],
       filters: [
         {
@@ -72,6 +89,16 @@ export default definePage({
           options: [
             { label: 'Défini', value: '__notnull' },
             { label: 'Anonyme', value: '__null' },
+          ],
+        },
+        {
+          key: 'abandon_notified_source',
+          label: 'Relance',
+          type: 'select',
+          options: [
+            { label: 'Envoyée par Manta', value: 'manta' },
+            { label: 'Envoyée par Klaviyo', value: 'klaviyo' },
+            { label: 'Pas relancé', value: '__null' },
           ],
         },
       ],
