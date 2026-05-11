@@ -140,6 +140,9 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
         AND c.items IS NOT NULL AND jsonb_array_length(c.items) > 0
         AND c.highest_stage <> 'completed' AND c.status <> 'completed'
         AND COALESCE(c.abandon_notified_count, 0) < 1
+        AND COALESCE(c.shopify_order_id, '') = ''
+        AND COALESCE(c.status, 'active') != 'completed'
+        AND c.highest_stage != 'completed'
         AND (ct.email_marketing_opt_out_at IS NULL)
         AND (ct.klaviyo_suppressed IS NULL OR ct.klaviyo_suppressed = false)
         AND NOT EXISTS (
@@ -172,6 +175,9 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
         AND c.items IS NOT NULL AND jsonb_array_length(c.items) > 0
         AND c.highest_stage <> 'completed' AND c.status <> 'completed'
         AND COALESCE(c.abandon_notified_count, 0) < 1
+        AND COALESCE(c.shopify_order_id, '') = ''
+        AND COALESCE(c.status, 'active') != 'completed'
+        AND c.highest_stage != 'completed'
         AND (ct.email_marketing_opt_out_at IS NULL)
         AND (ct.klaviyo_suppressed IS NULL OR ct.klaviyo_suppressed = false)
         AND NOT EXISTS (

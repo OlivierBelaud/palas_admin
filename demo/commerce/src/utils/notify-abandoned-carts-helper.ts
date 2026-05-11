@@ -203,6 +203,10 @@ export function buildSelectionWhere(input: SelectionInputs): Record<string, unkn
     // marker step. Anyone tweaking this must understand the user-facing
     // promise: "personne ne peut recevoir plus d'1 email".
     abandon_notified_count: { $lt: 1 },
+    // Belt-and-suspenders : un cart converti côté Shopify peut ne pas avoir
+    // mis à jour status/highest_stage si le pixel a raté l'event (~28% des
+    // conversions). Si shopify_order_id est posé, le cart a converti.
+    shopify_order_id: { $null: true },
   }
 }
 
