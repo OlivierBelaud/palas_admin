@@ -40,6 +40,20 @@ export interface GraphQueryDef {
 // ── Named Query ───────────────────────────────────────
 // Calls a defineQuery() endpoint on the backend
 // Input matches the Zod schema defined in the backend
+//
+// CHART RESPONSE CONTRACT — when a NamedQueryDef feeds a ChartCard, the
+// handler should return:
+//   {
+//     rows: Array<{ [xKey]: string; [seriesKey]: number }>,
+//     meta?: {
+//       range: { from: string; to: string },    // ISO timestamps
+//       granularity: 'day' | 'week' | 'month',
+//       xFormat?: string,
+//     }
+//   }
+// useBlockQuery() unwraps `rows` into `items` and surfaces `meta` on the
+// hook result. Backwards-compatible: handlers returning `{ data, count }`
+// or `{ items, count }` continue to work unchanged.
 
 export interface NamedQueryDef {
   /** Query name — matches a defineQuery() on the backend */

@@ -12,6 +12,12 @@ export interface UseBlockQueryResult {
   data: Record<string, unknown> | unknown[]
   items: unknown[]
   count?: number
+  /**
+   * Optional metadata envelope from named/HogQL responses. Blocks (e.g.
+   * ChartCard) that need server-resolved context (range, granularity) read
+   * this. Strictly additive — existing blocks ignore it.
+   */
+  meta?: Record<string, unknown>
   isLoading: boolean
   error: Error | null
   refetch: () => void
@@ -140,15 +146,22 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
   const result = isGraph ? graphResult : namedResult
   let rawData = result.data as unknown
   let totalCount: number | undefined
+  let metaEnvelope: Record<string, unknown> | undefined
 
   // Named/graph queries may return { data: [...], count: N } or { items: [...], count: N } — unwrap
   if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
     const wrapped = rawData as Record<string, unknown>
     if (wrapped.count != null) totalCount = Number(wrapped.count)
+    if (wrapped.meta != null && typeof wrapped.meta === 'object') {
+      metaEnvelope = wrapped.meta as Record<string, unknown>
+    }
     if (Array.isArray(wrapped.data)) {
       rawData = wrapped.data
     } else if (Array.isArray(wrapped.items)) {
       rawData = wrapped.items
+    } else if (Array.isArray(wrapped.rows)) {
+      // ChartCard contract: { rows: [...], meta?: {...} }
+      rawData = wrapped.rows
     }
   }
 
@@ -161,6 +174,7 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
         return {
           data: match,
           items: [match],
+          meta: metaEnvelope,
           isLoading: result.isLoading,
           error: result.error,
           refetch,
@@ -171,6 +185,7 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
       data: {},
       items: rawData,
       count: totalCount,
+      meta: metaEnvelope,
       isLoading: result.isLoading,
       error: result.error,
       refetch,
@@ -180,6 +195,7 @@ export function useBlockQuery(query?: BlockQueryDef): UseBlockQueryResult {
   return {
     data: (rawData as Record<string, unknown>) ?? {},
     items: [],
+    meta: metaEnvelope,
     isLoading: result.isLoading,
     error: result.error,
     refetch,

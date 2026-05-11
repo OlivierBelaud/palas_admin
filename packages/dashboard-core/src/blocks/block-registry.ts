@@ -3,6 +3,7 @@
 
 import type { ComponentType } from 'react'
 import { CardBlock } from './Card'
+import { ChartCardBlock } from './ChartCard'
 import { DataListBlock } from './DataList'
 import { DataTableBlock } from './DataTable'
 import { InfoCardBlock } from './InfoCard'
@@ -13,6 +14,7 @@ import { StatsCardBlock } from './StatsCard'
 
 const frameworkBlocks: Record<string, ComponentType<any>> = {
   Card: CardBlock,
+  ChartCard: ChartCardBlock,
   DataList: DataListBlock,
   DataTable: DataTableBlock,
   EntityTable: DataTableBlock, // alias for backward compat

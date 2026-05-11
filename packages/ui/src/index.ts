@@ -24,7 +24,20 @@ export { Badge, badgeVariants, StatusBadge } from './components/badge'
 export type { ButtonProps, IconButtonProps } from './components/button'
 export { Button, buttonVariants, IconButton } from './components/button'
 
+export type { CalendarProps } from './components/calendar'
+export { Calendar } from './components/calendar'
+
 export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/card'
+
+export type { ChartConfig } from './components/chart'
+export {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartStyle,
+  ChartTooltip,
+  ChartTooltipContent,
+} from './components/chart'
 
 export { Checkbox } from './components/checkbox'
 
@@ -39,6 +52,9 @@ export {
   CommandSeparator,
   CommandShortcut,
 } from './components/command'
+
+export type { DateRangePickerProps } from './components/date-range-picker'
+export { DateRangePicker } from './components/date-range-picker'
 
 export {
   Dialog,
@@ -137,6 +153,7 @@ export { Tooltip, TooltipContent, TooltipProvider, TooltipRoot, TooltipTrigger }
 
 // ── Hooks ───────────────────────────────────────────
 export { usePrompt } from './hooks/use-prompt'
-
+export type { DateRangePreset, DateRangeValue } from './lib/date-range'
+export { formatRangeLabel, parseRange, RANGE_PRESETS, resolveRange, serializeRange } from './lib/date-range'
 // ── Utils ───────────────────────────────────────────
 export { cn } from './lib/utils'

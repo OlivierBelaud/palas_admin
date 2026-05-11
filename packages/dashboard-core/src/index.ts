@@ -4,6 +4,8 @@
 export { resolveBlock } from './blocks/block-registry'
 export type { CardBlockProps } from './blocks/Card'
 export { CardBlock } from './blocks/Card'
+export type { ChartCardBlockProps, ChartSeries } from './blocks/ChartCard'
+export { applyRangeToQuery, ChartCardBlock } from './blocks/ChartCard'
 export type { DataListBlockProps, DataListColumn } from './blocks/DataList'
 export { buildDataListBody, DataListBlock, resolveDataListItems } from './blocks/DataList'
 export type { DataTableBlockProps } from './blocks/DataTable'

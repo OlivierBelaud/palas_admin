@@ -7,6 +7,7 @@ import { useParams } from 'react-router-dom'
 import { resolveBlock } from '../blocks/block-registry'
 import { PageHeaderBlock } from '../blocks/PageHeader'
 import type { BlockDef, PageDef } from '../primitives'
+import { assertUniqueBlockIds } from './assertUniqueBlockIds'
 import { usePrefetchQueries } from './hooks/usePrefetchQueries'
 
 export interface PageRendererProps {
@@ -31,6 +32,10 @@ function renderBlock(block: BlockDef, index: number, customBlocks?: Record<strin
 
 export function PageRenderer({ spec, customBlocks }: PageRendererProps) {
   const params = useParams()
+
+  // Fail loudly on duplicate block ids — they scope URL state (e.g. ChartCard's
+  // `range_<id>`) and silent collisions corrupt user data.
+  assertUniqueBlockIds(spec)
 
   // Collect all blocks for prefetching
   const allBlocks = useMemo(() => {

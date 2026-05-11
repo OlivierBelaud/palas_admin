@@ -1,5 +1,8 @@
 // Primitives — defineSpa(), definePage() & defineForm()
 
+export type { DateRangePreset, DateRangeValue } from '@manta/ui'
+export type { ChartCardBlockProps, ChartSeries } from '../blocks/ChartCard'
+export { chartCardBlockPropsSchema, chartSeriesSchema, dateRangeValueSchema } from '../blocks/ChartCard'
 export type { FieldDef, FieldRow, FieldType, FormDef, StepDef } from './define-form'
 export { defineForm } from './define-form'
 export type { BlockDef, HeaderAction, HeaderDef, PageDef } from './define-page'
