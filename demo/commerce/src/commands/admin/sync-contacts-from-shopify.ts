@@ -20,6 +20,7 @@
 // non-null fields, and EXCLUDED-only fields just rewrite identical
 // values). No full-refresh — that's the job of `audit-and-fix-prod-v1.ts`.
 
+import { type RawDb, reattachHistoryForContact } from '../../modules/contact/reattach-history'
 import {
   paginateConnection,
   ShopifyAdminClient,
@@ -347,14 +348,43 @@ export default defineCommand({
       ordersWritten = result.length
     }
 
+    // ── 4. Retro-attach historical carts to the freshly-upserted contacts ─
+    // Anonymous carts that landed before we knew the Shopify customer id
+    // (or before the Contact row existed at all) get linked back via the
+    // contact's email. First-write-wins on cart.shopify_customer_id.
+    let cartsReattached = 0
+    await step.action('reattach-cart-history', {
+      invoke: async (_i: unknown, ctx) => {
+        const db = ctx.app.infra.db as RawDb | undefined
+        if (!db || customersForUpsert.length === 0) return null
+        for (const c of customersForUpsert) {
+          if (!c.shopify_customer_id || !c.email) continue
+          try {
+            const outcome = await reattachHistoryForContact(db, {
+              email: c.email,
+              shopify_customer_id: c.shopify_customer_id,
+            })
+            cartsReattached += outcome.carts_attached
+          } catch (err) {
+            log.warn(`[syncContactsFromShopify] reattach failed for ${c.email}: ${(err as Error).message}`)
+          }
+        }
+        return null
+      },
+      compensate: async () => {
+        // Read-only against Shopify and idempotent locally — nothing to undo.
+      },
+    })({})
+
     const durationMs = Date.now() - startedAt
     log.info(
-      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} duration_ms=${durationMs}`,
+      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} carts_reattached=${cartsReattached} duration_ms=${durationMs}`,
     )
 
     return {
       contacts: contactsWritten,
       orders: ordersWritten,
+      carts_reattached: cartsReattached,
       duration_ms: durationMs,
       since: sinceIso,
     }

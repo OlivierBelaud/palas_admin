@@ -50,6 +50,10 @@ export interface ShopifyOrderPayload {
   currency: string | null
   line_items: ShopifyLineItem[] | null
   financial_status?: string | null
+  fulfillment_status?: string | null
+  name?: string | null
+  order_number?: number | string | null
+  cancelled_at?: string | null
 }
 
 export interface UpsertOutcome {
@@ -172,6 +176,58 @@ export interface UpsertOptions {
   dryRun?: boolean
 }
 
+function deriveOrderStatus(payload: ShopifyOrderPayload): 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded' {
+  if (payload.cancelled_at) return 'cancelled'
+  const fin = (payload.financial_status ?? '').toLowerCase()
+  const ful = (payload.fulfillment_status ?? '').toLowerCase()
+  if (fin === 'refunded') return 'refunded'
+  if (ful === 'fulfilled') return 'fulfilled'
+  if (fin === 'paid') return 'paid'
+  return 'pending'
+}
+
+/**
+ * Upsert a Shopify order into the `orders` mirror table by shopify_order_id.
+ * First-write-wins on identity columns (email, currency) so a later webhook
+ * never overwrites a value we already trust. Status fields (financial,
+ * fulfillment, totals) are always refreshed because Shopify mutates them
+ * over the order lifecycle.
+ */
+async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, createdAt: Date): Promise<void> {
+  const shopifyOrderId = String(payload.id)
+  const email = (payload.email ?? '').trim().toLowerCase() || null
+  const orderNumber = payload.name ?? (payload.order_number != null ? String(payload.order_number) : null)
+  const status = deriveOrderStatus(payload)
+  const totalPrice = toNumber(payload.total_price, 0)
+  const currency = payload.currency ?? 'EUR'
+  const cancelledAt = payload.cancelled_at ? new Date(payload.cancelled_at) : null
+  const items = mapLineItems(payload.line_items)
+  const now = new Date()
+
+  await sql`
+    INSERT INTO orders
+      (id, shopify_order_id, email, order_number, status, financial_status, fulfillment_status,
+       total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
+    VALUES
+      (gen_random_uuid(), ${shopifyOrderId}, ${email}, ${orderNumber}, ${status},
+       ${payload.financial_status ?? null}, ${payload.fulfillment_status ?? null},
+       ${totalPrice}, ${currency}, ${sql.json(items as never)}, ${createdAt}, ${cancelledAt},
+       ${now}, ${now}, ${now})
+    ON CONFLICT (shopify_order_id) DO UPDATE SET
+      email = COALESCE(orders.email, EXCLUDED.email),
+      order_number = COALESCE(orders.order_number, EXCLUDED.order_number),
+      status = EXCLUDED.status,
+      financial_status = EXCLUDED.financial_status,
+      fulfillment_status = EXCLUDED.fulfillment_status,
+      total_price = EXCLUDED.total_price,
+      currency = COALESCE(orders.currency, EXCLUDED.currency),
+      items = COALESCE(orders.items, EXCLUDED.items),
+      placed_at = COALESCE(orders.placed_at, EXCLUDED.placed_at),
+      cancelled_at = EXCLUDED.cancelled_at,
+      shopify_synced_at = EXCLUDED.shopify_synced_at,
+      updated_at = EXCLUDED.updated_at`
+}
+
 /**
  * Upsert a single Shopify paid order into `carts`. See module header for the
  * matching strategy. Returns an outcome describing what happened so callers
@@ -207,8 +263,11 @@ export async function upsertShopifyOrder(
 
   if (cart) {
     // Idempotence: Shopify may retry a delivered webhook. If the row is
-    // already complete with the same order id, no-op.
+    // already complete with the same order id, we still refresh the orders
+    // mirror because Shopify mutates status fields (fulfilled, refunded)
+    // independently of the cart.
     if (cart.shopify_order_id === shopifyOrderId && cart.highest_stage === 'completed') {
+      if (!dryRun) await upsertOrderRow(sql, order, createdAt)
       return { matched_via: 'noop', cart_id: cart.id, already_completed: true }
     }
     if (dryRun) {
@@ -235,6 +294,7 @@ export async function upsertShopifyOrder(
              currency = ${nextCurrency},
              updated_at = NOW()
        WHERE id = ${cart.id}`
+    await upsertOrderRow(sql, order, createdAt)
     return { matched_via: matchedVia ?? 'noop', cart_id: cart.id, already_completed: false }
   }
 
@@ -256,5 +316,6 @@ export async function upsertShopifyOrder(
        'checkout:completed', ${createdAt}, ${createdAt}, 'completed', 'completed',
        ${shopifyOrderId}, ${lineItems.length}, NOW(), NOW())
     RETURNING id`) as Array<{ id: string }>
+  await upsertOrderRow(sql, order, createdAt)
   return { matched_via: 'inserted', cart_id: inserted[0]?.id ?? null, already_completed: false }
 }

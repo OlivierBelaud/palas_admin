@@ -65,6 +65,48 @@ function makeLinkRepo(initial: CartContactRow[] = []): CartContactLinkOps {
   }
 }
 
+describe('buildContactPatch — distinct_id first-write-wins', () => {
+  it('never overwrites an existing distinct_id with a new one (one contact, many devices)', () => {
+    const existing: ContactRow = {
+      id: 'c1',
+      email: 'jane@example.com',
+      phone: null,
+      first_name: null,
+      last_name: null,
+      country_code: null,
+      city: null,
+      shopify_customer_id: null,
+      distinct_id: 'ph-original',
+    }
+    const patch = buildContactPatch(
+      existing,
+      { cart_id: 'cart-1', email: 'jane@example.com', distinct_id: 'ph-second-browser' },
+      new Date(),
+    )
+    expect(patch.distinct_id).toBe('ph-original')
+  })
+
+  it('fills in distinct_id when the contact had none', () => {
+    const existing: ContactRow = {
+      id: 'c1',
+      email: 'jane@example.com',
+      phone: null,
+      first_name: null,
+      last_name: null,
+      country_code: null,
+      city: null,
+      shopify_customer_id: null,
+      distinct_id: null,
+    }
+    const patch = buildContactPatch(
+      existing,
+      { cart_id: 'cart-1', email: 'jane@example.com', distinct_id: 'ph-first-seen' },
+      new Date(),
+    )
+    expect(patch.distinct_id).toBe('ph-first-seen')
+  })
+})
+
 describe('buildContactPatch', () => {
   it('lowercases the email and bumps last_activity_at', () => {
     const now = new Date('2026-05-08T12:00:00Z')

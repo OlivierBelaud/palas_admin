@@ -3,6 +3,7 @@
 // same semantics. Kept free of framework imports (no defineCommand, no
 // globals) so it can be imported from a standalone Node script.
 
+import { matchContactByEventKeys } from '../contact/match-by-event-keys'
 import { type NormalizedCartEvent, normalizeCartEvent } from './posthog-adapter'
 
 export const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
@@ -136,6 +137,42 @@ export async function applyEvent(
         ],
       )
     }
+
+    // Best-effort retroactive contact attachment. When the cart we just
+    // wrote has no shopify_customer_id but we can match a known Contact
+    // from any of the event identity keys, stamp the cart so the next
+    // run of sync-contacts-from-shopify (or any join via shopify_customer_id)
+    // can resolve cart → contact without a roundtrip through email.
+    try {
+      const refreshed = await db.raw<{ id: string; shopify_customer_id: string | null }>(
+        'SELECT id, shopify_customer_id FROM carts WHERE cart_token = $1 LIMIT 1',
+        [n.cart_token],
+      )
+      const row = refreshed[0]
+      if (row && !row.shopify_customer_id) {
+        const matched = await matchContactByEventKeys(db, {
+          email: n.email,
+          distinct_id: n.distinct_id,
+          shopify_customer_id: null,
+        })
+        if (matched) {
+          const contactRow = await db.raw<{ shopify_customer_id: string | null }>(
+            'SELECT shopify_customer_id FROM contacts WHERE id = $1 LIMIT 1',
+            [matched.id],
+          )
+          const custId = contactRow[0]?.shopify_customer_id
+          if (custId) {
+            await db.raw('UPDATE carts SET shopify_customer_id = $1 WHERE id = $2 AND shopify_customer_id IS NULL', [
+              custId,
+              row.id,
+            ])
+          }
+        }
+      }
+    } catch (err) {
+      if (priorErrors < 10) log.warn(`[applyEvent] match-contact: ${(err as Error).message.substring(0, 100)}`)
+    }
+
     return 'rebuilt'
   } catch (err) {
     if (priorErrors < 10) log.warn(`[applyEvent] ${evt.event}: ${(err as Error).message.substring(0, 100)}`)
