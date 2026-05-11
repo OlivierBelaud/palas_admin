@@ -11,7 +11,6 @@ import type { DataSource } from '@manta/dashboard-core'
  */
 export class MantaDataSource implements DataSource {
   baseUrl: string
-  private endpointMap: Record<string, string> = {}
   private queryKeyMap: Record<string, string> = {}
   /** Injected by MantaDashboard — refreshes the access token, returns true on success */
   private _onUnauthorized: (() => Promise<boolean>) | null = null
@@ -26,8 +25,7 @@ export class MantaDataSource implements DataSource {
   }
 
   /** Called after registry discovery to populate entity maps */
-  setEntityMaps(endpoints: Record<string, string>, queryKeys: Record<string, string>) {
-    this.endpointMap = endpoints
+  setEntityMaps(_endpoints: Record<string, string>, queryKeys: Record<string, string>) {
     this.queryKeyMap = queryKeys
   }
 

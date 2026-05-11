@@ -81,9 +81,12 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
   it('transaction commits on success', async () => {
     const sql = adapter.getPool()
 
-    await adapter.transaction(async (tx: any) => {
-      await tx.execute(drizzleSql`INSERT INTO test_items (id, name, value) VALUES ('tx1', 'committed', 42)`)
-    })
+    await adapter.transaction(
+      // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
+      async (tx: any) => {
+        await tx.execute(drizzleSql`INSERT INTO test_items (id, name, value) VALUES ('tx1', 'committed', 42)`)
+      },
+    )
 
     const rows = await sql`SELECT * FROM test_items WHERE id = 'tx1'`
     expect(rows).toHaveLength(1)
@@ -98,10 +101,13 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
     const sql = adapter.getPool()
 
     try {
-      await adapter.transaction(async (tx: any) => {
-        await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES ('tx2', 'should_not_exist')`)
-        throw new Error('abort')
-      })
+      await adapter.transaction(
+        // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
+        async (tx: any) => {
+          await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES ('tx2', 'should_not_exist')`)
+          throw new Error('abort')
+        },
+      )
     } catch {
       /* expected */
     }
@@ -117,6 +123,7 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
 
     // Two concurrent SERIALIZABLE transactions reading and writing same row
     const tx1 = adapter.transaction(
+      // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
       async (tx: any) => {
         const rows = await tx.execute(drizzleSql`SELECT value FROM test_items WHERE id = 'serial1'`)
         const current = rows[0].value
@@ -128,6 +135,7 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
     )
 
     const tx2 = adapter.transaction(
+      // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
       async (tx: any) => {
         const rows = await tx.execute(drizzleSql`SELECT value FROM test_items WHERE id = 'serial1'`)
         const current = rows[0].value
@@ -161,9 +169,12 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
     await sql`INSERT INTO test_items (id, name) VALUES ('dup1', 'first')`
 
     try {
-      await adapter.transaction(async (tx: any) => {
-        await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES ('dup1', 'duplicate')`)
-      })
+      await adapter.transaction(
+        // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
+        async (tx: any) => {
+          await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES ('dup1', 'duplicate')`)
+        },
+      )
       expect.fail('Should have thrown')
     } catch (err) {
       expect(MantaError.is(err)).toBe(true)
@@ -179,11 +190,14 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
   // D-11 — PG 23503 → NOT_FOUND (FK violation)
   it('PG 23503 FK violation → NOT_FOUND', async () => {
     try {
-      await adapter.transaction(async (tx: any) => {
-        await tx.execute(
-          drizzleSql`INSERT INTO test_children (id, parent_id, name) VALUES ('ch1', 'nonexistent', 'orphan')`,
-        )
-      })
+      await adapter.transaction(
+        // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
+        async (tx: any) => {
+          await tx.execute(
+            drizzleSql`INSERT INTO test_children (id, parent_id, name) VALUES ('ch1', 'nonexistent', 'orphan')`,
+          )
+        },
+      )
       expect.fail('Should have thrown')
     } catch (err) {
       expect(MantaError.is(err)).toBe(true)
@@ -196,9 +210,12 @@ describe('DrizzlePgAdapter — IDatabasePort conformance', () => {
   // D-12 — PG 23502 → INVALID_DATA (NOT NULL violation)
   it('PG 23502 NOT NULL violation → INVALID_DATA', async () => {
     try {
-      await adapter.transaction(async (tx: any) => {
-        await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES (${null}, ${null})`)
-      })
+      await adapter.transaction(
+        // biome-ignore lint/suspicious/noExplicitAny: drizzle tx type is internal
+        async (tx: any) => {
+          await tx.execute(drizzleSql`INSERT INTO test_items (id, name) VALUES (${null}, ${null})`)
+        },
+      )
       expect.fail('Should have thrown')
     } catch (err) {
       expect(MantaError.is(err)).toBe(true)

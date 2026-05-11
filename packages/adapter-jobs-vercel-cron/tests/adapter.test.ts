@@ -130,6 +130,7 @@ describe('VercelCronAdapter', () => {
 
   // Constructor validation
   it('constructor > throws without locking', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: testing null arg behavior
     expect(() => new VercelCronAdapter(null as any, logger)).toThrow()
   })
 

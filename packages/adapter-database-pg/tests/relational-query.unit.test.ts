@@ -50,6 +50,7 @@ describe('DrizzleRelationalQuery', () => {
         { id: '2', title: 'Gadget' },
       ],
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     const results = await rq.findWithRelations({ entity: 'products' })
@@ -60,6 +61,7 @@ describe('DrizzleRelationalQuery', () => {
   // RQ-02 — Throws for unknown entity
   it('RQ-02: findWithRelations throws UNKNOWN_MODULES for missing entity', async () => {
     const { db } = createMockDb({ products: [] })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     await expect(rq.findWithRelations({ entity: 'nonexistent' })).rejects.toThrow('No query target')
@@ -71,6 +73,7 @@ describe('DrizzleRelationalQuery', () => {
       products: [{ id: '1', title: 'Widget', productVariants: [{ id: 'v1', sku: 'W-001' }] }],
     })
     const aliases: RelationAliasMap = new Map([['products', { variants: 'productVariants' }]])
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any, aliases)
 
     const results = await rq.findWithRelations({
@@ -104,6 +107,7 @@ describe('DrizzleRelationalQuery', () => {
         },
       ],
     ])
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any, aliases)
 
     const results = await rq.findWithRelations({
@@ -138,6 +142,7 @@ describe('DrizzleRelationalQuery', () => {
         },
       ],
     ])
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any, aliases)
 
     const results = await rq.findWithRelations({
@@ -154,6 +159,7 @@ describe('DrizzleRelationalQuery', () => {
     const { db } = createMockDb({
       products: [{ id: '1', title: 'Widget', someRel: [{ id: 'r1' }] }],
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     const results = await rq.findWithRelations({ entity: 'products' })
@@ -180,6 +186,7 @@ describe('DrizzleRelationalQuery', () => {
         },
       ],
     ])
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any, aliases)
 
     const results = await rq.findWithRelations({
@@ -200,6 +207,7 @@ describe('DrizzleRelationalQuery', () => {
         { id: '3', title: 'Thingamajig' },
       ],
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     const [results, count] = await rq.findAndCountWithRelations({
@@ -216,6 +224,7 @@ describe('DrizzleRelationalQuery', () => {
     const { db } = createMockDb({
       customerGroups: [{ id: 'g1', name: 'VIP' }],
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     // 'customer_group' should resolve to 'customerGroups'
@@ -228,6 +237,7 @@ describe('DrizzleRelationalQuery', () => {
     const { db } = createMockDb({
       products: Array.from({ length: 20 }, (_, i) => ({ id: String(i), title: `P${i}` })),
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     const results = await rq.findWithRelations({
@@ -248,6 +258,7 @@ describe('DrizzleRelationalQuery', () => {
         { id: '3', title: 'Thingamajig', status: 'active' },
       ],
     })
+    // biome-ignore lint/suspicious/noExplicitAny: mock db is structurally compatible
     const rq = new DrizzleRelationalQuery(db as any)
 
     const [results, count] = await rq.findAndCountWithRelations({

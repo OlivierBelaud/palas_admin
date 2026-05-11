@@ -178,6 +178,7 @@ describe('UpstashEventBusAdapter', () => {
 
   // E-14 — non-serializable payload
   it('emit > non-serializable payload throws', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: circular ref by design for serialization test
     const circular: any = { a: 1 }
     circular.self = circular
     await expect(bus.emit(createMessage('test.event', circular))).rejects.toThrow()
