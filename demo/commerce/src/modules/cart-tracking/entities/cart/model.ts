@@ -50,6 +50,12 @@ export default defineModel('Cart', {
   checkout_token: field.text().nullable(),
   shopify_order_id: field.text().nullable(),
 
+  // Moment exact (Shopify order.created_at) où le paiement a réussi.
+  // Distinct de `last_action_at` qui peut être mis à jour par un event
+  // ultérieur (refund-handling futur). Renseigné par webhook orders/paid
+  // + cron de reconciliation + backfill manuel.
+  completed_at: field.dateTime().nullable(),
+
   // ── Checkout details (filled progressively) ───────────────────────
   is_first_order: field.boolean().nullable(),
   shipping_method: field.text().nullable(),

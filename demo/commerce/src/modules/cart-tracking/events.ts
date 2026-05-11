@@ -1,6 +1,6 @@
 // Single source of truth for cart-tracking event names.
 // Used by:
-//  - cart and cart-event entity enums (modules/cart-tracking/entities/*/model.ts)
+//  - cart entity enum (modules/cart-tracking/entities/cart/model.ts)
 //  - ingestCartEvent command (src/commands/admin/ingest-cart-event.ts)
 //  - posthog-cart-tracker subscriber (src/subscribers/posthog-cart-tracker.ts)
 //  - admin cart detail page (src/spa/admin/pages/paniers/[id]/page.ts)

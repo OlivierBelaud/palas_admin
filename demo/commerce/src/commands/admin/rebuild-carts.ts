@@ -1,6 +1,7 @@
 // Command: rebuild the carts snapshot table from PostHog events.
-// Wipes carts + cart_events, replays all cart/checkout events we've ever
-// seen through the same upsert logic as ingestCartEvent.
+// Wipes carts, replays all cart/checkout events we've ever seen through
+// the same upsert logic as ingestCartEvent. PostHog is the source of
+// truth for events — the snapshot table is rebuilt from there.
 //
 // Decomposed into 3 steps per WORKFLOW_PROGRESS.md §11:
 //   1. fetch-events   — incremental HogQL reads (only events we don't have
@@ -297,9 +298,8 @@ export default defineCommand({
         // Wipe + bulk insert. Order: wipe FIRST so a partial crash leaves an
         // empty snapshot (admin shows zero carts, clear signal) rather than a
         // stale half-populated one.
-        await db.raw('DELETE FROM cart_events')
         await db.raw('DELETE FROM carts')
-        log.info('[rebuildCarts] Snapshot tables wiped')
+        log.info('[rebuildCarts] Snapshot table wiped')
 
         const cartArray = Array.from(carts.values())
         const BULK_CHUNK = 100
@@ -316,11 +316,11 @@ export default defineCommand({
       },
       compensate: async (output) => {
         // Destructive by design — cannot roll back wiped + rebuilt carts (WP-F13).
-        // We surface a structured warn so operators see the cart tables are in an
+        // We surface a structured warn so operators see the cart snapshot is in an
         // intermediate state after a cancelled/failed rebuild. No automatic repair
         // is possible — the only remedy is to re-run the workflow.
         log.warn(
-          'Workflow cancelled after destructive operation — cart tables are in an intermediate state and require manual inspection or a full re-run',
+          'Workflow cancelled after destructive operation — cart snapshot is in an intermediate state and requires a full re-run',
           {
             step: 'replay-events',
             command: 'rebuildCarts',

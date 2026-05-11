@@ -96,7 +96,7 @@ export default defineCommand({
   }),
   workflow: async (input, { step }) => {
     // step.service is typed with module names (MantaGeneratedAppModules), but the runtime
-    // Proxy also resolves entity names (cart, cartEvent) to per-entity CRUD. We describe
+    // Proxy also resolves entity names (cart) to per-entity CRUD. We describe
     // the shape we actually use below.
     type CartRow = {
       id: string
@@ -127,10 +127,9 @@ export default defineCommand({
       update: (id: string, data: Record<string, unknown>) => Promise<Row>
     }
     // step.service is typed with module names (MantaGeneratedAppModules), but the runtime
-    // Proxy also exposes entity names (cart, cartEvent) as CRUD shortcuts not in generated types.
+    // Proxy also exposes entity names (cart) as CRUD shortcuts not in generated types.
     const svc = step.service as unknown as {
       cart: EntityCrud<CartRow>
-      cartEvent: EntityCrud<Record<string, unknown>>
     }
 
     // 1. Find or create the Cart head
@@ -223,10 +222,9 @@ export default defineCommand({
           shopify_customer_id: input.shopify_customer_id ?? null,
         })
       } catch (err) {
-        // Swallow the error — the cart_event will still be appended below
-        // and the contact will be retried on the next event for the same
-        // cart. We log via `throw` is too aggressive for a side-channel
-        // mirror; emit a structured event the subscriber can pick up later.
+        // Swallow — the contact will be retried on the next event for the
+        // same cart. Emit a structured signal so a subscriber can pick it
+        // up later if needed.
         await step.emit('contact.upsert_failed', {
           cart_id: cartId,
           email: input.email,
@@ -234,32 +232,6 @@ export default defineCommand({
         })
       }
     }
-
-    // 3. Always append the event (append-only log)
-    // `raw_properties` captures the full original payload — the canonical
-    // snapshot of what PostHog delivered, including any fields we don't
-    // break out into dedicated columns (e.g. cart.cart_level_discounts,
-    // cart.total_discount). Queries that need those fields read from
-    // raw_properties via JSONExtract.
-    await svc.cartEvent.create({
-      cart_id: cartId,
-      action: input.action,
-      items_snapshot: input.items,
-      total_price: input.total_price,
-      item_count: input.items.length,
-      currency: input.currency,
-      changed_items: input.changed_items ?? null,
-      occurred_at: new Date(input.occurred_at),
-      distinct_id: input.distinct_id ?? null,
-      email: input.email ?? null,
-      checkout_token: input.checkout_token ?? null,
-      order_id: input.order_id ?? null,
-      shipping_method: input.shipping_method ?? null,
-      shipping_price: input.shipping_price ?? null,
-      discounts_amount: input.discounts_amount ?? null,
-      discounts: input.discounts ?? null,
-      raw_properties: input.raw_properties ?? null,
-    })
 
     return { cart_id: cartId }
   },

@@ -1,7 +1,7 @@
 export default defineCommand({
   name: 'consolidateCarts',
   description:
-    'Find duplicate carts (same distinct_id) and merge them: move events to the most recent cart, merge identity fields, delete orphans.',
+    'Find duplicate carts (same distinct_id) and merge them: merge identity fields onto the most recent cart, delete orphans.',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
     // Use step.action for raw SQL — these are maintenance operations that cannot use service CRUD
@@ -41,9 +41,6 @@ export default defineCommand({
           for (let i = 1; i < cartIds.length; i++) {
             const orphanId = cartIds[i]
 
-            // Move events from orphan to keeper
-            await db.raw('UPDATE cart_events SET cart_id = $1 WHERE cart_id = $2', [keepId, orphanId])
-
             // Merge identity and checkout info from orphan into keeper
             await db.raw(
               `UPDATE carts SET
@@ -66,8 +63,7 @@ export default defineCommand({
               [keepId, orphanId],
             )
 
-            // Delete orphan events and cart
-            await db.raw('DELETE FROM cart_events WHERE cart_id = $1', [orphanId])
+            // Delete orphan cart
             await db.raw('DELETE FROM carts WHERE id = $1', [orphanId])
 
             totalMerged++

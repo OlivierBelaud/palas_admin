@@ -1,27 +1,27 @@
 // Command: continuous PostHog -> carts sync (5-min cron).
 //
-// The store-front emits `cart:*` and `checkout:*` events to PostHog. The
-// posthog-cart-tracker subscriber catches what flows through our proxy
-// in real time, but anything that goes directly from the storefront to
-// PostHog (or any event we lose to a redeploy / Klaviyo throttle / etc.)
-// is rescued by this loop.
+// PostHog is the source of truth for events. The `cart` snapshot table
+// holds the folded state. The subscriber catches what flows through our
+// proxy in real time; this loop rescues anything that reaches PostHog
+// directly from the storefront (or that we lose to a redeploy /
+// throttle).
 //
 // Strategy:
-//   1. Read MAX(occurred_at) from `cart_events` — that's the high-water
-//      mark of what we've already ingested.
-//   2. HogQL: pull every `cart:*` / `checkout:*` event with timestamp
-//      strictly greater than that mark, ordered ASC, capped at 5 000
-//      events / run.
-//   3. Normalise each event via the shared `posthog-sync` helper and
-//      dispatch through `step.command.ingestCartEvent`. Errors are
-//      counted, not thrown, so one bad event doesn't block the rest.
+//   1. Read per-class high-water marks from `cart.last_action_at`:
+//      MAX where last_action LIKE 'cart:%' and MAX where 'checkout:%'.
+//      Per-class (not global) because the cart:viewed firehose races
+//      ahead of checkout:* (Shopify Web Pixel emits checkouts 1–3 min
+//      after the cart event), so a single global mark would silently
+//      swallow completed checkouts.
+//   2. HogQL: pull every cart:* / checkout:* event with timestamp
+//      strictly greater than its class mark, ordered ASC, capped at
+//      5 000 events / run.
+//   3. Normalise via `posthog-sync` helper and dispatch through
+//      `step.command.ingestCartEvent`. Errors are counted, not thrown.
 //
-// Idempotence: ingestCartEvent is itself idempotent on the cart row
-// (upsert by token + distinct_id fallback), and `cart_events` is
-// append-only. If two cron ticks overlap on the same boundary timestamp
-// we may write a duplicate cart_event — accepted trade-off for v1; the
-// cart-row state remains correct because ingestCartEvent merges
-// monotonically.
+// Idempotence: ingestCartEvent upserts the cart row by token (+
+// distinct_id fallback) and merges monotonically — replaying overlap is
+// safe.
 
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
 import { type HogQLEventRow, ingestHogQLRows } from '../../modules/cart-tracking/posthog-sync'
@@ -47,15 +47,16 @@ export default defineCommand({
         const startedAt = Date.now()
 
         // ── 1. Resolve high-water marks — one per event class ─────────
-        // A single global MAX(occurred_at) lets the high-volume `cart:viewed`
-        // stream race ahead of any `checkout:*` event (Shopify Web Pixel
-        // posts checkouts 1–3 min after the cart event), making completed
-        // checkouts structurally invisible. Tracking marks per class fixes that.
+        // Source: the `carts` snapshot (PostHog itself is the event log;
+        // `carts.last_action / last_action_at` is the deepest event that
+        // has already been folded in). Per-class marks because the
+        // cart:viewed firehose races ahead of checkout:* — a single
+        // global MAX would silently swallow completed checkouts.
         const maxRows = await db.raw<{ kind: string; max_ts: Date | null }>(
-          `SELECT CASE WHEN action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
-                  MAX(occurred_at) AS max_ts
-             FROM cart_events
-            WHERE action LIKE 'cart:%' OR action LIKE 'checkout:%'
+          `SELECT CASE WHEN last_action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
+                  MAX(last_action_at) AS max_ts
+             FROM carts
+            WHERE last_action LIKE 'cart:%' OR last_action LIKE 'checkout:%'
             GROUP BY 1`,
         )
         const toIso = (ts: Date | null | undefined): string | null =>
@@ -115,14 +116,12 @@ export default defineCommand({
 
         const durationMs = Date.now() - startedAt
 
-        // Per-class watermark so the cart:viewed firehose can't pin
-        // checkout:* sync behind it (the two streams progress at very
-        // different rates and a global MAX silently swallows checkouts).
+        // Re-read marks after ingest so logs reflect actual progress per class.
         const finalRows = await db.raw<{ kind: string; max_ts: Date | null }>(
-          `SELECT CASE WHEN action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
-                  MAX(occurred_at) AS max_ts
-             FROM cart_events
-            WHERE action LIKE 'cart:%' OR action LIKE 'checkout:%'
+          `SELECT CASE WHEN last_action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
+                  MAX(last_action_at) AS max_ts
+             FROM carts
+            WHERE last_action LIKE 'cart:%' OR last_action LIKE 'checkout:%'
             GROUP BY 1`,
         )
         const cartFinalIso = toIso(finalRows.find((r) => r.kind === 'cart')?.max_ts)
@@ -143,9 +142,9 @@ export default defineCommand({
         }
       },
       compensate: async () => {
-        // ingestCartEvent is idempotent at the cart row level; cart_events is
-        // append-only. The cron is a safety net so partial progress is fine —
-        // the next tick resumes from the new MAX(occurred_at).
+        // ingestCartEvent is idempotent at the cart row level. The cron is
+        // a safety net so partial progress is fine — the next tick resumes
+        // from the new MAX(last_action_at) per class.
       },
     })
   },
