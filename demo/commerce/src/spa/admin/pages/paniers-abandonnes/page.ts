@@ -67,8 +67,25 @@ export default definePage({
           sortable: true,
         },
         {
+          key: 'abandon_notified_source',
+          label: 'Relance',
+          format: {
+            type: 'badge',
+            values: {
+              manta: 'green',
+              klaviyo: 'blue',
+            },
+          },
+        },
+        {
+          key: 'abandon_notified_at',
+          label: 'Relancé le',
+          format: { type: 'date', format: 'relative' },
+          sortable: true,
+        },
+        {
           key: 'last_abandon_email_at',
-          label: 'Dernier email abandon',
+          label: 'Dernier email (Klaviyo)',
           format: { type: 'date', format: 'long' },
           sortable: true,
         },

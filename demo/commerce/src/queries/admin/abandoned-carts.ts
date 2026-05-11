@@ -45,6 +45,8 @@ type CartRow = {
   created_at: Date
   shopify_order_id: string | null
   abandon_notified_count: number | null
+  abandon_notified_at: Date | string | null
+  abandon_notified_source: 'manta' | 'klaviyo' | null
 }
 
 interface EnrichedRow {
@@ -94,6 +96,8 @@ export default defineQuery({
         'created_at',
         'shopify_order_id',
         'abandon_notified_count',
+        'abandon_notified_at',
+        'abandon_notified_source',
       ],
       sort: { last_action_at: 'desc' },
       pagination: { limit: fetchLimit, offset: input.offset },
@@ -210,6 +214,12 @@ export default defineQuery({
         recovery_category: category,
         is_existing_customer: isExistingCustomer,
         abandon_notified_count: c.abandon_notified_count ?? 0,
+        abandon_notified_at: c.abandon_notified_at
+          ? c.abandon_notified_at instanceof Date
+            ? c.abandon_notified_at.toISOString()
+            : String(c.abandon_notified_at)
+          : null,
+        abandon_notified_source: c.abandon_notified_source ?? null,
       }
     })
 
