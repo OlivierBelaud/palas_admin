@@ -21,6 +21,11 @@ export default defineSpa({
       label: 'Clients',
       to: '/clients',
     },
+    {
+      icon: 'BarChart3',
+      label: 'Charts lab',
+      to: '/charts-lab',
+    },
   ],
 
   settings: [{ icon: 'Settings', label: 'General', to: '/settings' }],
