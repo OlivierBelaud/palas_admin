@@ -106,11 +106,16 @@ export function normalizeCartEvent(evt: PosthogEvent): NormalizedCartEvent | nul
   // ── cart_token ────────────────────────────────────────────────────
   // v2 → properties.cart.token (the Shopify cart token, shared across
   // cart + checkout events via the `posthog_cart_token` cart attribute).
+  // checkout.token is the last-resort fallback because the Shopify Web
+  // Pixel sometimes emits checkout:* events with only `checkout.token`
+  // populated (no `cart` sub-object). Without this fallback those events
+  // are silently dropped and conversions vanish from the snapshot DB.
   const cartToken =
     (cart?.token as string | undefined) ??
     // @legacy-schema-v1 — v1 used properties.cart_token at root
     (props.cart_token as string | undefined) ??
-    (cart?.cart_token as string | undefined)
+    (cart?.cart_token as string | undefined) ??
+    (checkout?.token as string | undefined)
   if (!cartToken) return null
 
   // ── Cart payload (items, totals, currency, discounts) ─────────────

@@ -46,18 +46,38 @@ export default defineCommand({
 
         const startedAt = Date.now()
 
-        // ── 1. Resolve the high-water mark ────────────────────────────
-        const maxRows = await db.raw<{ max_ts: Date | null }>('SELECT MAX(occurred_at) AS max_ts FROM cart_events')
-        const sinceTs = maxRows[0]?.max_ts
-        const sinceIso = sinceTs ? (sinceTs instanceof Date ? sinceTs.toISOString() : String(sinceTs)) : null
-        const sinceFilter = sinceIso ? ` AND timestamp > toDateTime('${sinceIso}')` : ''
+        // ── 1. Resolve high-water marks — one per event class ─────────
+        // A single global MAX(occurred_at) lets the high-volume `cart:viewed`
+        // stream race ahead of any `checkout:*` event (Shopify Web Pixel
+        // posts checkouts 1–3 min after the cart event), making completed
+        // checkouts structurally invisible. Tracking marks per class fixes that.
+        const maxRows = await db.raw<{ kind: string; max_ts: Date | null }>(
+          `SELECT CASE WHEN action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
+                  MAX(occurred_at) AS max_ts
+             FROM cart_events
+            WHERE action LIKE 'cart:%' OR action LIKE 'checkout:%'
+            GROUP BY 1`,
+        )
+        const toIso = (ts: Date | null | undefined): string | null =>
+          ts ? (ts instanceof Date ? ts.toISOString() : String(ts)) : null
+        const cartSinceIso = toIso(maxRows.find((r) => r.kind === 'cart')?.max_ts)
+        const checkoutSinceIso = toIso(maxRows.find((r) => r.kind === 'checkout')?.max_ts)
 
-        log.info(`[syncPosthogEvents] starting — since=${sinceIso ?? 'genesis'}`)
+        const cartClause = cartSinceIso
+          ? `(event LIKE 'cart:%' AND timestamp > toDateTime('${cartSinceIso}'))`
+          : `event LIKE 'cart:%'`
+        const checkoutClause = checkoutSinceIso
+          ? `(event LIKE 'checkout:%' AND timestamp > toDateTime('${checkoutSinceIso}'))`
+          : `event LIKE 'checkout:%'`
+
+        log.info(
+          `[syncPosthogEvents] starting — cartSince=${cartSinceIso ?? 'genesis'} checkoutSince=${checkoutSinceIso ?? 'genesis'}`,
+        )
 
         // ── 2. HogQL query ────────────────────────────────────────────
         const hogql = `SELECT uuid, event, distinct_id, timestamp, properties
                          FROM events
-                        WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%')${sinceFilter}
+                        WHERE ${cartClause} OR ${checkoutClause}
                         ORDER BY timestamp ASC
                         LIMIT ${MAX_EVENTS_PER_RUN}`
 
@@ -94,8 +114,22 @@ export default defineCommand({
         }
 
         const durationMs = Date.now() - startedAt
+
+        // Per-class watermark so the cart:viewed firehose can't pin
+        // checkout:* sync behind it (the two streams progress at very
+        // different rates and a global MAX silently swallows checkouts).
+        const finalRows = await db.raw<{ kind: string; max_ts: Date | null }>(
+          `SELECT CASE WHEN action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
+                  MAX(occurred_at) AS max_ts
+             FROM cart_events
+            WHERE action LIKE 'cart:%' OR action LIKE 'checkout:%'
+            GROUP BY 1`,
+        )
+        const cartFinalIso = toIso(finalRows.find((r) => r.kind === 'cart')?.max_ts)
+        const checkoutFinalIso = toIso(finalRows.find((r) => r.kind === 'checkout')?.max_ts)
+
         log.info(
-          `[syncPosthogEvents] done — fetched=${rows.length} ingested=${counters.ingested} skipped=${counters.skipped} errors=${counters.errors} duration_ms=${durationMs}`,
+          `[syncPosthogEvents] done — fetched=${rows.length} ingested=${counters.ingested} skipped=${counters.skipped} errors=${counters.errors} duration_ms=${durationMs} cartMark=${cartSinceIso ?? 'genesis'}→${cartFinalIso ?? 'genesis'} checkoutMark=${checkoutSinceIso ?? 'genesis'}→${checkoutFinalIso ?? 'genesis'}`,
         )
 
         return {
@@ -104,7 +138,8 @@ export default defineCommand({
           skipped: counters.skipped,
           errors: counters.errors,
           duration_ms: durationMs,
-          since: sinceIso,
+          cart_since: cartSinceIso,
+          checkout_since: checkoutSinceIso,
         }
       },
       compensate: async () => {
