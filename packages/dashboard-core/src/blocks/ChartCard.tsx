@@ -179,6 +179,7 @@ export function ChartCardBlock(props: ChartCardBlockProps) {
     title,
     description,
     xKey,
+    xFormat,
     series,
     height = DEFAULT_HEIGHT,
     defaultRange = DEFAULT_RANGE,
@@ -256,7 +257,7 @@ export function ChartCardBlock(props: ChartCardBlockProps) {
         </div>
       ) : (
         <ChartContainer config={chartConfig} style={{ height, aspectRatio: 'auto' }}>
-          {renderChart({ variant, rows, xKey, series, stacked })}
+          {renderChart({ variant, rows, xKey, series, stacked, xFormat })}
         </ChartContainer>
       )}
     </div>
@@ -289,20 +290,54 @@ type RenderArgs = {
   stacked: boolean
 }
 
-function renderChart({ variant, rows, xKey, series, stacked }: RenderArgs) {
+// Recharts ne réserve pas de place pour les tick labels si margin=0.
+// On garde axisLine/tickLine off pour le look minimaliste mais on donne
+// du gutter (left/bottom) pour que les valeurs et les dates s'affichent.
+const CHART_MARGIN = { top: 8, right: 16, left: 16, bottom: 8 }
+
+function formatXTick(value: unknown, xFormat: ChartCardBlockProps['xFormat']): string {
+  if (value == null) return ''
+  const str = String(value)
+  if (!xFormat || xFormat === 'date' || xFormat === 'datetime') {
+    // ISO date or datetime → format compact "DD/MM" in user locale
+    const d = new Date(str)
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
+    }
+  }
+  return str
+}
+
+interface RenderArgs2 extends RenderArgs {
+  xFormat?: ChartCardBlockProps['xFormat']
+}
+
+function renderChart({ variant, rows, xKey, series, stacked, xFormat }: RenderArgs2) {
+  const tickFormatter = (v: unknown) => formatXTick(v, xFormat)
+
   const commonAxes = (
     <>
-      <CartesianGrid vertical={false} />
-      <XAxis dataKey={xKey} tickLine={false} axisLine={false} tickMargin={8} />
-      <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-      <ChartTooltip content={<ChartTooltipContent />} />
+      <CartesianGrid vertical={false} strokeDasharray="3 3" />
+      <XAxis
+        dataKey={xKey}
+        tickLine={false}
+        axisLine={false}
+        tickMargin={8}
+        minTickGap={32}
+        tickFormatter={tickFormatter}
+      />
+      <YAxis tickLine={false} axisLine={false} tickMargin={8} width={40} allowDecimals={false} />
+      <ChartTooltip
+        cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+        content={<ChartTooltipContent indicator="line" />}
+      />
       <ChartLegend content={<ChartLegendContent />} />
     </>
   )
 
   if (variant === 'line') {
     return (
-      <LineChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <LineChart data={rows} margin={CHART_MARGIN}>
         {commonAxes}
         {series.map((s) => (
           <Line
@@ -312,6 +347,7 @@ function renderChart({ variant, rows, xKey, series, stacked }: RenderArgs) {
             stroke={`var(--color-${s.key})`}
             strokeWidth={2}
             dot={false}
+            activeDot={{ r: 4 }}
           />
         ))}
       </LineChart>
@@ -320,7 +356,7 @@ function renderChart({ variant, rows, xKey, series, stacked }: RenderArgs) {
 
   if (variant === 'area') {
     return (
-      <AreaChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <AreaChart data={rows} margin={CHART_MARGIN}>
         {commonAxes}
         {series.map((s) => (
           <Area
@@ -331,6 +367,7 @@ function renderChart({ variant, rows, xKey, series, stacked }: RenderArgs) {
             fill={`var(--color-${s.key})`}
             fillOpacity={0.2}
             stackId={stacked ? 'stack' : undefined}
+            activeDot={{ r: 4 }}
           />
         ))}
       </AreaChart>
@@ -339,7 +376,7 @@ function renderChart({ variant, rows, xKey, series, stacked }: RenderArgs) {
 
   // bar
   return (
-    <BarChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+    <BarChart data={rows} margin={CHART_MARGIN}>
       {commonAxes}
       {series.map((s) => (
         <Bar
