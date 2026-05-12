@@ -312,33 +312,32 @@ interface RenderArgs2 extends RenderArgs {
   xFormat?: ChartCardBlockProps['xFormat']
 }
 
+// Recharts v2 ne traverse pas les React.Fragment dans la lookup
+// `findAllByType` — les enfants d'un `<>...</>` sont invisibles. Donc
+// CartesianGrid/XAxis/YAxis/Tooltip/Legend doivent être enfants directs
+// du chart, jamais extraits dans une variable Fragment. Ne pas refactor.
+
 function renderChart({ variant, rows, xKey, series, stacked, xFormat }: RenderArgs2) {
   const tickFormatter = (v: unknown) => formatXTick(v, xFormat)
-
-  const commonAxes = (
-    <>
-      <CartesianGrid vertical={false} strokeDasharray="3 3" />
-      <XAxis
-        dataKey={xKey}
-        tickLine={false}
-        axisLine={false}
-        tickMargin={8}
-        minTickGap={32}
-        tickFormatter={tickFormatter}
-      />
-      <YAxis tickLine={false} axisLine={false} tickMargin={8} width={40} allowDecimals={false} />
-      <ChartTooltip
-        cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-        content={<ChartTooltipContent indicator="line" />}
-      />
-      <ChartLegend content={<ChartLegendContent />} />
-    </>
-  )
 
   if (variant === 'line') {
     return (
       <LineChart data={rows} margin={CHART_MARGIN}>
-        {commonAxes}
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis
+          dataKey={xKey}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          minTickGap={32}
+          tickFormatter={tickFormatter}
+        />
+        <YAxis tickLine={false} axisLine={false} tickMargin={8} width={40} allowDecimals={false} />
+        <ChartTooltip
+          cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+          content={<ChartTooltipContent indicator="line" />}
+        />
+        <ChartLegend content={<ChartLegendContent />} />
         {series.map((s) => (
           <Line
             key={s.key}
@@ -357,7 +356,21 @@ function renderChart({ variant, rows, xKey, series, stacked, xFormat }: RenderAr
   if (variant === 'area') {
     return (
       <AreaChart data={rows} margin={CHART_MARGIN}>
-        {commonAxes}
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis
+          dataKey={xKey}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          minTickGap={32}
+          tickFormatter={tickFormatter}
+        />
+        <YAxis tickLine={false} axisLine={false} tickMargin={8} width={40} allowDecimals={false} />
+        <ChartTooltip
+          cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+          content={<ChartTooltipContent indicator="line" />}
+        />
+        <ChartLegend content={<ChartLegendContent />} />
         {series.map((s) => (
           <Area
             key={s.key}
@@ -377,7 +390,18 @@ function renderChart({ variant, rows, xKey, series, stacked, xFormat }: RenderAr
   // bar
   return (
     <BarChart data={rows} margin={CHART_MARGIN}>
-      {commonAxes}
+      <CartesianGrid vertical={false} strokeDasharray="3 3" />
+      <XAxis
+        dataKey={xKey}
+        tickLine={false}
+        axisLine={false}
+        tickMargin={8}
+        minTickGap={32}
+        tickFormatter={tickFormatter}
+      />
+      <YAxis tickLine={false} axisLine={false} tickMargin={8} width={40} allowDecimals={false} />
+      <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+      <ChartLegend content={<ChartLegendContent />} />
       {series.map((s) => (
         <Bar
           key={s.key}
