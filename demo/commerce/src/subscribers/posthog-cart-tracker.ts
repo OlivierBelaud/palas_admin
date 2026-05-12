@@ -101,6 +101,23 @@ export default defineSubscriber({
             `[posthog-cart-tracker] upsertVisitorSessionFromEvent failed for ${evt.event}: ${err instanceof Error ? err.message : String(err)}`,
           )
         }
+
+        // ── Backfill contact.distinct_id when we see an identified event ───
+        // If the event carries both a resolved email and a distinct_id, and
+        // a contact already exists for that email but has no distinct_id yet
+        // (typical for Klaviyo-synced contacts who never had a PostHog
+        // session before), stamp the contact. Closes the gap that left
+        // newsletter-only contacts permanently unlinked. Idempotent.
+        if (sessionEmail && distinctId) {
+          try {
+            // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed
+            await (command as any).linkContactDistinctIdByEmail({ email: sessionEmail, distinct_id: distinctId })
+          } catch (err) {
+            log.error(
+              `[posthog-cart-tracker] linkContactDistinctIdByEmail failed for email=${sessionEmail}: ${err instanceof Error ? err.message : String(err)}`,
+            )
+          }
+        }
       }
     }
   },
