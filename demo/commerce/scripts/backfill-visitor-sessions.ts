@@ -93,15 +93,38 @@ const sql = postgres(DATABASE_URL, { ssl: needsSsl ? 'require' : undefined, max:
 
 const PAGE = 10000
 
-async function hogql(query: string): Promise<unknown[][]> {
-  const res = await fetch(`${PH_HOST}/api/projects/@current/query/`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${PH_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
-  })
-  if (!res.ok) throw new Error(`HogQL ${res.status} ${await res.text()}`)
-  const data = (await res.json()) as { results?: unknown[][] }
-  return data.results ?? []
+async function hogql(query: string, retries = 8): Promise<unknown[][]> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await fetch(`${PH_HOST}/api/projects/@current/query/`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${PH_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
+      })
+      if (!res.ok) {
+        const txt = await res.text()
+        if (res.status === 429 || res.status >= 500) {
+          const wait = 5000 * (attempt + 1)
+          console.log(`  HogQL ${res.status} retry ${attempt + 1}/${retries} in ${wait}ms`)
+          await new Promise((r) => setTimeout(r, wait))
+          continue
+        }
+        throw new Error(`HogQL ${res.status} ${txt}`)
+      }
+      const data = (await res.json()) as { results?: unknown[][] }
+      return data.results ?? []
+    } catch (e) {
+      const code = (e as { code?: string; cause?: { code?: string } }).cause?.code ?? (e as { code?: string }).code
+      if (code === 'EADDRNOTAVAIL' || code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'UND_ERR_SOCKET') {
+        const wait = 5000 * (attempt + 1)
+        console.log(`  network ${code} retry ${attempt + 1}/${retries} in ${wait}ms`)
+        await new Promise((r) => setTimeout(r, wait))
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('HogQL retries exhausted')
 }
 
 interface HogQLRow {
