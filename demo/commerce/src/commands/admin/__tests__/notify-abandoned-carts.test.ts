@@ -25,6 +25,8 @@ import {
   isAbandonmentFlowEvent,
   type KlaviyoEventLookupRow,
   type KlaviyoEventReadRepo,
+  type OrderLookupRow,
+  type OrderReadRepo,
   runNotifyAbandonedCarts,
 } from '../../../utils/notify-abandoned-carts-helper'
 
@@ -130,6 +132,25 @@ function makeLinkRepo(links: CartContactLinkRow[] = []): CartContactLinkReadRepo
     list: vi.fn(async (where: Record<string, unknown>) =>
       links.filter((l) => Object.entries(where).every(([k, v]) => (l as unknown as Record<string, unknown>)[k] === v)),
     ),
+  }
+}
+
+function makeOrderRepo(initial: OrderLookupRow[] = []): OrderReadRepo {
+  return {
+    list: vi.fn(async (where: Record<string, unknown>) => {
+      const emailIn = (where.email as { $in?: string[] } | undefined)?.$in
+      const placedGte = (where.placed_at as { $gte?: Date } | undefined)?.$gte
+      const statusIn = (where.status as { $in?: string[] } | undefined)?.$in
+      return initial.filter((o) => {
+        if (emailIn && !emailIn.includes(o.email)) return false
+        if (placedGte) {
+          const pa = o.placed_at instanceof Date ? o.placed_at : o.placed_at ? new Date(o.placed_at) : null
+          if (!pa || pa < placedGte) return false
+        }
+        if (statusIn && !statusIn.includes(o.status)) return false
+        return true
+      })
+    }),
   }
 }
 
@@ -242,6 +263,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -268,6 +290,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -295,6 +318,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: contactRepo,
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -323,6 +347,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: contactRepo,
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -348,6 +373,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: klaviyoRepo,
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -355,6 +381,55 @@ describe('runNotifyAbandonedCarts', () => {
     expect(out.notified).toBe(0)
     expect(out.skipped_klaviyo_recent).toBe(1)
     expect(notification.sent).toHaveLength(0)
+  })
+
+  it('SKIPS when the email placed an order within recentOrderHours window (Apple Pay bypass safety)', async () => {
+    const cart = makeCart({ email: 'buyer@test.com' })
+    const cartRepo = makeCartRepo([cart])
+    const orderRepo = makeOrderRepo([
+      {
+        email: 'buyer@test.com',
+        placed_at: new Date(NOW.getTime() - 3 * 3600 * 1000), // 3h ago
+        status: 'paid',
+      },
+    ])
+    const notification = new FakeNotification()
+    const out = await runNotifyAbandonedCarts(baseInput, {
+      cart: cartRepo,
+      contact: makeContactRepo(),
+      klaviyoEvent: makeKlaviyoEventRepo(),
+      order: orderRepo,
+      cartContactLink: makeLinkRepo(),
+      notification,
+      log,
+    })
+    expect(out.notified).toBe(0)
+    expect(out.skipped_recent_order).toBe(1)
+    expect(notification.sent).toHaveLength(0)
+  })
+
+  it('SENDS when the email has no order within recentOrderHours window', async () => {
+    const cart = makeCart({ email: 'no-order@test.com' })
+    const cartRepo = makeCartRepo([cart])
+    const orderRepo = makeOrderRepo([
+      {
+        email: 'no-order@test.com',
+        placed_at: new Date(NOW.getTime() - 30 * 24 * 3600 * 1000), // 30d ago
+        status: 'paid',
+      },
+    ])
+    const notification = new FakeNotification()
+    const out = await runNotifyAbandonedCarts(baseInput, {
+      cart: cartRepo,
+      contact: makeContactRepo(),
+      klaviyoEvent: makeKlaviyoEventRepo(),
+      order: orderRepo,
+      cartContactLink: makeLinkRepo(),
+      notification,
+      log,
+    })
+    expect(out.notified).toBe(1)
+    expect(out.skipped_recent_order).toBe(0)
   })
 
   it('SENDS when the only klaviyo event is older than 12h (default window)', async () => {
@@ -373,6 +448,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: klaviyoRepo,
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -400,6 +476,7 @@ describe('runNotifyAbandonedCarts', () => {
         cart: cartRepo,
         contact: makeContactRepo(),
         klaviyoEvent: klaviyoRepo,
+        order: makeOrderRepo(),
         cartContactLink: makeLinkRepo(),
         notification,
         log,
@@ -417,6 +494,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -437,6 +515,7 @@ describe('runNotifyAbandonedCarts', () => {
         cart: cartRepo,
         contact: makeContactRepo(),
         klaviyoEvent: makeKlaviyoEventRepo(),
+        order: makeOrderRepo(),
         cartContactLink: makeLinkRepo(),
         notification,
         log,
@@ -455,6 +534,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification: new FailingNotification(),
       log,
@@ -482,6 +562,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: contactRepo,
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: linkRepo,
       notification,
       log,
@@ -498,6 +579,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: contactRepo,
       klaviyoEvent: klaviyoRepo,
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification: new FakeNotification(),
       log,
@@ -509,6 +591,7 @@ describe('runNotifyAbandonedCarts', () => {
       errors: 0,
       skipped_optout: 0,
       skipped_klaviyo_recent: 0,
+      skipped_recent_order: 0,
       skipped_no_email_helper: 0,
       skipped_no_products: 0,
       skipped_dry_run: 0,
@@ -526,6 +609,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -544,6 +628,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -577,6 +662,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,
@@ -596,6 +682,7 @@ describe('runNotifyAbandonedCarts', () => {
       cart: cartRepo,
       contact: makeContactRepo(),
       klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
       cartContactLink: makeLinkRepo(),
       notification,
       log,

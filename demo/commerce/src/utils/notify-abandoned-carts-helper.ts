@@ -71,6 +71,12 @@ export interface KlaviyoEventLookupRow {
   occurred_at: Date | string
 }
 
+export interface OrderLookupRow {
+  email: string
+  placed_at: Date | string | null
+  status: string
+}
+
 export interface CartContactLinkRow {
   cart_id: string
   contact_id: string
@@ -96,6 +102,10 @@ export interface KlaviyoEventReadRepo {
   ) => Promise<KlaviyoEventLookupRow[]>
 }
 
+export interface OrderReadRepo {
+  list: (where: Record<string, unknown>) => Promise<OrderLookupRow[]>
+}
+
 export interface CartContactLinkReadRepo {
   list: (where: Record<string, unknown>) => Promise<CartContactLinkRow[]>
 }
@@ -117,6 +127,12 @@ const KLAVIYO_ABANDON_SUBJECT_PATTERNS = ['oublié quelque chose', 'pensez encor
 // `klaviyoRecentHours` is grounds to skip (we yield to Klaviyo's flow).
 const DEFAULT_KLAVIYO_RECENT_HOURS = 12
 
+// Default 7 days — if the customer placed any order on this email in the last
+// week, do NOT send an "abandoned cart" email. Catches Apple Pay / Web Pixel
+// bypass where Shopify recorded the order but our event pipeline never marked
+// the cart `completed`.
+const DEFAULT_RECENT_ORDER_HOURS = 168
+
 export interface SelectionInputs {
   minIdleHours: number
   maxAgeHours: number
@@ -132,6 +148,12 @@ export interface RunInputs extends SelectionInputs {
   /** Skip carts whose email received a Klaviyo native abandonment-flow event
    *  within this many hours. Default 12. */
   klaviyoRecentHours?: number
+  /** Skip carts whose email placed an order (Shopify) within this many hours.
+   *  Catches Apple Pay / Shopify Web Pixel bypass paths where the cart's own
+   *  highest_stage / shopify_order_id may not have been updated by our pipeline.
+   *  Default 168h = 7 days (a customer who bought yesterday should not get an
+   *  "abandoned cart" relance today). */
+  recentOrderHours?: number
 }
 
 export interface PosthogCaptureInput {
@@ -148,6 +170,11 @@ export interface RunDeps {
   contact: ContactReadRepo
   klaviyoEvent: KlaviyoEventReadRepo
   cartContactLink: CartContactLinkReadRepo
+  /** Read access to the local `orders` table (synced from Shopify). Used to
+   *  skip carts whose email has placed any order recently — catches the
+   *  Apple Pay / Shopify Web Pixel bypass where the cart's own status was
+   *  never updated by our event-driven pipeline. */
+  order: OrderReadRepo
   notification: NotificationSend
   log: BasicLogger
   now?: () => Date
@@ -164,6 +191,7 @@ export interface RunResult {
   errors: number
   skipped_optout: number
   skipped_klaviyo_recent: number
+  skipped_recent_order: number
   skipped_no_email_helper: number
   skipped_no_products: number
   skipped_dry_run: number
@@ -282,6 +310,36 @@ export async function loadRecentKlaviyoAbandonByEmail(
 }
 
 /**
+ * Load the set of emails (lowercased) that have placed at least one order
+ * (status in 'paid' / 'fulfilled') within the supplied window. Returns a Set
+ * so caller can do O(1) membership checks.
+ *
+ * Why this exists: most past Shopify orders bypassed our PostHog proxy (Apple
+ * Pay, Web Pixel server-side route). The cart row associated with the email
+ * was therefore never marked `highest_stage='completed'`. Without this filter
+ * the abandoned-cart relance fires emails to people who literally just bought.
+ */
+export async function loadRecentOrderEmails(
+  order: OrderReadRepo,
+  emails: string[],
+  now: Date,
+  recentOrderHours: number = DEFAULT_RECENT_ORDER_HOURS,
+): Promise<Set<string>> {
+  if (emails.length === 0) return new Set()
+  const since = new Date(now.getTime() - recentOrderHours * 3600 * 1000)
+  const rows = await order.list({
+    email: { $in: emails },
+    placed_at: { $gte: since },
+    status: { $in: ['paid', 'fulfilled'] },
+  })
+  const out = new Set<string>()
+  for (const r of rows) {
+    if (r.email) out.add(r.email.toLowerCase())
+  }
+  return out
+}
+
+/**
  * Resolve the linked Contact for a cart (1:1 link). Returns null if the cart
  * is not yet linked (stays compatible with the helper which only needs locale).
  */
@@ -329,6 +387,7 @@ export async function runNotifyAbandonedCarts(input: RunInputs, deps: RunDeps): 
     errors: 0,
     skipped_optout: 0,
     skipped_klaviyo_recent: 0,
+    skipped_recent_order: 0,
     skipped_no_email_helper: 0,
     skipped_no_products: 0,
     skipped_dry_run: 0,
@@ -348,9 +407,10 @@ export async function runNotifyAbandonedCarts(input: RunInputs, deps: RunDeps): 
     new Set(carts.map((c) => (c.email ? c.email.toLowerCase() : '')).filter((e): e is string => e.length > 0)),
   )
 
-  const [optedOut, klaviyoRecent] = await Promise.all([
+  const [optedOut, klaviyoRecent, recentOrderEmails] = await Promise.all([
     loadOptedOutEmails(deps.contact, cartEmails),
     loadRecentKlaviyoAbandonByEmail(deps.klaviyoEvent, cartEmails, now, input.klaviyoRecentHours),
+    loadRecentOrderEmails(deps.order, cartEmails, now, input.recentOrderHours),
   ])
 
   for (const cart of carts) {
@@ -387,6 +447,15 @@ export async function runNotifyAbandonedCarts(input: RunInputs, deps: RunDeps): 
         `[notifyAbandonedCarts] skip cart=${cart.id} — recent Klaviyo native abandonment email at ${klaviyoRecent
           .get(emailLc)
           ?.toISOString()}`,
+      )
+      continue
+    }
+
+    if (emailLc && recentOrderEmails.has(emailLc)) {
+      counters.skipped++
+      counters.skipped_recent_order++
+      deps.log.info(
+        `[notifyAbandonedCarts] skip cart=${cart.id} — email ${emailLc} placed an order within recentOrderHours window`,
       )
       continue
     }

@@ -31,6 +31,7 @@ import {
   type CartRepo,
   type ContactReadRepo,
   type KlaviyoEventReadRepo,
+  type OrderReadRepo,
   runNotifyAbandonedCarts,
 } from '../../utils/notify-abandoned-carts-helper'
 
@@ -54,6 +55,10 @@ export default defineCommand({
       .optional(),
     /** Skip carts whose email received a Klaviyo native abandonment-flow event within this many hours. */
     klaviyoRecentHours: z.number().positive().max(720).default(12),
+    /** Skip carts whose email placed any order (paid/fulfilled) within this many hours.
+     *  Default 168h (7d). Catches Apple Pay + Shopify Web Pixel bypass paths
+     *  that left the cart row without a `completed` status update. */
+    recentOrderHours: z.number().positive().max(8760).default(168),
   }),
   workflow: async (input, { step, log }) => {
     const result = await step.action('notify-abandoned-carts', {
@@ -84,6 +89,10 @@ export default defineCommand({
           // biome-ignore lint/suspicious/noExplicitAny: same
           list: (where, opts) => stepSvcAny.klaviyoEvent.listKlaviyoEvents(where as any, opts) as Promise<never>,
         }
+        const order: OrderReadRepo = {
+          // biome-ignore lint/suspicious/noExplicitAny: same
+          list: (where) => stepSvcAny.order.listOrders(where as any) as Promise<never>,
+        }
         const cartContactLink: CartContactLinkReadRepo = {
           list: (where) => stepLinkAny.cartContact.list(where),
         }
@@ -98,8 +107,9 @@ export default defineCommand({
             dryRun: input.dryRun,
             forDate: input.forDate,
             klaviyoRecentHours: input.klaviyoRecentHours,
+            recentOrderHours: input.recentOrderHours,
           },
-          { cart, contact, klaviyoEvent, cartContactLink, notification, log, signal: ctx.signal },
+          { cart, contact, klaviyoEvent, order, cartContactLink, notification, log, signal: ctx.signal },
         )
 
         return counters
@@ -112,7 +122,7 @@ export default defineCommand({
     })({})
 
     log.info(
-      `[notifyAbandonedCarts] scanned=${result.scanned} notified=${result.notified} skipped=${result.skipped} errors=${result.errors} skipped_optout=${result.skipped_optout} skipped_klaviyo_recent=${result.skipped_klaviyo_recent}`,
+      `[notifyAbandonedCarts] scanned=${result.scanned} notified=${result.notified} skipped=${result.skipped} errors=${result.errors} skipped_optout=${result.skipped_optout} skipped_klaviyo_recent=${result.skipped_klaviyo_recent} skipped_recent_order=${result.skipped_recent_order}`,
     )
     return result
   },
