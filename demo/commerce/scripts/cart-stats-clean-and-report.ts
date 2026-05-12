@@ -31,7 +31,7 @@ const sql = postgres(process.env.DATABASE_URL!, { ssl, max: 1, prepare: false })
 const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
 type Stage = (typeof STAGES)[number]
 const REACHED_CHECKOUT: Stage[] = ['checkout_started', 'checkout_engaged', 'payment_attempted', 'completed']
-const COMPLETED: Stage[] = ['completed']
+const _COMPLETED: Stage[] = ['completed']
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10)

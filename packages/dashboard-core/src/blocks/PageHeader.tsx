@@ -35,7 +35,7 @@ function CommandButton({ command, label, destructive }: { command: string; label
   const isPlainUrl = isUrl && extractedName === null
   // useCommand is always called (Hooks rule) — for plain URLs we just never use it.
   const cmd = useCommand(resolvedName)
-  const navigate = useNavigate()
+  const _navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 

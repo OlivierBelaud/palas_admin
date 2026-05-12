@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 // Auto-install Playwright chromium on fresh clones (BC-F20).
 //
 // The preflight script (`scripts/check-runtime-preflight.mjs`) fails loudly
@@ -19,8 +20,8 @@
 // block `pnpm install`. If the install itself fails, we print a warning and
 // continue with exit 0.
 
-import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

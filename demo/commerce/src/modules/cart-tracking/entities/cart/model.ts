@@ -56,6 +56,15 @@ export default defineModel('Cart', {
   // + cron de reconciliation + backfill manuel.
   completed_at: field.dateTime().nullable(),
 
+  // Premier timestamp jamais observé pour ce cart_token (cart:* ou checkout:*).
+  // IMMUABLE — figé sur le tout premier event qui crée la ligne, jamais réécrit.
+  // Distinct de `created_at` (qui dérive du moment d'écriture en base) : par
+  // exemple un rebuild des carts ré-écrit `created_at` mais doit préserver
+  // `cart_birth_at` (= moment où le visiteur a réellement commencé son panier).
+  // Utilisé par l'attribution session->cart (cohort late-update) et pour les
+  // analytics de funnel.
+  cart_birth_at: field.dateTime().nullable().index(),
+
   // ── Checkout details (filled progressively) ───────────────────────
   is_first_order: field.boolean().nullable(),
   shipping_method: field.text().nullable(),

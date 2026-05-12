@@ -16,6 +16,7 @@
 
 import { resolveEmailByDistinctId } from '../modules/cart-tracking/identity-resolver'
 import { extractPosthogEvents, toIngestInput } from '../modules/cart-tracking/posthog-adapter'
+import { extractSessionId } from '../modules/visitor-session/attribution'
 
 export default defineSubscriber({
   event: 'posthog.events.received',
@@ -26,36 +27,80 @@ export default defineSubscriber({
 
     for (const evt of events) {
       const input = toIngestInput(evt)
-      if (!input) continue
+      const isCartEvent = input != null
 
-      // Skip bots: storebotmail, joonix, known test patterns
-      let email = input.email as string | null
-      if (email && /storebotmail|joonix\.net|mailinator\.com|guerrillamail/i.test(email)) {
-        log.info(`[posthog-cart-tracker] Skipped bot: ${email}`)
-        continue
-      }
+      // Email recovery + bot filter only apply to cart events. We compute
+      // `email` once and re-use it for the optional session dispatch below.
+      let email: string | null = isCartEvent ? ((input.email as string | null) ?? null) : null
+      if (isCartEvent) {
+        // Skip bots: storebotmail, joonix, known test patterns
+        if (email && /storebotmail|joonix\.net|mailinator\.com|guerrillamail/i.test(email)) {
+          log.info(`[posthog-cart-tracker] Skipped bot: ${email}`)
+          continue
+        }
 
-      // Recover email from PostHog person when missing on the event itself.
-      // The checkout identity bridge + Klaviyo cookie decrypt upstream have
-      // already written $identify → person.properties.email in PostHog for
-      // users we've seen before; this closes the loop on cart:* events that
-      // land without email in $set.
-      if (!email && input.distinct_id) {
-        const recovered = await resolveEmailByDistinctId(input.distinct_id as string)
-        if (recovered) {
-          email = recovered
-          input.email = recovered
-          log.info(`[posthog-cart-tracker] Recovered email ${recovered} for distinct_id=${input.distinct_id}`)
+        // Recover email from PostHog person when missing on the event itself.
+        // The checkout identity bridge + Klaviyo cookie decrypt upstream have
+        // already written $identify → person.properties.email in PostHog for
+        // users we've seen before; this closes the loop on cart:* events that
+        // land without email in $set.
+        if (!email && input.distinct_id) {
+          const recovered = await resolveEmailByDistinctId(input.distinct_id as string)
+          if (recovered) {
+            email = recovered
+            input.email = recovered
+            log.info(`[posthog-cart-tracker] Recovered email ${recovered} for distinct_id=${input.distinct_id}`)
+          }
+        }
+
+        try {
+          // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed (ingestCartEvent is discovered at boot)
+          await (command as any).ingestCartEvent(input)
+        } catch (err) {
+          log.error(
+            `[posthog-cart-tracker] ingestCartEvent failed for ${evt.event}: ${err instanceof Error ? err.message : String(err)}`,
+          )
         }
       }
 
-      try {
-        // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed (ingestCartEvent is discovered at boot)
-        await (command as any).ingestCartEvent(input)
-      } catch (err) {
-        log.error(
-          `[posthog-cart-tracker] ingestCartEvent failed for ${evt.event}: ${err instanceof Error ? err.message : String(err)}`,
-        )
+      // ── Visitor-session dispatch ─────────────────────────────────
+      // Runs OUTSIDE the cart-event branch: session tracking covers ALL
+      // events with a $session_id + distinct_id (pageviews, identifies,
+      // checkout:started, cart events, etc.). Errors here MUST NOT abort
+      // the loop — cart tracking has already been done, and the cron
+      // rattrapage will replay any session-write we lose here.
+      const sessionId = extractSessionId(evt as { properties?: Record<string, unknown> })
+      const distinctId = (evt.distinct_id ?? null) as string | null
+      if (sessionId && distinctId) {
+        const props = (evt.properties ?? {}) as Record<string, unknown>
+        const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
+        const sessionEmail = email ?? ((($set.email as string | undefined) ?? null) as string | null)
+        try {
+          // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed
+          await (command as any).upsertVisitorSessionFromEvent({
+            distinct_id: distinctId,
+            session_id: sessionId,
+            // PostHog SDK sets `$insert_id` for client-side dedup; HogQL rows
+            // expose the canonical `uuid` field (used by the cron path).
+            event_uuid:
+              (evt as { uuid?: string }).uuid ??
+              (props.$insert_id as string | undefined) ??
+              (props.$event_uuid as string | undefined) ??
+              null,
+            event_name: (evt.event as string | undefined) ?? '',
+            occurred_at: (evt.timestamp as string | undefined) ?? new Date().toISOString(),
+            email_on_event: sessionEmail,
+            current_url: (props.$current_url as string | undefined) ?? null,
+            utm_source: (props.utm_source as string | undefined) ?? null,
+            utm_medium: (props.utm_medium as string | undefined) ?? null,
+            utm_campaign: (props.utm_campaign as string | undefined) ?? null,
+            referring_domain: (props.$referring_domain as string | undefined) ?? null,
+          })
+        } catch (err) {
+          log.error(
+            `[posthog-cart-tracker] upsertVisitorSessionFromEvent failed for ${evt.event}: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
       }
     }
   },

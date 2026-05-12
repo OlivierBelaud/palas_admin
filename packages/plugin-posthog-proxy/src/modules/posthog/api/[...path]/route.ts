@@ -156,9 +156,13 @@ export async function POST(req: Request & { app?: any }) {
       console.error('[posthog-proxy] Checkout identity error:', err)
     })
 
-    // Klaviyo identity: resolve email from $_kx / $kla_id tokens
+    // Klaviyo identity: resolve email from $_kx / $kla_id tokens.
+    // Pass the request's `app` so processEvents can emit a framework event
+    // every time it resolves a Klaviyo identity (consumed by demo-owned
+    // subscribers, e.g. `klaviyo-identity-to-session` which stamps the
+    // currently-open visitor_session as newsletter-acquired).
     if (config.klaviyoApiKey) {
-      processEvents(parsed, config, clientIp).catch((err) => {
+      processEvents(parsed, config, clientIp, req.app).catch((err) => {
         console.error('[posthog-proxy] Klaviyo bridge error:', err)
       })
     }
@@ -471,7 +475,13 @@ function extractEmailFromCheckout(_event: Record<string, unknown>, props?: Recor
 
 // ── Klaviyo identity bridge ─────────────────────────────────────────
 
-async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp?: string | null) {
+async function processEvents(
+  body: unknown,
+  config: PostHogProxyConfig,
+  clientIp?: string | null,
+  // biome-ignore lint/suspicious/noExplicitAny: app is host-injected — see POST(req) handler above
+  app?: any,
+) {
   const events = Array.isArray(body) ? body : ((body as Record<string, unknown>).batch ?? [body])
 
   for (const event of events as Record<string, unknown>[]) {
@@ -509,6 +519,20 @@ async function processEvents(body: unknown, config: PostHogProxyConfig, clientIp
         identifiedIds.add(distinctId)
         cacheEmail(distinctId, email)
         console.log(`[posthog-proxy] ✓ Identified ${distinctId} as ${email}`)
+
+        // Publish a framework event so demo-side subscribers can react
+        // (e.g. stamp the currently-open visitor_session as
+        // newsletter-acquired). Mirrors the `posthog.events.received`
+        // pattern in the POST handler — fire-and-forget, guarded by
+        // `app?.emit` so the plugin still works without a Manta host.
+        // Event name kebab-case to satisfy the framework's subscriber-name
+        // regex (`[a-zA-Z0-9][a-zA-Z0-9.-]*`, no underscores).
+        const emit = (app as { emit?: (event: string, data: unknown) => Promise<void> } | undefined)?.emit
+        if (emit) {
+          emit('posthog.klaviyo-identity-resolved', { distinct_id: distinctId, email }).catch((err) => {
+            console.warn(`[posthog-proxy] emit posthog.klaviyo-identity-resolved failed: ${(err as Error).message}`)
+          })
+        }
       }
     } catch (err) {
       console.log(`[posthog-proxy] ERROR resolving: ${(err as Error).message}`)

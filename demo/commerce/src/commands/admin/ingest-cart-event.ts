@@ -120,6 +120,8 @@ export default defineCommand({
       discounts?: unknown
       subtotal_price?: number | null
       total_tax?: number | null
+      completed_at?: Date | string | null
+      cart_birth_at?: Date | string | null
     }
     type EntityCrud<Row> = {
       list: (filters: Record<string, unknown>) => Promise<Row[]>
@@ -164,6 +166,10 @@ export default defineCommand({
     // Merge identity: keep existing values, fill in new ones progressively
     const merge = <A, B>(newVal: A, existingVal: B): A | B | null => newVal ?? existingVal ?? null
 
+    // Base payload — shared between create and update. `cart_birth_at` and
+    // `completed_at` are deliberately omitted here: they have asymmetric
+    // semantics (set-once on create vs. conditional on update) and are
+    // handled below.
     const cartData = {
       cart_token: input.cart_token,
       distinct_id: merge(input.distinct_id, existing?.distinct_id),
@@ -196,10 +202,33 @@ export default defineCommand({
 
     let cartId: string
     if (existing) {
-      await svc.cart.update(existing.id, cartData)
+      // Update path — NEVER touch `cart_birth_at` (immutable). Only set
+      // `completed_at` on the first cart→completed transition: triple
+      // guard (`checkout:completed`, current stage isn't already
+      // 'completed', no existing `completed_at`) keeps the write
+      // idempotent across replays.
+      const shouldSetCompletedAt =
+        input.action === 'checkout:completed' && existing.highest_stage !== 'completed' && existing.completed_at == null
+      const updateData: Record<string, unknown> = { ...cartData }
+      if (shouldSetCompletedAt) updateData.completed_at = new Date(input.occurred_at)
+      await svc.cart.update(existing.id, updateData)
       cartId = existing.id
     } else {
-      const created = await svc.cart.create(cartData)
+      // Create path — write `cart_birth_at` from the event timestamp.
+      // This is the immutable "first time we ever heard from this cart"
+      // anchor used by cohort attribution and funnel analytics. It is
+      // distinct from `created_at` (which gets re-stamped by rebuilds).
+      const createData: Record<string, unknown> = {
+        ...cartData,
+        cart_birth_at: new Date(input.occurred_at),
+      }
+      // When the first event we see for a brand-new cart is already
+      // `checkout:completed` (rare but possible — e.g. Apple Pay / fast
+      // checkout), capture `completed_at` too. Otherwise leave NULL.
+      if (input.action === 'checkout:completed') {
+        createData.completed_at = new Date(input.occurred_at)
+      }
+      const created = await svc.cart.create(createData)
       cartId = created.id
     }
 
@@ -230,6 +259,32 @@ export default defineCommand({
           email: input.email,
           message: (err as Error).message,
         })
+      }
+    }
+
+    // 3. Cohort late-update: when a cart transitions to completed for the
+    //    first time, attribute the conversion back to the visitor_session
+    //    that was active at cart_birth_at. Best-effort — failures emit a
+    //    signal but do NOT abort the ingest.
+    const wasCompleted = existing?.highest_stage === 'completed'
+    const becomesCompleted = input.action === 'checkout:completed' && !wasCompleted
+    if (becomesCompleted) {
+      const fresh = await svc.cart.list({ id: cartId })
+      const cartBirth = fresh[0]?.cart_birth_at as string | Date | null | undefined
+      if (cartBirth) {
+        try {
+          await step.command.attributeSessionConversion({
+            cart_id: cartId,
+            cart_birth_at: cartBirth instanceof Date ? cartBirth.toISOString() : cartBirth,
+            distinct_id: input.distinct_id ?? existing?.distinct_id ?? null,
+            order_id: input.shopify_order_id ?? null,
+          })
+        } catch (err) {
+          await step.emit('visitor_session.attribution_failed', {
+            cart_id: cartId,
+            message: (err as Error).message,
+          })
+        }
       }
     }
 

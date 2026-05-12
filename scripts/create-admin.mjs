@@ -26,7 +26,8 @@ const sql = postgres(dbUrl, { ssl: isNeon ? 'require' : undefined, max: 1 })
 
 try {
   // Check if already exists
-  const existing = await sql`SELECT id FROM provider_identities WHERE entity_id = ${email} AND provider = 'emailpass' LIMIT 1`
+  const existing =
+    await sql`SELECT id FROM provider_identities WHERE entity_id = ${email} AND provider = 'emailpass' LIMIT 1`
   if (existing.length > 0) {
     console.log(`User ${email} already exists — nothing to do`)
     await sql.end()
@@ -38,7 +39,10 @@ try {
   const hash = scryptSync(password, salt, 64).toString('hex')
   const hashedPassword = `${salt}:${hash}`
 
-  const uuid = () => randomBytes(16).toString('hex').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5')
+  const uuid = () =>
+    randomBytes(16)
+      .toString('hex')
+      .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5')
 
   // Create auth_identity
   const authId = uuid()

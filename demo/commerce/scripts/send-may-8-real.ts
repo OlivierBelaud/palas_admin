@@ -44,7 +44,8 @@ import { signUnsubscribeToken } from '../src/utils/unsubscribe-token'
 // ── Args + env ────────────────────────────────────────────────────────
 const DRY = process.argv.includes('--dry')
 const FOR_DATE = '2026-05-08'
-const SLEEP_MS = 15_000
+// Live: 15s between sends to be gentle. Dry-run: no sleep — drain instantly.
+const SLEEP_MS = DRY ? 0 : 15_000
 
 const here = dirname(fileURLToPath(import.meta.url))
 const envFile = '.env.production'

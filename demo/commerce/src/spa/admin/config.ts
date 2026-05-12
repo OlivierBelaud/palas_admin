@@ -26,6 +26,11 @@ export default defineSpa({
       label: 'Charts lab',
       to: '/charts-lab',
     },
+    {
+      icon: 'Activity',
+      label: 'Visitor stats',
+      to: '/visitor-stats',
+    },
   ],
 
   settings: [{ icon: 'Settings', label: 'General', to: '/settings' }],

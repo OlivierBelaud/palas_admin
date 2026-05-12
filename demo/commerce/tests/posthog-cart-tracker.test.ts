@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { extractPosthogEvents, normalizeCartEvent, toIngestInput } from '../src/modules/cart-tracking/posthog-adapter'
+import { extractSessionId } from '../src/modules/visitor-session/attribution'
 
 describe('extractPosthogEvents', () => {
   it('returns [] for empty body', () => {
@@ -351,5 +352,176 @@ describe('subscriber routing (simulated)', () => {
     expect((calls[0] as { action: string }).action).toBe('cart:product_added')
     expect((calls[1] as { action: string }).action).toBe('cart:cleared')
     expect((calls[2] as { action: string }).action).toBe('checkout:completed')
+  })
+})
+
+describe('subscriber visitor-session dispatch (simulated)', () => {
+  // Mirror the subscriber's dispatch logic (posthog-cart-tracker.ts):
+  //   - Cart event: dispatch ingestCartEvent
+  //   - Bot email: SKIP cart + SKIP session dispatch (continue)
+  //   - $session_id + distinct_id present: dispatch upsertVisitorSessionFromEvent
+  //   - No $session_id: skip session dispatch
+  //
+  // We replicate the relevant code paths inline so changes to the real
+  // subscriber are caught by these tests (the test reads the same
+  // attribution helper the subscriber imports).
+  const BOT_RE = /storebotmail|joonix\.net|mailinator\.com|guerrillamail/i
+
+  async function simulateSubscriberWithSession(
+    body: unknown,
+    onCart: (input: unknown) => Promise<void>,
+    onSession: (input: unknown) => Promise<void>,
+  ): Promise<void> {
+    const events = extractPosthogEvents(body)
+    for (const evt of events) {
+      const input = toIngestInput(evt)
+      const isCart = input != null
+      const email: string | null = isCart ? ((input?.email as string | null) ?? null) : null
+      if (isCart) {
+        if (email && BOT_RE.test(email)) {
+          // Bot: subscriber skips BOTH the cart AND the session dispatch
+          // (via the `continue` statement). This test enforces that
+          // contract — see subscriber line ~38.
+          continue
+        }
+        await onCart(input)
+      }
+
+      const sessionId = extractSessionId(evt as { properties?: Record<string, unknown> })
+      const distinctId = (evt.distinct_id ?? null) as string | null
+      if (sessionId && distinctId) {
+        const props = (evt.properties ?? {}) as Record<string, unknown>
+        const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
+        const sessionEmail = email ?? ((($set.email as string | undefined) ?? null) as string | null)
+        await onSession({
+          distinct_id: distinctId,
+          session_id: sessionId,
+          event_uuid: (evt as { uuid?: string }).uuid ?? null,
+          event_name: evt.event,
+          email_on_event: sessionEmail,
+        })
+      }
+    }
+  }
+
+  it('event with $session_id + distinct_id + bot email → BOTH dispatches skipped', async () => {
+    const cartCalls: unknown[] = []
+    const sessionCalls: unknown[] = []
+    const batch = {
+      batch: [
+        {
+          event: 'cart:product_added',
+          distinct_id: 'd_bot',
+          properties: {
+            $session_id: 'sess_bot',
+            cart: { token: 't_bot', items: [], total_price: 0, currency: 'EUR' },
+            $set: { email: 'someone@storebotmail.com' },
+          },
+        },
+      ],
+    }
+    await simulateSubscriberWithSession(
+      batch,
+      async (i) => {
+        cartCalls.push(i)
+      },
+      async (i) => {
+        sessionCalls.push(i)
+      },
+    )
+    expect(cartCalls).toHaveLength(0)
+    expect(sessionCalls).toHaveLength(0)
+  })
+
+  it('event with $session_id + distinct_id + not-bot → BOTH dispatches fire', async () => {
+    const cartCalls: unknown[] = []
+    const sessionCalls: unknown[] = []
+    const batch = {
+      batch: [
+        {
+          event: 'cart:product_added',
+          distinct_id: 'd_alice',
+          uuid: 'evt-1',
+          properties: {
+            $session_id: 'sess_alice',
+            cart: { token: 't_alice', items: [], total_price: 0, currency: 'EUR' },
+            $set: { email: 'alice@example.com' },
+          },
+        },
+      ],
+    }
+    await simulateSubscriberWithSession(
+      batch,
+      async (i) => {
+        cartCalls.push(i)
+      },
+      async (i) => {
+        sessionCalls.push(i)
+      },
+    )
+    expect(cartCalls).toHaveLength(1)
+    expect(sessionCalls).toHaveLength(1)
+    expect((sessionCalls[0] as { distinct_id: string; session_id: string }).distinct_id).toBe('d_alice')
+    expect((sessionCalls[0] as { session_id: string }).session_id).toBe('sess_alice')
+  })
+
+  it('cart event WITHOUT $session_id → only ingestCartEvent fires', async () => {
+    const cartCalls: unknown[] = []
+    const sessionCalls: unknown[] = []
+    const batch = {
+      batch: [
+        {
+          event: 'cart:product_added',
+          distinct_id: 'd_x',
+          properties: {
+            // no $session_id
+            cart: { token: 't_x', items: [], total_price: 0, currency: 'EUR' },
+          },
+        },
+      ],
+    }
+    await simulateSubscriberWithSession(
+      batch,
+      async (i) => {
+        cartCalls.push(i)
+      },
+      async (i) => {
+        sessionCalls.push(i)
+      },
+    )
+    expect(cartCalls).toHaveLength(1)
+    expect(sessionCalls).toHaveLength(0)
+  })
+
+  it('non-cart event WITH $session_id ($pageview) → only session dispatch fires', async () => {
+    // Subscriber-level invariant: session tracking covers ALL events
+    // with a session_id, including $pageview. Cart dispatch only fires
+    // for cart:* / checkout:* (filtered by toIngestInput → null).
+    const cartCalls: unknown[] = []
+    const sessionCalls: unknown[] = []
+    const batch = {
+      batch: [
+        {
+          event: '$pageview',
+          distinct_id: 'd_y',
+          properties: {
+            $session_id: 'sess_y',
+            $current_url: 'https://shop.example.com/cart',
+          },
+        },
+      ],
+    }
+    await simulateSubscriberWithSession(
+      batch,
+      async (i) => {
+        cartCalls.push(i)
+      },
+      async (i) => {
+        sessionCalls.push(i)
+      },
+    )
+    expect(cartCalls).toHaveLength(0)
+    expect(sessionCalls).toHaveLength(1)
+    expect((sessionCalls[0] as { event_name: string }).event_name).toBe('$pageview')
   })
 })

@@ -16,7 +16,6 @@ import type {
   StepContext,
   WorkflowContext,
   WorkflowDefinition,
-  WorkflowResult,
   WorkflowRunOptions,
   WorkflowRunResult,
 } from './types'

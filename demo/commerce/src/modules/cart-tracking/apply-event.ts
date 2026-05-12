@@ -82,36 +82,53 @@ export async function applyEvent(
       const nextTotalPrice = totalPrice ?? (ex.total_price as number | null) ?? 0
       const nextItemCount = itemCount ?? (ex.item_count as number | null) ?? 0
       const nextCurrency = currency ?? (ex.currency as string | null) ?? 'EUR'
+      // `completed_at` is the exact moment the payment succeeded — written
+      // ONLY on the cart→completed transition, never overwritten. This is
+      // distinct from `last_action_at` (refreshed on every event) and from
+      // `cart_birth_at` (immutable first-event timestamp set on INSERT).
+      // The triple guard (`newStage === 'completed'`, current stage isn't
+      // already 'completed', existing `completed_at` is NULL) keeps the
+      // write idempotent across replays.
+      const shouldSetCompletedAt =
+        newStage === 'completed' && (ex.highest_stage as string) !== 'completed' && ex.completed_at == null
+      const completedAtSql = shouldSetCompletedAt ? ', completed_at=$23' : ''
+      const updateParams: unknown[] = [
+        merge(n.distinct_id, ex.distinct_id),
+        merge(n.email, ex.email),
+        merge(n.first_name, ex.first_name),
+        merge(n.last_name, ex.last_name),
+        merge(n.phone, ex.phone),
+        merge(n.city, ex.city),
+        merge(n.country_code, ex.country_code),
+        nextItems,
+        nextTotalPrice,
+        nextItemCount,
+        nextCurrency,
+        n.event,
+        n.occurred_at,
+        highestStage,
+        status,
+        merge(n.checkout_token, ex.checkout_token),
+        merge(n.shopify_order_id, ex.shopify_order_id),
+        n.shipping_price ?? (ex.shipping_price as number | null),
+        n.discounts_amount ?? (ex.discounts_amount as number | null),
+        n.subtotal_price ?? (ex.subtotal_price as number | null),
+        n.total_tax ?? (ex.total_tax as number | null),
+        ex.id,
+      ]
+      if (shouldSetCompletedAt) updateParams.push(n.occurred_at)
       await db.raw(
-        `UPDATE carts SET distinct_id=$1, email=$2, first_name=$3, last_name=$4, phone=$5, city=$6, country_code=$7, items=$8::jsonb, total_price=$9, item_count=$10, currency=$11, last_action=$12, last_action_at=$13, highest_stage=$14, status=$15, checkout_token=$16, shopify_order_id=$17, shipping_price=$18, discounts_amount=$19, subtotal_price=$20, total_tax=$21, updated_at=$13 WHERE id=$22`,
-        [
-          merge(n.distinct_id, ex.distinct_id),
-          merge(n.email, ex.email),
-          merge(n.first_name, ex.first_name),
-          merge(n.last_name, ex.last_name),
-          merge(n.phone, ex.phone),
-          merge(n.city, ex.city),
-          merge(n.country_code, ex.country_code),
-          nextItems,
-          nextTotalPrice,
-          nextItemCount,
-          nextCurrency,
-          n.event,
-          n.occurred_at,
-          highestStage,
-          status,
-          merge(n.checkout_token, ex.checkout_token),
-          merge(n.shopify_order_id, ex.shopify_order_id),
-          n.shipping_price ?? (ex.shipping_price as number | null),
-          n.discounts_amount ?? (ex.discounts_amount as number | null),
-          n.subtotal_price ?? (ex.subtotal_price as number | null),
-          n.total_tax ?? (ex.total_tax as number | null),
-          ex.id,
-        ],
+        `UPDATE carts SET distinct_id=$1, email=$2, first_name=$3, last_name=$4, phone=$5, city=$6, country_code=$7, items=$8::jsonb, total_price=$9, item_count=$10, currency=$11, last_action=$12, last_action_at=$13, highest_stage=$14, status=$15, checkout_token=$16, shopify_order_id=$17, shipping_price=$18, discounts_amount=$19, subtotal_price=$20, total_tax=$21, updated_at=$13${completedAtSql} WHERE id=$22`,
+        updateParams,
       )
     } else {
+      // `cart_birth_at = n.occurred_at` — IMMUTABLE. Written here on the
+      // first-ever event for this cart_token and never touched again on
+      // any subsequent UPDATE (it must survive `rebuild-carts`, which
+      // re-writes `created_at` but must preserve the original visitor
+      // timestamp for funnel attribution).
       await db.raw(
-        `INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code, items, total_price, item_count, currency, last_action, last_action_at, highest_stage, status, checkout_token, shopify_order_id, shipping_price, discounts_amount, subtotal_price, total_tax, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $14, $14)`,
+        `INSERT INTO carts (id, cart_token, distinct_id, email, first_name, last_name, phone, city, country_code, items, total_price, item_count, currency, last_action, last_action_at, highest_stage, status, checkout_token, shopify_order_id, shipping_price, discounts_amount, subtotal_price, total_tax, cart_birth_at, completed_at, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $14, $23, $14, $14)`,
         [
           n.cart_token,
           n.distinct_id,
@@ -135,6 +152,7 @@ export async function applyEvent(
           n.discounts_amount,
           n.subtotal_price,
           n.total_tax,
+          newStage === 'completed' ? n.occurred_at : null,
         ],
       )
     }

@@ -186,7 +186,7 @@ async function pullFlowValuesReport(
     data: { attributes: { results: { groupings: Record<string, string>; statistics: Record<string, number> }[] } }
   }>('/api/flow-values-reports/', { method: 'POST', body: JSON.stringify(body) })
   return res.data.attributes.results.map((r) => ({
-    flowMessageId: r.groupings.flow_message_id ?? r.groupings['flow_message_id'],
+    flowMessageId: r.groupings.flow_message_id ?? r.groupings.flow_message_id,
     stats: r.statistics,
   }))
 }
@@ -286,7 +286,7 @@ async function main() {
       '| Step | Nom interne | Subject | Destinataires | Délivré | Open rate | Click rate | Conversions | Revenu |',
     )
     lines.push('|---:|---|---|---:|---:|---:|---:|---:|---:|')
-    let totalRecipients = 0
+    let _totalRecipients = 0
     let totalConversions = 0
     let totalRevenue = 0
     const perStep: {
@@ -306,7 +306,7 @@ async function main() {
       const conv = s.conversion_uniques ?? s.conversions ?? 0
       const revenue = s.conversion_value ?? 0
       perStep.push({ step: m.step, recipients, conversions: conv, revenue, opens, clicks })
-      totalRecipients += recipients
+      _totalRecipients += recipients
       totalConversions += conv
       totalRevenue += revenue
       lines.push(

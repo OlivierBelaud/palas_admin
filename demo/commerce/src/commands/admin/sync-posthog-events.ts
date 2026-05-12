@@ -24,7 +24,8 @@
 // safe.
 
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
-import { type HogQLEventRow, ingestHogQLRows } from '../../modules/cart-tracking/posthog-sync'
+import { type HogQLEventRow, ingestHogQLRows, rowToPosthogEvent } from '../../modules/cart-tracking/posthog-sync'
+import { extractSessionId } from '../../modules/visitor-session/attribution'
 
 const MAX_EVENTS_PER_RUN = 5000
 
@@ -106,6 +107,57 @@ export default defineCommand({
           shouldStop: () => ctx.signal?.aborted ?? false,
         })
 
+        // ── 3b. Sibling visitor-session dispatch ─────────────────────
+        // Iterate the SAME rows and dispatch upsertVisitorSessionFromEvent
+        // for every event carrying $session_id + distinct_id. Idempotent
+        // via the per-session seen_event_uuids[] FIFO array, so re-runs
+        // (overlapping high-water marks, retries) are safe.
+        //
+        // V1 limitation: the HogQL query above pulls only `cart:%` and
+        // `checkout:%` events. `$pageview` events are not in the cron
+        // path — their session counters come from the live subscriber
+        // only. Until V2 widens the query, sessions without proxy
+        // traffic will under-count pageviews. See backlog VS-FU-01.
+        let sessionsAttempted = 0
+        let sessionsSkipped = 0
+        let sessionsErrors = 0
+        for (const row of rows) {
+          if (ctx.signal?.aborted) break
+          const evt = rowToPosthogEvent(row)
+          const sessionId = extractSessionId(evt)
+          if (!sessionId || !evt.distinct_id) {
+            sessionsSkipped += 1
+            continue
+          }
+          const props = evt.properties ?? {}
+          const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
+          const emailOnEvent = ($set.email as string | undefined) ?? null
+          try {
+            sessionsAttempted += 1
+            // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed
+            await (step.command as any).upsertVisitorSessionFromEvent({
+              distinct_id: evt.distinct_id,
+              session_id: sessionId,
+              event_uuid: evt.uuid,
+              event_name: evt.event,
+              occurred_at: evt.timestamp,
+              email_on_event: emailOnEvent,
+              current_url: (props.$current_url as string | undefined) ?? null,
+              utm_source: (props.utm_source as string | undefined) ?? null,
+              utm_medium: (props.utm_medium as string | undefined) ?? null,
+              utm_campaign: (props.utm_campaign as string | undefined) ?? null,
+              referring_domain: (props.$referring_domain as string | undefined) ?? null,
+            })
+          } catch (err) {
+            sessionsErrors += 1
+            if (sessionsErrors < 10) {
+              log.warn(
+                `[syncPosthogEvents] upsertVisitorSessionFromEvent failed for ${evt.event} (${evt.uuid}): ${(err as Error).message}`,
+              )
+            }
+          }
+        }
+
         // Translate "stopped early because of cancel" into the canonical
         // MantaError the workflow runner expects. We detect cancellation
         // from `ctx.signal.aborted` (the ingestHogQLRows helper itself
@@ -128,7 +180,7 @@ export default defineCommand({
         const checkoutFinalIso = toIso(finalRows.find((r) => r.kind === 'checkout')?.max_ts)
 
         log.info(
-          `[syncPosthogEvents] done — fetched=${rows.length} ingested=${counters.ingested} skipped=${counters.skipped} errors=${counters.errors} duration_ms=${durationMs} cartMark=${cartSinceIso ?? 'genesis'}→${cartFinalIso ?? 'genesis'} checkoutMark=${checkoutSinceIso ?? 'genesis'}→${checkoutFinalIso ?? 'genesis'}`,
+          `[syncPosthogEvents] done — fetched=${rows.length} ingested=${counters.ingested} skipped=${counters.skipped} errors=${counters.errors} sessions_attempted=${sessionsAttempted} sessions_skipped=${sessionsSkipped} sessions_errors=${sessionsErrors} duration_ms=${durationMs} cartMark=${cartSinceIso ?? 'genesis'}→${cartFinalIso ?? 'genesis'} checkoutMark=${checkoutSinceIso ?? 'genesis'}→${checkoutFinalIso ?? 'genesis'}`,
         )
 
         return {
@@ -136,6 +188,9 @@ export default defineCommand({
           ingested: counters.ingested,
           skipped: counters.skipped,
           errors: counters.errors,
+          sessions_attempted: sessionsAttempted,
+          sessions_skipped: sessionsSkipped,
+          sessions_errors: sessionsErrors,
           duration_ms: durationMs,
           cart_since: cartSinceIso,
           checkout_since: checkoutSinceIso,

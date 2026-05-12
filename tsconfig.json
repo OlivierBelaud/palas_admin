@@ -16,6 +16,7 @@
       "@manta/adapter-locking-neon": ["./packages/adapter-locking-neon/src/index.ts"],
       "@manta/adapter-file-vercel-blob": ["./packages/adapter-file-vercel-blob/src/index.ts"],
       "@manta/adapter-jobs-vercel-cron": ["./packages/adapter-jobs-vercel-cron/src/index.ts"],
+      "@manta/adapter-notification-resend": ["./packages/adapter-notification-resend/src/index.ts"],
       "@manta/adapter-eventbus-upstash": ["./packages/adapter-eventbus-upstash/src/index.ts"],
       "@manta/adapter-h3": ["./packages/adapter-h3/src/index.ts"]
     }
