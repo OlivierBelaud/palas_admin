@@ -1,36 +1,103 @@
 // ChartCard feed: per-day cart-creation funnel.
-// Two series: `carts_created` (sum) and `carts_created_converted` (count of
-// sessions where carts_created_in_session>0 AND cart_converted).
+//
+// Source = `carts` table (authoritative cohort source), NOT
+// `visitor_sessions` — because past Shopify orders that bypassed our
+// proxy don't have matching visitor_sessions, while their `carts`
+// rows are populated by the `sync-from-shopify` cron + the
+// `reconcile-shopify-orders` cron. Using carts directly means the
+// chart matches Shopify's order count even for days where no session
+// was captured.
+//
+// Two series:
+//   - `carts_created` — COUNT of carts whose `cart_birth_at` falls on day D
+//   - `carts_created_converted` — of those, COUNT with `highest_stage = 'completed'`
+//
+// `cart_birth_at` is the immutable first-event timestamp (set on cart
+// INSERT in apply-event.ts, frozen forever). If a cart pre-dates the
+// `cart_birth_at` field (very old rows), it falls back to `created_at`
+// — and the synthetic backfill from orders.placed_at also fills
+// `cart_birth_at` retroactively.
 
-import { buildAllDaysFromTo, dayKey, emptyResponse, pullSessions, toDate } from '../../utils/visitor-stats-helpers'
+import {
+  buildAllDaysFromTo,
+  dayKey,
+  emptyResponse,
+  type QueryGraphPort,
+  toDate,
+} from '../../utils/visitor-stats-helpers'
+
+interface CartLite {
+  cart_birth_at: Date | string | null
+  created_at: Date | string | null
+  highest_stage: string
+}
+
+// Standalone cart pull (separate from pullSessions which is session-bound)
+async function pullCarts(
+  input: { from: string; to: string },
+  query: {
+    graph:
+      | QueryGraphPort['graph']
+      | ((c: {
+          entity: 'cart'
+          fields?: string[]
+          filters?: Record<string, unknown>
+          pagination?: { limit?: number; offset?: number }
+        }) => Promise<unknown[]>)
+  },
+  log: { warn: (m: string) => void },
+): Promise<{ carts: CartLite[]; from: Date; to: Date } | null> {
+  const from = new Date(input.from)
+  const to = new Date(input.to)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new MantaError('INVALID_DATA', `visitor-stats: invalid range from=${input.from} to=${input.to}`)
+  }
+  try {
+    const rows = (await (query as { graph: (c: unknown) => Promise<unknown[]> }).graph({
+      entity: 'cart',
+      fields: ['cart_birth_at', 'created_at', 'highest_stage'],
+      filters: {
+        $or: [
+          { cart_birth_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+          // Fallback for carts created before cart_birth_at existed.
+          { cart_birth_at: null, created_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+        ],
+      },
+      pagination: { limit: 50000 },
+    })) as CartLite[]
+    return { carts: rows, from, to }
+  } catch (err) {
+    log.warn(`[visitor-stats-carts-created] graph query failed: ${(err as Error).message}. Returning empty.`)
+    return null
+  }
+}
 
 export default defineQuery({
   name: 'visitor-stats-carts-created-funnel',
-  description: 'Per-day total vs converted carts created in session. Total = SUM(carts_created_in_session).',
+  description:
+    'Per-day cart-creation cohort funnel: total carts created vs converted. Source = carts table (authoritative).',
   input: z.object({
     from: z.string(),
     to: z.string(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {
-    const pulled = await pullSessions(input, query, log)
+    const pulled = await pullCarts(input, query, log)
     if (!pulled) return emptyResponse(input)
-    const { sessions, from, to } = pulled
-    const fromMs = from.getTime()
-    const toMs = to.getTime()
+    const { carts, from, to } = pulled
 
     const buckets = new Map<string, { total: number; converted: number }>()
-    for (const s of sessions) {
-      const ms = toDate(s.started_at).getTime()
-      if (ms < fromMs || ms >= toMs) continue
-      const day = dayKey(toDate(s.started_at))
+    for (const c of carts) {
+      const ref = c.cart_birth_at ?? c.created_at
+      if (!ref) continue
+      const day = dayKey(toDate(ref))
       let b = buckets.get(day)
       if (!b) {
         b = { total: 0, converted: 0 }
         buckets.set(day, b)
       }
-      b.total += s.carts_created_in_session
-      if (s.carts_created_in_session > 0 && s.cart_converted) b.converted += 1
+      b.total += 1
+      if (c.highest_stage === 'completed') b.converted += 1
     }
 
     const days = buildAllDaysFromTo(from, to)
