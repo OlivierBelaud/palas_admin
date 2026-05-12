@@ -266,6 +266,24 @@ async function linkOrderContactByEmail(sql: SqlClient, orderId: string, email: s
     ON CONFLICT DO NOTHING`
 }
 
+// Populate the cart_contact pivot. The webhook/cron path doesn't go through
+// upsertContactFromCartSignal (that one is for live PostHog events), so we
+// have to link the cart to its Contact ourselves once we have both.
+async function linkCartContactByEmail(sql: SqlClient, cartId: string, email: string | null): Promise<void> {
+  if (!cartId || !email) return
+  const lower = email.trim().toLowerCase()
+  if (!lower) return
+  const rows = (await sql`SELECT id::text AS id FROM contacts WHERE LOWER(email) = ${lower} LIMIT 1`) as Array<{
+    id: string
+  }>
+  const contactId = rows[0]?.id
+  if (!contactId) return
+  await sql`
+    INSERT INTO cart_contact (id, cart_id, contact_id, created_at, updated_at)
+    VALUES (gen_random_uuid(), ${cartId}, ${contactId}, NOW(), NOW())
+    ON CONFLICT DO NOTHING`
+}
+
 /**
  * Upsert a single Shopify paid order into `carts`. See module header for the
  * matching strategy. Returns an outcome describing what happened so callers
@@ -316,6 +334,7 @@ export async function upsertShopifyOrder(
         const orderId = await upsertOrderRow(sql, order, createdAt)
         await linkCartOrder(sql, cart.id, orderId)
         await linkOrderContactByEmail(sql, orderId, email)
+        await linkCartContactByEmail(sql, cart.id, cart.email ?? email)
       }
       return { matched_via: 'noop', cart_id: cart.id, already_completed: true }
     }
@@ -346,6 +365,7 @@ export async function upsertShopifyOrder(
     const orderIdMatched = await upsertOrderRow(sql, order, createdAt)
     await linkCartOrder(sql, cart.id, orderIdMatched)
     await linkOrderContactByEmail(sql, orderIdMatched, email)
+    await linkCartContactByEmail(sql, cart.id, cart.email ?? email)
     return { matched_via: matchedVia ?? 'noop', cart_id: cart.id, already_completed: false }
   }
 
@@ -368,7 +388,10 @@ export async function upsertShopifyOrder(
        ${shopifyOrderId}, ${lineItems.length}, NOW(), NOW())
     RETURNING id`) as Array<{ id: string }>
   const orderIdInserted = await upsertOrderRow(sql, order, createdAt)
-  if (inserted[0]?.id) await linkCartOrder(sql, inserted[0].id, orderIdInserted)
+  if (inserted[0]?.id) {
+    await linkCartOrder(sql, inserted[0].id, orderIdInserted)
+    await linkCartContactByEmail(sql, inserted[0].id, email)
+  }
   await linkOrderContactByEmail(sql, orderIdInserted, email)
   return { matched_via: 'inserted', cart_id: inserted[0]?.id ?? null, already_completed: false }
 }
