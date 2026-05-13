@@ -14,7 +14,7 @@ export interface QueryGraphPort {
     entity: 'visitorSession'
     fields?: string[]
     filters?: Record<string, unknown>
-    pagination?: { limit?: number; offset?: number }
+    pagination?: { limit?: number; offset?: number; take?: number; skip?: number }
   }) => Promise<unknown[]>
 }
 
@@ -66,26 +66,36 @@ export async function pullSessions(
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid date range from=${input.from} to=${input.to}`)
   }
   const lookbackStart = new Date(from.getTime() - LOOKBACK_DAYS_FOR_HAD_PAID_7D * MS_PER_DAY)
+  // 30d × ~700 sessions/day = ~21k rows. A single graph call caps near 10k.
+  // We paginate to drain the window — safety cap at 100k to avoid pathological loops.
+  const PAGE = 5000
+  const HARD_CAP = 100_000
+  const all: SessionLite[] = []
   try {
-    const rows = (await query.graph({
-      entity: 'visitorSession',
-      fields: [
-        'distinct_id',
-        'started_at',
-        'segment_at_session_start',
-        'is_paid_session',
-        'carts_created_in_session',
-        'carts_updated_in_session',
-        'cart_converted',
-        'email_acquired_in_session',
-        'email_acquired_via',
-      ],
-      filters: {
-        started_at: { $gte: lookbackStart.toISOString(), $lt: to.toISOString() },
-      },
-      pagination: { limit: 10000 },
-    })) as unknown as SessionLite[]
-    return { sessions: rows, from, to }
+    for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
+      const page = (await query.graph({
+        entity: 'visitorSession',
+        fields: [
+          'distinct_id',
+          'started_at',
+          'segment_at_session_start',
+          'is_paid_session',
+          'carts_created_in_session',
+          'carts_updated_in_session',
+          'cart_converted',
+          'email_acquired_in_session',
+          'email_acquired_via',
+        ],
+        filters: {
+          started_at: { $gte: lookbackStart.toISOString(), $lt: to.toISOString() },
+        },
+        pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
+      })) as unknown as SessionLite[]
+      if (!Array.isArray(page) || page.length === 0) break
+      all.push(...page)
+      if (page.length < PAGE) break
+    }
+    return { sessions: all, from, to }
   } catch (err) {
     log.warn(`[visitor-stats] graph query failed (table missing?): ${(err as Error).message}. Returning empty.`)
     return null

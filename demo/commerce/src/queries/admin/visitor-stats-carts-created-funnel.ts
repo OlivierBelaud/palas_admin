@@ -52,20 +52,29 @@ async function pullCarts(
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid range from=${input.from} to=${input.to}`)
   }
+  // Paginate to drain the window (graph caps each call near 10k).
+  const PAGE = 5000
+  const HARD_CAP = 100_000
+  const all: CartLite[] = []
   try {
-    const rows = (await (query as { graph: (c: unknown) => Promise<unknown[]> }).graph({
-      entity: 'cart',
-      fields: ['cart_birth_at', 'created_at', 'highest_stage'],
-      filters: {
-        $or: [
-          { cart_birth_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
-          // Fallback for carts created before cart_birth_at existed.
-          { cart_birth_at: null, created_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
-        ],
-      },
-      pagination: { limit: 50000 },
-    })) as CartLite[]
-    return { carts: rows, from, to }
+    for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
+      const page = (await (query as { graph: (c: unknown) => Promise<unknown[]> }).graph({
+        entity: 'cart',
+        fields: ['cart_birth_at', 'created_at', 'highest_stage'],
+        filters: {
+          $or: [
+            { cart_birth_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+            // Fallback for carts created before cart_birth_at existed.
+            { cart_birth_at: null, created_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+          ],
+        },
+        pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
+      })) as CartLite[]
+      if (!Array.isArray(page) || page.length === 0) break
+      all.push(...page)
+      if (page.length < PAGE) break
+    }
+    return { carts: all, from, to }
   } catch (err) {
     log.warn(`[visitor-stats-carts-created] graph query failed: ${(err as Error).message}. Returning empty.`)
     return null
