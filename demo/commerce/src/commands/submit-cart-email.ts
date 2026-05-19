@@ -73,6 +73,13 @@ export default defineCommand({
         `orders=${input.shopify_number_of_orders} discount=${discountCode ?? 'none'}`,
     )
 
+    await step.emit('contact.refresh-requested', {
+      email,
+      reason: 'cart_email_capture',
+      source: 'submitCartEmail',
+      requested_at: new Date().toISOString(),
+    })
+
     // 2. In test mode we stop here — no external noise (Klaviyo / PostHog).
     if (input.is_test) {
       return {

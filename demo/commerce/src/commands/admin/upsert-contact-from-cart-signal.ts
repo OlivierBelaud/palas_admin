@@ -62,6 +62,13 @@ export default defineCommand({
       unlink: (i) => step.command.unlinkCartContact(i),
     }
 
-    return await upsertContactAndLink({ contact, link, input })
+    const result = await upsertContactAndLink({ contact, link, input })
+    await step.emit('contact.refresh-requested', {
+      email: input.email.trim().toLowerCase(),
+      reason: 'cart_signal',
+      source: 'upsertContactFromCartSignal',
+      requested_at: new Date().toISOString(),
+    })
+    return result
   },
 })

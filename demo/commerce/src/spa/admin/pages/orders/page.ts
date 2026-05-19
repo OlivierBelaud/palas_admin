@@ -3,6 +3,10 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: {
     title: 'Commandes',
+    actions: [
+      { label: 'Tester refresh orders', command: 'backfillOrderSnapshots' },
+      { label: 'Réparer orders (lot)', command: 'backfillOrderSnapshotsApply', destructive: true },
+    ],
   },
   main: [
     {

@@ -52,6 +52,12 @@ export default defineCommand({
     if (!target) return { matched: 0 } // No contact for this email → no-op
     if (target.distinct_id != null && target.distinct_id !== '') return { matched: 1 } // Already set → idempotent
     await svc.contact.update(target.id, { distinct_id: input.distinct_id })
+    await step.emit('contact.refresh-requested', {
+      email: emailLc,
+      reason: 'distinct_id_linked',
+      source: 'linkContactDistinctIdByEmail',
+      requested_at: new Date().toISOString(),
+    })
     return { matched: 1 }
   },
 })

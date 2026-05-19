@@ -51,7 +51,7 @@ interface ContextAuthRule {
 export function isPublicRoute(path: string, contextRules?: ContextAuthRule[]): boolean {
   if (contextRules) {
     for (const rule of contextRules) {
-      if (rule.publicPaths.has(path)) return true
+      if (isContextPublicPath(path, rule)) return true
     }
   }
   return false
@@ -65,11 +65,16 @@ export function requiresAuthentication(path: string, contextRules?: ContextAuthR
   if (contextRules) {
     for (const rule of contextRules) {
       if (path.startsWith(rule.prefix)) {
-        return !rule.publicPaths.has(path)
+        return !isContextPublicPath(path, rule)
       }
     }
   }
   return false
+}
+
+function isContextPublicPath(path: string, rule: ContextAuthRule): boolean {
+  if (rule.publicPaths.has(path)) return true
+  return path.startsWith(`${rule.prefix}_workflow/`) && path.endsWith('/resume')
 }
 
 export interface RouteOptions {
@@ -422,7 +427,7 @@ export class H3Adapter implements IHttpPort {
     // V2: verify actor_type matches the context (or delegate to custom middleware)
     if (this._contextAuthRules.length > 0) {
       for (const rule of this._contextAuthRules) {
-        if (path.startsWith(rule.prefix) && !rule.publicPaths.has(path)) {
+        if (path.startsWith(rule.prefix) && !isContextPublicPath(path, rule)) {
           if (rule.customMiddleware) {
             // Custom middleware replaces the default actor_type check
             const headers: Record<string, string | string[] | undefined> = {}
@@ -655,7 +660,7 @@ export class H3Adapter implements IHttpPort {
           // V2: verify actor_type matches context (or delegate to custom middleware)
           if (this._contextAuthRules.length > 0) {
             for (const rule of this._contextAuthRules) {
-              if (pathname.startsWith(rule.prefix) && !rule.publicPaths.has(pathname)) {
+              if (pathname.startsWith(rule.prefix) && !isContextPublicPath(pathname, rule)) {
                 if (rule.customMiddleware) {
                   const headers: Record<string, string | string[] | undefined> = {}
                   for (const [k, v] of req.headers) headers[k] = v

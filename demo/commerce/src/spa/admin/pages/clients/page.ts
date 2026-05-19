@@ -3,6 +3,10 @@ import { definePage } from '@manta/dashboard-core'
 export default definePage({
   header: {
     title: 'Clients',
+    actions: [
+      { label: 'Tester consolidation', command: 'reconcileContactSnapshots' },
+      { label: 'Réparer contacts', command: 'reconcileContactSnapshotsApply', destructive: true },
+    ],
   },
   main: [
     {

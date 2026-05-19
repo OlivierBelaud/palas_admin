@@ -91,6 +91,7 @@ export default defineCommand({
         already_completed: number
         no_local_cart: number
         errors: number
+        order_refresh_requested: number
         duration_ms: number
       }> => {
         const startedAt = Date.now()
@@ -113,6 +114,7 @@ export default defineCommand({
         let alreadyCompleted = 0
         let noLocalCart = 0
         let errors = 0
+        let orderRefreshRequested = 0
 
         let url: string | null =
           `https://${shopifyDomain}/admin/api/${apiVersion}/orders.json` +
@@ -143,6 +145,14 @@ export default defineCommand({
 
           for (const order of orders) {
             try {
+              await step.emit('order.refresh-requested', {
+                shopify_order_id: String(order.id),
+                reason: 'shopify_paid_orders_reconcile',
+                source: 'reconcileShopifyOrders',
+                requested_at: new Date().toISOString(),
+              })
+              orderRefreshRequested += 1
+
               const remoteToken = normalizeToken(order.cart_token)
               if (!remoteToken) {
                 // Shopify orders without a cart_token (POS / admin /
@@ -211,7 +221,7 @@ export default defineCommand({
 
         const durationMs = Date.now() - startedAt
         log.info(
-          `[reconcileShopifyOrders] done — scanned=${scanned} dispatched=${dispatched} already_completed=${alreadyCompleted} no_local_cart=${noLocalCart} errors=${errors} duration_ms=${durationMs}`,
+          `[reconcileShopifyOrders] done — scanned=${scanned} dispatched=${dispatched} already_completed=${alreadyCompleted} no_local_cart=${noLocalCart} order_refresh_requested=${orderRefreshRequested} errors=${errors} duration_ms=${durationMs}`,
         )
 
         return {
@@ -220,6 +230,7 @@ export default defineCommand({
           already_completed: alreadyCompleted,
           no_local_cart: noLocalCart,
           errors,
+          order_refresh_requested: orderRefreshRequested,
           duration_ms: durationMs,
         }
       },

@@ -88,6 +88,36 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const outcome = await upsertShopifyOrder(sql, order)
+    const app = (req as Request & { app?: { emit?: (event: string, data: unknown) => Promise<void> } }).app
+    if (app?.emit) {
+      app
+        .emit('order.refresh-requested', {
+          shopify_order_id: String(order.id),
+          reason: 'shopify_order_paid_webhook',
+          source: 'shopify-webhooks/orders-paid',
+          requested_at: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(
+            `[shopify-webhook orders-paid] order refresh emit failed for ${order.id}: ${(err as Error).message}`,
+          )
+        })
+    }
+    const email = order.email?.trim().toLowerCase()
+    if (email && app?.emit) {
+      app
+        .emit('contact.refresh-requested', {
+          email,
+          reason: 'shopify_order_paid_webhook',
+          source: 'shopify-webhooks/orders-paid',
+          requested_at: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(
+            `[shopify-webhook orders-paid] contact refresh emit failed for ${email}: ${(err as Error).message}`,
+          )
+        })
+    }
     console.log(
       `[shopify-webhook orders-paid] order=${order.id} matched_via=${outcome.matched_via} cart_id=${outcome.cart_id ?? 'null'} already=${outcome.already_completed}`,
     )

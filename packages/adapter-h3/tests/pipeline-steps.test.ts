@@ -99,6 +99,20 @@ describe('Pipeline — Step 6: Auth', () => {
     expect(body.type).toBe('UNAUTHORIZED')
   })
 
+  it('HP-04b — workflow resume route stays public for signed queue deliveries', async () => {
+    adapter.setAuthVerifier(async () => null)
+    adapter.registerContextAuth('admin', 'admin', ['/api/admin/login'])
+
+    adapter.registerRoute('POST', '/api/admin/_workflow/tx_123/resume', async () => {
+      return Response.json({ ok: true })
+    })
+
+    const res = await adapter.handleRequest(
+      new Request('http://localhost/api/admin/_workflow/tx_123/resume', { method: 'POST' }),
+    )
+    expect(res.status).toBe(200)
+  })
+
   // HP-05 — /store/* auth is optional (no 401 without token)
   it('HP-05 — /store/ without auth succeeds (auth is optional)', async () => {
     adapter.setAuthVerifier(async () => null)

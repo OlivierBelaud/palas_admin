@@ -226,15 +226,15 @@ export async function wireWorkflowRoutes(ctx: BootstrapContext, appRef: AppRef):
       })
       wm.register({ name: `cmd:${commandName}`, fn: entry.workflow })
 
-      // Fire the resume. Don't await the full completion — return 202
-      // immediately so the queue (QStash) can mark delivery as successful.
-      // The workflow may yield again, in which case the manager enqueues
-      // another continuation; or it may terminate, in which case the next
-      // `useCommand` poll sees 'succeeded'.
-      void wm.resume(runId).catch((err) => {
-        logger.error(`[workflow-resume:${commandName}] run failed: ${(err as Error)?.message ?? err}`)
-      })
-      return Response.json({ data: { runId, status: 'resumed' } }, { status: 202 })
+      // Await the resumed slice. On serverless hosts, fire-and-forget work is
+      // killed as soon as the response is sent; long workflows must either
+      // complete this slice or yield and enqueue the next continuation.
+      await wm.resume(runId)
+      const updated = await store.get(runId)
+      return Response.json(
+        { data: { runId, status: updated?.status ?? 'resumed' } },
+        { status: updated?.status === 'succeeded' ? 200 : 202 },
+      )
     } catch (err) {
       return Response.json({ type: 'UNEXPECTED_STATE', message: (err as Error).message }, { status: 500 })
     }

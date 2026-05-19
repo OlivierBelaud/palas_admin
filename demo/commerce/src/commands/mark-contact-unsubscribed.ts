@@ -59,6 +59,12 @@ export default defineCommand({
         }
 
         await svc.contact.updateContacts({ id: contact.id, email_marketing_opt_out_at: new Date() })
+        await step.emit('contact.refresh-requested', {
+          email,
+          reason: 'palas_unsubscribe',
+          source: 'markContactUnsubscribed',
+          requested_at: new Date().toISOString(),
+        })
         log.info(`[markContactUnsubscribed] opted out contact_id=${contact.id} email=${email}`)
         return { found: true, alreadyOptedOut: false, contactId: contact.id }
       },

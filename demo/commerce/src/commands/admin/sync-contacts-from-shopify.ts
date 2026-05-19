@@ -376,15 +376,46 @@ export default defineCommand({
       },
     })({})
 
+    // Every Shopify customer/order update means the contact snapshot may
+    // need consolidation across Shopify + Klaviyo + PostHog. Emit a refresh
+    // ping for every touched email instead of letting this bulk sync be a
+    // special mutation path with its own contact semantics.
+    const refreshEmails = Array.from(
+      new Set(
+        [
+          ...customersForUpsert.map((c) => c.email),
+          ...ordersForUpsert.map((o) => o.email).filter((email): email is string => Boolean(email)),
+        ].map((email) => email.trim().toLowerCase()),
+      ),
+    )
+    for (const email of refreshEmails) {
+      await step.emit('contact.refresh-requested', {
+        email,
+        reason: 'shopify_sync',
+        source: 'syncContactsFromShopify',
+        requested_at: new Date().toISOString(),
+      })
+    }
+    for (const order of ordersForUpsert) {
+      await step.emit('order.refresh-requested', {
+        shopify_order_id: order.shopify_order_id,
+        reason: 'shopify_sync',
+        source: 'syncContactsFromShopify',
+        requested_at: new Date().toISOString(),
+      })
+    }
+
     const durationMs = Date.now() - startedAt
     log.info(
-      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} carts_reattached=${cartsReattached} duration_ms=${durationMs}`,
+      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} carts_reattached=${cartsReattached} contact_refresh_requested=${refreshEmails.length} order_refresh_requested=${ordersForUpsert.length} duration_ms=${durationMs}`,
     )
 
     return {
       contacts: contactsWritten,
       orders: ordersWritten,
       carts_reattached: cartsReattached,
+      contact_refresh_requested: refreshEmails.length,
+      order_refresh_requested: ordersForUpsert.length,
       duration_ms: durationMs,
       since: sinceIso,
     }

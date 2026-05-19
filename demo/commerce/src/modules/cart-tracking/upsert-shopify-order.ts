@@ -230,7 +230,7 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
       fulfillment_status = EXCLUDED.fulfillment_status,
       total_price = EXCLUDED.total_price,
       currency = COALESCE(orders.currency, EXCLUDED.currency),
-      items = COALESCE(orders.items, EXCLUDED.items),
+      items = COALESCE(EXCLUDED.items, orders.items),
       placed_at = COALESCE(orders.placed_at, EXCLUDED.placed_at),
       cancelled_at = EXCLUDED.cancelled_at,
       shopify_synced_at = EXCLUDED.shopify_synced_at,

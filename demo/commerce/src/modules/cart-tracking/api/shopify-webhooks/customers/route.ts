@@ -68,6 +68,22 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const outcome = await upsertShopifyCustomer(sql, customer)
+    const app = (req as Request & { app?: { emit?: (event: string, data: unknown) => Promise<void> } }).app
+    const email = customer.email?.trim().toLowerCase()
+    if (email && app?.emit) {
+      app
+        .emit('contact.refresh-requested', {
+          email,
+          reason: 'shopify_customer_webhook',
+          source: 'shopify-webhooks/customers',
+          requested_at: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(
+            `[shopify-webhook customers] contact refresh emit failed for ${email}: ${(err as Error).message}`,
+          )
+        })
+    }
     console.log(
       `[shopify-webhook customers] customer=${customer.id} matched_via=${outcome.matched_via} contact_id=${outcome.contact_id ?? 'null'} created=${outcome.created} carts_reattached=${outcome.carts_reattached}`,
     )
