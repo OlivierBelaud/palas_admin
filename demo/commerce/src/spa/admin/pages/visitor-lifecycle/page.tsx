@@ -130,6 +130,7 @@ const audienceGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(280px,
 const twoColumnGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
 const flowGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
 const qualityGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }
+const transitionRowGridStyle = { gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr) 5rem' }
 
 export default function VisitorLifecyclePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -422,7 +423,7 @@ function LifecycleFlow({ rows }: { rows: FlowRow[] }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {rows.map((row) => (
-          <div key={`${row.from}-${row.to}`} className="grid grid-cols-[1fr_auto_1fr_5rem] items-center gap-3">
+          <div key={`${row.from}-${row.to}`} className="grid items-center gap-3" style={transitionRowGridStyle}>
             <div className="truncate text-sm font-medium">{row.from}</div>
             <ArrowRight className="h-4 w-4 text-muted-foreground" />
             <div className="min-w-0">
