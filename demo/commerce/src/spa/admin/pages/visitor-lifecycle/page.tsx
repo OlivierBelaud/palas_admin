@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Eye,
+  Info,
   MousePointerClick,
   RefreshCw,
   ShoppingCart,
@@ -147,7 +148,7 @@ export default function VisitorLifecyclePage() {
     <div className="flex flex-col gap-4 pb-8">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-normal">Visitor lifecycle</h1>
+          <h1 className="text-2xl font-semibold tracking-normal">Lifecycle visiteurs</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Badge variant="outline">
               {formatDate(params.from)} - {formatDate(params.to)}
@@ -174,17 +175,18 @@ export default function VisitorLifecyclePage() {
 function Dashboard({ data }: { data: LifecycleDashboardData }) {
   return (
     <>
-      <KpiGrid kpis={data.kpis} />
+      <ExecutiveSummary data={data} />
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 md:w-[36rem]">
-          <TabsTrigger value="overview">Vue</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4 md:w-[34rem]">
+          <TabsTrigger value="overview">Synthèse</TabsTrigger>
           <TabsTrigger value="audiences">Audiences</TabsTrigger>
-          <TabsTrigger value="trends">Temps</TabsTrigger>
-          <TabsTrigger value="quality">Qualité</TabsTrigger>
+          <TabsTrigger value="trends">Évolution</TabsTrigger>
+          <TabsTrigger value="quality">Données</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
-          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <AudienceCards rows={data.audience} />
+          <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
             <LifecycleFlow rows={data.flow} />
             <ConversionRates audience={data.audience} />
           </div>
@@ -213,72 +215,191 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
   )
 }
 
-function KpiGrid({ kpis }: { kpis: Kpis }) {
+function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
+  const { kpis } = data
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+      <Card className="border border-border/70 shadow-none">
+        <CardContent className="grid gap-4 p-4 md:grid-cols-3">
+          <SummaryMetric
+            label="Sessions"
+            value={fmtNumber(kpis.sessions)}
+            detail={`${fmtNumber(kpis.converted_sessions)} converties`}
+            icon={Users}
+          />
+          <SummaryMetric
+            label="CA ecommerce"
+            value={fmtMoney(kpis.revenue)}
+            detail={`${fmtNumber(kpis.orders)} orders · AOV ${fmtMoney(kpis.aov)}`}
+            icon={CircleDollarSign}
+          />
+          <SummaryMetric
+            label="Conversion"
+            value={fmtPct(kpis.conversion_rate)}
+            detail="sessions → order ecommerce"
+            icon={Activity}
+          />
+        </CardContent>
+      </Card>
+      <Card className="border border-border/70 shadow-none">
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+          <TransitionMetric
+            label="Deviennent connus"
+            value={kpis.became_known}
+            rate={kpis.became_known_rate}
+            icon={UserCheck}
+          />
+          <TransitionMetric
+            label="Deviennent clients"
+            value={kpis.became_customer}
+            rate={kpis.became_customer_rate}
+            icon={CheckCircle2}
+          />
+        </CardContent>
+      </Card>
+      <CartEngagement kpis={kpis} />
+    </div>
+  )
+}
+
+function SummaryMetric({
+  label,
+  value,
+  detail,
+  icon: Icon,
+}: {
+  label: string
+  value: string
+  detail: string
+  icon: React.ComponentType<{ className?: string }>
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs font-medium text-muted-foreground">{label}</div>
+        <div className="mt-0.5 truncate text-2xl font-semibold tracking-normal">{value}</div>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</div>
+      </div>
+    </div>
+  )
+}
+
+function TransitionMetric({
+  label,
+  value,
+  rate,
+  icon: Icon,
+}: {
+  label: string
+  value: number
+  rate: number
+  icon: React.ComponentType<{ className?: string }>
+}) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          <span>{label}</span>
+        </div>
+        <span className="text-lg font-semibold">{fmtNumber(value)}</span>
+      </div>
+      <Progress value={rate} className="mt-2 h-1.5" />
+      <div className="mt-1 text-xs text-muted-foreground">{fmtPct(rate)} des sessions</div>
+    </div>
+  )
+}
+
+function CartEngagement({ kpis }: { kpis: Kpis }) {
   const cards = [
     {
-      label: 'Sessions',
-      value: fmtNumber(kpis.sessions),
-      icon: Users,
-      sub: `${fmtPct(kpis.conversion_rate)} conversion`,
+      label: 'Voient un panier',
+      value: fmtNumber(kpis.cart_viewed_sessions),
+      icon: Eye,
+      sub: fmtPct(kpis.cart_view_rate),
     },
     {
-      label: 'CA ecommerce',
-      value: fmtMoney(kpis.revenue),
-      icon: CircleDollarSign,
-      sub: `${fmtNumber(kpis.orders)} orders`,
-    },
-    {
-      label: 'Deviennent connus',
-      value: fmtNumber(kpis.became_known),
-      icon: UserCheck,
-      sub: fmtPct(kpis.became_known_rate),
-    },
-    {
-      label: 'Deviennent clients',
-      value: fmtNumber(kpis.became_customer),
-      icon: CheckCircle2,
-      sub: fmtPct(kpis.became_customer_rate),
-    },
-    { label: 'Vues panier', value: fmtNumber(kpis.cart_viewed_sessions), icon: Eye, sub: fmtPct(kpis.cart_view_rate) },
-    {
-      label: 'Paniers initiés',
+      label: 'Initient un panier',
       value: fmtNumber(kpis.cart_initiated_sessions),
       icon: ShoppingCart,
       sub: fmtPct(kpis.cart_initiation_rate),
     },
     {
-      label: 'Paniers modifiés',
+      label: 'Modifient un panier',
       value: fmtNumber(kpis.cart_updated_sessions),
       icon: MousePointerClick,
       sub: fmtPct(kpis.cart_update_rate),
     },
-    {
-      label: 'Panier moyen',
-      value: fmtMoney(kpis.aov),
-      icon: Activity,
-      sub: `${fmtNumber(kpis.converted_sessions)} sessions converties`,
-    },
   ]
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {cards.map((card) => {
-        const Icon = card.icon
-        return (
-          <Card key={card.label} className="border border-border/70 shadow-none">
-            <CardContent className="flex items-center justify-between p-4">
+    <Card className="border border-border/70 shadow-none xl:col-span-2">
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2">
+          <CardTitle>Engagement panier</CardTitle>
+          <Info className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-3">
+        {cards.map((card) => {
+          const Icon = card.icon
+          return (
+            <div key={card.label} className="flex items-center justify-between rounded-md border bg-background p-3">
               <div className="min-w-0">
                 <div className="text-xs font-medium text-muted-foreground">{card.label}</div>
-                <div className="mt-1 text-2xl font-semibold tracking-normal">{card.value}</div>
+                <div className="mt-0.5 text-xl font-semibold">{card.value}</div>
+              </div>
+              <div className="text-right">
+                <Icon className="ml-auto h-4 w-4 text-muted-foreground" />
                 <div className="mt-1 text-xs text-muted-foreground">{card.sub}</div>
               </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
-                <Icon className="h-4 w-4 text-muted-foreground" />
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AudienceCards({ rows }: { rows: AudienceRow[] }) {
+  return (
+    <div className="grid gap-3 xl:grid-cols-3">
+      {rows.map((row) => (
+        <Card key={row.key} className="border border-border/70 shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: AUDIENCE_COLORS[row.key] }} />
+                  <div className="font-medium">{row.label}</div>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">{fmtPct(row.share)} des sessions</div>
               </div>
-            </CardContent>
-          </Card>
-        )
-      })}
+              <div className="text-right">
+                <div className="text-xl font-semibold">{fmtNumber(row.sessions)}</div>
+                <div className="text-xs text-muted-foreground">sessions</div>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+              <AudienceMiniMetric label="Panier" value={fmtPct(row.cart_initiation_rate)} />
+              <AudienceMiniMetric label="Convertit" value={fmtPct(row.conversion_rate)} />
+              <AudienceMiniMetric label="CA" value={fmtMoney(row.revenue)} />
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+function AudienceMiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-muted/60 p-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate font-medium">{value}</div>
     </div>
   )
 }
@@ -339,7 +460,7 @@ function AudienceMixChart({ rows }: { rows: AudienceRow[] }) {
       </CardHeader>
       <CardContent>
         <ChartContainer
-          className="h-[280px]"
+          className="h-[240px]"
           config={{
             sessions: { label: 'Sessions', color: 'var(--chart-1)' },
           }}
@@ -369,7 +490,7 @@ function DailyTransitionsChart({ rows }: { rows: DailyRow[] }) {
       </CardHeader>
       <CardContent>
         <ChartContainer
-          className="h-[280px]"
+          className="h-[240px]"
           config={{
             became_known: { label: 'Deviennent connus', color: 'var(--chart-2)' },
             became_customer: { label: 'Deviennent clients', color: 'var(--chart-3)' },
@@ -377,7 +498,7 @@ function DailyTransitionsChart({ rows }: { rows: DailyRow[] }) {
         >
           <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
             <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={shortDate} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <Tooltip formatter={(value) => fmtNumber(Number(value))} />
             <Line type="monotone" dataKey="became_known" stroke="var(--chart-2)" strokeWidth={2} dot={false} />
@@ -414,7 +535,7 @@ function AudienceMatrix({ rows }: { rows: AudienceRow[] }) {
           <tbody>
             {rows.map((row) => (
               <tr key={row.key} className="border-b last:border-0">
-                <td className="py-3 pr-3">
+                <td className="sticky left-0 bg-card py-3 pr-3">
                   <div className="font-medium">{row.label}</div>
                   <div className="text-xs text-muted-foreground">{fmtPct(row.share)} des sessions</div>
                 </td>
@@ -444,7 +565,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
       </CardHeader>
       <CardContent>
         <ChartContainer
-          className="h-[320px]"
+          className="h-[300px]"
           config={{
             unknown: { label: 'Inconnus', color: 'var(--chart-1)' },
             known_no_purchase: { label: 'Connus non-clients', color: 'var(--chart-2)' },
@@ -453,7 +574,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
         >
           <AreaChart data={rows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
             <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={shortDate} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <Tooltip formatter={(value) => fmtNumber(Number(value))} />
             <Area type="monotone" dataKey="unknown" stackId="1" fill="var(--chart-1)" stroke="var(--chart-1)" />
@@ -486,10 +607,16 @@ function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
           <CardTitle>CA ecommerce</CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer className="h-[280px]" config={{ revenue: { label: 'CA', color: 'var(--chart-4)' } }}>
+          <ChartContainer className="h-[240px]" config={{ revenue: { label: 'CA', color: 'var(--chart-4)' } }}>
             <BarChart data={rows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11 }}
+                tickFormatter={shortDate}
+              />
               <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
               <Tooltip formatter={(value) => fmtMoney(Number(value))} />
               <Bar dataKey="revenue" fill="var(--chart-4)" radius={[4, 4, 0, 0]} />
@@ -503,12 +630,18 @@ function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
         </CardHeader>
         <CardContent>
           <ChartContainer
-            className="h-[280px]"
+            className="h-[240px]"
             config={{ conversion_rate: { label: 'Conversion', color: 'var(--chart-5)' } }}
           >
             <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11 }}
+                tickFormatter={shortDate}
+              />
               <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
               <Tooltip formatter={(value) => fmtPct(Number(value))} />
               <Line type="monotone" dataKey="conversion_rate" stroke="var(--chart-5)" strokeWidth={2} dot={false} />
@@ -608,4 +741,9 @@ function formatDateTime(value: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function shortDate(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' }).format(date)
 }
