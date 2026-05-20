@@ -47,6 +47,7 @@ interface LifecycleFactRow {
 interface LifecycleDaySnapshotRow {
   day: string
   status: 'ready' | 'failed'
+  facts_count: number | null
 }
 
 interface AudienceBucket {
@@ -154,7 +155,10 @@ export default defineQuery({
     }
 
     const expectedDays = buildDays(from, to)
-    const canUseFacts = factBundle ? expectedDays.every((day) => factBundle.coveredDays.has(day)) : false
+    const canUseFacts = factBundle
+      ? expectedDays.every((day) => factBundle.coveredDays.has(day)) &&
+        factBundle.facts.length >= factBundle.expectedFacts
+      : false
     const facts = canUseFacts && factBundle ? factBundle.facts : []
     const sessions = canUseFacts ? [] : await loadSessions(query, from, to, log)
     const actors = canUseFacts ? buildActorAggregatesFromFacts(facts) : buildActorAggregates(sessions)
@@ -220,7 +224,7 @@ async function loadFactBundle(
   from: Date,
   to: Date,
   log: { warn: (message: string) => void },
-): Promise<{ facts: LifecycleFactRow[]; coveredDays: Set<string> } | null> {
+): Promise<{ facts: LifecycleFactRow[]; coveredDays: Set<string>; expectedFacts: number } | null> {
   const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
   const fromDay = dayKey(from)
   const toDay = dayKey(to)
@@ -255,7 +259,7 @@ async function loadFactBundle(
       (pagination) =>
         graph({
           entity: 'visitorLifecycleDaySnapshot',
-          fields: ['day', 'status'],
+          fields: ['day', 'status', 'facts_count'],
           filters: { day: { $gte: fromDay, $lte: toDay }, status: 'ready' },
           pagination,
         }) as unknown as Promise<LifecycleDaySnapshotRow[]>,
@@ -269,6 +273,7 @@ async function loadFactBundle(
   return {
     facts,
     coveredDays: new Set(snapshots.map((row) => row.day)),
+    expectedFacts: snapshots.reduce((sum, row) => sum + count(row.facts_count), 0),
   }
 }
 
