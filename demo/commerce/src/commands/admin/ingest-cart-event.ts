@@ -288,6 +288,17 @@ export default defineCommand({
       }
     }
 
+    await step.emit('cart.refresh-requested', {
+      cart_id: cartId,
+      cart_token: input.cart_token,
+      checkout_token: input.checkout_token ?? null,
+      shopify_order_id: input.shopify_order_id ?? null,
+      email: input.email?.trim().toLowerCase() ?? null,
+      reason: 'cart_event_ingested',
+      source: 'ingestCartEvent',
+      requested_at: new Date().toISOString(),
+    })
+
     return { cart_id: cartId }
   },
 })

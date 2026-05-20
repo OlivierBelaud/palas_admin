@@ -83,6 +83,16 @@ export async function POST(req: Request): Promise<Response> {
             `[shopify-webhook customers] contact refresh emit failed for ${email}: ${(err as Error).message}`,
           )
         })
+      app
+        .emit('cart.refresh-requested', {
+          email,
+          reason: 'shopify_customer_webhook',
+          source: 'shopify-webhooks/customers',
+          requested_at: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(`[shopify-webhook customers] cart refresh emit failed for ${email}: ${(err as Error).message}`)
+        })
     }
     console.log(
       `[shopify-webhook customers] customer=${customer.id} matched_via=${outcome.matched_via} contact_id=${outcome.contact_id ?? 'null'} created=${outcome.created} carts_reattached=${outcome.carts_reattached}`,

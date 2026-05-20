@@ -82,6 +82,13 @@ export default defineCommand({
           requested_at: new Date().toISOString(),
         })
       }
+      await step.emit('cart.refresh-requested', {
+        shopify_order_id: shopifyOrderId,
+        email: snapshot.email,
+        reason: 'shopify_order_refresh',
+        source: 'refreshOrder',
+        requested_at: new Date().toISOString(),
+      })
     }
 
     log.info(

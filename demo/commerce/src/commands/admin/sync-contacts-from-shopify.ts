@@ -395,10 +395,23 @@ export default defineCommand({
         source: 'syncContactsFromShopify',
         requested_at: new Date().toISOString(),
       })
+      await step.emit('cart.refresh-requested', {
+        email,
+        reason: 'shopify_contact_sync',
+        source: 'syncContactsFromShopify',
+        requested_at: new Date().toISOString(),
+      })
     }
     for (const order of ordersForUpsert) {
       await step.emit('order.refresh-requested', {
         shopify_order_id: order.shopify_order_id,
+        reason: 'shopify_sync',
+        source: 'syncContactsFromShopify',
+        requested_at: new Date().toISOString(),
+      })
+      await step.emit('cart.refresh-requested', {
+        shopify_order_id: order.shopify_order_id,
+        email: order.email?.trim().toLowerCase() ?? null,
         reason: 'shopify_sync',
         source: 'syncContactsFromShopify',
         requested_at: new Date().toISOString(),

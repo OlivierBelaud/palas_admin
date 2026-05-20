@@ -14,7 +14,7 @@ export default defineQuery({
     const carts = await query.graph({
       entity: 'cart',
       fields: ['highest_stage', 'last_action_at', 'total_price'],
-      pagination: { limit: 500 },
+      pagination: { limit: 5000 },
     })
 
     if (carts.length === 0) {

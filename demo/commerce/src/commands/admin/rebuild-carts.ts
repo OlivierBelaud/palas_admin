@@ -34,6 +34,7 @@
 import { type PosthogEvent, type RawDb, SPAM_EMAIL_RE, STAGES } from '../../modules/cart-tracking/apply-event'
 import { enrichEventWithEmail, resolveEmailsBatch } from '../../modules/cart-tracking/identity-resolver'
 import { normalizeCartEvent } from '../../modules/cart-tracking/posthog-adapter'
+import { repairCartSnapshots } from '../../modules/cart-tracking/refresh-cart'
 
 const POSTHOG_PAGE_SIZE = 1000
 const LOG_INSERT_BATCH = 200 // rows per multi-values INSERT — keeps payload well under Neon's 64 MB cap
@@ -312,6 +313,11 @@ export default defineCommand({
         }
         log.info(`[rebuildCarts] Inserted ${inserted} carts in ${Math.ceil(cartArray.length / BULK_CHUNK)} batches`)
 
+        const repairResult = await repairCartSnapshots(db, { limit: 5000, dryRun: false })
+        log.info(
+          `[rebuildCarts] Repair pass — selected=${repairResult.selected} repaired=${repairResult.repaired} missing_cart_order_links ${repairResult.before.missing_cart_order_links}->${repairResult.after.missing_cart_order_links}`,
+        )
+
         return { rebuilt: cartArray.length, skipped, errors, identities_recovered: identitiesRecovered }
       },
       compensate: async (output) => {
@@ -391,6 +397,8 @@ interface CartAccumulator {
   discounts_amount: number | null
   subtotal_price: number | null
   total_tax: number | null
+  cart_birth_at: string | null
+  completed_at: string | null
 }
 
 function actionToStage(action: string): (typeof STAGES)[number] {
@@ -474,6 +482,8 @@ function foldCartEvent(
       discounts_amount: n.discounts_amount ?? null,
       subtotal_price: n.subtotal_price ?? null,
       total_tax: n.total_tax ?? null,
+      cart_birth_at: n.occurred_at,
+      completed_at: n.event === 'checkout:completed' ? n.occurred_at : null,
     }
     carts.set(token, acc)
     if (n.distinct_id) tokenByDistinctId.set(n.distinct_id, token)
@@ -516,6 +526,7 @@ function foldCartEvent(
   existing.discounts_amount = firstNonNull(existing.discounts_amount, n.discounts_amount)
   existing.subtotal_price = firstNonNull(existing.subtotal_price, n.subtotal_price)
   existing.total_tax = firstNonNull(existing.total_tax, n.total_tax)
+  if (n.event === 'checkout:completed') existing.completed_at = firstNonNull(existing.completed_at, n.occurred_at)
 
   // Last action always the most recent event seen (events arrive in ts order)
   existing.last_action = n.event
@@ -556,6 +567,8 @@ const CART_COLUMNS = [
   'discounts_amount',
   'subtotal_price',
   'total_tax',
+  'cart_birth_at',
+  'completed_at',
 ] as const
 
 /**
@@ -605,6 +618,8 @@ async function bulkInsertCarts(db: RawDb, carts: CartAccumulator[]): Promise<voi
       c.discounts_amount,
       c.subtotal_price,
       c.total_tax,
+      c.cart_birth_at,
+      c.completed_at,
     )
   }
   // ON CONFLICT: between the WIPE and the bulk INSERT the live

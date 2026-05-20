@@ -118,6 +118,24 @@ export async function POST(req: Request): Promise<Response> {
           )
         })
     }
+    if (app?.emit) {
+      app
+        .emit('cart.refresh-requested', {
+          cart_id: outcome.cart_id,
+          shopify_order_id: String(order.id),
+          cart_token: order.cart_token ?? null,
+          checkout_token: order.checkout_token ?? null,
+          email: order.email?.trim().toLowerCase() ?? null,
+          reason: 'shopify_order_paid_webhook',
+          source: 'shopify-webhooks/orders-paid',
+          requested_at: new Date().toISOString(),
+        })
+        .catch((err) => {
+          console.warn(
+            `[shopify-webhook orders-paid] cart refresh emit failed for ${order.id}: ${(err as Error).message}`,
+          )
+        })
+    }
     console.log(
       `[shopify-webhook orders-paid] order=${order.id} matched_via=${outcome.matched_via} cart_id=${outcome.cart_id ?? 'null'} already=${outcome.already_completed}`,
     )

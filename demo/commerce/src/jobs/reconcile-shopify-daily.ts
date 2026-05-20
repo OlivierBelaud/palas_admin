@@ -14,6 +14,7 @@
 // Production-only — local `manta dev` no-ops to avoid hitting prod data.
 
 import postgres from 'postgres'
+import { type RawDb, refreshCartSnapshot } from '../modules/cart-tracking/refresh-cart'
 import { type ShopifyOrderPayload, upsertShopifyOrder } from '../modules/cart-tracking/upsert-shopify-order'
 
 interface ReconcileResult {
@@ -72,6 +73,10 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ log }
 
   const t0 = Date.now()
   const sql = postgres(dbUrl, { ssl: 'require', max: 1, prepare: false })
+  const db: RawDb = {
+    raw: async <T>(query: string, params?: unknown[]): Promise<T[]> =>
+      (await sql.unsafe(query, (params ?? []) as never[])) as T[],
+  }
   const result: ReconcileResult = { ...EMPTY }
 
   try {
@@ -99,6 +104,13 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ log }
       for (const order of orders) {
         try {
           const outcome = await upsertShopifyOrder(sql, order)
+          await refreshCartSnapshot(db, {
+            cart_id: outcome.cart_id,
+            cart_token: order.cart_token ?? null,
+            checkout_token: order.checkout_token ?? null,
+            shopify_order_id: String(order.id),
+            email: order.email?.trim().toLowerCase() ?? null,
+          })
           if (outcome.already_completed) {
             result.already_completed++
           } else {

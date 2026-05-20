@@ -29,10 +29,11 @@ export default defineCommand({
         )
 
         if (duplicates.length === 0) {
-          return { consolidated: 0, groups: 0 }
+          return { consolidated: 0, groups: 0, refreshed_cart_ids: [] as string[] }
         }
 
         let totalMerged = 0
+        const refreshedCartIds = new Set<string>()
 
         for (const group of duplicates) {
           const cartIds = group.cart_ids
@@ -67,10 +68,15 @@ export default defineCommand({
             await db.raw('DELETE FROM carts WHERE id = $1', [orphanId])
 
             totalMerged++
+            refreshedCartIds.add(keepId)
           }
         }
 
-        return { consolidated: totalMerged, groups: duplicates.length }
+        return {
+          consolidated: totalMerged,
+          groups: duplicates.length,
+          refreshed_cart_ids: Array.from(refreshedCartIds),
+        }
       },
       compensate: async (output, _ctx) => {
         // Non-compensable operation — consolidation merges and deletes are irreversible
@@ -79,6 +85,15 @@ export default defineCommand({
     })({})
 
     log.info(`[consolidateCarts] Consolidated ${result.consolidated} duplicate carts across ${result.groups} groups`)
+
+    for (const cartId of result.refreshed_cart_ids) {
+      await step.emit('cart.refresh-requested', {
+        cart_id: cartId,
+        reason: 'cart_consolidated',
+        source: 'consolidateCarts',
+        requested_at: new Date().toISOString(),
+      })
+    }
 
     return result
   },

@@ -5,6 +5,9 @@ export default definePage({
     title: 'Paniers',
     actions: [
       { label: 'Consolider', command: '/api/cart-tracking/consolidate' },
+      { label: 'Auditer carts', command: 'auditCartSnapshots' },
+      { label: 'Tester réparation carts', command: 'repairCartSnapshots' },
+      { label: 'Réparer carts', command: 'repairCartSnapshotsApply', destructive: true },
       { label: 'Purger paniers vides', command: '/api/cart-tracking/purge-empty', destructive: true },
       { label: 'Reconstruire depuis PostHog', command: '/api/admin/command/rebuildCarts', destructive: true },
     ],
