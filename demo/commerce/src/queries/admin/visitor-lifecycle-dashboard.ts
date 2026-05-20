@@ -25,6 +25,30 @@ interface OrderRow {
   include_in_ecommerce_analytics: boolean | null
 }
 
+interface LifecycleFactRow {
+  day: string
+  actor_key: string
+  first_started_at: Date | string
+  segment_at_day_start: Segment
+  sessions: number | null
+  cart_viewed: boolean | null
+  cart_initiated: boolean | null
+  cart_updated: boolean | null
+  converted: boolean | null
+  converted_sessions: number | null
+  became_known: boolean | null
+  became_customer: boolean | null
+  known_without_contact: boolean | null
+  converted_without_order_id: boolean | null
+  became_customer_without_contact: boolean | null
+  order_ids: string[] | null
+}
+
+interface LifecycleDaySnapshotRow {
+  day: string
+  status: 'ready' | 'failed'
+}
+
 interface AudienceBucket {
   key: Segment
   label: string
@@ -72,8 +96,12 @@ interface ActorAggregate {
   cart_initiated: boolean
   cart_updated: boolean
   converted: boolean
+  converted_sessions: number
   became_known: boolean
   became_customer: boolean
+  known_without_contact: boolean
+  converted_without_order_id: boolean
+  became_customer_without_contact: boolean
   order_ids: Set<string>
 }
 
@@ -100,34 +128,8 @@ export default defineQuery({
       )
     }
 
-    const [sessions, orders] = await Promise.all([
-      pullAll<SessionRow>(
-        (pagination) =>
-          query.graph({
-            entity: 'visitorSession',
-            fields: [
-              'id',
-              'distinct_id',
-              'started_at',
-              'segment_at_session_start',
-              'contact_id',
-              'carts_viewed_in_session',
-              'carts_created_in_session',
-              'carts_updated_in_session',
-              'cart_converted',
-              'order_id',
-              'became_customer_in_session',
-              'email_acquired_in_session',
-              'email_acquired_via',
-              'is_paid_session',
-            ],
-            filters: { started_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
-            pagination,
-          }) as unknown as Promise<SessionRow[]>,
-      ).catch((err) => {
-        log.warn(`[visitor-lifecycle-dashboard] sessions: ${(err as Error).message}`)
-        return [] as SessionRow[]
-      }),
+    const [factBundle, orders] = await Promise.all([
+      loadFactBundle(query, from, to, log),
       pullAll<OrderRow>(
         (pagination) =>
           query.graph({
@@ -151,36 +153,32 @@ export default defineQuery({
       if (order.shopify_order_id) orderByShopifyId.set(order.shopify_order_id, order)
     }
 
-    const totalSessions = sessions.length
-    const actors = buildActorAggregates(sessions)
+    const expectedDays = buildDays(from, to)
+    const canUseFacts = factBundle ? expectedDays.every((day) => factBundle.coveredDays.has(day)) : false
+    const facts = canUseFacts && factBundle ? factBundle.facts : []
+    const sessions = canUseFacts ? [] : await loadSessions(query, from, to, log)
+    const actors = canUseFacts ? buildActorAggregatesFromFacts(facts) : buildActorAggregates(sessions)
+    const totalSessions = canUseFacts ? facts.reduce((sum, fact) => sum + count(fact.sessions), 0) : sessions.length
     const totalVisitors = actors.length
     const audience = buildAudienceBuckets(actors, orderByShopifyId, totalVisitors)
-    const daily = buildDailyBuckets(sessions, ecommerceOrders, from, to)
+    const daily = canUseFacts
+      ? buildDailyBucketsFromFacts(facts, ecommerceOrders, from, to)
+      : buildDailyBuckets(sessions, ecommerceOrders, from, to)
     const totalOrders = ecommerceOrders.length
     const revenue = roundMoney(ecommerceOrders.reduce((sum, order) => sum + money(order.total_price), 0))
     const convertedVisitors = actors.filter((actor) => actor.converted).length
-    const convertedSessions = sessions.filter((session) => session.cart_converted === true).length
+    const convertedSessions = canUseFacts
+      ? actors.reduce((sum, actor) => sum + actor.converted_sessions, 0)
+      : sessions.filter((session) => session.cart_converted === true).length
     const becameKnown = actors.filter((actor) => actor.became_known).length
     const becameCustomer = actors.filter((actor) => actor.became_customer).length
     const cartViewedVisitors = actors.filter((actor) => actor.cart_viewed).length
     const cartInitiatedVisitors = actors.filter((actor) => actor.cart_initiated).length
     const cartUpdatedVisitors = actors.filter((actor) => actor.cart_updated).length
 
-    const dataQuality = {
-      sessions_without_contact_but_known_segment: sessions.filter(
-        (session) => session.contact_id == null && session.segment_at_session_start !== 'unknown',
-      ).length,
-      converted_sessions_without_order_id: sessions.filter(
-        (session) => session.cart_converted === true && !session.order_id,
-      ).length,
-      converted_sessions_without_matching_order: sessions.filter(
-        (session) => session.cart_converted === true && session.order_id && !orderByShopifyId.has(session.order_id),
-      ).length,
-      became_customer_sessions_without_contact: sessions.filter(
-        (session) => session.became_customer_in_session === true && !session.contact_id,
-      ).length,
-      known_transitions: becameKnown,
-    }
+    const dataQuality = canUseFacts
+      ? buildDataQualityFromFacts(facts, orderByShopifyId, becameKnown)
+      : buildDataQualityFromSessions(sessions, orderByShopifyId, becameKnown)
 
     return {
       meta: {
@@ -217,6 +215,99 @@ export default defineQuery({
   },
 })
 
+async function loadFactBundle(
+  query: unknown,
+  from: Date,
+  to: Date,
+  log: { warn: (message: string) => void },
+): Promise<{ facts: LifecycleFactRow[]; coveredDays: Set<string> } | null> {
+  const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
+  const fromDay = dayKey(from)
+  const toDay = dayKey(to)
+  const [facts, snapshots] = await Promise.all([
+    pullAll<LifecycleFactRow>(
+      (pagination) =>
+        graph({
+          entity: 'visitorLifecycleActorDailyFact',
+          fields: [
+            'day',
+            'actor_key',
+            'first_started_at',
+            'segment_at_day_start',
+            'sessions',
+            'cart_viewed',
+            'cart_initiated',
+            'cart_updated',
+            'converted',
+            'converted_sessions',
+            'became_known',
+            'became_customer',
+            'known_without_contact',
+            'converted_without_order_id',
+            'became_customer_without_contact',
+            'order_ids',
+          ],
+          filters: { day: { $gte: fromDay, $lte: toDay } },
+          pagination,
+        }) as unknown as Promise<LifecycleFactRow[]>,
+    ),
+    pullAll<LifecycleDaySnapshotRow>(
+      (pagination) =>
+        graph({
+          entity: 'visitorLifecycleDaySnapshot',
+          fields: ['day', 'status'],
+          filters: { day: { $gte: fromDay, $lte: toDay }, status: 'ready' },
+          pagination,
+        }) as unknown as Promise<LifecycleDaySnapshotRow[]>,
+    ),
+  ]).catch((err) => {
+    log.warn(`[visitor-lifecycle-dashboard] fact cache unavailable: ${(err as Error).message}`)
+    return [[], []] as [LifecycleFactRow[], LifecycleDaySnapshotRow[]]
+  })
+
+  if (snapshots.length === 0) return null
+  return {
+    facts,
+    coveredDays: new Set(snapshots.map((row) => row.day)),
+  }
+}
+
+async function loadSessions(
+  query: unknown,
+  from: Date,
+  to: Date,
+  log: { warn: (message: string) => void },
+): Promise<SessionRow[]> {
+  const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
+  return pullAll<SessionRow>(
+    (pagination) =>
+      graph({
+        entity: 'visitorSession',
+        fields: [
+          'id',
+          'distinct_id',
+          'started_at',
+          'segment_at_session_start',
+          'contact_id',
+          'carts_viewed_in_session',
+          'carts_created_in_session',
+          'carts_updated_in_session',
+          'cart_converted',
+          'order_id',
+          'became_customer_in_session',
+          'email_acquired_in_session',
+          'email_acquired_via',
+          'is_paid_session',
+        ],
+        filters: { started_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+        pagination,
+      }) as unknown as Promise<SessionRow[]>,
+  ).catch((err) => {
+    log.warn(`[visitor-lifecycle-dashboard] sessions: ${(err as Error).message}`)
+    return [] as SessionRow[]
+  })
+}
+
 async function pullAll<T>(
   loadPage: (pagination: { take: number; skip: number; limit: number; offset: number }) => Promise<T[]>,
 ): Promise<T[]> {
@@ -249,8 +340,12 @@ function buildActorAggregates(sessions: SessionRow[]): ActorAggregate[] {
         cart_initiated: false,
         cart_updated: false,
         converted: false,
+        converted_sessions: 0,
         became_known: false,
         became_customer: false,
+        known_without_contact: false,
+        converted_without_order_id: false,
+        became_customer_without_contact: false,
         order_ids: new Set<string>(),
       }
       actors.set(key, actor)
@@ -261,9 +356,57 @@ function buildActorAggregates(sessions: SessionRow[]): ActorAggregate[] {
     actor.cart_initiated ||= count(session.carts_created_in_session) > 0
     actor.cart_updated ||= count(session.carts_updated_in_session) > 0
     actor.converted ||= session.cart_converted === true
+    if (session.cart_converted === true) actor.converted_sessions += 1
     actor.became_known ||= session.email_acquired_in_session === true
     actor.became_customer ||= session.became_customer_in_session === true
+    actor.known_without_contact ||= session.contact_id == null && session.segment_at_session_start !== 'unknown'
+    actor.converted_without_order_id ||= session.cart_converted === true && !session.order_id
+    actor.became_customer_without_contact ||= session.became_customer_in_session === true && !session.contact_id
     if (session.order_id) actor.order_ids.add(session.order_id)
+  }
+
+  return [...actors.values()]
+}
+
+function buildActorAggregatesFromFacts(facts: LifecycleFactRow[]): ActorAggregate[] {
+  const actors = new Map<string, ActorAggregate>()
+  const sorted = [...facts].sort((a, b) => toMs(a.first_started_at) - toMs(b.first_started_at))
+
+  for (const fact of sorted) {
+    let actor = actors.get(fact.actor_key)
+    if (!actor) {
+      actor = {
+        key: fact.actor_key,
+        first_started_at: toMs(fact.first_started_at),
+        segment: fact.segment_at_day_start,
+        sessions: 0,
+        cart_viewed: false,
+        cart_initiated: false,
+        cart_updated: false,
+        converted: false,
+        converted_sessions: 0,
+        became_known: false,
+        became_customer: false,
+        known_without_contact: false,
+        converted_without_order_id: false,
+        became_customer_without_contact: false,
+        order_ids: new Set<string>(),
+      }
+      actors.set(fact.actor_key, actor)
+    }
+
+    actor.sessions += count(fact.sessions)
+    actor.cart_viewed ||= fact.cart_viewed === true
+    actor.cart_initiated ||= fact.cart_initiated === true
+    actor.cart_updated ||= fact.cart_updated === true
+    actor.converted ||= fact.converted === true
+    actor.converted_sessions += count(fact.converted_sessions)
+    actor.became_known ||= fact.became_known === true
+    actor.became_customer ||= fact.became_customer === true
+    actor.known_without_contact ||= fact.known_without_contact === true
+    actor.converted_without_order_id ||= fact.converted_without_order_id === true
+    actor.became_customer_without_contact ||= fact.became_customer_without_contact === true
+    for (const orderId of normalizeOrderIds(fact.order_ids)) actor.order_ids.add(orderId)
   }
 
   return [...actors.values()]
@@ -385,6 +528,107 @@ function buildDailyBuckets(sessions: SessionRow[], orders: OrderRow[], from: Dat
   return Array.from(buckets.values())
 }
 
+function buildDailyBucketsFromFacts(facts: LifecycleFactRow[], orders: OrderRow[], from: Date, to: Date): DayBucket[] {
+  const buckets = new Map<string, DayBucket>()
+  const actorSets = new Map<string, Record<Segment, Set<string>>>()
+  const convertedActorSets = new Map<string, Set<string>>()
+  const becameKnownActorSets = new Map<string, Set<string>>()
+  const becameCustomerActorSets = new Map<string, Set<string>>()
+  for (const day of buildDays(from, to)) {
+    buckets.set(day, {
+      date: day,
+      visitors: 0,
+      sessions: 0,
+      unknown: 0,
+      known_no_purchase: 0,
+      returning_customer: 0,
+      became_known: 0,
+      became_customer: 0,
+      converted_visitors: 0,
+      converted_sessions: 0,
+      orders: 0,
+      revenue: 0,
+      conversion_rate: 0,
+    })
+    actorSets.set(day, { unknown: new Set(), known_no_purchase: new Set(), returning_customer: new Set() })
+    convertedActorSets.set(day, new Set())
+    becameKnownActorSets.set(day, new Set())
+    becameCustomerActorSets.set(day, new Set())
+  }
+
+  for (const fact of facts) {
+    const bucket = buckets.get(fact.day)
+    if (!bucket) continue
+    bucket.sessions += count(fact.sessions)
+    bucket.converted_sessions += count(fact.converted_sessions)
+    actorSets.get(fact.day)?.[fact.segment_at_day_start].add(fact.actor_key)
+    if (fact.became_known) becameKnownActorSets.get(fact.day)?.add(fact.actor_key)
+    if (fact.became_customer) becameCustomerActorSets.get(fact.day)?.add(fact.actor_key)
+    if (fact.converted) convertedActorSets.get(fact.day)?.add(fact.actor_key)
+  }
+
+  for (const order of orders) {
+    if (!order.placed_at) continue
+    const day = dayKey(order.placed_at)
+    const bucket = buckets.get(day)
+    if (!bucket) continue
+    bucket.orders += 1
+    bucket.revenue = roundMoney(bucket.revenue + money(order.total_price))
+  }
+
+  for (const bucket of buckets.values()) {
+    const actors = actorSets.get(bucket.date)
+    bucket.unknown = actors?.unknown.size ?? 0
+    bucket.known_no_purchase = actors?.known_no_purchase.size ?? 0
+    bucket.returning_customer = actors?.returning_customer.size ?? 0
+    bucket.visitors = bucket.unknown + bucket.known_no_purchase + bucket.returning_customer
+    bucket.became_known = becameKnownActorSets.get(bucket.date)?.size ?? 0
+    bucket.became_customer = becameCustomerActorSets.get(bucket.date)?.size ?? 0
+    bucket.converted_visitors = convertedActorSets.get(bucket.date)?.size ?? 0
+    bucket.conversion_rate = rate(bucket.converted_visitors, bucket.visitors)
+  }
+  return Array.from(buckets.values())
+}
+
+function buildDataQualityFromSessions(
+  sessions: SessionRow[],
+  orderByShopifyId: Map<string, OrderRow>,
+  becameKnown: number,
+) {
+  return {
+    sessions_without_contact_but_known_segment: sessions.filter(
+      (session) => session.contact_id == null && session.segment_at_session_start !== 'unknown',
+    ).length,
+    converted_sessions_without_order_id: sessions.filter(
+      (session) => session.cart_converted === true && !session.order_id,
+    ).length,
+    converted_sessions_without_matching_order: sessions.filter(
+      (session) => session.cart_converted === true && session.order_id && !orderByShopifyId.has(session.order_id),
+    ).length,
+    became_customer_sessions_without_contact: sessions.filter(
+      (session) => session.became_customer_in_session === true && !session.contact_id,
+    ).length,
+    known_transitions: becameKnown,
+  }
+}
+
+function buildDataQualityFromFacts(
+  facts: LifecycleFactRow[],
+  orderByShopifyId: Map<string, OrderRow>,
+  becameKnown: number,
+) {
+  return {
+    sessions_without_contact_but_known_segment: facts.filter((fact) => fact.known_without_contact === true).length,
+    converted_sessions_without_order_id: facts.filter((fact) => fact.converted_without_order_id === true).length,
+    converted_sessions_without_matching_order: facts.filter((fact) =>
+      normalizeOrderIds(fact.order_ids).some((orderId) => !orderByShopifyId.has(orderId)),
+    ).length,
+    became_customer_sessions_without_contact: facts.filter((fact) => fact.became_customer_without_contact === true)
+      .length,
+    known_transitions: becameKnown,
+  }
+}
+
 function buildFlow(audience: AudienceBucket[]) {
   const unknown = audience.find((row) => row.key === 'unknown')
   const known = audience.find((row) => row.key === 'known_no_purchase')
@@ -422,6 +666,17 @@ function toMs(input: Date | string): number {
 
 function count(value: number | null | undefined): number {
   return Number(value ?? 0)
+}
+
+function normalizeOrderIds(value: string[] | string | null | undefined): string[] {
+  if (!value) return []
+  if (Array.isArray(value)) return value.filter(Boolean)
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : []
+  } catch {
+    return []
+  }
 }
 
 function money(value: number | string | null | undefined): number {
