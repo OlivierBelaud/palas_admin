@@ -232,13 +232,13 @@ async function loadFactBundle(
   expectedFacts: number
   expectedSessions: number
 } | null> {
-  const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
+  const queryService = query as { graph: (input: unknown) => Promise<unknown> }
   const fromDay = dayKey(from)
   const toDay = dayKey(to)
   const [facts, snapshots] = await Promise.all([
     pullAll<LifecycleFactRow>(
       (pagination) =>
-        graph({
+        queryService.graph({
           entity: 'visitorLifecycleActorDailyFact',
           fields: [
             'day',
@@ -264,7 +264,7 @@ async function loadFactBundle(
     ),
     pullAll<LifecycleDaySnapshotRow>(
       (pagination) =>
-        graph({
+        queryService.graph({
           entity: 'visitorLifecycleDaySnapshot',
           fields: ['day', 'status', 'sessions_count', 'facts_count'],
           filters: { day: { $gte: fromDay, $lte: toDay }, status: 'ready' },
@@ -291,10 +291,10 @@ async function loadSessions(
   to: Date,
   log: { warn: (message: string) => void },
 ): Promise<SessionRow[]> {
-  const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
+  const queryService = query as { graph: (input: unknown) => Promise<unknown> }
   return pullAll<SessionRow>(
     (pagination) =>
-      graph({
+      queryService.graph({
         entity: 'visitorSession',
         fields: [
           'id',
