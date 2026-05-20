@@ -6,6 +6,11 @@
 export default defineModel('Order', {
   shopify_order_id: field.text().unique(),
 
+  // Shopify customer id attached to the order when Shopify exposes it.
+  // This lets us link orders to contacts even when Shopify redacts or
+  // omits the order email.
+  shopify_customer_id: field.text().nullable().index(),
+
   // Email captured at order time — denormalized for fast lookup. May
   // not match `contact.email` if the Shopify customer used a different
   // address (rare but possible), so the link table remains the

@@ -53,6 +53,7 @@ interface CustomerRow {
 
 interface OrderRow {
   shopify_order_id: string
+  shopify_customer_id: string | null
   email: string | null
   order_number: string
   status: 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded'
@@ -186,7 +187,7 @@ async function pullOrders(
     cancelledAt: string | null
     createdAt: string
     currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
-    customer: { email: string | null } | null
+    customer: { id: string | null; email: string | null } | null
   }
   const nodes = await paginateConnection<Node>(
     client,
@@ -198,7 +199,7 @@ async function pullOrders(
               id name email displayFinancialStatus displayFulfillmentStatus
               cancelledAt createdAt
               currentTotalPriceSet { shopMoney { amount currencyCode } }
-              customer { email }
+              customer { id email }
             }
           }
           pageInfo { hasNextPage endCursor }
@@ -226,6 +227,7 @@ async function pullOrders(
     const cancelledAt = toDate(n.cancelledAt)
     return {
       shopify_order_id: gidNum(n.id),
+      shopify_customer_id: n.customer?.id ? gidNum(n.customer.id) : null,
       email,
       order_number: n.name,
       status: deriveOrderStatus({
@@ -333,6 +335,7 @@ export default defineCommand({
         ordersForUpsert as unknown as Record<string, unknown>[],
         [
           'email',
+          'shopify_customer_id',
           'order_number',
           'status',
           'financial_status',

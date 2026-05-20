@@ -19,7 +19,7 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
         cancelledAt: null,
         createdAt: '2026-05-19T10:00:00Z',
         currentTotalPriceSet: { shopMoney: { amount: '42.50', currencyCode: 'EUR' } },
-        customer: { email: null },
+        customer: { id: 'gid://shopify/Customer/987', email: null },
         lineItems: {
           edges: [
             {
@@ -45,6 +45,7 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
     )
 
     expect(snapshot.shopify_order_id).toBe('123456')
+    expect(snapshot.shopify_customer_id).toBe('987')
     expect(snapshot.email).toBe('jane@example.com')
     expect(snapshot.status).toBe('fulfilled')
     expect(snapshot.total_price).toBe(42.5)

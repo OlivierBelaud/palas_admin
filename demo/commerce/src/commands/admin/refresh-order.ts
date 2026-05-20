@@ -6,6 +6,7 @@ interface RawDb {
 
 const REPLACE_FIELDS = [
   'email',
+  'shopify_customer_id',
   'order_number',
   'status',
   'financial_status',
@@ -56,7 +57,7 @@ export default defineCommand({
         'shopify_order_id',
       ])
       const orderId = rows[0]?.id ?? (existing?.id as string | undefined) ?? null
-      if (orderId && snapshot.email) {
+      if (orderId && (snapshot.email || snapshot.shopify_customer_id)) {
         await step.action('link-order-contact', {
           invoke: async (_i: unknown, ctx) => {
             const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
@@ -65,16 +66,19 @@ export default defineCommand({
               `INSERT INTO order_contact (id, order_id, contact_id, created_at, updated_at)
                SELECT gen_random_uuid(), $1, c.id::text, NOW(), NOW()
                  FROM contacts c
-                WHERE LOWER(c.email) = LOWER($2)
+                WHERE ($2::text IS NOT NULL AND LOWER(c.email) = LOWER($2))
+                   OR ($3::text IS NOT NULL AND c.shopify_customer_id = $3)
                 ORDER BY c.updated_at DESC NULLS LAST
                 LIMIT 1
                ON CONFLICT DO NOTHING`,
-              [orderId, snapshot.email],
+              [orderId, snapshot.email, snapshot.shopify_customer_id],
             )
             return null
           },
           compensate: async () => {},
         })({})
+      }
+      if (snapshot.email) {
         await step.emit('contact.refresh-requested', {
           email: snapshot.email,
           reason: 'shopify_order_refresh',

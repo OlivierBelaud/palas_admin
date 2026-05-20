@@ -36,16 +36,20 @@ export default defineCommand({
           `)
 
           await db.raw(`
-            WITH order_agg AS (
+            WITH linked_orders AS (
+              SELECT DISTINCT oc.contact_id, o.id, o.total_price, o.placed_at
+                FROM order_contact oc
+                JOIN orders o ON o.id::text = oc.order_id
+            ),
+            order_agg AS (
               SELECT
-                lower(email) AS email,
+                contact_id,
                 count(*)::int AS orders_count,
                 coalesce(sum(total_price), 0)::float AS total_spent,
                 min(placed_at) AS first_order_at,
                 max(placed_at) AS last_order_at
-              FROM orders
-              WHERE email IS NOT NULL
-              GROUP BY lower(email)
+              FROM linked_orders
+              GROUP BY contact_id
             )
             UPDATE contacts c
                SET orders_count = a.orders_count,
@@ -54,7 +58,7 @@ export default defineCommand({
                    last_order_at = a.last_order_at,
                    updated_at = NOW()
               FROM order_agg a
-             WHERE lower(c.email) = a.email
+             WHERE c.id::text = a.contact_id
                AND (
                  c.orders_count IS DISTINCT FROM a.orders_count
                  OR c.total_spent IS DISTINCT FROM a.total_spent
@@ -86,13 +90,16 @@ export default defineCommand({
 const CONTACT_AUDIT_SQL = `
 WITH local_order_agg AS (
   SELECT
-    lower(email) AS email,
+    contact_id,
     count(*)::int AS local_orders,
     min(placed_at) AS first_order_at,
     max(placed_at) AS last_order_at
-  FROM orders
-  WHERE email IS NOT NULL
-  GROUP BY lower(email)
+  FROM (
+    SELECT DISTINCT oc.contact_id, o.id, o.placed_at
+      FROM order_contact oc
+      JOIN orders o ON o.id::text = oc.order_id
+  ) linked_orders
+  GROUP BY contact_id
 )
 SELECT
   (SELECT count(*)::int FROM contacts) AS contacts,
@@ -101,5 +108,5 @@ SELECT
   count(*) FILTER (WHERE c.first_order_at IS DISTINCT FROM a.first_order_at)::int AS first_order_mismatches,
   count(*) FILTER (WHERE c.last_order_at IS DISTINCT FROM a.last_order_at)::int AS last_order_mismatches
 FROM local_order_agg a
-JOIN contacts c ON lower(c.email) = a.email
+JOIN contacts c ON c.id::text = a.contact_id
 `

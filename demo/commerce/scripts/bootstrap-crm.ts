@@ -99,6 +99,7 @@ const CREATE_ORDERS = `
 CREATE TABLE IF NOT EXISTS orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   shopify_order_id text NOT NULL UNIQUE,
+  shopify_customer_id text,
   email text,
   order_number text,
   status text NOT NULL,
@@ -117,6 +118,7 @@ CREATE TABLE IF NOT EXISTS orders (
 `
 
 const INDEXES_ORDERS = [
+  'CREATE INDEX IF NOT EXISTS orders_shopify_customer_id_idx ON orders (shopify_customer_id)',
   'CREATE INDEX IF NOT EXISTS orders_email_idx ON orders (email)',
   'CREATE INDEX IF NOT EXISTS orders_placed_at_idx ON orders (placed_at DESC)',
 ]

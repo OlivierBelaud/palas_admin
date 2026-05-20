@@ -236,7 +236,19 @@ async function repairOneCart(db: RawDb, cartId: string): Promise<void> {
      SELECT gen_random_uuid(), o.id::text, contact.id::text, NOW(), NOW()
        FROM carts c
        JOIN orders o ON o.shopify_order_id = c.shopify_order_id
-       JOIN contacts contact ON LOWER(contact.email) = LOWER(COALESCE(o.email, c.email))
+       JOIN contacts contact ON (
+         LOWER(contact.email) = LOWER(COALESCE(o.email, c.email))
+         OR (
+           o.shopify_customer_id IS NOT NULL
+           AND o.shopify_customer_id <> ''
+           AND contact.shopify_customer_id = o.shopify_customer_id
+         )
+         OR (
+           c.shopify_customer_id IS NOT NULL
+           AND c.shopify_customer_id <> ''
+           AND contact.shopify_customer_id = c.shopify_customer_id
+         )
+       )
       WHERE c.id = $1
         AND NOT EXISTS (
           SELECT 1 FROM order_contact existing
@@ -522,7 +534,19 @@ order_contacts AS (
     )::int AS missing_order_contact_links
   FROM carts c
   LEFT JOIN orders o ON o.shopify_order_id = c.shopify_order_id
-  LEFT JOIN contacts contact ON LOWER(contact.email) = LOWER(COALESCE(o.email, c.email))
+  LEFT JOIN contacts contact ON (
+    LOWER(contact.email) = LOWER(COALESCE(o.email, c.email))
+    OR (
+      o.shopify_customer_id IS NOT NULL
+      AND o.shopify_customer_id <> ''
+      AND contact.shopify_customer_id = o.shopify_customer_id
+    )
+    OR (
+      c.shopify_customer_id IS NOT NULL
+      AND c.shopify_customer_id <> ''
+      AND contact.shopify_customer_id = c.shopify_customer_id
+    )
+  )
   LEFT JOIN order_contact oc ON oc.order_id = o.id::text AND oc.contact_id = contact.id::text
 ),
 duplicates AS (
@@ -591,7 +615,19 @@ WITH linked AS (
   FROM carts c
   LEFT JOIN orders o ON o.shopify_order_id = c.shopify_order_id
   LEFT JOIN contacts contact ON LOWER(contact.email) = LOWER(c.email)
-  LEFT JOIN contacts order_contact_source ON LOWER(order_contact_source.email) = LOWER(COALESCE(o.email, c.email))
+  LEFT JOIN contacts order_contact_source ON (
+    LOWER(order_contact_source.email) = LOWER(COALESCE(o.email, c.email))
+    OR (
+      o.shopify_customer_id IS NOT NULL
+      AND o.shopify_customer_id <> ''
+      AND order_contact_source.shopify_customer_id = o.shopify_customer_id
+    )
+    OR (
+      c.shopify_customer_id IS NOT NULL
+      AND c.shopify_customer_id <> ''
+      AND order_contact_source.shopify_customer_id = c.shopify_customer_id
+    )
+  )
   LEFT JOIN cart_order existing_order_link ON existing_order_link.order_id = o.id::text
   LEFT JOIN cart_order co ON co.cart_id = c.id AND co.order_id = o.id::text
   LEFT JOIN cart_contact cc ON cc.cart_id = c.id AND cc.contact_id = contact.id::text

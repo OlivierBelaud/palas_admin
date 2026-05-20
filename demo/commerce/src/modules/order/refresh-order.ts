@@ -2,6 +2,7 @@ import { ShopifyAdminClient } from '../shopify-admin/client'
 
 export interface OrderSnapshot {
   shopify_order_id: string
+  shopify_customer_id: string | null
   email: string | null
   order_number: string | null
   status: 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded'
@@ -24,7 +25,7 @@ type ShopifyOrderNode = {
   cancelledAt: string | null
   createdAt: string | null
   currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null
-  customer: { email: string | null } | null
+  customer: { id: string | null; email: string | null } | null
   lineItems: {
     edges: Array<{
       node: {
@@ -57,6 +58,7 @@ export function mapShopifyOrderNodeToSnapshot(node: ShopifyOrderNode, syncedAt =
 
   return {
     shopify_order_id: orderId,
+    shopify_customer_id: node.customer?.id ? normalizeShopifyOrderId(node.customer.id) : null,
     email,
     order_number: node.name,
     status: deriveOrderStatus({ cancelledAt, financial, fulfillment }),
@@ -88,7 +90,7 @@ export async function fetchShopifyOrderSnapshot(shopifyOrderId: string | number)
           cancelledAt
           createdAt
           currentTotalPriceSet { shopMoney { amount currencyCode } }
-          customer { email }
+          customer { id email }
           lineItems(first: 100) {
             edges {
               node {

@@ -178,7 +178,7 @@ async function fetchOrderSnapshotsBatch(client: ShopifyAdminClient, ids: string[
           cancelledAt
           createdAt
           currentTotalPriceSet { shopMoney { amount currencyCode } }
-          customer { email }
+          customer { id email }
           lineItems(first: 100) {
             edges {
               node {
@@ -209,6 +209,7 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
        SELECT *
          FROM jsonb_to_recordset($1::jsonb) AS x(
            shopify_order_id text,
+           shopify_customer_id text,
            email text,
            order_number text,
            status text,
@@ -223,14 +224,15 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
          )
      )
      INSERT INTO orders
-      (id, shopify_order_id, email, order_number, status, financial_status, fulfillment_status,
+      (id, shopify_order_id, shopify_customer_id, email, order_number, status, financial_status, fulfillment_status,
        total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
      SELECT
-       gen_random_uuid(), shopify_order_id, email, order_number, status, financial_status, fulfillment_status,
+       gen_random_uuid(), shopify_order_id, shopify_customer_id, email, order_number, status, financial_status, fulfillment_status,
        total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, NOW(), NOW()
      FROM payload
      ON CONFLICT (shopify_order_id) DO UPDATE SET
        email = EXCLUDED.email,
+       shopify_customer_id = EXCLUDED.shopify_customer_id,
        order_number = EXCLUDED.order_number,
        status = EXCLUDED.status,
        financial_status = EXCLUDED.financial_status,
@@ -246,6 +248,7 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
       JSON.stringify(
         snapshots.map((snapshot) => ({
           shopify_order_id: snapshot.shopify_order_id,
+          shopify_customer_id: snapshot.shopify_customer_id,
           email: snapshot.email,
           order_number: snapshot.order_number,
           status: snapshot.status,
