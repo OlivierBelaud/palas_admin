@@ -39,36 +39,42 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, T
 type Segment = 'unknown' | 'known_no_purchase' | 'returning_customer'
 
 interface Kpis {
+  unique_visitors: number
   sessions: number
+  sessions_per_visitor: number
   orders: number
   revenue: number
   aov: number
+  converted_visitors: number
+  visitor_conversion_rate: number
   converted_sessions: number
   conversion_rate: number
   became_known: number
   became_known_rate: number
   became_customer: number
   became_customer_rate: number
-  cart_viewed_sessions: number
+  cart_viewed_visitors: number
   cart_view_rate: number
-  cart_initiated_sessions: number
+  cart_initiated_visitors: number
   cart_initiation_rate: number
-  cart_updated_sessions: number
+  cart_updated_visitors: number
   cart_update_rate: number
 }
 
 interface AudienceRow {
   key: Segment
   label: string
+  visitors: number
   sessions: number
   share: number
-  cart_viewed_sessions: number
+  sessions_per_visitor: number
+  cart_viewed_visitors: number
   cart_view_rate: number
-  cart_initiated_sessions: number
+  cart_initiated_visitors: number
   cart_initiation_rate: number
-  cart_updated_sessions: number
+  cart_updated_visitors: number
   cart_update_rate: number
-  converted_sessions: number
+  converted_visitors: number
   conversion_rate: number
   became_known: number
   became_customer: number
@@ -79,12 +85,14 @@ interface AudienceRow {
 
 interface DailyRow {
   date: string
+  visitors: number
   sessions: number
   unknown: number
   known_no_purchase: number
   returning_customer: number
   became_known: number
   became_customer: number
+  converted_visitors: number
   converted_sessions: number
   orders: number
   revenue: number
@@ -232,9 +240,9 @@ function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
       <Card className="border border-border/70 shadow-none">
         <CardContent className="grid gap-4 p-4" style={metricGridStyle}>
           <SummaryMetric
-            label="Sessions"
-            value={fmtNumber(kpis.sessions)}
-            detail={`${fmtNumber(kpis.converted_sessions)} converties`}
+            label="Visiteurs uniques"
+            value={fmtNumber(kpis.unique_visitors)}
+            detail={`${fmtNumber(kpis.sessions)} sessions · ${formatDecimal(kpis.sessions_per_visitor)} / visiteur`}
             icon={Users}
           />
           <SummaryMetric
@@ -245,8 +253,8 @@ function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
           />
           <SummaryMetric
             label="Conversion"
-            value={fmtPct(kpis.conversion_rate)}
-            detail="sessions → order ecommerce"
+            value={fmtPct(kpis.visitor_conversion_rate)}
+            detail={`${fmtNumber(kpis.converted_visitors)} visiteurs convertis`}
             icon={Activity}
           />
         </CardContent>
@@ -318,7 +326,7 @@ function TransitionMetric({
         <span className="text-lg font-semibold">{fmtNumber(value)}</span>
       </div>
       <Progress value={rate} className="mt-2 h-1.5" />
-      <div className="mt-1 text-xs text-muted-foreground">{fmtPct(rate)} des sessions</div>
+      <div className="mt-1 text-xs text-muted-foreground">{fmtPct(rate)} des visiteurs</div>
     </div>
   )
 }
@@ -327,19 +335,19 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
   const cards = [
     {
       label: 'Voient un panier',
-      value: fmtNumber(kpis.cart_viewed_sessions),
+      value: fmtNumber(kpis.cart_viewed_visitors),
       icon: Eye,
       sub: fmtPct(kpis.cart_view_rate),
     },
     {
       label: 'Initient un panier',
-      value: fmtNumber(kpis.cart_initiated_sessions),
+      value: fmtNumber(kpis.cart_initiated_visitors),
       icon: ShoppingCart,
       sub: fmtPct(kpis.cart_initiation_rate),
     },
     {
       label: 'Modifient un panier',
-      value: fmtNumber(kpis.cart_updated_sessions),
+      value: fmtNumber(kpis.cart_updated_visitors),
       icon: MousePointerClick,
       sub: fmtPct(kpis.cart_update_rate),
     },
@@ -386,11 +394,11 @@ function AudienceCards({ rows }: { rows: AudienceRow[] }) {
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: AUDIENCE_COLORS[row.key] }} />
                   <div className="font-medium">{row.label}</div>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">{fmtPct(row.share)} des sessions</div>
+                <div className="mt-1 text-xs text-muted-foreground">{fmtPct(row.share)} des visiteurs</div>
               </div>
               <div className="text-right">
-                <div className="text-xl font-semibold">{fmtNumber(row.sessions)}</div>
-                <div className="text-xs text-muted-foreground">sessions</div>
+                <div className="text-xl font-semibold">{fmtNumber(row.visitors)}</div>
+                <div className="text-xs text-muted-foreground">visiteurs</div>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
@@ -453,7 +461,7 @@ function ConversionRates({ audience }: { audience: AudienceRow[] }) {
             </div>
             <Progress value={row.conversion_rate} className="h-2" />
             <div className="mt-1 text-xs text-muted-foreground">
-              {fmtNumber(row.converted_sessions)} / {fmtNumber(row.sessions)} sessions
+              {fmtNumber(row.converted_visitors)} / {fmtNumber(row.visitors)} visiteurs
             </div>
           </div>
         ))}
@@ -472,7 +480,7 @@ function AudienceMixChart({ rows }: { rows: AudienceRow[] }) {
         <ChartContainer
           className="h-[240px]"
           config={{
-            sessions: { label: 'Sessions', color: 'var(--chart-1)' },
+            visitors: { label: 'Visiteurs', color: 'var(--chart-1)' },
           }}
         >
           <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
@@ -480,7 +488,7 @@ function AudienceMixChart({ rows }: { rows: AudienceRow[] }) {
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <Tooltip formatter={(value) => fmtNumber(Number(value))} />
-            <Bar dataKey="sessions" radius={[4, 4, 0, 0]}>
+            <Bar dataKey="visitors" radius={[4, 4, 0, 0]}>
               {rows.map((row) => (
                 <Cell key={row.key} fill={AUDIENCE_COLORS[row.key]} />
               ))}
@@ -531,6 +539,7 @@ function AudienceMatrix({ rows }: { rows: AudienceRow[] }) {
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="py-2 pr-3 font-medium">Audience départ</th>
+              <th className="py-2 pr-3 text-right font-medium">Visiteurs</th>
               <th className="py-2 pr-3 text-right font-medium">Sessions</th>
               <th className="py-2 pr-3 text-right font-medium">Vue panier</th>
               <th className="py-2 pr-3 text-right font-medium">Panier initié</th>
@@ -547,13 +556,14 @@ function AudienceMatrix({ rows }: { rows: AudienceRow[] }) {
               <tr key={row.key} className="border-b last:border-0">
                 <td className="sticky left-0 bg-card py-3 pr-3">
                   <div className="font-medium">{row.label}</div>
-                  <div className="text-xs text-muted-foreground">{fmtPct(row.share)} des sessions</div>
+                  <div className="text-xs text-muted-foreground">{fmtPct(row.share)} des visiteurs</div>
                 </td>
+                <td className="py-3 pr-3 text-right">{fmtNumber(row.visitors)}</td>
                 <td className="py-3 pr-3 text-right">{fmtNumber(row.sessions)}</td>
-                <MetricCell count={row.cart_viewed_sessions} rate={row.cart_view_rate} />
-                <MetricCell count={row.cart_initiated_sessions} rate={row.cart_initiation_rate} />
-                <MetricCell count={row.cart_updated_sessions} rate={row.cart_update_rate} />
-                <MetricCell count={row.converted_sessions} rate={row.conversion_rate} />
+                <MetricCell count={row.cart_viewed_visitors} rate={row.cart_view_rate} />
+                <MetricCell count={row.cart_initiated_visitors} rate={row.cart_initiation_rate} />
+                <MetricCell count={row.cart_updated_visitors} rate={row.cart_update_rate} />
+                <MetricCell count={row.converted_visitors} rate={row.conversion_rate} />
                 <td className="py-3 pr-3 text-right">{fmtNumber(row.became_known)}</td>
                 <td className="py-3 pr-3 text-right">{fmtNumber(row.became_customer)}</td>
                 <td className="py-3 pr-3 text-right">{fmtMoney(row.revenue)}</td>
@@ -571,7 +581,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-2">
-        <CardTitle>Sessions par audience</CardTitle>
+        <CardTitle>Visiteurs par audience</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer
@@ -714,7 +724,7 @@ function MetricCell({ count, rate }: { count: number; rate: number }) {
 }
 
 function LoadingState() {
-  const placeholders = ['sessions', 'revenue', 'known', 'customers', 'views', 'initiated', 'updated', 'aov']
+  const placeholders = ['visitors', 'revenue', 'known', 'customers', 'views', 'initiated', 'updated', 'aov']
   return (
     <div className="grid gap-3" style={audienceGridStyle}>
       {placeholders.map((key) => (
@@ -730,6 +740,10 @@ function ErrorState({ message }: { message: string }) {
 
 function fmtNumber(value: number): string {
   return new Intl.NumberFormat('fr-FR').format(Math.round(value))
+}
+
+function formatDecimal(value: number): string {
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(value)
 }
 
 function fmtMoney(value: number): string {
