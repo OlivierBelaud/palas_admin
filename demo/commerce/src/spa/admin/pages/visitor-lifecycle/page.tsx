@@ -121,6 +121,15 @@ const AUDIENCE_COLORS: Record<Segment, string> = {
 }
 
 const DEFAULT_RANGE: DateRangeValue = { kind: 'preset', preset: '30d' }
+const tabsGridStyle = { gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: 'min(100%, 34rem)' }
+const summaryGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }
+const metricGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }
+const transitionGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }
+const cartMetricGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }
+const audienceGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }
+const twoColumnGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
+const flowGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
+const qualityGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }
 
 export default function VisitorLifecyclePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -177,7 +186,7 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
     <>
       <ExecutiveSummary data={data} />
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 md:w-[34rem]">
+        <TabsList className="grid w-full" style={tabsGridStyle}>
           <TabsTrigger value="overview">Synthèse</TabsTrigger>
           <TabsTrigger value="audiences">Audiences</TabsTrigger>
           <TabsTrigger value="trends">Évolution</TabsTrigger>
@@ -186,11 +195,11 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 
         <TabsContent value="overview" className="mt-4">
           <AudienceCards rows={data.audience} />
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+          <div className="mt-4 grid gap-4" style={flowGridStyle}>
             <LifecycleFlow rows={data.flow} />
             <ConversionRates audience={data.audience} />
           </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="mt-4 grid gap-4" style={twoColumnGridStyle}>
             <AudienceMixChart rows={data.audience} />
             <DailyTransitionsChart rows={data.daily} />
           </div>
@@ -218,9 +227,9 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
   const { kpis } = data
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="grid gap-4" style={summaryGridStyle}>
       <Card className="border border-border/70 shadow-none">
-        <CardContent className="grid gap-4 p-4 md:grid-cols-3">
+        <CardContent className="grid gap-4 p-4" style={metricGridStyle}>
           <SummaryMetric
             label="Sessions"
             value={fmtNumber(kpis.sessions)}
@@ -242,7 +251,7 @@ function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
         </CardContent>
       </Card>
       <Card className="border border-border/70 shadow-none">
-        <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+        <CardContent className="grid gap-3 p-4" style={transitionGridStyle}>
           <TransitionMetric
             label="Deviennent connus"
             value={kpis.became_known}
@@ -343,7 +352,7 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
           <Info className="h-4 w-4 text-muted-foreground" />
         </div>
       </CardHeader>
-      <CardContent className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+      <CardContent className="grid gap-3" style={cartMetricGridStyle}>
         {cards.map((card) => {
           const Icon = card.icon
           return (
@@ -366,7 +375,7 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
 
 function AudienceCards({ rows }: { rows: AudienceRow[] }) {
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
+    <div className="grid gap-3" style={audienceGridStyle}>
       {rows.map((row) => (
         <Card key={row.key} className="border border-border/70 shadow-none">
           <CardContent className="p-4">
@@ -601,7 +610,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
 
 function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4" style={twoColumnGridStyle}>
       <Card className="border border-border/70 shadow-none">
         <CardHeader className="pb-2">
           <CardTitle>CA ecommerce</CardTitle>
@@ -682,7 +691,7 @@ function DataQualityPanel({ quality }: { quality: DataQuality }) {
       <CardHeader className="pb-2">
         <CardTitle>Qualité des données</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-2">
+      <CardContent className="grid gap-3" style={qualityGridStyle}>
         {rows.map((row) => (
           <div key={row.label} className="flex items-center justify-between rounded-md border p-3">
             <span className="text-sm font-medium">{row.label}</span>
@@ -706,7 +715,7 @@ function MetricCell({ count, rate }: { count: number; rate: number }) {
 function LoadingState() {
   const placeholders = ['sessions', 'revenue', 'known', 'customers', 'views', 'initiated', 'updated', 'aov']
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3" style={audienceGridStyle}>
       {placeholders.map((key) => (
         <Skeleton key={key} className="h-28 rounded-md" />
       ))}
