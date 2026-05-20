@@ -47,6 +47,7 @@ interface LifecycleFactRow {
 interface LifecycleDaySnapshotRow {
   day: string
   status: 'ready' | 'failed'
+  sessions_count: number | null
   facts_count: number | null
 }
 
@@ -157,6 +158,7 @@ export default defineQuery({
     const expectedDays = buildDays(from, to)
     const canUseFacts = factBundle
       ? expectedDays.every((day) => factBundle.coveredDays.has(day)) &&
+        factBundle.facts.length > 0 &&
         factBundle.facts.length >= factBundle.expectedFacts
       : false
     const facts = canUseFacts && factBundle ? factBundle.facts : []
@@ -224,7 +226,12 @@ async function loadFactBundle(
   from: Date,
   to: Date,
   log: { warn: (message: string) => void },
-): Promise<{ facts: LifecycleFactRow[]; coveredDays: Set<string>; expectedFacts: number } | null> {
+): Promise<{
+  facts: LifecycleFactRow[]
+  coveredDays: Set<string>
+  expectedFacts: number
+  expectedSessions: number
+} | null> {
   const graph = (query as { graph: (input: unknown) => Promise<unknown> }).graph
   const fromDay = dayKey(from)
   const toDay = dayKey(to)
@@ -259,7 +266,7 @@ async function loadFactBundle(
       (pagination) =>
         graph({
           entity: 'visitorLifecycleDaySnapshot',
-          fields: ['day', 'status', 'facts_count'],
+          fields: ['day', 'status', 'sessions_count', 'facts_count'],
           filters: { day: { $gte: fromDay, $lte: toDay }, status: 'ready' },
           pagination,
         }) as unknown as Promise<LifecycleDaySnapshotRow[]>,
@@ -274,6 +281,7 @@ async function loadFactBundle(
     facts,
     coveredDays: new Set(snapshots.map((row) => row.day)),
     expectedFacts: snapshots.reduce((sum, row) => sum + count(row.facts_count), 0),
+    expectedSessions: snapshots.reduce((sum, row) => sum + count(row.sessions_count), 0),
   }
 }
 
