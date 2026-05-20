@@ -186,11 +186,11 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 
         <TabsContent value="overview" className="mt-4">
           <AudienceCards rows={data.audience} />
-          <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <LifecycleFlow rows={data.flow} />
             <ConversionRates audience={data.audience} />
           </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <AudienceMixChart rows={data.audience} />
             <DailyTransitionsChart rows={data.daily} />
           </div>
@@ -218,7 +218,7 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
   const { kpis } = data
   return (
-    <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+    <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
       <Card className="border border-border/70 shadow-none">
         <CardContent className="grid gap-4 p-4 md:grid-cols-3">
           <SummaryMetric
@@ -336,7 +336,7 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
   ]
 
   return (
-    <Card className="border border-border/70 shadow-none xl:col-span-2">
+    <Card className="border border-border/70 shadow-none lg:col-span-2">
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2">
           <CardTitle>Engagement panier</CardTitle>
@@ -366,7 +366,7 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
 
 function AudienceCards({ rows }: { rows: AudienceRow[] }) {
   return (
-    <div className="grid gap-3 xl:grid-cols-3">
+    <div className="grid gap-3 lg:grid-cols-3">
       {rows.map((row) => (
         <Card key={row.key} className="border border-border/70 shadow-none">
           <CardContent className="p-4">
@@ -601,7 +601,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
 
 function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-2">
       <Card className="border border-border/70 shadow-none">
         <CardHeader className="pb-2">
           <CardTitle>CA ecommerce</CardTitle>
@@ -706,7 +706,7 @@ function MetricCell({ count, rate }: { count: number; rate: number }) {
 function LoadingState() {
   const placeholders = ['sessions', 'revenue', 'known', 'customers', 'views', 'initiated', 'updated', 'aov']
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {placeholders.map((key) => (
         <Skeleton key={key} className="h-28 rounded-md" />
       ))}
