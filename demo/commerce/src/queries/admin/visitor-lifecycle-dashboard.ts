@@ -398,7 +398,7 @@ function buildFlow(audience: AudienceBucket[]) {
 }
 
 function actorKey(session: SessionRow): string {
-  return session.contact_id ? `contact:${session.contact_id}` : `distinct:${session.distinct_id}`
+  return session.distinct_id
 }
 
 function buildDays(from: Date, to: Date): string[] {
