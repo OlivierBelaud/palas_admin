@@ -289,7 +289,7 @@ function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
       <Card className="border border-border/70 shadow-none">
         <CardContent className="grid gap-3 p-4" style={transitionGridStyle}>
           <TransitionMetric
-            label="Deviennent connus"
+            label="Deviennent prospects"
             value={kpis.became_known}
             rate={kpis.became_known_rate}
             icon={UserCheck}
@@ -537,7 +537,7 @@ function DailyTransitionsChart({ rows }: { rows: DailyRow[] }) {
         <ChartContainer
           className="h-[240px]"
           config={{
-            became_known: { label: 'Deviennent connus', color: 'var(--chart-2)' },
+            became_known: { label: 'Deviennent prospects', color: 'var(--chart-2)' },
             became_customer: { label: 'Deviennent clients', color: 'var(--chart-3)' },
           }}
         >
@@ -703,7 +703,7 @@ function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
 function DataQualityPanel({ quality }: { quality: DataQuality }) {
   const rows = [
     {
-      label: 'Segments connus sans contact',
+      label: 'Segments prospects ou clients sans contact',
       value: quality.sessions_without_contact_but_known_segment,
       ok: quality.sessions_without_contact_but_known_segment === 0,
     },
