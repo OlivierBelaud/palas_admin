@@ -383,6 +383,21 @@ describe('planSessionUpsert — identity transitions', () => {
     expect(out.row.email_acquired_in_session).toBe(false)
     expect(out.row.email_acquired_via).toBeNull()
   })
+
+  it('fills contact_id when an anonymous session later resolves to a contact', () => {
+    const out = planSessionUpsert({
+      event: makeEvent({
+        event_uuid: 'evt_identified',
+        event_name: '$identify',
+        email_on_event: 'known@test.com',
+      }),
+      existingSession: makeExisting({ contact_id: null, email_at_session_start: null }),
+      identityAtStart: makeIdentity({ contact_id: 'contact_late', segment: 'known_no_purchase' }),
+    })
+    expect(out.row.segment_at_session_start).toBe('unknown')
+    expect(out.row.contact_id).toBe('contact_late')
+    expect(out.row.email_acquired_in_session).toBe(true)
+  })
 })
 
 describe('planSessionUpsert — segment classification at first event', () => {

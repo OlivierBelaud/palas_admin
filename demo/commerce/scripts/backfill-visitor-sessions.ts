@@ -191,6 +191,31 @@ async function batchLookupContacts(distinctIds: string[], cache: Map<string, Con
   }
 }
 
+async function lookupContactByEmail(
+  email: string,
+  cache: Map<string, ContactInfo | null>,
+): Promise<ContactInfo | null> {
+  const normalized = email.trim().toLowerCase()
+  const key = `email:${normalized}`
+  if (cache.has(key)) return cache.get(key) ?? null
+  const rows = (await sql.unsafe(
+    `SELECT id, distinct_id, first_order_at
+       FROM contacts
+      WHERE lower(email) = $1
+      LIMIT 1`,
+    [normalized],
+  )) as Array<{ id: string; distinct_id: string | null; first_order_at: Date | null }>
+  const row = rows[0]
+  const info = row
+    ? {
+        contact_id: row.id,
+        first_order_at: row.first_order_at,
+      }
+    : null
+  cache.set(key, info)
+  return info
+}
+
 function deriveIdentity(
   distinctId: string,
   occurredAtIso: string,
@@ -235,6 +260,7 @@ async function upsertSession(row: ReturnType<typeof planSessionUpsert>['row']): 
      ON CONFLICT (distinct_id, session_id) DO UPDATE SET
        last_event_at = EXCLUDED.last_event_at,
        email_at_session_end = EXCLUDED.email_at_session_end,
+       contact_id = COALESCE(visitor_sessions.contact_id, EXCLUDED.contact_id),
        pageviews_count = EXCLUDED.pageviews_count,
        carts_viewed_in_session = EXCLUDED.carts_viewed_in_session,
        carts_created_in_session = EXCLUDED.carts_created_in_session,
@@ -368,13 +394,22 @@ try {
       const key = `${decoded.distinct_id}|${sessionId}`
       const existing = sessionState.get(key)
 
-      const identityAtStart = existing
+      let identityAtStart = existing
         ? {
             contact_id: existing.contact_id,
             email: existing.email_at_session_start,
             segment: existing.segment_at_session_start,
           }
         : deriveIdentity(decoded.distinct_id, decoded.timestamp, contactCache)
+      if (existing && !existing.contact_id && emailOnEvent) {
+        const contact = await lookupContactByEmail(emailOnEvent, contactCache)
+        if (contact) {
+          identityAtStart = {
+            ...identityAtStart,
+            contact_id: contact.contact_id,
+          }
+        }
+      }
 
       const intent = planSessionUpsert({
         event: {

@@ -284,7 +284,7 @@ export function planSessionUpsert(args: PlanSessionUpsertArgs): SessionUpsertInt
     pageviews_count: pageviews,
     email_at_session_start: emailAtSessionStart, // frozen
     email_at_session_end: emailAtSessionEnd,
-    contact_id: existingSession.contact_id, // frozen
+    contact_id: existingSession.contact_id ?? identityAtStart.contact_id, // fill once when an anonymous session becomes known
     segment_at_session_start: existingSession.segment_at_session_start, // frozen
     first_url: existingSession.first_url, // frozen
     utm_source: existingSession.utm_source, // frozen
@@ -318,6 +318,7 @@ const ALL_REPLACE_FIELDS: string[] = [
   'last_event_at',
   'pageviews_count',
   'email_at_session_end',
+  'contact_id',
   'carts_viewed_in_session',
   'carts_created_in_session',
   'carts_updated_in_session',

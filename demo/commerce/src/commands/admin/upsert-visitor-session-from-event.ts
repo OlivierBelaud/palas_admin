@@ -83,8 +83,13 @@ export default defineCommand({
     let identityAtStart: IdentityAtStart
     if (existing) {
       // Re-use the frozen identity — we never re-classify a session.
+      let contactId = existing.contact_id
+      if (!contactId && input.email_on_event) {
+        const contacts = await svc.contact.list({ email: input.email_on_event.trim().toLowerCase() })
+        contactId = contacts[0]?.id ?? null
+      }
       identityAtStart = {
-        contact_id: existing.contact_id,
+        contact_id: contactId,
         email: existing.email_at_session_start,
         segment: existing.segment_at_session_start,
       }
