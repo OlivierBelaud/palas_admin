@@ -40,6 +40,7 @@ export default defineCommand({
               SELECT DISTINCT oc.contact_id, o.id, o.total_price, o.placed_at
                 FROM order_contact oc
                 JOIN orders o ON o.id::text = oc.order_id
+               WHERE o.include_in_ecommerce_analytics IS TRUE
             ),
             order_agg AS (
               SELECT
@@ -50,20 +51,30 @@ export default defineCommand({
                 max(placed_at) AS last_order_at
               FROM linked_orders
               GROUP BY contact_id
+            ),
+            desired AS (
+              SELECT
+                c.id,
+                coalesce(a.orders_count, 0) AS orders_count,
+                coalesce(a.total_spent, 0)::float AS total_spent,
+                a.first_order_at,
+                a.last_order_at
+              FROM contacts c
+              LEFT JOIN order_agg a ON a.contact_id = c.id::text
             )
             UPDATE contacts c
-               SET orders_count = a.orders_count,
-                   total_spent = a.total_spent,
-                   first_order_at = a.first_order_at,
-                   last_order_at = a.last_order_at,
+               SET orders_count = d.orders_count,
+                   total_spent = d.total_spent,
+                   first_order_at = d.first_order_at,
+                   last_order_at = d.last_order_at,
                    updated_at = NOW()
-              FROM order_agg a
-             WHERE c.id::text = a.contact_id
+              FROM desired d
+             WHERE c.id = d.id
                AND (
-                 c.orders_count IS DISTINCT FROM a.orders_count
-                 OR c.total_spent IS DISTINCT FROM a.total_spent
-                 OR c.first_order_at IS DISTINCT FROM a.first_order_at
-                 OR c.last_order_at IS DISTINCT FROM a.last_order_at
+                 c.orders_count IS DISTINCT FROM d.orders_count
+                 OR c.total_spent IS DISTINCT FROM d.total_spent
+                 OR c.first_order_at IS DISTINCT FROM d.first_order_at
+                 OR c.last_order_at IS DISTINCT FROM d.last_order_at
                )
           `)
         }
@@ -88,23 +99,36 @@ export default defineCommand({
 })
 
 const CONTACT_AUDIT_SQL = `
-WITH local_order_agg AS (
+WITH linked_order_agg AS (
   SELECT
     contact_id,
     count(*)::int AS local_orders,
+    coalesce(sum(total_price), 0)::float AS total_spent,
     min(placed_at) AS first_order_at,
     max(placed_at) AS last_order_at
   FROM (
-    SELECT DISTINCT oc.contact_id, o.id, o.placed_at
+    SELECT DISTINCT oc.contact_id, o.id, o.total_price, o.placed_at
       FROM order_contact oc
       JOIN orders o ON o.id::text = oc.order_id
+     WHERE o.include_in_ecommerce_analytics IS TRUE
   ) linked_orders
   GROUP BY contact_id
+),
+local_order_agg AS (
+  SELECT
+    c.id::text AS contact_id,
+    coalesce(a.local_orders, 0) AS local_orders,
+    coalesce(a.total_spent, 0)::float AS total_spent,
+    a.first_order_at,
+    a.last_order_at
+  FROM contacts c
+  LEFT JOIN linked_order_agg a ON a.contact_id = c.id::text
 )
 SELECT
   (SELECT count(*)::int FROM contacts) AS contacts,
   (SELECT count(*)::int FROM contacts WHERE locale IS NULL OR locale NOT IN ('fr', 'en')) AS bad_locale,
   count(*) FILTER (WHERE c.orders_count <> a.local_orders)::int AS order_count_mismatches,
+  count(*) FILTER (WHERE c.total_spent IS DISTINCT FROM a.total_spent)::int AS total_spent_mismatches,
   count(*) FILTER (WHERE c.first_order_at IS DISTINCT FROM a.first_order_at)::int AS first_order_mismatches,
   count(*) FILTER (WHERE c.last_order_at IS DISTINCT FROM a.last_order_at)::int AS last_order_mismatches
 FROM local_order_agg a

@@ -57,6 +57,9 @@ describe('CRM-V1-01 — Phase 1 model files', () => {
     expect(src).toMatch(/defineModel\('Order'/)
     for (const col of [
       'shopify_order_id:',
+      'shopify_customer_id:',
+      'sales_channel:',
+      'include_in_ecommerce_analytics:',
       'email:',
       'order_number:',
       'status:',

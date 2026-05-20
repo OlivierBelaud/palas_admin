@@ -15,8 +15,10 @@
 //   3) INSERT new row
 //
 // Idempotent. First-write-wins on identity (email/names/phone/locale) so the
-// pixel-seeded values are never clobbered; aggregates (orders_count,
-// total_spent, last_order_at) are refreshed because they evolve over time.
+// pixel-seeded values are never clobbered. E-commerce aggregates are not
+// copied from Shopify customers because Shopify includes POS / private sale /
+// wholesale channels; local `orders` classification + `order_contact` is the
+// source of truth for analytics aggregates.
 
 import type { Sql } from 'postgres'
 import { reattachHistoryForContact } from './reattach-history'
@@ -54,15 +56,6 @@ export interface UpsertContactOutcome {
 
 // biome-ignore lint/suspicious/noExplicitAny: postgres-js tagged-template surface
 export type SqlClient = Sql<any>
-
-function toNumber(v: unknown, fallback = 0): number {
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  if (typeof v === 'string') {
-    const n = Number(v)
-    if (Number.isFinite(n)) return n
-  }
-  return fallback
-}
 
 interface ContactRow {
   id: string
@@ -117,8 +110,6 @@ export async function upsertShopifyCustomer(
     return { matched_via: 'noop', contact_id: null, created: false, carts_reattached: 0 }
   }
 
-  const ordersCount = payload.orders_count != null ? toNumber(payload.orders_count, 0) : 0
-  const totalSpent = payload.total_spent != null ? toNumber(payload.total_spent, 0) : 0
   const locale = payload.locale ?? null
   const countryCode = payload.default_address?.country_code ?? null
   const city = payload.default_address?.city ?? null
@@ -157,8 +148,6 @@ export async function upsertShopifyCustomer(
              END,
              country_code = COALESCE(country_code, ${countryCode}),
              city = COALESCE(city, ${city}),
-             orders_count = ${ordersCount},
-             total_spent = ${totalSpent},
              shopify_synced_at = ${now},
              last_activity_at = ${now},
              updated_at = ${now}
@@ -177,14 +166,12 @@ export async function upsertShopifyCustomer(
       ) VALUES (
         gen_random_uuid(), ${email}, ${phone}, ${locale ?? 'fr-FR'}, ${firstName}, ${lastName},
         ${countryCode}, ${city},
-        ${shopifyCustomerId}, ${ordersCount}, ${totalSpent},
+        ${shopifyCustomerId}, 0, 0,
         false, false,
         ${now}, ${now}, ${now}, ${now}
       )
       ON CONFLICT (email) DO UPDATE SET
         shopify_customer_id = COALESCE(contacts.shopify_customer_id, EXCLUDED.shopify_customer_id),
-        orders_count = EXCLUDED.orders_count,
-        total_spent = EXCLUDED.total_spent,
         shopify_synced_at = EXCLUDED.shopify_synced_at,
         last_activity_at = EXCLUDED.last_activity_at,
         updated_at = EXCLUDED.updated_at

@@ -1,16 +1,17 @@
 import { runBackfillOrderSnapshots } from './backfill-order-snapshots'
 
 export default defineCommand({
-  name: 'backfillOrderSnapshotsApply',
-  description: 'Apply one controlled batch of incomplete Order snapshot refreshes from Shopify.',
+  name: 'resyncOrderAnalyticsApply',
+  description:
+    'Refresh Order snapshots that still miss channel classification and rebuild order/contact analytics links.',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
     return await runBackfillOrderSnapshots(
       {
-        limit: 250,
+        limit: 1000,
         dryRun: false,
-        onlyMissingItems: true,
-        onlyMissingClassification: false,
+        onlyMissingItems: false,
+        onlyMissingClassification: true,
         delayMs: 0,
       },
       step,

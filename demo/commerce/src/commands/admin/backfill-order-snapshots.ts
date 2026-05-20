@@ -13,6 +13,7 @@ export interface BackfillOrderSnapshotsInput {
   limit: number
   dryRun: boolean
   onlyMissingItems: boolean
+  onlyMissingClassification?: boolean
   delayMs: number
 }
 
@@ -62,6 +63,7 @@ export default defineCommand({
     limit: z.number().int().min(1).max(500).default(25),
     dryRun: z.boolean().default(true),
     onlyMissingItems: z.boolean().default(true),
+    onlyMissingClassification: z.boolean().default(false),
     delayMs: z.number().int().min(0).max(5000).default(150),
   }),
   workflow: async (input, { step, log }) => {
@@ -84,7 +86,7 @@ export async function runBackfillOrderSnapshots(
       const remaining = Math.max(0, input.limit - previous.scanned)
       if (remaining === 0) return previous
 
-      const where = input.onlyMissingItems ? "WHERE items IS NULL OR items = '[]'::jsonb" : ''
+      const where = buildWhere(input)
       const rows = await db.raw<{ shopify_order_id: string }>(
         `SELECT shopify_order_id
            FROM orders
@@ -115,6 +117,7 @@ export async function runBackfillOrderSnapshots(
         if (!input.dryRun && snapshots.length > 0) {
           try {
             await upsertOrderSnapshots(db, snapshots)
+            await reconcileOrderLinksAndContactAggregates(db)
             progress.refreshed += snapshots.length
           } catch (err) {
             progress.errors += snapshots.length
@@ -142,6 +145,20 @@ export async function runBackfillOrderSnapshots(
     `[backfillOrderSnapshots] scanned=${result.scanned} found=${result.found} refreshed=${result.refreshed} dry_run=${input.dryRun} errors=${result.errors}`,
   )
   return result
+}
+
+function buildWhere(input: BackfillOrderSnapshotsInput): string {
+  const clauses: string[] = []
+  if (input.onlyMissingItems) clauses.push("(items IS NULL OR items = '[]'::jsonb)")
+  if (input.onlyMissingClassification) {
+    clauses.push(`(
+      sales_channel IS NULL
+      OR sales_channel = 'unknown'
+      OR shopify_source_name IS NULL
+      OR include_in_ecommerce_analytics IS NULL
+    )`)
+  }
+  return clauses.length ? `WHERE ${clauses.join(' OR ')}` : ''
 }
 
 function normalizeProgress(state: unknown, dryRun: boolean): BackfillProgress {
@@ -177,6 +194,11 @@ async function fetchOrderSnapshotsBatch(client: ShopifyAdminClient, ids: string[
           displayFulfillmentStatus
           cancelledAt
           createdAt
+          sourceName
+          sourceIdentifier
+          tags
+          app { name }
+          channelInformation { channelDefinition { channelName } }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           customer { id email }
           lineItems(first: 100) {
@@ -210,6 +232,14 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
          FROM jsonb_to_recordset($1::jsonb) AS x(
            shopify_order_id text,
            shopify_customer_id text,
+           shopify_source_name text,
+           shopify_source_identifier text,
+           shopify_app_name text,
+           shopify_channel_name text,
+           shopify_tags jsonb,
+           sales_channel text,
+           include_in_ecommerce_analytics boolean,
+           analytics_exclusion_reason text,
            email text,
            order_number text,
            status text,
@@ -224,15 +254,27 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
          )
      )
      INSERT INTO orders
-      (id, shopify_order_id, shopify_customer_id, email, order_number, status, financial_status, fulfillment_status,
+      (id, shopify_order_id, shopify_customer_id, shopify_source_name, shopify_source_identifier,
+       shopify_app_name, shopify_channel_name, shopify_tags, sales_channel, include_in_ecommerce_analytics,
+       analytics_exclusion_reason, email, order_number, status, financial_status, fulfillment_status,
        total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
      SELECT
-       gen_random_uuid(), shopify_order_id, shopify_customer_id, email, order_number, status, financial_status, fulfillment_status,
+       gen_random_uuid(), shopify_order_id, shopify_customer_id, shopify_source_name, shopify_source_identifier,
+       shopify_app_name, shopify_channel_name, shopify_tags, sales_channel, include_in_ecommerce_analytics,
+       analytics_exclusion_reason, email, order_number, status, financial_status, fulfillment_status,
        total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, NOW(), NOW()
      FROM payload
      ON CONFLICT (shopify_order_id) DO UPDATE SET
        email = EXCLUDED.email,
        shopify_customer_id = EXCLUDED.shopify_customer_id,
+       shopify_source_name = EXCLUDED.shopify_source_name,
+       shopify_source_identifier = EXCLUDED.shopify_source_identifier,
+       shopify_app_name = EXCLUDED.shopify_app_name,
+       shopify_channel_name = EXCLUDED.shopify_channel_name,
+       shopify_tags = EXCLUDED.shopify_tags,
+       sales_channel = EXCLUDED.sales_channel,
+       include_in_ecommerce_analytics = EXCLUDED.include_in_ecommerce_analytics,
+       analytics_exclusion_reason = EXCLUDED.analytics_exclusion_reason,
        order_number = EXCLUDED.order_number,
        status = EXCLUDED.status,
        financial_status = EXCLUDED.financial_status,
@@ -249,6 +291,14 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
         snapshots.map((snapshot) => ({
           shopify_order_id: snapshot.shopify_order_id,
           shopify_customer_id: snapshot.shopify_customer_id,
+          shopify_source_name: snapshot.shopify_source_name,
+          shopify_source_identifier: snapshot.shopify_source_identifier,
+          shopify_app_name: snapshot.shopify_app_name,
+          shopify_channel_name: snapshot.shopify_channel_name,
+          shopify_tags: snapshot.shopify_tags,
+          sales_channel: snapshot.sales_channel,
+          include_in_ecommerce_analytics: snapshot.include_in_ecommerce_analytics,
+          analytics_exclusion_reason: snapshot.analytics_exclusion_reason,
           email: snapshot.email,
           order_number: snapshot.order_number,
           status: snapshot.status,
@@ -264,4 +314,69 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
       ),
     ],
   )
+}
+
+async function reconcileOrderLinksAndContactAggregates(db: RawDb): Promise<void> {
+  await db.raw(`
+    INSERT INTO order_contact (id, order_id, contact_id, created_at, updated_at)
+    SELECT gen_random_uuid(), o.id::text, c.id::text, NOW(), NOW()
+      FROM orders o
+      JOIN contacts c ON (
+        (o.email IS NOT NULL AND o.email <> '' AND LOWER(c.email) = LOWER(o.email))
+        OR (
+          o.shopify_customer_id IS NOT NULL
+          AND o.shopify_customer_id <> ''
+          AND c.shopify_customer_id = o.shopify_customer_id
+        )
+      )
+     WHERE NOT EXISTS (
+       SELECT 1 FROM order_contact oc
+        WHERE oc.order_id = o.id::text
+          AND oc.contact_id = c.id::text
+     )
+    ON CONFLICT DO NOTHING
+  `)
+
+  await db.raw(`
+    WITH linked_orders AS (
+      SELECT DISTINCT oc.contact_id, o.id, o.total_price, o.placed_at
+        FROM order_contact oc
+        JOIN orders o ON o.id::text = oc.order_id
+       WHERE o.include_in_ecommerce_analytics IS TRUE
+    ),
+    order_agg AS (
+      SELECT
+        contact_id,
+        count(*)::int AS orders_count,
+        coalesce(sum(total_price), 0)::float AS total_spent,
+        min(placed_at) AS first_order_at,
+        max(placed_at) AS last_order_at
+      FROM linked_orders
+      GROUP BY contact_id
+    ),
+    desired AS (
+      SELECT
+        c.id,
+        coalesce(a.orders_count, 0) AS orders_count,
+        coalesce(a.total_spent, 0)::float AS total_spent,
+        a.first_order_at,
+        a.last_order_at
+      FROM contacts c
+      LEFT JOIN order_agg a ON a.contact_id = c.id::text
+    )
+    UPDATE contacts c
+       SET orders_count = d.orders_count,
+           total_spent = d.total_spent,
+           first_order_at = d.first_order_at,
+           last_order_at = d.last_order_at,
+           updated_at = NOW()
+      FROM desired d
+     WHERE c.id = d.id
+       AND (
+         c.orders_count IS DISTINCT FROM d.orders_count
+         OR c.total_spent IS DISTINCT FROM d.total_spent
+         OR c.first_order_at IS DISTINCT FROM d.first_order_at
+         OR c.last_order_at IS DISTINCT FROM d.last_order_at
+       )
+  `)
 }

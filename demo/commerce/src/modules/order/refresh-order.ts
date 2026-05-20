@@ -1,8 +1,17 @@
 import { ShopifyAdminClient } from '../shopify-admin/client'
+import { classifyOrderChannel, type OrderSalesChannel } from './classify-order-channel'
 
 export interface OrderSnapshot {
   shopify_order_id: string
   shopify_customer_id: string | null
+  shopify_source_name: string | null
+  shopify_source_identifier: string | null
+  shopify_app_name: string | null
+  shopify_channel_name: string | null
+  shopify_tags: string[]
+  sales_channel: OrderSalesChannel
+  include_in_ecommerce_analytics: boolean
+  analytics_exclusion_reason: string | null
   email: string | null
   order_number: string | null
   status: 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded'
@@ -24,6 +33,11 @@ type ShopifyOrderNode = {
   displayFulfillmentStatus: string | null
   cancelledAt: string | null
   createdAt: string | null
+  sourceName: string | null
+  sourceIdentifier: string | null
+  tags: string[] | null
+  app: { name: string | null } | null
+  channelInformation: { channelDefinition: { channelName: string | null } | null } | null
   currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null
   customer: { id: string | null; email: string | null } | null
   lineItems: {
@@ -55,10 +69,24 @@ export function mapShopifyOrderNodeToSnapshot(node: ShopifyOrderNode, syncedAt =
   const financial = node.displayFinancialStatus
   const fulfillment = node.displayFulfillmentStatus
   const total = node.currentTotalPriceSet?.shopMoney
+  const tags = node.tags ?? []
+  const classification = classifyOrderChannel({
+    source_name: node.sourceName,
+    source_identifier: node.sourceIdentifier,
+    app_name: node.app?.name,
+    channel_name: node.channelInformation?.channelDefinition?.channelName,
+    tags,
+  })
 
   return {
     shopify_order_id: orderId,
     shopify_customer_id: node.customer?.id ? normalizeShopifyOrderId(node.customer.id) : null,
+    shopify_source_name: node.sourceName,
+    shopify_source_identifier: node.sourceIdentifier,
+    shopify_app_name: node.app?.name ?? null,
+    shopify_channel_name: node.channelInformation?.channelDefinition?.channelName ?? null,
+    shopify_tags: tags,
+    ...classification,
     email,
     order_number: node.name,
     status: deriveOrderStatus({ cancelledAt, financial, fulfillment }),
@@ -89,6 +117,11 @@ export async function fetchShopifyOrderSnapshot(shopifyOrderId: string | number)
           displayFulfillmentStatus
           cancelledAt
           createdAt
+          sourceName
+          sourceIdentifier
+          tags
+          app { name }
+          channelInformation { channelDefinition { channelName } }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           customer { id email }
           lineItems(first: 100) {

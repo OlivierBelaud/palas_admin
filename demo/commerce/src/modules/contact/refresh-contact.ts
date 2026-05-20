@@ -217,11 +217,7 @@ async function fetchShopifyContactSignals(email: string): Promise<ContactSignal[
   )
   const customer = data.customers.edges[0]?.node
   if (!customer?.email) return []
-  const firstOrderAt = data.firstOrder.edges[0]?.node.createdAt ?? null
-  const lastOrderAt = data.lastOrder.edges[0]?.node.createdAt ?? null
   const id = customer.id.match(/(\d+)$/)?.[1] ?? customer.id
-  const ordersCount = Number(customer.numberOfOrders) || 0
-  const totalSpent = Number(customer.amountSpent?.amount ?? 0) || 0
   return [
     {
       source: 'shopify',
@@ -236,10 +232,6 @@ async function fetchShopifyContactSignals(email: string): Promise<ContactSignal[
       country_code: customer.defaultAddress?.countryCodeV2 ?? null,
       city: customer.defaultAddress?.city ?? null,
       shopify_customer_id: id,
-      orders_count: ordersCount,
-      total_spent: totalSpent,
-      first_order_at: firstOrderAt,
-      last_order_at: lastOrderAt,
     },
   ]
 }

@@ -1,2 +1,14 @@
+DROP INDEX IF EXISTS orders_include_in_ecommerce_analytics_idx;
+DROP INDEX IF EXISTS orders_sales_channel_idx;
+DROP INDEX IF EXISTS orders_shopify_app_name_idx;
+DROP INDEX IF EXISTS orders_shopify_source_name_idx;
 DROP INDEX IF EXISTS orders_shopify_customer_id_idx;
+ALTER TABLE orders DROP COLUMN IF EXISTS analytics_exclusion_reason;
+ALTER TABLE orders DROP COLUMN IF EXISTS include_in_ecommerce_analytics;
+ALTER TABLE orders DROP COLUMN IF EXISTS sales_channel;
+ALTER TABLE orders DROP COLUMN IF EXISTS shopify_tags;
+ALTER TABLE orders DROP COLUMN IF EXISTS shopify_channel_name;
+ALTER TABLE orders DROP COLUMN IF EXISTS shopify_app_name;
+ALTER TABLE orders DROP COLUMN IF EXISTS shopify_source_identifier;
+ALTER TABLE orders DROP COLUMN IF EXISTS shopify_source_name;
 ALTER TABLE orders DROP COLUMN IF EXISTS shopify_customer_id;

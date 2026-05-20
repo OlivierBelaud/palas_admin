@@ -10,6 +10,17 @@ export default defineModel('Order', {
   // This lets us link orders to contacts even when Shopify redacts or
   // omits the order email.
   shopify_customer_id: field.text().nullable().index(),
+  shopify_source_name: field.text().nullable().index(),
+  shopify_source_identifier: field.text().nullable(),
+  shopify_app_name: field.text().nullable().index(),
+  shopify_channel_name: field.text().nullable().index(),
+  shopify_tags: field.json<string[]>().nullable(),
+  sales_channel: field
+    .enum(['online_store', 'pos', 'private_sale', 'wholesale', 'draft_order', 'external_app', 'unknown'])
+    .default('unknown')
+    .index(),
+  include_in_ecommerce_analytics: field.boolean().default(false).index(),
+  analytics_exclusion_reason: field.text().nullable(),
 
   // Email captured at order time — denormalized for fast lookup. May
   // not match `contact.email` if the Shopify customer used a different

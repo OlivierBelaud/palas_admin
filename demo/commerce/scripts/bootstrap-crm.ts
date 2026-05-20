@@ -100,6 +100,14 @@ CREATE TABLE IF NOT EXISTS orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   shopify_order_id text NOT NULL UNIQUE,
   shopify_customer_id text,
+  shopify_source_name text,
+  shopify_source_identifier text,
+  shopify_app_name text,
+  shopify_channel_name text,
+  shopify_tags jsonb,
+  sales_channel text NOT NULL DEFAULT 'unknown',
+  include_in_ecommerce_analytics boolean NOT NULL DEFAULT false,
+  analytics_exclusion_reason text,
   email text,
   order_number text,
   status text NOT NULL,
@@ -119,6 +127,10 @@ CREATE TABLE IF NOT EXISTS orders (
 
 const INDEXES_ORDERS = [
   'CREATE INDEX IF NOT EXISTS orders_shopify_customer_id_idx ON orders (shopify_customer_id)',
+  'CREATE INDEX IF NOT EXISTS orders_shopify_source_name_idx ON orders (shopify_source_name)',
+  'CREATE INDEX IF NOT EXISTS orders_shopify_app_name_idx ON orders (shopify_app_name)',
+  'CREATE INDEX IF NOT EXISTS orders_sales_channel_idx ON orders (sales_channel)',
+  'CREATE INDEX IF NOT EXISTS orders_include_in_ecommerce_analytics_idx ON orders (include_in_ecommerce_analytics)',
   'CREATE INDEX IF NOT EXISTS orders_email_idx ON orders (email)',
   'CREATE INDEX IF NOT EXISTS orders_placed_at_idx ON orders (placed_at DESC)',
 ]

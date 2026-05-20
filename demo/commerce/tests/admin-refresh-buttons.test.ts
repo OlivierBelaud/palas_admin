@@ -13,6 +13,11 @@ describe('admin exceptional refresh buttons', () => {
           label: 'Réparer orders (lot)',
           destructive: true,
         }),
+        expect.objectContaining({
+          command: 'resyncOrderAnalyticsApply',
+          label: 'Resync analytics orders',
+          destructive: true,
+        }),
       ]),
     )
   })

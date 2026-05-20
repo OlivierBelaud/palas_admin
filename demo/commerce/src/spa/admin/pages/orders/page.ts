@@ -6,6 +6,7 @@ export default definePage({
     actions: [
       { label: 'Tester refresh orders', command: 'backfillOrderSnapshots' },
       { label: 'Réparer orders (lot)', command: 'backfillOrderSnapshotsApply', destructive: true },
+      { label: 'Resync analytics orders', command: 'resyncOrderAnalyticsApply', destructive: true },
     ],
   },
   main: [
@@ -39,6 +40,8 @@ export default definePage({
           },
         },
         { key: 'total_price', label: 'Total', format: 'currency', sortable: true },
+        { key: 'sales_channel', label: 'Canal', format: 'badge' },
+        { key: 'include_in_ecommerce_analytics', label: 'Analytics e-com', format: 'boolean' },
         {
           key: 'placed_at',
           label: 'Date',

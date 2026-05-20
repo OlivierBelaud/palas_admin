@@ -21,6 +21,7 @@
 // values). No full-refresh — that's the job of `audit-and-fix-prod-v1.ts`.
 
 import { type RawDb, reattachHistoryForContact } from '../../modules/contact/reattach-history'
+import { classifyOrderChannel, type OrderSalesChannel } from '../../modules/order/classify-order-channel'
 import {
   paginateConnection,
   ShopifyAdminClient,
@@ -54,6 +55,14 @@ interface CustomerRow {
 interface OrderRow {
   shopify_order_id: string
   shopify_customer_id: string | null
+  shopify_source_name: string | null
+  shopify_source_identifier: string | null
+  shopify_app_name: string | null
+  shopify_channel_name: string | null
+  shopify_tags: string[]
+  sales_channel: OrderSalesChannel
+  include_in_ecommerce_analytics: boolean
+  analytics_exclusion_reason: string | null
   email: string | null
   order_number: string
   status: 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded'
@@ -155,7 +164,7 @@ async function pullCustomers(
     .map((n) => {
       const email = (n.email ?? '').trim().toLowerCase()
       if (!email) return null
-      return {
+      const row: CustomerRow = {
         shopify_customer_id: gidNum(n.id),
         email,
         first_name: n.firstName,
@@ -164,11 +173,12 @@ async function pullCustomers(
         phone: n.phone,
         city: n.defaultAddress?.city ?? null,
         country_code: n.defaultAddress?.countryCodeV2 ?? null,
-        orders_count: Number(n.numberOfOrders) || 0,
-        total_spent: Number(n.amountSpent?.amount) || 0,
-        last_order_at: toDate(n.lastOrder?.createdAt),
+        orders_count: 0,
+        total_spent: 0,
+        last_order_at: null,
         shopify_synced_at: now,
-      } satisfies CustomerRow
+      }
+      return row
     })
     .filter((r): r is CustomerRow => r !== null)
 }
@@ -186,6 +196,11 @@ async function pullOrders(
     displayFulfillmentStatus: string | null
     cancelledAt: string | null
     createdAt: string
+    sourceName: string | null
+    sourceIdentifier: string | null
+    tags: string[] | null
+    app: { name: string | null } | null
+    channelInformation: { channelDefinition: { channelName: string | null } | null } | null
     currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
     customer: { id: string | null; email: string | null } | null
   }
@@ -197,7 +212,9 @@ async function pullOrders(
           edges {
             node {
               id name email displayFinancialStatus displayFulfillmentStatus
-              cancelledAt createdAt
+              cancelledAt createdAt sourceName sourceIdentifier tags
+              app { name }
+              channelInformation { channelDefinition { channelName } }
               currentTotalPriceSet { shopMoney { amount currencyCode } }
               customer { id email }
             }
@@ -225,9 +242,23 @@ async function pullOrders(
   return nodes.map((n) => {
     const email = ((n.email ?? n.customer?.email ?? '').trim() || null)?.toLowerCase() ?? null
     const cancelledAt = toDate(n.cancelledAt)
+    const tags = n.tags ?? []
+    const classification = classifyOrderChannel({
+      source_name: n.sourceName,
+      source_identifier: n.sourceIdentifier,
+      app_name: n.app?.name,
+      channel_name: n.channelInformation?.channelDefinition?.channelName,
+      tags,
+    })
     return {
       shopify_order_id: gidNum(n.id),
       shopify_customer_id: n.customer?.id ? gidNum(n.customer.id) : null,
+      shopify_source_name: n.sourceName,
+      shopify_source_identifier: n.sourceIdentifier,
+      shopify_app_name: n.app?.name ?? null,
+      shopify_channel_name: n.channelInformation?.channelDefinition?.channelName ?? null,
+      shopify_tags: tags,
+      ...classification,
       email,
       order_number: n.name,
       status: deriveOrderStatus({
@@ -321,9 +352,6 @@ export default defineCommand({
           'country_code',
           'city',
           'shopify_customer_id',
-          'orders_count',
-          'total_spent',
-          'last_order_at',
           'shopify_synced_at',
         ],
         ['email'],
@@ -336,6 +364,14 @@ export default defineCommand({
         [
           'email',
           'shopify_customer_id',
+          'shopify_source_name',
+          'shopify_source_identifier',
+          'shopify_app_name',
+          'shopify_channel_name',
+          'shopify_tags',
+          'sales_channel',
+          'include_in_ecommerce_analytics',
+          'analytics_exclusion_reason',
           'order_number',
           'status',
           'financial_status',

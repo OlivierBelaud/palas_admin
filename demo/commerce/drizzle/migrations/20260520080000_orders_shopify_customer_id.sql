@@ -1,2 +1,14 @@
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_customer_id text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_source_name text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_source_identifier text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_app_name text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_channel_name text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shopify_tags jsonb;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS sales_channel text NOT NULL DEFAULT 'unknown';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS include_in_ecommerce_analytics boolean NOT NULL DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS analytics_exclusion_reason text;
 CREATE INDEX IF NOT EXISTS orders_shopify_customer_id_idx ON orders (shopify_customer_id);
+CREATE INDEX IF NOT EXISTS orders_shopify_source_name_idx ON orders (shopify_source_name);
+CREATE INDEX IF NOT EXISTS orders_shopify_app_name_idx ON orders (shopify_app_name);
+CREATE INDEX IF NOT EXISTS orders_sales_channel_idx ON orders (sales_channel);
+CREATE INDEX IF NOT EXISTS orders_include_in_ecommerce_analytics_idx ON orders (include_in_ecommerce_analytics);

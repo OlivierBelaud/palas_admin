@@ -18,6 +18,11 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
         displayFulfillmentStatus: 'FULFILLED',
         cancelledAt: null,
         createdAt: '2026-05-19T10:00:00Z',
+        sourceName: 'web',
+        sourceIdentifier: null,
+        tags: [],
+        app: { name: 'Online Store' },
+        channelInformation: { channelDefinition: { channelName: 'Online Store' } },
         currentTotalPriceSet: { shopMoney: { amount: '42.50', currencyCode: 'EUR' } },
         customer: { id: 'gid://shopify/Customer/987', email: null },
         lineItems: {
@@ -46,6 +51,8 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
 
     expect(snapshot.shopify_order_id).toBe('123456')
     expect(snapshot.shopify_customer_id).toBe('987')
+    expect(snapshot.sales_channel).toBe('online_store')
+    expect(snapshot.include_in_ecommerce_analytics).toBe(true)
     expect(snapshot.email).toBe('jane@example.com')
     expect(snapshot.status).toBe('fulfilled')
     expect(snapshot.total_price).toBe(42.5)
