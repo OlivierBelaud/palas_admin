@@ -186,7 +186,7 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 
         <TabsContent value="overview" className="mt-4">
           <AudienceCards rows={data.audience} />
-          <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
             <LifecycleFlow rows={data.flow} />
             <ConversionRates audience={data.audience} />
           </div>
@@ -218,7 +218,7 @@ function Dashboard({ data }: { data: LifecycleDashboardData }) {
 function ExecutiveSummary({ data }: { data: LifecycleDashboardData }) {
   const { kpis } = data
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="grid gap-4 lg:grid-cols-3">
       <Card className="border border-border/70 shadow-none">
         <CardContent className="grid gap-4 p-4 md:grid-cols-3">
           <SummaryMetric
@@ -336,14 +336,14 @@ function CartEngagement({ kpis }: { kpis: Kpis }) {
   ]
 
   return (
-    <Card className="border border-border/70 shadow-none lg:col-span-2">
+    <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2">
           <CardTitle>Engagement panier</CardTitle>
           <Info className="h-4 w-4 text-muted-foreground" />
         </div>
       </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-3">
+      <CardContent className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
         {cards.map((card) => {
           const Icon = card.icon
           return (
