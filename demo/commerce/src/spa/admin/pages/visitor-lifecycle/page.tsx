@@ -538,7 +538,7 @@ function AudienceMatrix({ rows }: { rows: AudienceRow[] }) {
         <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="py-2 pr-3 font-medium">Audience départ</th>
+              <th className="py-2 pr-3 font-medium">Segment</th>
               <th className="py-2 pr-3 text-right font-medium">Visiteurs</th>
               <th className="py-2 pr-3 text-right font-medium">Sessions</th>
               <th className="py-2 pr-3 text-right font-medium">Vue panier</th>
@@ -587,9 +587,9 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
         <ChartContainer
           className="h-[300px]"
           config={{
-            unknown: { label: 'Inconnus', color: 'var(--chart-1)' },
-            known_no_purchase: { label: 'Connus non-clients', color: 'var(--chart-2)' },
-            returning_customer: { label: 'Clients existants', color: 'var(--chart-3)' },
+            unknown: { label: 'Suspects', color: 'var(--chart-1)' },
+            known_no_purchase: { label: 'Prospects', color: 'var(--chart-2)' },
+            returning_customer: { label: 'Clients', color: 'var(--chart-3)' },
           }}
         >
           <AreaChart data={rows} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>

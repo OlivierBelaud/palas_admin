@@ -78,9 +78,9 @@ interface ActorAggregate {
 }
 
 const AUDIENCES: Array<{ key: Segment; label: string }> = [
-  { key: 'unknown', label: 'Inconnus' },
-  { key: 'known_no_purchase', label: 'Connus non-clients' },
-  { key: 'returning_customer', label: 'Clients existants' },
+  { key: 'unknown', label: 'Suspects' },
+  { key: 'known_no_purchase', label: 'Prospects' },
+  { key: 'returning_customer', label: 'Clients' },
 ]
 
 export default defineQuery({
@@ -390,10 +390,10 @@ function buildFlow(audience: AudienceBucket[]) {
   const known = audience.find((row) => row.key === 'known_no_purchase')
   const returning = audience.find((row) => row.key === 'returning_customer')
   return [
-    { from: 'Inconnus', to: 'Deviennent connus', value: unknown?.became_known ?? 0 },
-    { from: 'Inconnus', to: 'Deviennent clients', value: unknown?.became_customer ?? 0 },
-    { from: 'Connus non-clients', to: 'Deviennent clients', value: known?.became_customer ?? 0 },
-    { from: 'Clients existants', to: 'Réachètent', value: returning?.converted_visitors ?? 0 },
+    { from: 'Suspects', to: 'Deviennent prospects', value: unknown?.became_known ?? 0 },
+    { from: 'Suspects', to: 'Deviennent clients', value: unknown?.became_customer ?? 0 },
+    { from: 'Prospects', to: 'Deviennent clients', value: known?.became_customer ?? 0 },
+    { from: 'Clients', to: 'Réachètent', value: returning?.converted_visitors ?? 0 },
   ]
 }
 
