@@ -37,6 +37,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
+import { parsePosthogProperties } from '../src/modules/cart-tracking/posthog-sync'
 import {
   type ExistingSession,
   type IdentityAtStart,
@@ -74,7 +75,13 @@ function readNumberFlag(name: string, fallback: number): number {
 const DAYS = readNumberFlag('--days', 90)
 
 loadEnv('.env', false)
-if (useProd) loadEnv('.env.production', true)
+const localPosthogPersonalKey = process.env.POSTHOG_PERSONAL_API_KEY
+const localPosthogKey = process.env.POSTHOG_API_KEY
+if (useProd) {
+  loadEnv('.env.production', true)
+  if (localPosthogPersonalKey) process.env.POSTHOG_PERSONAL_API_KEY = localPosthogPersonalKey
+  if (localPosthogKey) process.env.POSTHOG_API_KEY = localPosthogKey
+}
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
@@ -133,20 +140,17 @@ interface HogQLRow {
   distinct_id: string | null
   timestamp: string
   properties: Record<string, unknown>
+  person_email: string | null
 }
 
 function decodeRow(row: unknown[]): HogQLRow | null {
-  const [uuid, event, distinctId, timestamp, props] = row
+  const [uuid, event, distinctId, timestamp, props, personEmail] = row
   if (typeof event !== 'string' || typeof timestamp !== 'string') return null
   let properties: Record<string, unknown>
-  if (typeof props === 'string') {
-    try {
-      properties = JSON.parse(props) as Record<string, unknown>
-    } catch {
-      return null
-    }
-  } else {
-    properties = (props ?? {}) as Record<string, unknown>
+  try {
+    properties = parsePosthogProperties(props)
+  } catch {
+    return null
   }
   return {
     uuid: String(uuid ?? ''),
@@ -154,6 +158,7 @@ function decodeRow(row: unknown[]): HogQLRow | null {
     distinct_id: distinctId == null ? null : String(distinctId),
     timestamp,
     properties,
+    person_email: typeof personEmail === 'string' && personEmail.length > 0 ? personEmail : null,
   }
 }
 
@@ -214,25 +219,29 @@ async function upsertSession(row: ReturnType<typeof planSessionUpsert>['row']): 
        (id, distinct_id, session_id, started_at, last_event_at, pageviews_count,
         email_at_session_start, email_at_session_end, contact_id,
         segment_at_session_start, first_url, utm_source, utm_medium, utm_campaign,
-        referring_domain, is_paid_session, carts_created_in_session,
+        referring_domain, is_paid_session, carts_viewed_in_session, carts_created_in_session,
         carts_updated_in_session, cart_converted, order_id,
-        email_acquired_in_session, email_acquired_via, seen_event_uuids,
+        became_customer_in_session, became_customer_at,
+        email_acquired_in_session, email_acquired_via, email_acquired_at, seen_event_uuids,
         created_at, updated_at)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5,
              $6, $7, $8,
              $9, $10, $11, $12, $13,
-             $14, $15, $16,
-             $17, $18, $19,
-             $20, $21, $22::jsonb,
+             $14, $15, $16, $17,
+             $18, $19, $20,
+             $21, $22,
+             $23, $24, $25, $26::jsonb,
              NOW(), NOW())
      ON CONFLICT (distinct_id, session_id) DO UPDATE SET
        last_event_at = EXCLUDED.last_event_at,
        email_at_session_end = EXCLUDED.email_at_session_end,
        pageviews_count = EXCLUDED.pageviews_count,
+       carts_viewed_in_session = EXCLUDED.carts_viewed_in_session,
        carts_created_in_session = EXCLUDED.carts_created_in_session,
        carts_updated_in_session = EXCLUDED.carts_updated_in_session,
        email_acquired_in_session = EXCLUDED.email_acquired_in_session,
        email_acquired_via = EXCLUDED.email_acquired_via,
+       email_acquired_at = EXCLUDED.email_acquired_at,
        seen_event_uuids = EXCLUDED.seen_event_uuids,
        updated_at = NOW()`,
     [
@@ -251,12 +260,16 @@ async function upsertSession(row: ReturnType<typeof planSessionUpsert>['row']): 
       row.utm_campaign,
       row.referring_domain,
       row.is_paid_session,
+      row.carts_viewed_in_session,
       row.carts_created_in_session,
       row.carts_updated_in_session,
       row.cart_converted,
       row.order_id,
+      row.became_customer_in_session,
+      row.became_customer_at,
       row.email_acquired_in_session,
       row.email_acquired_via,
+      row.email_acquired_at,
       row.seen_event_uuids != null ? JSON.stringify(row.seen_event_uuids) : null,
     ],
   )
@@ -266,6 +279,20 @@ try {
   console.log(
     `[backfill-visitor-sessions] target: ${useProd ? 'PROD' : 'LOCAL'}  dryRun: ${dryRun}  days: ${DAYS}  since: ${SINCE_ISO}`,
   )
+  if (!dryRun) {
+    await sql.unsafe(
+      `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS carts_viewed_in_session integer NOT NULL DEFAULT 0`,
+    )
+    await sql.unsafe(
+      `ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS became_customer_in_session boolean NOT NULL DEFAULT false`,
+    )
+    await sql.unsafe(`ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS became_customer_at timestamp`)
+    await sql.unsafe(`ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS email_acquired_at timestamp`)
+    await sql.unsafe(
+      `CREATE INDEX IF NOT EXISTS visitor_sessions_became_customer_idx
+         ON visitor_sessions(became_customer_in_session) WHERE became_customer_in_session = true`,
+    )
+  }
   const t0 = Date.now()
 
   // ── In-memory caches (preserved across pages) ───────────────────────
@@ -284,7 +311,7 @@ try {
 
   while (true) {
     const raws = await hogql(`
-      SELECT uuid, event, distinct_id, timestamp, properties
+      SELECT uuid, event, distinct_id, timestamp, properties, person.properties.email
         FROM events
        WHERE timestamp >= toDateTime('${SINCE_ISO}')
          AND (event LIKE 'cart:%' OR event LIKE 'checkout:%' OR event = '$identify' OR event = '$pageview')
@@ -329,6 +356,7 @@ try {
         if (typeof direct === 'string' && direct.length > 0) return direct
         const checkout = props.checkout as { email?: unknown } | undefined
         if (checkout && typeof checkout.email === 'string' && checkout.email.length > 0) return checkout.email
+        if (decoded.person_email) return decoded.person_email
         return null
       })()
       const currentUrl = (props.$current_url as string | undefined) ?? null
@@ -386,11 +414,15 @@ try {
         referring_domain: intent.row.referring_domain,
         is_paid_session: intent.row.is_paid_session,
         carts_created_in_session: intent.row.carts_created_in_session,
+        carts_viewed_in_session: intent.row.carts_viewed_in_session,
         carts_updated_in_session: intent.row.carts_updated_in_session,
         cart_converted: intent.row.cart_converted,
         order_id: intent.row.order_id,
+        became_customer_in_session: intent.row.became_customer_in_session,
+        became_customer_at: intent.row.became_customer_at,
         email_acquired_in_session: intent.row.email_acquired_in_session,
         email_acquired_via: intent.row.email_acquired_via,
+        email_acquired_at: intent.row.email_acquired_at,
         seen_event_uuids: intent.row.seen_event_uuids,
       }
       sessionState.set(key, nextState)
@@ -417,9 +449,16 @@ try {
       `UPDATE visitor_sessions vs
           SET cart_converted = true,
               order_id = c.shopify_order_id,
+              became_customer_in_session = (vs.segment_at_session_start <> 'returning_customer'),
+              became_customer_at = CASE
+                WHEN vs.segment_at_session_start <> 'returning_customer' THEN c.completed_at
+                ELSE NULL
+              END,
               updated_at = NOW()
          FROM carts c
+         JOIN orders o ON o.shopify_order_id = c.shopify_order_id
         WHERE c.highest_stage = 'completed'
+          AND o.include_in_ecommerce_analytics = true
           AND c.distinct_id = vs.distinct_id
           AND c.cart_birth_at >= vs.started_at
           AND c.cart_birth_at <= vs.last_event_at + INTERVAL '30 minutes'

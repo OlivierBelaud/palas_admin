@@ -18,6 +18,7 @@ export interface SessionRow {
   id: string
   last_event_at: Date | string
   email_acquired_in_session: boolean
+  email_acquired_at?: Date | string | null
 }
 
 export interface SessionMarkerRepo {
@@ -61,6 +62,7 @@ export async function markSessionEmailAcquiredCore(
   await repo.update(target.id, {
     email_acquired_in_session: true,
     email_acquired_via: input.via,
+    email_acquired_at: new Date(nowMs),
     email_at_session_end: input.email,
   })
   return { matched: 1 }

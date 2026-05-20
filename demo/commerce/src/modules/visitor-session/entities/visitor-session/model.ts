@@ -41,14 +41,18 @@ export default defineModel('VisitorSession', {
   is_paid_session: field.boolean().default(false).index(),
 
   // ── Cart activity within the session ──────────────────────────────
+  carts_viewed_in_session: field.number().default(0),
   carts_created_in_session: field.number().default(0),
   carts_updated_in_session: field.number().default(0),
   cart_converted: field.boolean().default(false).index(),
   order_id: field.text().nullable(),
+  became_customer_in_session: field.boolean().default(false).index(),
+  became_customer_at: field.dateTime().nullable(),
 
   // ── Identity acquisition (newsletter / checkout_started) ──────────
   email_acquired_in_session: field.boolean().default(false),
   email_acquired_via: field.enum(['newsletter', 'checkout_started']).nullable(),
+  email_acquired_at: field.dateTime().nullable(),
 
   // ── Idempotency (per-session dedup of counter increments) ─────────
   // FIFO-capped at 200 entries; replays of the same event_uuid are skipped.

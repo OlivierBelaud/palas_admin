@@ -74,17 +74,29 @@ const STATEMENTS: string[] = [
      utm_campaign text,
      referring_domain text,
      is_paid_session boolean NOT NULL DEFAULT false,
+     carts_viewed_in_session integer NOT NULL DEFAULT 0,
      carts_created_in_session integer NOT NULL DEFAULT 0,
      carts_updated_in_session integer NOT NULL DEFAULT 0,
      cart_converted boolean NOT NULL DEFAULT false,
      order_id text,
+     became_customer_in_session boolean NOT NULL DEFAULT false,
+     became_customer_at timestamp,
      email_acquired_in_session boolean NOT NULL DEFAULT false,
      email_acquired_via text,
+     email_acquired_at timestamp,
      seen_event_uuids jsonb,
      created_at timestamp NOT NULL DEFAULT now(),
      updated_at timestamp NOT NULL DEFAULT now(),
      deleted_at timestamp
    )`,
+  `ALTER TABLE visitor_sessions
+     ADD COLUMN IF NOT EXISTS carts_viewed_in_session integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE visitor_sessions
+     ADD COLUMN IF NOT EXISTS became_customer_in_session boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE visitor_sessions
+     ADD COLUMN IF NOT EXISTS became_customer_at timestamp`,
+  `ALTER TABLE visitor_sessions
+     ADD COLUMN IF NOT EXISTS email_acquired_at timestamp`,
   // Conflict target for upsertWithReplace on (distinct_id, session_id)
   `CREATE UNIQUE INDEX IF NOT EXISTS visitor_sessions_distinct_session_uq
      ON visitor_sessions(distinct_id, session_id)`,
@@ -96,6 +108,8 @@ const STATEMENTS: string[] = [
   // Partial index — only converted sessions, kept tiny for funnel queries.
   `CREATE INDEX IF NOT EXISTS visitor_sessions_cart_converted_idx
      ON visitor_sessions(cart_converted) WHERE cart_converted = true`,
+  `CREATE INDEX IF NOT EXISTS visitor_sessions_became_customer_idx
+     ON visitor_sessions(became_customer_in_session) WHERE became_customer_in_session = true`,
   `CREATE INDEX IF NOT EXISTS visitor_sessions_distinct_id_idx
      ON visitor_sessions(distinct_id)`,
   `CREATE INDEX IF NOT EXISTS visitor_sessions_segment_idx

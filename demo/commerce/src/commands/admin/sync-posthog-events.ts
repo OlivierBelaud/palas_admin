@@ -35,7 +35,7 @@ export default defineCommand({
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
     const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
+    const key = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
     if (!key) {
       throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required for syncPosthogEvents')
     }

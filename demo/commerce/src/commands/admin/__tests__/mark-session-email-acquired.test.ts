@@ -54,6 +54,7 @@ describe('markSessionEmailAcquiredCore', () => {
       patch: {
         email_acquired_in_session: true,
         email_acquired_via: 'newsletter',
+        email_acquired_at: new Date(NOW_MS),
         email_at_session_end: 'shopper@test.com',
       },
     })

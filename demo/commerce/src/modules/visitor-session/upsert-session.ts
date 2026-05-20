@@ -19,6 +19,7 @@
 //     is_paid_session.
 //   - ALWAYS update: last_event_at, email_at_session_end.
 //   - Counters by event_name:
+//       cart:viewed                                                 → carts_viewed_in_session += 1
 //       cart:product_added                                          → carts_created_in_session += 1
 //       cart:product_removed | cart:updated | cart:cleared
 //         | cart:discount_applied                                   → carts_updated_in_session += 1
@@ -92,11 +93,15 @@ export interface ExistingSession {
   referring_domain: string | null
   is_paid_session: boolean
   carts_created_in_session: number
+  carts_viewed_in_session?: number
   carts_updated_in_session: number
   cart_converted: boolean
   order_id: string | null
+  became_customer_in_session?: boolean
+  became_customer_at?: Date | string | null
   email_acquired_in_session: boolean
   email_acquired_via: EmailAcquisitionVia | null
+  email_acquired_at?: Date | string | null
   seen_event_uuids: string[] | null
 }
 
@@ -130,11 +135,15 @@ export interface SessionUpsertRow {
   referring_domain: string | null
   is_paid_session: boolean
   carts_created_in_session: number
+  carts_viewed_in_session: number
   carts_updated_in_session: number
   cart_converted: boolean
   order_id: string | null
+  became_customer_in_session: boolean
+  became_customer_at: Date | null
   email_acquired_in_session: boolean
   email_acquired_via: EmailAcquisitionVia | null
+  email_acquired_at: Date | null
   seen_event_uuids: string[] | null
 }
 
@@ -144,6 +153,9 @@ export const SEEN_EVENT_UUIDS_CAP = 200
 
 /** Event names that should bump `carts_created_in_session`. */
 const CART_CREATE_EVENTS = new Set(['cart:product_added'])
+
+/** Event names that should bump `carts_viewed_in_session`. */
+const CART_VIEW_EVENTS = new Set(['cart:viewed'])
 
 /** Event names that should bump `carts_updated_in_session`. */
 const CART_UPDATE_EVENTS = new Set(['cart:product_removed', 'cart:updated', 'cart:cleared', 'cart:discount_applied'])
@@ -186,10 +198,12 @@ export function planSessionUpsert(args: PlanSessionUpsertArgs): SessionUpsertInt
 
   // ── 4. Counter increments — skipped on duplicate event_uuid ────
   let cartsCreated = existingSession?.carts_created_in_session ?? 0
+  let cartsViewed = existingSession?.carts_viewed_in_session ?? 0
   let cartsUpdated = existingSession?.carts_updated_in_session ?? 0
   let pageviews = existingSession?.pageviews_count ?? 0
   if (!alreadySeen) {
-    if (CART_CREATE_EVENTS.has(event.event_name)) cartsCreated += 1
+    if (CART_VIEW_EVENTS.has(event.event_name)) cartsViewed += 1
+    else if (CART_CREATE_EVENTS.has(event.event_name)) cartsCreated += 1
     else if (CART_UPDATE_EVENTS.has(event.event_name)) cartsUpdated += 1
     else if (event.event_name === '$pageview') pageviews += 1
   }
@@ -212,17 +226,13 @@ export function planSessionUpsert(args: PlanSessionUpsertArgs): SessionUpsertInt
   //     session emits checkout:started with an email, stamp the flag.
   let emailAcquired = existingSession?.email_acquired_in_session ?? false
   let emailAcquiredVia: EmailAcquisitionVia | null = existingSession?.email_acquired_via ?? null
+  let emailAcquiredAt = existingSession?.email_acquired_at ? toDate(existingSession.email_acquired_at) : null
 
-  const previouslyAnon = existingSession ? existingSession.email_at_session_start == null : true
-  if (
-    previouslyAnon &&
-    event.event_name === 'checkout:started' &&
-    event.email_on_event != null &&
-    event.email_on_event.length > 0 &&
-    !emailAcquired
-  ) {
+  const previouslyAnon = existingSession ? existingSession.email_at_session_start == null : false
+  if (previouslyAnon && event.email_on_event != null && event.email_on_event.length > 0 && !emailAcquired) {
     emailAcquired = true
-    emailAcquiredVia = 'checkout_started'
+    emailAcquiredVia = event.event_name === 'checkout:started' ? 'checkout_started' : 'newsletter'
+    emailAcquiredAt = occurredAt
   }
 
   // ── 6. Build the row ─────────────────────────────────────────────
@@ -244,12 +254,16 @@ export function planSessionUpsert(args: PlanSessionUpsertArgs): SessionUpsertInt
       utm_campaign: attribution.utm_campaign,
       referring_domain: attribution.referring_domain,
       is_paid_session: attribution.is_paid_session,
+      carts_viewed_in_session: cartsViewed,
       carts_created_in_session: cartsCreated,
       carts_updated_in_session: cartsUpdated,
       cart_converted: false,
       order_id: null,
+      became_customer_in_session: false,
+      became_customer_at: null,
       email_acquired_in_session: emailAcquired,
       email_acquired_via: emailAcquiredVia,
+      email_acquired_at: emailAcquiredAt,
       seen_event_uuids: nextSeen,
     }
     return { row, replaceFields: ALL_REPLACE_FIELDS, conflictTarget: ['distinct_id', 'session_id'] }
@@ -278,12 +292,16 @@ export function planSessionUpsert(args: PlanSessionUpsertArgs): SessionUpsertInt
     utm_campaign: existingSession.utm_campaign, // frozen
     referring_domain: existingSession.referring_domain, // frozen
     is_paid_session: existingSession.is_paid_session, // frozen
+    carts_viewed_in_session: cartsViewed,
     carts_created_in_session: cartsCreated,
     carts_updated_in_session: cartsUpdated,
     cart_converted: existingSession.cart_converted, // updated by attributeSessionConversion only
     order_id: existingSession.order_id, // ditto
+    became_customer_in_session: existingSession.became_customer_in_session ?? false,
+    became_customer_at: existingSession.became_customer_at ? toDate(existingSession.became_customer_at) : null,
     email_acquired_in_session: emailAcquired,
     email_acquired_via: emailAcquiredVia,
+    email_acquired_at: emailAcquiredAt,
     seen_event_uuids: nextSeen,
   }
   return { row, replaceFields: ALL_REPLACE_FIELDS, conflictTarget: ['distinct_id', 'session_id'] }
@@ -300,10 +318,12 @@ const ALL_REPLACE_FIELDS: string[] = [
   'last_event_at',
   'pageviews_count',
   'email_at_session_end',
+  'carts_viewed_in_session',
   'carts_created_in_session',
   'carts_updated_in_session',
   'email_acquired_in_session',
   'email_acquired_via',
+  'email_acquired_at',
   'seen_event_uuids',
 ]
 

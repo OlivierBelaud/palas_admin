@@ -34,6 +34,7 @@
 import { type PosthogEvent, type RawDb, SPAM_EMAIL_RE, STAGES } from '../../modules/cart-tracking/apply-event'
 import { enrichEventWithEmail, resolveEmailsBatch } from '../../modules/cart-tracking/identity-resolver'
 import { normalizeCartEvent } from '../../modules/cart-tracking/posthog-adapter'
+import { parsePosthogProperties } from '../../modules/cart-tracking/posthog-sync'
 import { repairCartSnapshots } from '../../modules/cart-tracking/refresh-cart'
 
 const POSTHOG_PAGE_SIZE = 1000
@@ -70,7 +71,7 @@ export default defineCommand({
     const fetchEvents = step.action('fetch-events', {
       invoke: async (_i: unknown, ctx): Promise<{ total: number; newlyInserted: number }> => {
         const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-        const key = process.env.POSTHOG_API_KEY
+        const key = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
         if (!key) throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required')
 
         const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
@@ -145,7 +146,7 @@ export default defineCommand({
               event: row[1] as string,
               distinct_id: (row[2] ?? null) as string | null,
               timestamp: row[3] as string,
-              properties: typeof row[4] === 'string' ? JSON.parse(row[4]) : (row[4] ?? {}),
+              properties: parsePosthogProperties(row[4]),
             }),
           )
 
@@ -268,10 +269,7 @@ export default defineCommand({
               row.event_timestamp instanceof Date ? row.event_timestamp.toISOString() : String(row.event_timestamp)
             lastUuid = row.posthog_uuid
             // postgres.js with `prepare: false` returns JSONB as raw string.
-            const parsedProps =
-              typeof row.properties === 'string'
-                ? (JSON.parse(row.properties) as Record<string, unknown>)
-                : ((row.properties ?? {}) as Record<string, unknown>)
+            const parsedProps = parsePosthogProperties(row.properties)
             const evt: PosthogEvent = {
               uuid: row.posthog_uuid,
               event: row.event_name,

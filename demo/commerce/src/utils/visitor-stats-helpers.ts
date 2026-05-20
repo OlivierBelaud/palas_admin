@@ -28,9 +28,11 @@ export interface SessionLite {
   started_at: Date | string
   segment_at_session_start: Segment
   is_paid_session: boolean
+  carts_viewed_in_session?: number
   carts_created_in_session: number
   carts_updated_in_session: number
   cart_converted: boolean
+  became_customer_in_session?: boolean
   email_acquired_in_session: boolean
   email_acquired_via: 'newsletter' | 'checkout_started' | null
 }
@@ -80,9 +82,11 @@ export async function pullSessions(
           'started_at',
           'segment_at_session_start',
           'is_paid_session',
+          'carts_viewed_in_session',
           'carts_created_in_session',
           'carts_updated_in_session',
           'cart_converted',
+          'became_customer_in_session',
           'email_acquired_in_session',
           'email_acquired_via',
         ],

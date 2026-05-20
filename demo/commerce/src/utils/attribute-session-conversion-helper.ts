@@ -17,6 +17,7 @@ export interface SessionRow {
   last_event_at: Date | string
   cart_converted: boolean
   order_id: string | null
+  segment_at_session_start?: 'unknown' | 'known_no_purchase' | 'returning_customer'
 }
 
 export interface SessionAttributionRepo {
@@ -65,9 +66,12 @@ export async function attributeSessionConversionCore(
 
   if (target.cart_converted === true) return { matched: 1 }
 
+  const becameCustomer = target.segment_at_session_start !== 'returning_customer'
   await repo.update(target.id, {
     cart_converted: true,
     order_id: input.order_id ?? null,
+    became_customer_in_session: becameCustomer,
+    became_customer_at: becameCustomer ? new Date(input.cart_birth_at) : null,
   })
   return { matched: 1 }
 }

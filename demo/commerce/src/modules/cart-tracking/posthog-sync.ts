@@ -66,11 +66,21 @@ export function rowToPosthogEvent(row: HogQLEventRow): PosthogEvent {
     event: event as string,
     distinct_id: (distinctId ?? null) as string | null,
     timestamp: timestamp as string,
-    properties:
-      typeof properties === 'string'
-        ? (JSON.parse(properties) as Record<string, unknown>)
-        : ((properties ?? {}) as Record<string, unknown>),
+    properties: parsePosthogProperties(properties),
   }
+}
+
+export function parsePosthogProperties(properties: unknown): Record<string, unknown> {
+  let value = properties
+  for (let i = 0; i < 2; i += 1) {
+    if (typeof value !== 'string') break
+    value = JSON.parse(value) as unknown
+  }
+  return isRecord(value) ? value : {}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
 /**

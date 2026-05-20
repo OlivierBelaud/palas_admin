@@ -21,9 +21,11 @@ export interface DailyStatsAggregateRow {
   had_paid_7d: boolean
   unique_visitors: number
   carts_created: number
+  carts_viewed: number
   carts_updated: number
   carts_created_converted: number
   carts_updated_converted: number
+  became_customers: number
   identity_newsletter: number
   identity_checkout: number
 }
@@ -80,9 +82,11 @@ export function aggregateVisitorSessions(sessions: SessionLite[], from: Date, to
         had_paid_7d: hadPaid,
         unique_visitors: 0,
         carts_created: 0,
+        carts_viewed: 0,
         carts_updated: 0,
         carts_created_converted: 0,
         carts_updated_converted: 0,
+        became_customers: 0,
         identity_newsletter: 0,
         identity_checkout: 0,
       }
@@ -92,10 +96,12 @@ export function aggregateVisitorSessions(sessions: SessionLite[], from: Date, to
     const uniqueSet = uniqueSetByKey.get(key) as Set<string>
     uniqueSet.add(s.distinct_id)
 
+    acc.carts_viewed += s.carts_viewed_in_session ?? 0
     acc.carts_created += s.carts_created_in_session
     acc.carts_updated += s.carts_updated_in_session
     if (s.carts_created_in_session > 0 && s.cart_converted) acc.carts_created_converted += 1
     if (s.carts_updated_in_session > 0 && s.cart_converted) acc.carts_updated_converted += 1
+    if (s.became_customer_in_session) acc.became_customers += 1
     if (s.email_acquired_in_session && s.email_acquired_via === 'newsletter') acc.identity_newsletter += 1
     if (s.email_acquired_in_session && s.email_acquired_via === 'checkout_started') acc.identity_checkout += 1
   }

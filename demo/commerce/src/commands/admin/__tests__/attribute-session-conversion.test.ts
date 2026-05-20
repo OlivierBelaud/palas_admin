@@ -53,7 +53,12 @@ describe('attributeSessionConversionCore', () => {
     expect(repo.updates).toHaveLength(1)
     expect(repo.updates[0]).toEqual({
       id: 'sess_a',
-      patch: { cart_converted: true, order_id: 'order_42' },
+      patch: {
+        cart_converted: true,
+        order_id: 'order_42',
+        became_customer_in_session: true,
+        became_customer_at: new Date(CART_BIRTH),
+      },
     })
   })
 
@@ -197,7 +202,12 @@ describe('attributeSessionConversionCore', () => {
       repo,
     )
     expect(out).toEqual({ matched: 1 })
-    expect(repo.updates[0].patch).toEqual({ cart_converted: true, order_id: null })
+    expect(repo.updates[0].patch).toEqual({
+      cart_converted: true,
+      order_id: null,
+      became_customer_in_session: true,
+      became_customer_at: new Date(CART_BIRTH),
+    })
   })
 
   it('ignores other-distinct-id sessions by passing distinct_id to the repo', async () => {
