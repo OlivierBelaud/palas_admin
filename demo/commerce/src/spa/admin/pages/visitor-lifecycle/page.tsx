@@ -128,6 +128,18 @@ const AUDIENCE_COLORS: Record<Segment, string> = {
   returning_customer: 'var(--chart-3)',
 }
 
+const CHART_LABELS: Record<string, string> = {
+  unknown: 'Suspects',
+  known_no_purchase: 'Prospects',
+  returning_customer: 'Clients',
+  visitors: 'Visiteurs',
+  became_known: 'Deviennent prospects',
+  became_customer: 'Deviennent clients',
+  revenue: 'CA ecommerce',
+  conversion_rate: 'Conversion visiteurs',
+  visitor_conversion_rate: 'Conversion visiteurs',
+}
+
 const DEFAULT_RANGE: DateRangeValue = { kind: 'preset', preset: '30d' }
 const tabsGridStyle = { gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: 'min(100%, 34rem)' }
 const summaryGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }
@@ -139,6 +151,21 @@ const twoColumnGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px
 const flowGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
 const qualityGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }
 const transitionRowGridStyle = { gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr) 5rem' }
+
+function formatTooltipNumber(value: unknown, name: unknown) {
+  const key = String(name)
+  return [fmtNumber(Number(value)), CHART_LABELS[key] ?? key]
+}
+
+function formatTooltipMoney(value: unknown, name: unknown) {
+  const key = String(name)
+  return [fmtMoney(Number(value)), CHART_LABELS[key] ?? key]
+}
+
+function formatTooltipPercent(value: unknown, name: unknown) {
+  const key = String(name)
+  return [fmtPct(Number(value)), CHART_LABELS[key] ?? key]
+}
 
 export default function VisitorLifecyclePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -487,7 +514,7 @@ function AudienceMixChart({ rows }: { rows: AudienceRow[] }) {
             <CartesianGrid vertical={false} strokeDasharray="3 3" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => fmtNumber(Number(value))} />
+            <Tooltip formatter={formatTooltipNumber} />
             <Bar dataKey="visitors" radius={[4, 4, 0, 0]}>
               {rows.map((row) => (
                 <Cell key={row.key} fill={AUDIENCE_COLORS[row.key]} />
@@ -518,7 +545,7 @@ function DailyTransitionsChart({ rows }: { rows: DailyRow[] }) {
             <CartesianGrid vertical={false} strokeDasharray="3 3" />
             <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={shortDate} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => fmtNumber(Number(value))} />
+            <Tooltip formatter={formatTooltipNumber} />
             <Line type="monotone" dataKey="became_known" stroke="var(--chart-2)" strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="became_customer" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
           </LineChart>
@@ -596,7 +623,7 @@ function SessionsByAudienceChart({ rows }: { rows: DailyRow[] }) {
             <CartesianGrid vertical={false} strokeDasharray="3 3" />
             <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={shortDate} />
             <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => fmtNumber(Number(value))} />
+            <Tooltip formatter={formatTooltipNumber} />
             <Area type="monotone" dataKey="unknown" stackId="1" fill="var(--chart-1)" stroke="var(--chart-1)" />
             <Area
               type="monotone"
@@ -638,7 +665,7 @@ function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
                 tickFormatter={shortDate}
               />
               <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value) => fmtMoney(Number(value))} />
+              <Tooltip formatter={formatTooltipMoney} />
               <Bar dataKey="revenue" fill="var(--chart-4)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartContainer>
@@ -663,7 +690,7 @@ function DailyRevenueConversionChart({ rows }: { rows: DailyRow[] }) {
                 tickFormatter={shortDate}
               />
               <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value) => fmtPct(Number(value))} />
+              <Tooltip formatter={formatTooltipPercent} />
               <Line type="monotone" dataKey="conversion_rate" stroke="var(--chart-5)" strokeWidth={2} dot={false} />
             </LineChart>
           </ChartContainer>
