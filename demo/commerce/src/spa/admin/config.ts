@@ -28,8 +28,9 @@ export default defineSpa({
     },
     {
       icon: 'Activity',
-      label: 'Visitor stats',
-      to: '/visitor-stats',
+      label: 'Lifecycle',
+      to: '/visitor-lifecycle',
+      items: [{ label: 'Visitor stats', to: '/visitor-stats' }],
     },
   ],
 
