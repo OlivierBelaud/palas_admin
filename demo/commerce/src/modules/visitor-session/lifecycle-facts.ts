@@ -186,51 +186,40 @@ async function replaceLifecycleFactsForDay(db: RawDb, day: string, facts: Lifecy
   await db.raw(`DELETE FROM ${FACTS_TABLE} WHERE day = $1`, [day])
   if (facts.length === 0) return
 
+  const params: unknown[] = []
+  const values = facts.map((fact, index) => {
+    const base = index * 18
+    params.push(
+      fact.day,
+      fact.actor_key,
+      fact.first_started_at,
+      fact.segment_at_day_start,
+      fact.sessions,
+      fact.cart_viewed,
+      fact.cart_initiated,
+      fact.cart_updated,
+      fact.converted,
+      fact.converted_sessions,
+      fact.became_known,
+      fact.became_customer,
+      fact.known_without_contact,
+      fact.converted_without_order_id,
+      fact.became_customer_without_contact,
+      JSON.stringify(fact.order_ids),
+      fact.computed_at,
+      fact.source_last_event_at,
+    )
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}, $${base + 14}, $${base + 15}, $${base + 16}::jsonb, $${base + 17}, $${base + 18})`
+  })
+
   await db.raw(
     `INSERT INTO ${FACTS_TABLE}
         (day, actor_key, first_started_at, segment_at_day_start, sessions,
          cart_viewed, cart_initiated, cart_updated, converted, converted_sessions, became_known,
          became_customer, known_without_contact, converted_without_order_id, became_customer_without_contact,
          order_ids, computed_at, source_last_event_at)
-     SELECT day,
-            actor_key,
-            first_started_at::timestamptz,
-            segment_at_day_start,
-            sessions,
-            cart_viewed,
-            cart_initiated,
-            cart_updated,
-            converted,
-            converted_sessions,
-            became_known,
-            became_customer,
-            known_without_contact,
-            converted_without_order_id,
-            became_customer_without_contact,
-            order_ids,
-            computed_at::timestamptz,
-            source_last_event_at::timestamptz
-       FROM jsonb_to_recordset($1::jsonb) AS x(
-            day text,
-            actor_key text,
-            first_started_at text,
-            segment_at_day_start text,
-            sessions integer,
-            cart_viewed boolean,
-            cart_initiated boolean,
-            cart_updated boolean,
-            converted boolean,
-            converted_sessions integer,
-            became_known boolean,
-            became_customer boolean,
-            known_without_contact boolean,
-            converted_without_order_id boolean,
-            became_customer_without_contact boolean,
-            order_ids jsonb,
-            computed_at text,
-            source_last_event_at text
-       )`,
-    [JSON.stringify(facts)],
+     VALUES ${values.join(', ')}`,
+    params,
   )
 }
 
