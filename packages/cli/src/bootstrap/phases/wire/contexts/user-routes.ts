@@ -87,6 +87,7 @@ export async function userRoutes(ctx: BootstrapContext, _appRef: AppRef): Promis
           jwtSecret,
           notification: infraMap.get('INotificationPort') as INotificationPort | undefined,
           baseUrl: process.env.ADMIN_BASE_URL ?? process.env.MANTA_BASE_URL,
+          publicPathPrefix: `/${contextName}`,
         })
 
         const overriddenNames = new Set(

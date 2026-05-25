@@ -9,6 +9,14 @@
     {
       "source": "/admin/:path*",
       "destination": "/admin/index.html"
+    },
+    {
+      "source": "/reset-password",
+      "destination": "/admin/reset-password"
+    },
+    {
+      "source": "/accept-invite",
+      "destination": "/admin/accept-invite"
     }
   ],
   "crons": [

@@ -16,6 +16,8 @@ import { Shell } from './shell'
 export interface MainLayoutProps {
   /** Static navigation items (from distribution) */
   navigation: Omit<INavItem, 'pathname'>[]
+  /** Settings navigation items (from distribution) */
+  settings?: Omit<INavItem, 'pathname'>[]
   /** Header component (store selector + logout) */
   headerSlot?: ReactNode
   /** User menu component */
@@ -24,7 +26,7 @@ export interface MainLayoutProps {
   iconMap?: Record<string, React.ReactElement>
 }
 
-export const MainLayout = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayoutProps) => {
+export const MainLayout = ({ navigation, settings, headerSlot, userMenuSlot, iconMap }: MainLayoutProps) => {
   const { setDefaultNavigation } = useDashboardContext()
 
   // Memoize the serialized navigation so the effect doesn't fire on every render
@@ -53,12 +55,18 @@ export const MainLayout = ({ navigation, headerSlot, userMenuSlot, iconMap }: Ma
 
   return (
     <Shell>
-      <MainSidebar navigation={navigation} headerSlot={headerSlot} userMenuSlot={userMenuSlot} iconMap={iconMap} />
+      <MainSidebar
+        navigation={navigation}
+        settings={settings}
+        headerSlot={headerSlot}
+        userMenuSlot={userMenuSlot}
+        iconMap={iconMap}
+      />
     </Shell>
   )
 }
 
-const MainSidebar = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayoutProps) => {
+const MainSidebar = ({ navigation, settings, headerSlot, userMenuSlot, iconMap }: MainLayoutProps) => {
   return (
     <aside className="flex flex-1 flex-col justify-between overflow-y-auto">
       <div className="flex flex-1 flex-col">
@@ -71,7 +79,7 @@ const MainSidebar = ({ navigation, headerSlot, userMenuSlot, iconMap }: MainLayo
             <CustomPagesSection />
             <ExtensionRouteSection />
           </div>
-          <UtilitySection />
+          <UtilitySection iconMap={iconMap} settings={settings} />
         </div>
         <div className="sticky bottom-0">{userMenuSlot ?? null}</div>
       </div>
@@ -237,12 +245,32 @@ const ExtensionRouteSection = () => {
   )
 }
 
-const UtilitySection = () => {
+const UtilitySection = ({
+  iconMap,
+  settings,
+}: {
+  iconMap?: Record<string, React.ReactElement>
+  settings?: Omit<INavItem, 'pathname'>[]
+}) => {
   const location = useLocation()
+  const mergedIconMap = { ...DEFAULT_ICON_MAP, ...iconMap }
+  const items: Omit<INavItem, 'pathname'>[] =
+    settings && settings.length > 0
+      ? settings
+      : [{ label: 'Settings', to: '/settings', icon: <Settings className="h-4 w-4" /> }]
 
   return (
     <div className="flex flex-col gap-y-0.5 py-3">
-      <NavItem label="Settings" to="/settings" from={location.pathname} icon={<Settings className="h-4 w-4" />} />
+      {items.map((item) => (
+        <NavItem
+          key={item.to}
+          label={item.label}
+          to={item.to}
+          from={location.pathname}
+          icon={item.icon ?? mergedIconMap.Settings}
+          items={item.items}
+        />
+      ))}
     </div>
   )
 }

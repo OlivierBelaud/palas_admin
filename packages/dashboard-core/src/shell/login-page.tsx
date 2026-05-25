@@ -124,7 +124,7 @@ export const LoginPage = ({ subtitle = 'Sign in to your account', defaultRedirec
         <span className="my-6 text-sm text-muted-foreground">
           Forgot your password?{' '}
           <Link
-            to="/reset-password"
+            to="../reset-password"
             className="font-medium text-primary transition-colors hover:text-primary/80 outline-none"
           >
             Reset it

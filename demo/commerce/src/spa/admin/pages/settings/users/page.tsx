@@ -80,7 +80,7 @@ export default function SettingsUsersPage() {
     const token = body.data?.token
     setStatus(`Invitation created for ${body.data?.email ?? email}.`)
     if (token) {
-      setInviteLink(`${window.location.origin}/accept-invite?token=${encodeURIComponent(token)}`)
+      setInviteLink(`${window.location.origin}/admin/accept-invite?token=${encodeURIComponent(token)}`)
     }
     setEmail('')
     setIsInviting(false)

@@ -30,6 +30,7 @@ export interface AutoRouteDeps {
   jwtSecret: string
   notification?: INotificationPort
   baseUrl?: string
+  publicPathPrefix?: string
 }
 
 async function getBody<T>(req: Request): Promise<T> {
@@ -50,6 +51,17 @@ function getBaseUrl(req: Request, configured?: string): string {
   if (base) return base.replace(/\/+$/, '')
   const url = new URL(req.url)
   return url.origin
+}
+
+function getPublicPageUrl(
+  req: Request,
+  configuredBaseUrl: string | undefined,
+  prefix: string | undefined,
+  path: string,
+) {
+  const base = getBaseUrl(req, configuredBaseUrl)
+  const cleanPrefix = prefix ? `/${prefix.replace(/^\/+|\/+$/g, '')}` : ''
+  return `${base}${cleanPrefix}${path}`
 }
 
 async function sendAuthEmail(
@@ -81,7 +93,7 @@ async function sendAuthEmail(
 // ── Auth routes ─────────────────────────────────────────
 
 export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
-  const { userDef, authService, userRepo, cache, logger, jwtSecret, notification, baseUrl } = deps
+  const { userDef, authService, userRepo, cache, logger, jwtSecret, notification, baseUrl, publicPathPrefix } = deps
   const ctx = userDef.contextName
   const basePath = `/api/${ctx}`
 
@@ -222,7 +234,7 @@ export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
         )
 
         await cache.set(`auth:reset:${ctx}:${email}`, resetToken, 3600)
-        const resetUrl = `${getBaseUrl(req, baseUrl)}/reset-password?email=${encodeURIComponent(email)}&token=${encodeURIComponent(resetToken)}`
+        const resetUrl = `${getPublicPageUrl(req, baseUrl, publicPathPrefix, '/reset-password')}?email=${encodeURIComponent(email)}&token=${encodeURIComponent(resetToken)}`
         await sendAuthEmail(
           notification,
           {
@@ -399,7 +411,7 @@ export function generateUserCrudRoutes(deps: AutoRouteDeps): RouteEntry[] {
 // ── Invite routes ───────────────────────────────────────
 
 export function generateInviteRoutes(deps: AutoRouteDeps): RouteEntry[] {
-  const { userDef, userRepo, inviteRepo, authService, logger, notification, baseUrl } = deps
+  const { userDef, userRepo, inviteRepo, authService, logger, notification, baseUrl, publicPathPrefix } = deps
   const ctx = userDef.contextName
   const basePath = `/api/${ctx}`
 
@@ -424,7 +436,7 @@ export function generateInviteRoutes(deps: AutoRouteDeps): RouteEntry[] {
           expires_at,
           metadata: body.metadata ?? null,
         })
-        const acceptUrl = `${getBaseUrl(req, baseUrl)}/accept-invite?token=${encodeURIComponent(token)}`
+        const acceptUrl = `${getPublicPageUrl(req, baseUrl, publicPathPrefix, '/accept-invite')}?token=${encodeURIComponent(token)}`
         await sendAuthEmail(
           notification,
           {

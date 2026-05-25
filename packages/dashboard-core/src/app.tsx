@@ -41,6 +41,7 @@ export interface DashboardAppProps {
   overrideStore: OverrideStore
   defaults: { pages: Record<string, PageSpec>; components: Record<string, DataComponent> }
   navigation: Omit<INavItem, 'pathname'>[]
+  settings?: Omit<INavItem, 'pathname'>[]
   formRoutes?: Record<string, RouteObject[]>
   config?: Partial<DashboardConfig>
   basename?: string
@@ -112,6 +113,7 @@ export function DashboardApp({
   overrideStore,
   defaults,
   navigation,
+  settings,
   formRoutes = {},
   config = {},
   basename,
@@ -386,6 +388,7 @@ export function DashboardApp({
                   <ActiveRunsBridge />
                   <MainLayout
                     navigation={navigation}
+                    settings={settings}
                     headerSlot={headerSlot}
                     userMenuSlot={userMenuSlot}
                     iconMap={iconMap}
@@ -435,6 +438,7 @@ export function DashboardApp({
     iconMap,
     loginProps,
     navigation,
+    settings,
     pageSpecs.filter,
     userMenuSlot,
   ])

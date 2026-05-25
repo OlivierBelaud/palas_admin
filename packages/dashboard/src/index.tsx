@@ -15,6 +15,7 @@ import {
   Sparkles,
   Store,
   Tag,
+  UserPlus,
   Users,
 } from 'lucide-react'
 import type React from 'react'
@@ -34,6 +35,7 @@ const ICON_MAP: Record<string, React.ReactElement> = {
   Buildings: <Building2 className="h-4 w-4" />,
   Building2: <Building2 className="h-4 w-4" />,
   Users: <Users className="h-4 w-4" />,
+  UserPlus: <UserPlus className="h-4 w-4" />,
   ReceiptPercent: <Receipt className="h-4 w-4" />,
   Receipt: <Receipt className="h-4 w-4" />,
   CurrencyDollar: <DollarSign className="h-4 w-4" />,
@@ -200,6 +202,7 @@ export function MantaDashboard({
     }
     return registry ? resolveNavigation(registry.navigation) : []
   }, [registry, spaConfig])
+  const settings = useMemo(() => (spaConfig?.settings ? resolveNavigation(spaConfig.settings) : []), [spaConfig])
   const defaultRoute = spaConfig?.defaultRedirect || navigation[0]?.to || '/'
   const defaults = useMemo(
     () => (registry ? { pages: registry.pages, components: registry.components } : { pages: {}, components: {} }),
@@ -250,6 +253,7 @@ export function MantaDashboard({
         overrideStore={overrideStore}
         defaults={defaults}
         navigation={navigation}
+        settings={settings}
         headerSlot={headerSlot}
         userMenuSlot={userMenuSlot}
         iconMap={ICON_MAP}
