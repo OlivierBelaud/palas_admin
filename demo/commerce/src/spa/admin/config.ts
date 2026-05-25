@@ -34,7 +34,10 @@ export default defineSpa({
     },
   ],
 
-  settings: [{ icon: 'Settings', label: 'General', to: '/settings' }],
+  settings: [
+    { icon: 'Settings', label: 'General', to: '/settings' },
+    { icon: 'UserPlus', label: 'Users', to: '/settings/users' },
+  ],
 
   ai: true,
 })

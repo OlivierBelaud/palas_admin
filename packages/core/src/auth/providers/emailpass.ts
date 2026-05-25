@@ -91,4 +91,31 @@ export class EmailpassAuthProvider implements IAuthProvider {
       authIdentity: providerIdentity.auth_identity,
     }
   }
+
+  async update(
+    data: Record<string, unknown>,
+    authIdentityService: IAuthIdentityProviderService,
+  ): Promise<AuthenticationResponse> {
+    const email = typeof data.email === 'string' ? data.email : undefined
+    const password = typeof data.password === 'string' ? data.password : undefined
+
+    if (!email || !password) {
+      return { success: false, error: 'Email and password are required' }
+    }
+
+    const existing = await authIdentityService.retrieve(email, 'emailpass')
+    if (!existing) {
+      return { success: false, error: 'Invalid email or password' }
+    }
+
+    const hashedPassword = await hashPassword(password)
+    const authIdentity = await authIdentityService.update(email, 'emailpass', {
+      provider_metadata: {
+        ...(existing.provider_metadata ?? {}),
+        password: hashedPassword,
+      },
+    })
+
+    return { success: true, authIdentity }
+  }
 }

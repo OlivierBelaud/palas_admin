@@ -2,7 +2,7 @@
 // Dev user seeding moved to the dedicated seed-dev-users phase.
 
 import { generateAllUserRoutes, getPublicPaths } from '@manta/core'
-import type { ICachePort } from '@manta/core/ports'
+import type { ICachePort, INotificationPort } from '@manta/core/ports'
 import type { AppRef, BootstrapContext } from '../../../bootstrap-context'
 import { ensureEntityTables } from '../../../bootstrap-helpers'
 
@@ -85,6 +85,8 @@ export async function userRoutes(ctx: BootstrapContext, _appRef: AppRef): Promis
           cache: infraMap.get('ICachePort') as ICachePort,
           logger,
           jwtSecret,
+          notification: infraMap.get('INotificationPort') as INotificationPort | undefined,
+          baseUrl: process.env.ADMIN_BASE_URL ?? process.env.MANTA_BASE_URL,
         })
 
         const overriddenNames = new Set(

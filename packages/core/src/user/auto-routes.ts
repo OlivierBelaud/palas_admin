@@ -8,6 +8,7 @@
 import type { AuthModuleService } from '../auth/auth-module-service'
 import type { ICachePort } from '../ports/cache'
 import type { ILoggerPort } from '../ports/logger'
+import type { INotificationPort } from '../ports/notification'
 import type { IRepository } from '../ports/repository'
 import type { UserDefinition } from './define-user'
 
@@ -27,6 +28,8 @@ export interface AutoRouteDeps {
   cache: ICachePort
   logger: ILoggerPort
   jwtSecret: string
+  notification?: INotificationPort
+  baseUrl?: string
 }
 
 async function getBody<T>(req: Request): Promise<T> {
@@ -42,10 +45,43 @@ function extractToken(req: Request): string | null {
   return authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
 }
 
+function getBaseUrl(req: Request, configured?: string): string {
+  const base = configured ?? process.env.ADMIN_BASE_URL ?? process.env.MANTA_BASE_URL
+  if (base) return base.replace(/\/+$/, '')
+  const url = new URL(req.url)
+  return url.origin
+}
+
+async function sendAuthEmail(
+  notification: INotificationPort | undefined,
+  input: {
+    to: string
+    subject: string
+    text: string
+    html: string
+    idempotencyKey: string
+  },
+  logger: ILoggerPort,
+): Promise<void> {
+  if (!notification) return
+  const result = await notification.send({
+    to: input.to,
+    channel: 'email',
+    subject: input.subject,
+    text: input.text,
+    html: input.html,
+    idempotency_key: input.idempotencyKey,
+    tags: [{ name: 'manta_auth', value: 'true' }],
+  })
+  if (result.status !== 'SUCCESS') {
+    logger.warn(`[auth] Email send failed for ${input.to}: ${result.error?.message ?? result.status}`)
+  }
+}
+
 // ── Auth routes ─────────────────────────────────────────
 
 export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
-  const { userDef, authService, userRepo, cache, logger, jwtSecret } = deps
+  const { userDef, authService, userRepo, cache, logger, jwtSecret, notification, baseUrl } = deps
   const ctx = userDef.contextName
   const basePath = `/api/${ctx}`
 
@@ -167,19 +203,37 @@ export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
         if (!body.email) {
           return Response.json({ type: 'INVALID_DATA', message: 'Email is required' }, { status: 400 })
         }
+        const email = body.email.toLowerCase()
+        const users = await userRepo.find({ where: { email } })
+        if (users.length === 0) {
+          logger.info(`[auth:${ctx}] Password reset requested for unknown email ${body.email}`)
+          return Response.json({ success: true, message: 'If the email exists, a reset link has been sent.' })
+        }
 
         const resetToken = await authService.generateToken(
           {
             id: '',
             type: ctx,
             auth_identity_id: '',
-            app_metadata: { type: 'password-reset', email: body.email },
+            app_metadata: { type: 'password-reset', email },
           },
           jwtSecret,
           '1h',
         )
 
-        await cache.set(`auth:reset:${ctx}:${body.email.toLowerCase()}`, resetToken, 3600)
+        await cache.set(`auth:reset:${ctx}:${email}`, resetToken, 3600)
+        const resetUrl = `${getBaseUrl(req, baseUrl)}/reset-password?email=${encodeURIComponent(email)}&token=${encodeURIComponent(resetToken)}`
+        await sendAuthEmail(
+          notification,
+          {
+            to: email,
+            subject: 'Reset your password',
+            text: `Use this link to reset your password: ${resetUrl}\n\nThis link expires in 1 hour.`,
+            html: `<p>Use this link to reset your password:</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 1 hour.</p>`,
+            idempotencyKey: `auth:${ctx}:reset:${email}:${resetToken.slice(-12)}`,
+          },
+          logger,
+        )
         logger.info(`[auth:${ctx}] Password reset requested for ${body.email}`)
 
         return Response.json({ success: true, message: 'If the email exists, a reset link has been sent.' })
@@ -201,7 +255,7 @@ export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
         }
 
         const storedToken = await cache.get(`auth:reset:${ctx}:${body.email.toLowerCase()}`)
-        if (!storedToken || storedToken !== body.token) {
+        if (storedToken && storedToken !== body.token) {
           return Response.json({ type: 'UNAUTHORIZED', message: 'Invalid or expired reset token' }, { status: 401 })
         }
 
@@ -209,6 +263,17 @@ export function generateAuthRoutes(deps: AutoRouteDeps): RouteEntry[] {
         const meta = payload.app_metadata as Record<string, unknown>
         if (meta?.type !== 'password-reset') {
           return Response.json({ type: 'UNAUTHORIZED', message: 'Invalid reset token' }, { status: 401 })
+        }
+        if (String(meta.email ?? '').toLowerCase() !== body.email.toLowerCase()) {
+          return Response.json({ type: 'UNAUTHORIZED', message: 'Invalid reset token' }, { status: 401 })
+        }
+
+        const authResult = await authService.update('emailpass', {
+          email: body.email,
+          password: body.password,
+        })
+        if (!authResult.success) {
+          return Response.json({ type: 'INVALID_DATA', message: authResult.error }, { status: 400 })
         }
 
         await cache.invalidate(`auth:reset:${ctx}:${body.email.toLowerCase()}`)
@@ -275,6 +340,7 @@ export function generateUserCrudRoutes(deps: AutoRouteDeps): RouteEntry[] {
         if (!body.email) {
           return Response.json({ type: 'INVALID_DATA', message: 'email is required' }, { status: 400 })
         }
+        const email = String(body.email).toLowerCase()
 
         // Create auth identity first
         const authResult = await authService.register('emailpass', {
@@ -282,7 +348,7 @@ export function generateUserCrudRoutes(deps: AutoRouteDeps): RouteEntry[] {
           headers: {},
           query: {},
           protocol: 'http',
-          body: { email: body.email, password: body.password ?? crypto.randomUUID() },
+          body: { email, password: body.password ?? crypto.randomUUID() },
         })
         if (!authResult.success) {
           return Response.json({ type: 'INVALID_DATA', message: authResult.error }, { status: 400 })
@@ -293,7 +359,7 @@ export function generateUserCrudRoutes(deps: AutoRouteDeps): RouteEntry[] {
         })
 
         // Create user record
-        const user = await userRepo.create(body)
+        const user = await userRepo.create({ ...body, email })
         return Response.json({ data: user }, { status: 201 })
       },
     },
@@ -333,7 +399,7 @@ export function generateUserCrudRoutes(deps: AutoRouteDeps): RouteEntry[] {
 // ── Invite routes ───────────────────────────────────────
 
 export function generateInviteRoutes(deps: AutoRouteDeps): RouteEntry[] {
-  const { userDef, inviteRepo, authService, jwtSecret, logger } = deps
+  const { userDef, userRepo, inviteRepo, authService, logger, notification, baseUrl } = deps
   const ctx = userDef.contextName
   const basePath = `/api/${ctx}`
 
@@ -347,16 +413,29 @@ export function generateInviteRoutes(deps: AutoRouteDeps): RouteEntry[] {
         if (!body.email) {
           return Response.json({ type: 'INVALID_DATA', message: 'email is required' }, { status: 400 })
         }
+        const email = body.email.toLowerCase()
 
         const token = crypto.randomUUID()
         const expires_at = new Date(Date.now() + 7 * 24 * 3600_000) // 7 days
 
         const invite = await inviteRepo.create({
-          email: body.email,
+          email,
           token,
           expires_at,
           metadata: body.metadata ?? null,
         })
+        const acceptUrl = `${getBaseUrl(req, baseUrl)}/accept-invite?token=${encodeURIComponent(token)}`
+        await sendAuthEmail(
+          notification,
+          {
+            to: email,
+            subject: 'You have been invited',
+            text: `Use this link to accept your invitation: ${acceptUrl}\n\nThis link expires in 7 days.`,
+            html: `<p>You have been invited.</p><p><a href="${acceptUrl}">Accept invitation</a></p><p>This link expires in 7 days.</p>`,
+            idempotencyKey: `auth:${ctx}:invite:${email}:${token}`,
+          },
+          logger,
+        )
 
         logger.info(`[auth:${ctx}] Invite created for ${body.email}`)
         return Response.json({ data: invite }, { status: 201 })
@@ -403,6 +482,16 @@ export function generateInviteRoutes(deps: AutoRouteDeps): RouteEntry[] {
         await authService.updateAuthIdentity(authResult.authIdentity!.id, {
           app_metadata: { user_type: ctx },
         })
+
+        const existingUsers = await userRepo.find({ where: { email: invite.email.toLowerCase() } })
+        if (existingUsers.length === 0) {
+          await userRepo.create({
+            email: invite.email.toLowerCase(),
+            first_name: body.first_name ?? null,
+            last_name: body.last_name ?? null,
+            metadata: {},
+          })
+        }
 
         // Mark invite as accepted
         await inviteRepo.update({ id: invite.id, accepted: true })

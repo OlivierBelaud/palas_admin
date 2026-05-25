@@ -28,4 +28,10 @@ export interface AuthAdapter {
   getAuthHeaders(): Record<string, string>
   /** Optional: reset password */
   resetPassword?(email: string): Promise<void>
+  /** Optional: request a password reset email */
+  requestPasswordReset?(email: string): Promise<void>
+  /** Optional: confirm a password reset with a token */
+  confirmPasswordReset?(input: { email: string; token: string; password: string }): Promise<void>
+  /** Optional: accept an invitation */
+  acceptInvite?(input: { token: string; password: string; first_name?: string; last_name?: string }): Promise<void>
 }

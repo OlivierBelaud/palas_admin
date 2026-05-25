@@ -73,6 +73,14 @@ export class AuthModuleService {
     return authProvider.register(data, this.createProviderService(provider))
   }
 
+  async update(provider: string, data: Record<string, unknown>): Promise<AuthenticationResponse> {
+    const authProvider = this.getProvider(provider)
+    if (!authProvider.update) {
+      return { success: false, error: `Provider "${provider}" does not support updates` }
+    }
+    return authProvider.update(data, this.createProviderService(provider))
+  }
+
   async validateCallback(provider: string, data: AuthenticationInput): Promise<AuthenticationResponse> {
     const authProvider = this.getProvider(provider)
     if (!authProvider.validateCallback) {

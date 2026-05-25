@@ -146,10 +146,47 @@ export class MantaAuthAdapter implements AuthAdapter {
   }
 
   async resetPassword(email: string): Promise<void> {
-    await fetch(`${this.baseUrl}${this.authPrefix}/reset-password`, {
+    await this.requestPasswordReset(email)
+  }
+
+  async requestPasswordReset(email: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}${this.authPrefix}/forgot-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.message || 'Password reset request failed')
+    }
+  }
+
+  async confirmPasswordReset(input: { email: string; token: string; password: string }): Promise<void> {
+    const res = await fetch(`${this.baseUrl}${this.authPrefix}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.message || 'Password reset failed')
+    }
+  }
+
+  async acceptInvite(input: {
+    token: string
+    password: string
+    first_name?: string
+    last_name?: string
+  }): Promise<void> {
+    const res = await fetch(`${this.baseUrl}${this.authPrefix}/accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.message || 'Invitation acceptance failed')
+    }
   }
 }

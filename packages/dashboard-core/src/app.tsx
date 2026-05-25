@@ -20,6 +20,7 @@ import { Providers } from './providers/providers'
 import { FormRenderer } from './renderers/FormRenderer'
 import { PageRenderer } from './renderers/PageRenderer'
 import { SpecRenderer } from './renderers/SpecRenderer'
+import { AcceptInvitePage } from './shell/accept-invite-page'
 import { ProtectedRoute } from './shell/auth-guard'
 import { ErrorBoundary } from './shell/error-boundary'
 import type { LoginPageProps } from './shell/login-page'
@@ -27,6 +28,7 @@ import { LoginPage } from './shell/login-page'
 import { MainLayout } from './shell/main-layout'
 import type { INavItem } from './shell/nav-item'
 import { buildBreadcrumbHandle } from './shell/page-breadcrumb'
+import { ResetPasswordPage } from './shell/reset-password-page'
 import { buildRouteMap } from './shell/route-builder'
 import { ActiveRunsBridge } from './workflow'
 
@@ -364,6 +366,14 @@ export function DashboardApp({
         {
           path: '/login',
           element: <LoginPage {...loginProps} />,
+        },
+        {
+          path: '/reset-password',
+          element: <ResetPasswordPage />,
+        },
+        {
+          path: '/accept-invite',
+          element: <AcceptInvitePage />,
         },
         {
           path: '/',

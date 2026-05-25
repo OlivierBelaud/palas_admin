@@ -146,6 +146,33 @@ describe('AuthModuleService', () => {
     expect(result.success).toBe(false)
   })
 
+  it('updates an emailpass password', async () => {
+    await authService.register(
+      'emailpass',
+      createAuthInput({
+        email: 'reset@example.com',
+        password: 'OldPassword123',
+      }),
+    )
+
+    const update = await authService.update('emailpass', {
+      email: 'reset@example.com',
+      password: 'NewPassword123',
+    })
+
+    expect(update.success).toBe(true)
+    const oldLogin = await authService.authenticate(
+      'emailpass',
+      createAuthInput({ email: 'reset@example.com', password: 'OldPassword123' }),
+    )
+    const newLogin = await authService.authenticate(
+      'emailpass',
+      createAuthInput({ email: 'reset@example.com', password: 'NewPassword123' }),
+    )
+    expect(oldLogin.success).toBe(false)
+    expect(newLogin.success).toBe(true)
+  })
+
   it('authenticate with unregistered provider throws', async () => {
     await expect(authService.authenticate('nonexistent', createAuthInput({}))).rejects.toThrow('not registered')
   })
