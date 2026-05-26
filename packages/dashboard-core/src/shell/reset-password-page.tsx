@@ -1,7 +1,7 @@
 import { Alert, Button, Input } from '@manta/ui'
 import type React from 'react'
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useDashboardContext } from '../context'
 
 export const ResetPasswordPage = () => {
@@ -17,7 +17,10 @@ export const ResetPasswordPage = () => {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const title = useMemo(() => (hasToken ? 'Choose a new password' : 'Reset your password'), [hasToken])
+  const title = useMemo(
+    () => (hasToken ? 'Choisir un nouveau mot de passe' : 'Réinitialiser votre mot de passe'),
+    [hasToken],
+  )
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -28,13 +31,12 @@ export const ResetPasswordPage = () => {
       if (hasToken) {
         if (!authAdapter.confirmPasswordReset) throw new Error('Password reset is not configured')
         await authAdapter.confirmPasswordReset({ email, token, password })
-        setStatus('Password updated. You can sign in now.')
-        setTimeout(() => navigate('/login'), 800)
+        setStatus('Mot de passe mis à jour. Vous pouvez vous connecter.')
       } else {
         const requestReset = authAdapter.requestPasswordReset ?? authAdapter.resetPassword
         if (!requestReset) throw new Error('Password reset is not configured')
         await requestReset(email)
-        setStatus('If this account exists, a reset email has been sent.')
+        setStatus('Si ce compte existe, un email de réinitialisation vient d’être envoyé.')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed')
@@ -49,7 +51,9 @@ export const ResetPasswordPage = () => {
         <div className="flex flex-col items-center gap-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           <p className="text-sm text-muted-foreground">
-            {hasToken ? 'Enter your email and a new password.' : 'Enter your admin email.'}
+            {hasToken
+              ? 'Saisissez votre email admin et votre nouveau mot de passe.'
+              : 'Saisissez votre email admin pour recevoir un lien.'}
           </p>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -68,7 +72,7 @@ export const ResetPasswordPage = () => {
               className="bg-background"
               minLength={8}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="New password"
+              placeholder="Nouveau mot de passe"
               required
               type="password"
               value={password}
@@ -77,12 +81,14 @@ export const ResetPasswordPage = () => {
           {error && <Alert variant="error">{error}</Alert>}
           {status && <Alert variant="success">{status}</Alert>}
           <Button className="w-full" type="submit" isLoading={isSubmitting}>
-            {hasToken ? 'Update password' : 'Send reset link'}
+            {hasToken ? 'Mettre à jour le mot de passe' : 'Envoyer le lien de réinitialisation'}
           </Button>
         </form>
-        <Link className="text-center text-sm font-medium text-primary hover:text-primary/80" to="/login">
-          Back to login
-        </Link>
+        {status && (
+          <Button className="w-full" variant="outline" type="button" onClick={() => navigate('/login')}>
+            Retour à la connexion
+          </Button>
+        )}
       </div>
     </div>
   )
