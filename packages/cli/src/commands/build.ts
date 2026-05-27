@@ -170,7 +170,7 @@ export async function buildCommand(
 
   // Generate vercel.json for Vercel preset
   if (preset === 'vercel') {
-    generateVercelConfig(cwd, jobs)
+    generateVercelConfig(cwd, jobs, resources.spas)
   }
 
   // Delegate to Nitro build via @manta/host-nitro (only if nitro.config.ts exists)
@@ -182,9 +182,9 @@ export async function buildCommand(
       await buildForProduction({ cwd, preset })
       console.log('  ✓ Nitro build complete')
 
-      // Patch Vercel config.json to add SPA rewrite for /admin/* → /admin/index.html.
+      // Patch Vercel config.json to add SPA rewrites for static SPA fallbacks.
       // Nitro's Build Output API generates config.json with routes that bypass vercel.json
-      // rewrites entirely. Without this patch, /admin falls through to the serverless
+      // rewrites entirely. Without this patch, /{spa} falls through to the serverless
       // catch-all and 404s because Nitro has no handler for it (the SPA is static).
       if (preset === 'vercel') {
         const configPath = join(cwd, '.vercel', 'output', 'config.json')
@@ -192,19 +192,20 @@ export async function buildCommand(
           const config = JSON.parse(readFileSync(configPath, 'utf-8'))
           const routes: Array<Record<string, unknown>> = config.routes ?? []
           // Insert the SPA fallback AFTER 'handle: filesystem' so that
-          // /admin/assets/*.js is served by the filesystem handler first,
-          // and only bare /admin/* paths (no matching file) get the index.html.
+          // /{spa}/assets/*.js is served by the filesystem handler first,
+          // and only bare /{spa}/* paths (no matching file) get the index.html.
           const fsIdx = routes.findIndex((r) => r.handle === 'filesystem')
           if (fsIdx >= 0) {
-            routes.splice(fsIdx + 1, 0, {
-              src: '/admin(/.*)?',
-              dest: '/admin/index.html',
+            const spaRoutes = resources.spas.map((spa) => ({
+              src: `/${spa.name}(/.*)?`,
+              dest: `/${spa.name}/index.html`,
               status: 200,
-            })
+            }))
+            routes.splice(fsIdx + 1, 0, ...spaRoutes)
           }
           config.routes = routes
           writeFileSync(configPath, JSON.stringify(config, null, 2))
-          console.log('  ✓ Vercel config.json patched (SPA /admin fallback)')
+          console.log('  ✓ Vercel config.json patched (SPA fallbacks)')
         }
 
         // NOTE: source files are NOT copied to the function directory anymore.
@@ -225,17 +226,34 @@ export async function buildCommand(
 // Vercel-specific config generation
 // ──────────────────────────────────────────────
 
-function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[]): void {
+function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[], spas: Array<{ name: string }> = []): void {
   // NOTE: do NOT include `buildCommand` here — it creates a "Production Override" in Vercel
   // that takes precedence over the Project Settings build command, making it impossible to
   // change from the Vercel UI. Let the user configure their build command in Vercel settings.
+  const rewrites: Array<{ source: string; destination: string }> = []
+  if (spas.length === 1) {
+    const [spa] = spas
+    rewrites.push(
+      { source: '/', destination: `/${spa.name}/login` },
+      { source: `/${spa.name}`, destination: `/${spa.name}/index.html` },
+      { source: `/${spa.name}/:path*`, destination: `/${spa.name}/index.html` },
+      { source: '/login', destination: `/${spa.name}/login` },
+      { source: '/reset-password', destination: `/${spa.name}/reset-password` },
+      { source: '/accept-invite', destination: `/${spa.name}/accept-invite` },
+    )
+  } else {
+    for (const spa of spas) {
+      rewrites.push(
+        { source: `/${spa.name}`, destination: `/${spa.name}/index.html` },
+        { source: `/${spa.name}/:path*`, destination: `/${spa.name}/index.html` },
+      )
+    }
+  }
+
   const vercelJson: Record<string, unknown> = {
     $schema: 'https://openapi.vercel.sh/vercel.json',
     framework: null,
-    rewrites: [
-      { source: '/', destination: '/admin' },
-      { source: '/admin/:path*', destination: '/admin/index.html' },
-    ],
+    rewrites,
   }
   if (jobs.length > 0) {
     vercelJson.crons = jobs.map((job) => ({
