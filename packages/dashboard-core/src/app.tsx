@@ -3,7 +3,7 @@ import { type ReactNode, useCallback, useMemo, useRef, useState, useSyncExternal
 import type { RouteObject } from 'react-router-dom'
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useParams } from 'react-router-dom'
 import type { DashboardContextValue } from './context'
-import { DashboardContext } from './context'
+import { DashboardContext, useDashboardContext } from './context'
 import type { AuthAdapter } from './interfaces/auth-adapter'
 import type { DataSource } from './interfaces/data-source'
 import type { OverrideStore } from './interfaces/override-store'
@@ -77,6 +77,14 @@ export interface DashboardAppProps {
 function PageWrapper({ spec, resolver }: { spec: PageSpec; resolver: Resolver }) {
   const params = useParams()
   return <SpecRenderer spec={spec} resolver={resolver} params={params as Record<string, string>} />
+}
+
+function PublicOnlyRoute({ children }: { children: ReactNode }) {
+  const { authAdapter } = useDashboardContext()
+  if (authAdapter.isAuthenticated()) {
+    return <Navigate to="/" replace />
+  }
+  return <>{children}</>
 }
 
 const defaultApi: ExtensionAPI = {
@@ -344,15 +352,27 @@ export function DashboardApp({
       [
         {
           path: '/login',
-          element: <LoginPage {...loginProps} />,
+          element: (
+            <PublicOnlyRoute>
+              <LoginPage {...loginProps} />
+            </PublicOnlyRoute>
+          ),
         },
         {
           path: '/reset-password',
-          element: <ResetPasswordPage />,
+          element: (
+            <PublicOnlyRoute>
+              <ResetPasswordPage />
+            </PublicOnlyRoute>
+          ),
         },
         {
           path: '/accept-invite',
-          element: <AcceptInvitePage />,
+          element: (
+            <PublicOnlyRoute>
+              <AcceptInvitePage />
+            </PublicOnlyRoute>
+          ),
         },
         {
           path: '/',
