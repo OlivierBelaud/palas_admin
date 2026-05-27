@@ -230,16 +230,19 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[], spas: Array
   // NOTE: do NOT include `buildCommand` here — it creates a "Production Override" in Vercel
   // that takes precedence over the Project Settings build command, making it impossible to
   // change from the Vercel UI. Let the user configure their build command in Vercel settings.
+  const redirects: Array<{ source: string; destination: string; permanent: boolean }> = []
   const rewrites: Array<{ source: string; destination: string }> = []
   if (spas.length === 1) {
     const [spa] = spas
+    redirects.push(
+      { source: '/', destination: `/${spa.name}/login`, permanent: false },
+      { source: '/login', destination: `/${spa.name}/login`, permanent: false },
+      { source: '/reset-password', destination: `/${spa.name}/reset-password`, permanent: false },
+      { source: '/accept-invite', destination: `/${spa.name}/accept-invite`, permanent: false },
+    )
     rewrites.push(
-      { source: '/', destination: `/${spa.name}/login` },
       { source: `/${spa.name}`, destination: `/${spa.name}/index.html` },
       { source: `/${spa.name}/:path*`, destination: `/${spa.name}/index.html` },
-      { source: '/login', destination: `/${spa.name}/login` },
-      { source: '/reset-password', destination: `/${spa.name}/reset-password` },
-      { source: '/accept-invite', destination: `/${spa.name}/accept-invite` },
     )
   } else {
     for (const spa of spas) {
@@ -253,6 +256,7 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[], spas: Array
   const vercelJson: Record<string, unknown> = {
     $schema: 'https://openapi.vercel.sh/vercel.json',
     framework: null,
+    redirects,
     rewrites,
   }
   if (jobs.length > 0) {

@@ -1,11 +1,29 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "rewrites": [
+  "redirects": [
     {
       "source": "/",
-      "destination": "/admin/login"
+      "destination": "/admin/login",
+      "permanent": false
     },
+    {
+      "source": "/login",
+      "destination": "/admin/login",
+      "permanent": false
+    },
+    {
+      "source": "/reset-password",
+      "destination": "/admin/reset-password",
+      "permanent": false
+    },
+    {
+      "source": "/accept-invite",
+      "destination": "/admin/accept-invite",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
     {
       "source": "/admin",
       "destination": "/admin/index.html"
@@ -13,18 +31,6 @@
     {
       "source": "/admin/:path*",
       "destination": "/admin/index.html"
-    },
-    {
-      "source": "/login",
-      "destination": "/admin/login"
-    },
-    {
-      "source": "/reset-password",
-      "destination": "/admin/reset-password"
-    },
-    {
-      "source": "/accept-invite",
-      "destination": "/admin/accept-invite"
     }
   ],
   "crons": [
