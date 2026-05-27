@@ -7,8 +7,16 @@
       "destination": "/admin"
     },
     {
+      "source": "/admin",
+      "destination": "/admin/index.html"
+    },
+    {
       "source": "/admin/:path*",
       "destination": "/admin/index.html"
+    },
+    {
+      "source": "/login",
+      "destination": "/admin/login"
     },
     {
       "source": "/reset-password",

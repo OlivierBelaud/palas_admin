@@ -1,9 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { type ReactNode, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { RouteObject } from 'react-router-dom'
-import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation, useParams } from 'react-router-dom'
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useParams } from 'react-router-dom'
 import type { DashboardContextValue } from './context'
-import { DashboardContext, useDashboardContext } from './context'
+import { DashboardContext } from './context'
 import type { AuthAdapter } from './interfaces/auth-adapter'
 import type { DataSource } from './interfaces/data-source'
 import type { OverrideStore } from './interfaces/override-store'
@@ -77,29 +77,6 @@ export interface DashboardAppProps {
 function PageWrapper({ spec, resolver }: { spec: PageSpec; resolver: Resolver }) {
   const params = useParams()
   return <SpecRenderer spec={spec} resolver={resolver} params={params as Record<string, string>} />
-}
-
-// Custom page wrapper
-function CustomPageWrapper({ resolver }: { resolver: Resolver }) {
-  const location = useLocation()
-  const { overrideStore, overridesVersion: _v } = useDashboardContext()
-
-  const customPages = overrideStore.getCustomPages()
-  const pageId = Object.keys(customPages).find((id) => {
-    const page = customPages[id]
-    return page.route && location.pathname === page.route
-  })
-
-  if (!pageId) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">Page not found</p>
-      </div>
-    )
-  }
-
-  const spec = customPages[pageId]
-  return <SpecRenderer spec={spec} resolver={resolver} params={{}} />
 }
 
 const defaultApi: ExtensionAPI = {
@@ -411,7 +388,7 @@ export function DashboardApp({
                 ...customRoutes,
                 {
                   path: '*',
-                  element: <CustomPageWrapper resolver={resolver} />,
+                  element: <Navigate to="/login" replace />,
                 },
               ],
             },
@@ -419,7 +396,7 @@ export function DashboardApp({
         },
         {
           path: '*',
-          element: <Navigate to={`/${defaultRedirect}`} replace />,
+          element: <Navigate to="/login" replace />,
         },
       ],
       { basename },
