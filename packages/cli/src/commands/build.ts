@@ -194,7 +194,7 @@ export async function buildCommand(
           if (resources.spas.length === 1) {
             const [spa] = resources.spas
             routes.unshift(
-              { src: '^/$', status: 307, headers: { Location: `/${spa.name}/login` } },
+              { src: '^/$', status: 307, headers: { Location: `/${spa.name}` } },
               { src: '^/login/?$', status: 307, headers: { Location: `/${spa.name}/login` } },
               { src: '^/reset-password/?$', status: 307, headers: { Location: `/${spa.name}/reset-password` } },
               { src: '^/accept-invite/?$', status: 307, headers: { Location: `/${spa.name}/accept-invite` } },
@@ -244,7 +244,7 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[], spas: Array
   if (spas.length === 1) {
     const [spa] = spas
     redirects.push(
-      { source: '/', destination: `/${spa.name}/login`, permanent: false },
+      { source: '/', destination: `/${spa.name}`, permanent: false },
       { source: '/login', destination: `/${spa.name}/login`, permanent: false },
       { source: '/reset-password', destination: `/${spa.name}/reset-password`, permanent: false },
       { source: '/accept-invite', destination: `/${spa.name}/accept-invite`, permanent: false },

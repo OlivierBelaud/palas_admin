@@ -4,7 +4,7 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/admin/login",
+      "destination": "/admin",
       "permanent": false
     },
     {
