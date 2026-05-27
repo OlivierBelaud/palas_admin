@@ -191,6 +191,15 @@ export async function buildCommand(
         if (existsSync(configPath)) {
           const config = JSON.parse(readFileSync(configPath, 'utf-8'))
           const routes: Array<Record<string, unknown>> = config.routes ?? []
+          if (resources.spas.length === 1) {
+            const [spa] = resources.spas
+            routes.unshift(
+              { src: '^/$', status: 307, headers: { Location: `/${spa.name}/login` } },
+              { src: '^/login/?$', status: 307, headers: { Location: `/${spa.name}/login` } },
+              { src: '^/reset-password/?$', status: 307, headers: { Location: `/${spa.name}/reset-password` } },
+              { src: '^/accept-invite/?$', status: 307, headers: { Location: `/${spa.name}/accept-invite` } },
+            )
+          }
           // Insert the SPA fallback AFTER 'handle: filesystem' so that
           // /{spa}/assets/*.js is served by the filesystem handler first,
           // and only bare /{spa}/* paths (no matching file) get the index.html.
