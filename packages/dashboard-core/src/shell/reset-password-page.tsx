@@ -33,9 +33,13 @@ export const ResetPasswordPage = () => {
         await authAdapter.confirmPasswordReset({ email, token, password })
         setStatus('Mot de passe mis à jour. Vous pouvez vous connecter.')
       } else {
-        const requestReset = authAdapter.requestPasswordReset ?? authAdapter.resetPassword
-        if (!requestReset) throw new Error('Password reset is not configured')
-        await requestReset(email)
+        if (authAdapter.requestPasswordReset) {
+          await authAdapter.requestPasswordReset(email)
+        } else if (authAdapter.resetPassword) {
+          await authAdapter.resetPassword(email)
+        } else {
+          throw new Error('Password reset is not configured')
+        }
         setStatus('Si ce compte existe, un email de réinitialisation vient d’être envoyé.')
       }
     } catch (err) {
