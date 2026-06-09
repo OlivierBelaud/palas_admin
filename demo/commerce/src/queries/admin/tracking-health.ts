@@ -19,40 +19,64 @@ export default defineQuery({
   description: 'Live Event Hub hot log for the last 24 hours',
   input: z.object({
     hours: z.number().int().positive().max(24).default(4),
-    limit: z.number().int().positive().max(500).default(200),
+    limit: z.number().int().positive().max(200).default(50),
+    offset: z.number().int().min(0).default(0),
     event_name: z.string().optional(),
   }),
   handler: async (input, { query }) => {
     const hours = input.hours ?? 4
-    const limit = input.limit ?? 200
+    const limit = input.limit ?? 50
+    const offset = input.offset ?? 0
     const to = new Date()
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
-    const filters: Record<string, unknown> = {
+    const baseFilters: Record<string, unknown> = {
       received_at: { $gte: from.toISOString(), $lte: to.toISOString() },
     }
+    const filters: Record<string, unknown> = { ...baseFilters }
     if (input.event_name && input.event_name !== 'all') filters.event_name = input.event_name
 
-    const rows = (await query.graph({
+    const fields = [
+      'id',
+      'event_id',
+      'event_name',
+      'source',
+      'received_at',
+      'page_type',
+      'market',
+      'identity_muid',
+      'identity_email_sha256',
+      'distinct_id',
+      'valid',
+      'validation_errors',
+      'payload_normalized',
+    ]
+
+    const [rows, total] = (await query.graphAndCount({
       entity: 'eventLog',
       filters,
-      fields: [
-        'id',
-        'event_id',
-        'event_name',
-        'source',
-        'received_at',
-        'page_type',
-        'market',
-        'identity_muid',
-        'identity_email_sha256',
-        'distinct_id',
-        'valid',
-        'validation_errors',
-        'payload_normalized',
-      ],
+      fields,
       sort: { received_at: 'desc' },
-      pagination: { limit },
+      pagination: { limit, offset },
+    })) as unknown as [EventLogRow[], number]
+
+    const typeRows = (await query.graph({
+      entity: 'eventLog',
+      filters: baseFilters,
+      fields,
+      sort: { received_at: 'desc' },
+      pagination: { limit: 10000, offset: 0 },
     })) as unknown as EventLogRow[]
+
+    const statRows =
+      input.event_name && input.event_name !== 'all'
+        ? ((await query.graph({
+            entity: 'eventLog',
+            filters,
+            fields,
+            sort: { received_at: 'desc' },
+            pagination: { limit: 10000, offset: 0 },
+          })) as unknown as EventLogRow[])
+        : typeRows
 
     const byType = new Map<
       string,
@@ -60,10 +84,14 @@ export default defineQuery({
     >()
     let identified = 0
     let valid = 0
+    const latestAt = typeRows[0]?.received_at ? new Date(typeRows[0].received_at).toISOString() : null
 
-    for (const row of rows) {
+    for (const row of statRows) {
       if (row.identity_muid || row.identity_email_sha256 || row.distinct_id) identified += 1
       if (row.valid) valid += 1
+    }
+
+    for (const row of typeRows) {
       const item = byType.get(row.event_name) ?? {
         event_name: row.event_name,
         count: 0,
@@ -114,14 +142,22 @@ export default defineQuery({
       meta: {
         range: { from: from.toISOString(), to: to.toISOString() },
         generated_at: new Date().toISOString(),
+        latest_event_at: latestAt,
         retention_hours: 24,
+        pagination: {
+          limit,
+          offset,
+          total,
+          page: Math.floor(offset / limit) + 1,
+          page_count: Math.max(1, Math.ceil(total / limit)),
+        },
       },
       kpis: {
-        total: rows.length,
+        total,
         valid,
-        invalid: rows.length - valid,
+        invalid: total - valid,
         identified,
-        anonymous: rows.length - identified,
+        anonymous: total - identified,
       },
       event_types: Array.from(byType.values()).sort((a, b) => b.count - a.count),
       events,

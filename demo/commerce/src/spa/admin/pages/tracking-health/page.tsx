@@ -1,12 +1,20 @@
 import { useQuery } from '@manta/sdk'
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@manta/ui'
+import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@manta/ui'
 import * as React from 'react'
 
 interface TrackingHealthData {
   meta: {
     range: { from: string; to: string }
     generated_at: string
+    latest_event_at: string | null
     retention_hours: number
+    pagination: {
+      limit: number
+      offset: number
+      total: number
+      page: number
+      page_count: number
+    }
   }
   kpis: {
     total: number
@@ -43,12 +51,18 @@ interface TrackingHealthData {
 }
 
 const HOURS_OPTIONS = [1, 4, 12, 24]
+const PAGE_SIZE = 50
+const LIVE_STALE_MS = 2 * 60 * 1000
 const kpiGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }
 
 export default function TrackingHealthPage() {
   const [hours, setHours] = React.useState(4)
   const [eventName, setEventName] = React.useState('all')
-  const params = React.useMemo(() => ({ hours, limit: 300, event_name: eventName }), [hours, eventName])
+  const [pageIndex, setPageIndex] = React.useState(0)
+  const params = React.useMemo(
+    () => ({ hours, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE, event_name: eventName }),
+    [hours, eventName, pageIndex],
+  )
   const query = useQuery<TrackingHealthData>('tracking-health', params, {
     staleTime: 0,
     refetchInterval: 1000,
@@ -60,6 +74,12 @@ export default function TrackingHealthPage() {
     if (eventName !== 'all') names.add(eventName)
     return Array.from(names).sort()
   }, [data?.event_types, eventName])
+
+  React.useEffect(() => {
+    setPageIndex(0)
+  }, [hours, eventName])
+
+  const live = getLiveState(data, query.isError)
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -73,6 +93,13 @@ export default function TrackingHealthPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
+            <span
+              aria-hidden="true"
+              className={`h-2.5 w-2.5 rounded-full ${live.ok ? 'animate-pulse bg-emerald-500' : 'bg-red-500'}`}
+            />
+            <span className={live.ok ? 'text-emerald-700' : 'text-red-700'}>{live.label}</span>
+          </div>
           <select
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={hours}
@@ -96,9 +123,6 @@ export default function TrackingHealthPage() {
               </option>
             ))}
           </select>
-          <Button variant="outline" size="small" onClick={() => query.refetch()} isLoading={query.isFetching}>
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -108,7 +132,7 @@ export default function TrackingHealthPage() {
         <>
           <Kpis data={data} />
           <EventTypeTable rows={data.event_types} active={eventName} setActive={setEventName} />
-          <LiveEventTable events={data.events} />
+          <LiveEventTable data={data} pageIndex={pageIndex} setPageIndex={setPageIndex} />
         </>
       ) : null}
     </div>
@@ -198,65 +222,96 @@ function EventTypeTable({
   )
 }
 
-function LiveEventTable({ events }: { events: TrackingHealthData['events'] }) {
+function LiveEventTable({
+  data,
+  pageIndex,
+  setPageIndex,
+}: {
+  data: TrackingHealthData
+  pageIndex: number
+  setPageIndex: (value: number) => void
+}) {
+  const events = data.events
+  const pageCount = data.meta.pagination.page_count
+  const total = data.meta.pagination.total
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Log live</CardTitle>
+        <span className="text-sm text-muted-foreground">50 lignes par page</span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <table className="w-full min-w-[980px] text-sm">
-          <thead className="border-b text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="py-2 pr-4 font-medium">Reçu</th>
-              <th className="py-2 pr-4 font-medium">Event</th>
-              <th className="py-2 pr-4 font-medium">Source</th>
-              <th className="py-2 pr-4 font-medium">Page</th>
-              <th className="py-2 pr-4 font-medium">Identité</th>
-              <th className="py-2 pr-4 font-medium">Valeur</th>
-              <th className="py-2 pr-4 font-medium">Articles</th>
-              <th className="py-2 pr-4 font-medium">Statut</th>
-              <th className="py-2 pr-4 font-medium">Event ID</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="min-w-[980px]">
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Reçu</Table.Head>
+              <Table.Head>Event</Table.Head>
+              <Table.Head>Source</Table.Head>
+              <Table.Head>Page</Table.Head>
+              <Table.Head>Identité</Table.Head>
+              <Table.Head>Valeur</Table.Head>
+              <Table.Head>Articles</Table.Head>
+              <Table.Head>Statut</Table.Head>
+              <Table.Head>Event ID</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
             {events.map((event) => (
-              <tr key={event.id} className="border-b align-top last:border-0">
-                <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">{formatTime(event.received_at)}</td>
-                <td className="py-2 pr-4 font-medium">{event.event_name}</td>
-                <td className="py-2 pr-4">{event.source}</td>
-                <td className="py-2 pr-4">{event.page_type ?? '-'}</td>
-                <td className="py-2 pr-4">
+              <Table.Row key={event.id} className="align-top">
+                <Table.Cell className="whitespace-nowrap text-muted-foreground">{formatTime(event.received_at)}</Table.Cell>
+                <Table.Cell className="font-medium">{event.event_name}</Table.Cell>
+                <Table.Cell>{event.source}</Table.Cell>
+                <Table.Cell>{event.page_type ?? '-'}</Table.Cell>
+                <Table.Cell>
                   <Badge variant={event.identity === 'anon' ? 'outline' : 'secondary'}>{event.identity}</Badge>
-                </td>
-                <td className="py-2 pr-4">
+                </Table.Cell>
+                <Table.Cell>
                   {event.value == null ? '-' : `${fmtNumber(event.value)} ${event.currency ?? ''}`}
-                </td>
-                <td className="py-2 pr-4">{event.item_count ?? '-'}</td>
-                <td className="py-2 pr-4">
+                </Table.Cell>
+                <Table.Cell>{event.item_count ?? '-'}</Table.Cell>
+                <Table.Cell>
                   {event.valid ? (
                     <Badge variant="secondary">ok</Badge>
                   ) : (
                     <Badge variant="destructive">{event.validation_errors.join(', ') || 'invalid'}</Badge>
                   )}
-                </td>
-                <td className="max-w-[220px] truncate py-2 pr-4 font-mono text-xs text-muted-foreground">
+                </Table.Cell>
+                <Table.Cell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
                   {event.event_id}
-                </td>
-              </tr>
+                </Table.Cell>
+              </Table.Row>
             ))}
             {events.length === 0 ? (
-              <tr>
-                <td className="py-6 text-center text-muted-foreground" colSpan={9}>
+              <Table.Row>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={9}>
                   Aucun event reçu.
-                </td>
-              </tr>
+                </Table.Cell>
+              </Table.Row>
             ) : null}
-          </tbody>
-        </table>
+          </Table.Body>
+        </Table>
       </CardContent>
+      <Table.Pagination
+        canNextPage={pageIndex + 1 < pageCount}
+        canPreviousPage={pageIndex > 0}
+        nextPage={() => setPageIndex(pageIndex + 1)}
+        previousPage={() => setPageIndex(Math.max(0, pageIndex - 1))}
+        count={total}
+        pageIndex={pageIndex}
+        pageCount={pageCount}
+        pageSize={PAGE_SIZE}
+        translations={{ of: 'sur', results: 'events', pages: 'pages', prev: 'Préc.', next: 'Suiv.' }}
+      />
     </Card>
   )
+}
+
+function getLiveState(data: TrackingHealthData | undefined, isError: boolean) {
+  if (isError) return { ok: false, label: 'Erreur' }
+  if (!data?.meta.latest_event_at) return { ok: false, label: 'Aucun event' }
+  const age = Date.now() - new Date(data.meta.latest_event_at).getTime()
+  if (age > LIVE_STALE_MS) return { ok: false, label: 'Silencieux' }
+  return { ok: true, label: 'Live' }
 }
 
 function LoadingState() {
