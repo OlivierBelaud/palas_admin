@@ -34,8 +34,10 @@ export type RuntimeApp = {
 }
 
 export function resolveDatabase(app: RuntimeApp | undefined): RuntimeDatabasePort | null {
-  const db = app?.infra?.db ?? safeResolve(app, 'IDatabasePort') ?? safeResolve(app, 'db')
-  if (isDatabasePort(db)) return db
+  const candidates = [app?.infra?.db, safeResolve(app, 'IDatabasePort'), safeResolve(app, 'db')]
+  for (const db of candidates) {
+    if (isDatabasePort(db)) return db
+  }
   return null
 }
 
