@@ -43,6 +43,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/crons/flush-ga4-dispatches",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/crons/purge-event-hub-logs",
       "schedule": "0 */4 * * *"
     },

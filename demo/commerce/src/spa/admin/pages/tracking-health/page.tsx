@@ -23,6 +23,10 @@ interface TrackingHealthData {
     identified: number
     anonymous: number
     ga4_ready: number
+    ga4_pending: number
+    ga4_sent: number
+    ga4_invalid: number
+    ga4_error: number
     posthog_forwarded: number
   }
   event_types: Array<{
@@ -57,6 +61,11 @@ interface TrackingHealthData {
     posthog_http_status: number | null
     ga4_ready: boolean
     ga4_status: string
+    ga4_http_status: number | null
+    ga4_error_code: string | null
+    ga4_error_message: string | null
+    ga4_attempt_count: number
+    ga4_sent_at: string | null
   }>
 }
 
@@ -154,7 +163,12 @@ function Kpis({ data }: { data: TrackingHealthData }) {
     { label: 'Events reçus', value: data.kpis.total, detail: 'hot log', mark: 'EV' },
     { label: 'Valides', value: data.kpis.valid, detail: `${data.kpis.invalid} invalides`, mark: 'OK' },
     { label: 'Identifiés', value: data.kpis.identified, detail: `${data.kpis.anonymous} anonymes`, mark: 'ID' },
-    { label: 'GA4 ready', value: data.kpis.ga4_ready, detail: 'format + champs requis', mark: 'G4' },
+    {
+      label: 'GA4',
+      value: data.kpis.ga4_sent,
+      detail: `${data.kpis.ga4_pending} attente · ${data.kpis.ga4_invalid + data.kpis.ga4_error} à corriger`,
+      mark: 'G4',
+    },
     { label: 'PostHog', value: data.kpis.posthog_forwarded, detail: 'forward observé', mark: 'PH' },
   ]
   return (
@@ -297,9 +311,14 @@ function LiveEventTable({
                   </Badge>
                 </Table.Cell>
                 <Table.Cell>
-                  <Badge variant={event.ga4_ready ? 'secondary' : 'outline'}>
-                    {event.ga4_ready ? 'ready' : event.ga4_status}
-                  </Badge>
+                  <div className="flex flex-col gap-1">
+                    <Badge variant={ga4BadgeVariant(event.ga4_status)}>{formatGa4Status(event)}</Badge>
+                    {event.ga4_error_code ? (
+                      <span className="max-w-[180px] truncate text-xs text-muted-foreground" title={event.ga4_error_message ?? event.ga4_error_code}>
+                        {event.ga4_error_code}
+                      </span>
+                    ) : null}
+                  </div>
                 </Table.Cell>
                 <Table.Cell>
                   {event.valid ? (
@@ -384,4 +403,16 @@ function formatTime(value: string) {
 
 function fmtNumber(value: number) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(value)
+}
+
+function ga4BadgeVariant(status: string) {
+  if (status === 'sent') return 'secondary'
+  if (status === 'invalid' || status === 'error') return 'destructive'
+  return 'outline'
+}
+
+function formatGa4Status(event: TrackingHealthData['events'][number]) {
+  if (event.ga4_http_status) return `${event.ga4_status} ${event.ga4_http_status}`
+  if (event.ga4_attempt_count > 0) return `${event.ga4_status} x${event.ga4_attempt_count}`
+  return event.ga4_status
 }

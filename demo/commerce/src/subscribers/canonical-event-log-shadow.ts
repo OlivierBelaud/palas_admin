@@ -8,6 +8,7 @@ export default defineSubscriber({
       | {
           body?: unknown
           posthog?: { forwarded?: boolean; status?: number | null }
+          context?: Record<string, unknown>
         }
       | undefined
     const events = extractPosthogEvents(data?.body)
@@ -20,6 +21,7 @@ export default defineSubscriber({
           event: evt as unknown as Record<string, unknown>,
           posthog_forwarded: posthog.forwarded,
           posthog_status: posthog.status ?? null,
+          source_context: data?.context ?? {},
         })
       } catch (err) {
         log.error(

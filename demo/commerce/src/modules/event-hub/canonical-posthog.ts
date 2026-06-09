@@ -169,6 +169,7 @@ export function normalizePosthogEventToCanonical(
   event: RawPosthogEvent,
   comparison: IdentityShadowComparison,
   forward: PosthogForwardStatus = {},
+  sourceContext: Record<string, unknown> = {},
 ): CanonicalPosthogEvent | null {
   const rawEventName = str(event.event, 160) || 'unknown'
   if (SKIPPED_POSTHOG_EVENTS.has(rawEventName)) return null
@@ -212,6 +213,13 @@ export function normalizePosthogEventToCanonical(
       email_sha256: emailSha256(comparison.v2.email),
       distinct_id: signals.posthog_distinct_id,
       session_id: signals.session_id,
+      ga_client_id: str(sourceContext.ga_client_id, 128) || str(props.ga_client_id, 128) || str(props.$ga_client_id, 128),
+      ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
+      fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
+      fbc: str(sourceContext.fbc, 256) || str(props.fbc, 256) || str(props._fbc, 256),
+      gclid: str(sourceContext.gclid, 512) || str(props.gclid, 512),
+      client_ip: str(sourceContext.client_ip, 256),
+      user_agent: str(sourceContext.user_agent, 1024),
       matched_v1: comparison.matched_v1,
     },
     context: {

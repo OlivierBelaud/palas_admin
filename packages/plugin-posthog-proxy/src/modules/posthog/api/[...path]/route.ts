@@ -176,9 +176,15 @@ export async function POST(req: Request & { app?: any }) {
     // must work in environments that don't register a Manta app.
     const app = req.app as { emit?: (event: string, data: unknown) => Promise<void> } | undefined
     if (app?.emit) {
-      app.emit('posthog.events.received', { body: parsed, posthog: { forwarded: true, status: resp.status } }).catch((err) => {
-        console.error('[posthog-proxy] emit posthog.events.received error:', err)
-      })
+      app
+        .emit('posthog.events.received', {
+          body: parsed,
+          posthog: { forwarded: true, status: resp.status },
+          context: eventHubContextFromHeaders(req.headers),
+        })
+        .catch((err) => {
+          console.error('[posthog-proxy] emit posthog.events.received error:', err)
+        })
     }
   }
 
@@ -186,6 +192,43 @@ export async function POST(req: Request & { app?: any }) {
     status: resp.status,
     headers: { ...CORS_HEADERS, 'Content-Type': resp.headers.get('Content-Type') ?? 'application/json' },
   })
+}
+
+function eventHubContextFromHeaders(headers: Headers): Record<string, unknown> {
+  const cookie = headers.get('cookie')
+  return compact({
+    ga_client_id: gaClientIdFromCookie(readCookie(cookie, '_ga')),
+    fbp: readCookie(cookie, '_fbp'),
+    fbc: readCookie(cookie, '_fbc'),
+    gclid: readCookie(cookie, 'gclid') || readCookie(cookie, '_gcl_aw'),
+    user_agent: headers.get('user-agent'),
+    client_ip: headers.get('x-forwarded-for') ?? headers.get('x-real-ip'),
+  })
+}
+
+function readCookie(header: string | null, name: string): string | null {
+  if (!header) return null
+  const parts = header.split(';')
+  for (const part of parts) {
+    const idx = part.indexOf('=')
+    if (idx === -1) continue
+    const key = part.slice(0, idx).trim()
+    if (key !== name) continue
+    return decodeURIComponent(part.slice(idx + 1).trim())
+  }
+  return null
+}
+
+function gaClientIdFromCookie(value: string | null): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  const match = trimmed.match(/^GA\d+\.\d+\.(\d+\.\d+)$/)
+  if (match?.[1]) return match[1]
+  return /^\d+\.\d+$/.test(trimmed) ? trimmed : null
+}
+
+function compact(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value != null && value !== ''))
 }
 
 /** Normalize a PostHog batch body into an array of event objects. */

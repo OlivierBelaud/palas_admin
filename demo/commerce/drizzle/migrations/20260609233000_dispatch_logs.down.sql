@@ -1,0 +1,14 @@
+DROP INDEX IF EXISTS "dispatch_logs_destination_received_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_destination_status_next_attempt_idx";
+DROP INDEX IF EXISTS "dispatch_logs_error_code_idx";
+DROP INDEX IF EXISTS "dispatch_logs_sent_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_next_attempt_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_last_attempt_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_first_attempt_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_event_received_at_idx";
+DROP INDEX IF EXISTS "dispatch_logs_status_idx";
+DROP INDEX IF EXISTS "dispatch_logs_destination_idx";
+DROP INDEX IF EXISTS "dispatch_logs_source_event_name_idx";
+DROP INDEX IF EXISTS "dispatch_logs_canonical_event_name_idx";
+DROP INDEX IF EXISTS "dispatch_logs_event_id_idx";
+DROP TABLE IF EXISTS "dispatch_logs";

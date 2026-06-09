@@ -10,7 +10,7 @@ export default defineJob('purge-event-hub-logs', '0 */4 * * *', async ({ db, log
     return { deleted: 0, error: 'DB_UNAVAILABLE' }
   }
 
-  const rows = await runtimeDb.raw<{ count: string }>(
+  const eventRows = await runtimeDb.raw<{ count: string }>(
     `WITH deleted AS (
        DELETE FROM event_logs
         WHERE received_at < NOW() - INTERVAL '24 hours'
@@ -18,7 +18,16 @@ export default defineJob('purge-event-hub-logs', '0 */4 * * *', async ({ db, log
      )
      SELECT COUNT(*)::text AS count FROM deleted`,
   )
-  const deleted = Number(rows[0]?.count ?? 0)
-  log.info(`[purge-event-hub-logs] deleted=${deleted}`)
-  return { deleted }
+  const dispatchRows = await runtimeDb.raw<{ count: string }>(
+    `WITH deleted AS (
+       DELETE FROM dispatch_logs
+        WHERE event_received_at < NOW() - INTERVAL '24 hours'
+        RETURNING 1
+     )
+     SELECT COUNT(*)::text AS count FROM deleted`,
+  )
+  const eventsDeleted = Number(eventRows[0]?.count ?? 0)
+  const dispatchesDeleted = Number(dispatchRows[0]?.count ?? 0)
+  log.info(`[purge-event-hub-logs] events_deleted=${eventsDeleted} dispatches_deleted=${dispatchesDeleted}`)
+  return { events_deleted: eventsDeleted, dispatches_deleted: dispatchesDeleted }
 })

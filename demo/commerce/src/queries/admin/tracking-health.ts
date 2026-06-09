@@ -14,6 +14,18 @@ type EventLogRow = {
   payload_normalized: Record<string, unknown> | null
 }
 
+type DispatchLogRow = {
+  event_id: string
+  destination: string
+  status: string
+  http_status: number | null
+  error_code: string | null
+  error_message: string | null
+  attempt_count: number
+  sent_at: string | Date | null
+  last_attempt_at: string | Date | null
+}
+
 export default defineQuery({
   name: 'tracking-health',
   description: 'Live Event Hub hot log for the last 24 hours',
@@ -58,6 +70,28 @@ export default defineQuery({
       sort: { received_at: 'desc' },
       pagination: { limit, offset },
     })) as unknown as [EventLogRow[], number]
+    const pageEventIds = rows.map((row) => row.event_id).filter(Boolean)
+    const pageDispatchRows =
+      pageEventIds.length > 0
+        ? ((await query.graph({
+            entity: 'dispatchLog',
+            filters: { destination: 'ga4', event_id: { $in: pageEventIds } },
+            fields: [
+              'event_id',
+              'destination',
+              'status',
+              'http_status',
+              'error_code',
+              'error_message',
+              'attempt_count',
+              'sent_at',
+              'last_attempt_at',
+            ],
+            sort: { event_received_at: 'desc' },
+            pagination: { limit: Math.max(limit, pageEventIds.length), offset: 0 },
+          })) as unknown as DispatchLogRow[])
+        : []
+    const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
 
     const typeRows = (await query.graph({
       entity: 'eventLog',
@@ -77,6 +111,16 @@ export default defineQuery({
             pagination: { limit: 10000, offset: 0 },
           })) as unknown as EventLogRow[])
         : typeRows
+    const dispatchStatRows = (await query.graph({
+      entity: 'dispatchLog',
+      filters: {
+        destination: 'ga4',
+        event_received_at: { $gte: from.toISOString(), $lte: to.toISOString() },
+      },
+      fields: ['event_id', 'status', 'http_status', 'error_code', 'attempt_count', 'sent_at', 'last_attempt_at'],
+      sort: { event_received_at: 'desc' },
+      pagination: { limit: 10000, offset: 0 },
+    })) as unknown as DispatchLogRow[]
 
     const byType = new Map<
       string,
@@ -86,6 +130,7 @@ export default defineQuery({
     let valid = 0
     let ga4Ready = 0
     let posthogForwarded = 0
+    const ga4StatusCounts = countBy(dispatchStatRows, (row) => row.status)
     const latestAt = typeRows[0]?.received_at ? new Date(typeRows[0].received_at).toISOString() : null
 
     for (const row of statRows) {
@@ -126,6 +171,7 @@ export default defineQuery({
       const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
       const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
       const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
+      const ga4Log = dispatchByEventId.get(row.event_id)
       return {
         id: row.id,
         event_id: row.event_id,
@@ -157,8 +203,13 @@ export default defineQuery({
         shopify_order_id: checkout.shopify_order_id ?? null,
         posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
         posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
-        ga4_ready: ga4.ready === true,
-        ga4_status: typeof ga4.status === 'string' ? ga4.status : 'not_configured',
+        ga4_ready: ga4Log ? ['pending', 'sending', 'sent', 'retry'].includes(ga4Log.status) : ga4.ready === true,
+        ga4_status: ga4Log?.status ?? (typeof ga4.status === 'string' ? ga4.status : 'not_configured'),
+        ga4_http_status: ga4Log?.http_status ?? null,
+        ga4_error_code: ga4Log?.error_code ?? null,
+        ga4_error_message: ga4Log?.error_message ?? null,
+        ga4_attempt_count: ga4Log?.attempt_count ?? 0,
+        ga4_sent_at: ga4Log?.sent_at ? new Date(ga4Log.sent_at).toISOString() : null,
       }
     })
 
@@ -183,6 +234,13 @@ export default defineQuery({
         identified,
         anonymous: total - identified,
         ga4_ready: ga4Ready,
+        ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
+        ga4_sent: countStatus(ga4StatusCounts, 'sent'),
+        ga4_invalid: countStatus(ga4StatusCounts, 'invalid'),
+        ga4_error:
+          countStatus(ga4StatusCounts, 'error') +
+          countStatus(ga4StatusCounts, 'not_configured') +
+          countStatus(ga4StatusCounts, 'sending'),
         posthog_forwarded: posthogForwarded,
       },
       event_types: Array.from(byType.values()).sort((a, b) => b.count - a.count),
@@ -190,3 +248,16 @@ export default defineQuery({
     }
   },
 })
+
+function countBy<T>(rows: T[], key: (row: T) => string) {
+  const map = new Map<string, number>()
+  for (const row of rows) {
+    const k = key(row)
+    map.set(k, (map.get(k) ?? 0) + 1)
+  }
+  return map
+}
+
+function countStatus(map: Map<string, number>, status: string) {
+  return map.get(status) ?? 0
+}
