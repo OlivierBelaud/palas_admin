@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS "event_logs_event_name_received_at_idx";
+DROP INDEX IF EXISTS "event_logs_distinct_id_idx";
+DROP INDEX IF EXISTS "event_logs_identity_email_sha256_idx";
+DROP INDEX IF EXISTS "event_logs_identity_muid_idx";
+DROP INDEX IF EXISTS "event_logs_market_idx";
+DROP INDEX IF EXISTS "event_logs_page_type_idx";
+DROP INDEX IF EXISTS "event_logs_received_at_idx";
+DROP INDEX IF EXISTS "event_logs_source_idx";
+DROP INDEX IF EXISTS "event_logs_event_name_idx";
+DROP TABLE IF EXISTS "event_logs";

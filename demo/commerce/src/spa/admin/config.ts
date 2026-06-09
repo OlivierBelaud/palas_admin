@@ -32,6 +32,11 @@ export default defineSpa({
       to: '/visitor-lifecycle',
       items: [{ label: 'Visitor stats', to: '/visitor-stats' }],
     },
+    {
+      icon: 'Radio',
+      label: 'Tracking',
+      to: '/tracking-health',
+    },
   ],
 
   settings: [
