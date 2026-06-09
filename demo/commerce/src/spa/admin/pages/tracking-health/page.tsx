@@ -22,6 +22,8 @@ interface TrackingHealthData {
     invalid: number
     identified: number
     anonymous: number
+    ga4_ready: number
+    posthog_forwarded: number
   }
   event_types: Array<{
     event_name: string
@@ -34,11 +36,15 @@ interface TrackingHealthData {
     id: string
     event_id: string
     event_name: string
+    raw_event_name: string
     source: string
     received_at: string
     page_type: string | null
     market: string | null
-    identity: 'email' | 'muid' | 'posthog' | 'anon'
+    identity: 'contact' | 'email' | 'muid' | 'posthog' | 'anon'
+    identity_source: string | null
+    contact_id: string | null
+    matched_v1: boolean
     valid: boolean
     validation_errors: string[]
     value: number | null
@@ -47,6 +53,10 @@ interface TrackingHealthData {
     cart_token: string | null
     checkout_token: string | null
     shopify_order_id: string | null
+    posthog_status: string
+    posthog_http_status: number | null
+    ga4_ready: boolean
+    ga4_status: string
   }>
 }
 
@@ -144,6 +154,8 @@ function Kpis({ data }: { data: TrackingHealthData }) {
     { label: 'Events reçus', value: data.kpis.total, detail: 'hot log', mark: 'EV' },
     { label: 'Valides', value: data.kpis.valid, detail: `${data.kpis.invalid} invalides`, mark: 'OK' },
     { label: 'Identifiés', value: data.kpis.identified, detail: `${data.kpis.anonymous} anonymes`, mark: 'ID' },
+    { label: 'GA4 ready', value: data.kpis.ga4_ready, detail: 'format + champs requis', mark: 'G4' },
+    { label: 'PostHog', value: data.kpis.posthog_forwarded, detail: 'forward observé', mark: 'PH' },
   ]
   return (
     <div className="grid gap-4" style={kpiGridStyle}>
@@ -241,17 +253,19 @@ function LiveEventTable({
         <span className="text-sm text-muted-foreground">50 lignes par page</span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[1260px]">
           <Table.Header>
             <Table.Row>
               <Table.Head>Reçu</Table.Head>
-              <Table.Head>Event</Table.Head>
-              <Table.Head>Source</Table.Head>
+              <Table.Head>Canonique</Table.Head>
+              <Table.Head>Raw</Table.Head>
               <Table.Head>Page</Table.Head>
               <Table.Head>Identité</Table.Head>
               <Table.Head>Valeur</Table.Head>
               <Table.Head>Articles</Table.Head>
-              <Table.Head>Statut</Table.Head>
+              <Table.Head>PostHog</Table.Head>
+              <Table.Head>GA4</Table.Head>
+              <Table.Head>Validité</Table.Head>
               <Table.Head>Event ID</Table.Head>
             </Table.Row>
           </Table.Header>
@@ -260,15 +274,33 @@ function LiveEventTable({
               <Table.Row key={event.id} className="align-top">
                 <Table.Cell className="whitespace-nowrap text-muted-foreground">{formatTime(event.received_at)}</Table.Cell>
                 <Table.Cell className="font-medium">{event.event_name}</Table.Cell>
-                <Table.Cell>{event.source}</Table.Cell>
+                <Table.Cell className="text-muted-foreground">{event.raw_event_name}</Table.Cell>
                 <Table.Cell>{event.page_type ?? '-'}</Table.Cell>
                 <Table.Cell>
-                  <Badge variant={event.identity === 'anon' ? 'outline' : 'secondary'}>{event.identity}</Badge>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={event.identity === 'anon' ? 'outline' : 'secondary'}>{event.identity}</Badge>
+                      {event.matched_v1 ? <Badge variant="outline">v1=v2</Badge> : null}
+                    </div>
+                    <span className="max-w-[160px] truncate text-xs text-muted-foreground">
+                      {event.identity_source ?? 'no identity'}
+                    </span>
+                  </div>
                 </Table.Cell>
                 <Table.Cell>
                   {event.value == null ? '-' : `${fmtNumber(event.value)} ${event.currency ?? ''}`}
                 </Table.Cell>
                 <Table.Cell>{event.item_count ?? '-'}</Table.Cell>
+                <Table.Cell>
+                  <Badge variant={event.posthog_status === 'forwarded' ? 'secondary' : 'outline'}>
+                    {event.posthog_http_status ? `${event.posthog_status} ${event.posthog_http_status}` : event.posthog_status}
+                  </Badge>
+                </Table.Cell>
+                <Table.Cell>
+                  <Badge variant={event.ga4_ready ? 'secondary' : 'outline'}>
+                    {event.ga4_ready ? 'ready' : event.ga4_status}
+                  </Badge>
+                </Table.Cell>
                 <Table.Cell>
                   {event.valid ? (
                     <Badge variant="secondary">ok</Badge>
@@ -283,7 +315,7 @@ function LiveEventTable({
             ))}
             {events.length === 0 ? (
               <Table.Row>
-                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={9}>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={11}>
                   Aucun event reçu.
                 </Table.Cell>
               </Table.Row>

@@ -176,7 +176,7 @@ export async function POST(req: Request & { app?: any }) {
     // must work in environments that don't register a Manta app.
     const app = req.app as { emit?: (event: string, data: unknown) => Promise<void> } | undefined
     if (app?.emit) {
-      app.emit('posthog.events.received', { body: parsed }).catch((err) => {
+      app.emit('posthog.events.received', { body: parsed, posthog: { forwarded: true, status: resp.status } }).catch((err) => {
         console.error('[posthog-proxy] emit posthog.events.received error:', err)
       })
     }

@@ -84,11 +84,21 @@ export default defineQuery({
     >()
     let identified = 0
     let valid = 0
+    let ga4Ready = 0
+    let posthogForwarded = 0
     const latestAt = typeRows[0]?.received_at ? new Date(typeRows[0].received_at).toISOString() : null
 
     for (const row of statRows) {
-      if (row.identity_muid || row.identity_email_sha256 || row.distinct_id) identified += 1
+      const payload = row.payload_normalized ?? {}
+      const user = (payload.user ?? {}) as Record<string, unknown>
+      const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
+      const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
+      const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
+
+      if (user.contact_id || row.identity_email_sha256 || row.identity_muid || row.distinct_id) identified += 1
       if (row.valid) valid += 1
+      if (ga4.ready === true) ga4Ready += 1
+      if (posthog.status === 'forwarded') posthogForwarded += 1
     }
 
     for (const row of typeRows) {
@@ -112,21 +122,31 @@ export default defineQuery({
       const ecommerce = (payload.ecommerce ?? {}) as Record<string, unknown>
       const cart = (payload.cart ?? {}) as Record<string, unknown>
       const checkout = (payload.checkout ?? {}) as Record<string, unknown>
+      const user = (payload.user ?? {}) as Record<string, unknown>
+      const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
+      const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
+      const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
       return {
         id: row.id,
         event_id: row.event_id,
         event_name: row.event_name,
+        raw_event_name: typeof payload.raw_event_name === 'string' ? payload.raw_event_name : row.event_name,
         source: row.source,
         received_at: new Date(row.received_at).toISOString(),
         page_type: row.page_type,
         market: row.market,
-        identity: row.identity_email_sha256
+        identity: user.contact_id
+          ? 'contact'
+          : row.identity_email_sha256
           ? 'email'
           : row.identity_muid
             ? 'muid'
             : row.distinct_id
               ? 'posthog'
               : 'anon',
+        identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
+        contact_id: typeof user.contact_id === 'string' ? user.contact_id : null,
+        matched_v1: user.matched_v1 === true,
         valid: row.valid,
         validation_errors: row.validation_errors ?? [],
         value: ecommerce.value ?? null,
@@ -135,6 +155,10 @@ export default defineQuery({
         cart_token: cart.token ?? null,
         checkout_token: checkout.token ?? null,
         shopify_order_id: checkout.shopify_order_id ?? null,
+        posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
+        posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
+        ga4_ready: ga4.ready === true,
+        ga4_status: typeof ga4.status === 'string' ? ga4.status : 'not_configured',
       }
     })
 
@@ -158,6 +182,8 @@ export default defineQuery({
         invalid: total - valid,
         identified,
         anonymous: total - identified,
+        ga4_ready: ga4Ready,
+        posthog_forwarded: posthogForwarded,
       },
       event_types: Array.from(byType.values()).sort((a, b) => b.count - a.count),
       events,
