@@ -19,7 +19,7 @@ export class NeonDrizzleAdapter implements IDatabasePort {
       throw new MantaError('INVALID_STATE', 'Adapter has been disposed')
     }
     console.log(`[neon] Initializing database (url: ${config.url?.replace(/:[^@]+@/, ':***@')})`)
-    this._neonDb = createNeonDatabase({ url: config.url })
+    this._neonDb = await createNeonDatabase({ url: config.url })
     console.log('[neon] Database instance created')
   }
 

@@ -1,3 +1,20 @@
 packages:
   - 'packages/*'
   - 'demo/commerce'
+
+onlyBuiltDependencies:
+  - '@medusajs/telemetry'
+  - '@swc/core'
+  - esbuild
+  - msgpackr-extract
+  - protobufjs
+  - sharp
+  - simple-git-hooks
+allowBuilds:
+  '@medusajs/telemetry': true
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
+  sharp: true
+  simple-git-hooks: true

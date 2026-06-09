@@ -1,6 +1,6 @@
 // SPEC-039 — H3Adapter implements IHttpPort
 
-import { createServer, type Server } from 'node:http'
+import type { Server } from 'node:http'
 import { MantaError } from '@manta/core/errors'
 import type { IHttpPort } from '@manta/core/ports'
 import {
@@ -232,6 +232,7 @@ export class H3Adapter implements IHttpPort {
   }
 
   async listen(): Promise<void> {
+    const { createServer } = await import('node:http')
     return new Promise((resolve) => {
       this._server = createServer(toNodeListener(this._app))
       this._server.listen(this._port, this._host, () => {

@@ -1,6 +1,6 @@
 // Phase 3c: Load resources — workflows, subscribers, jobs, agents, commands, queries, user defs.
 
-import type { IEventBusPort, IWorkflowStorePort, Message } from '@manta/core'
+import type { IDatabasePort, IEventBusPort, INotificationPort, IWorkflowStorePort, Message } from '@manta/core'
 import { createOrphanReaperJob, MantaError, QueryRegistry } from '@manta/core'
 import type { AppRef, BootstrapContext } from '../../bootstrap-context'
 
@@ -78,13 +78,25 @@ export async function loadResources(ctx: BootstrapContext, appRef: AppRef): Prom
         const job = imported.default as {
           name: string
           schedule: string
-          handler: (scope: { command: unknown; log: unknown }) => Promise<unknown>
+          handler: (scope: {
+            command: unknown
+            log: unknown
+            app: unknown
+            db?: IDatabasePort
+            notification?: INotificationPort
+          }) => Promise<unknown>
         }
         if (job?.name && job.schedule && typeof job.handler === 'function') {
           scheduler.register(job.name, job.schedule, async () => {
             const startedAt = Date.now()
             try {
-              const result = await job.handler({ command: appRef.current!.commands, log: logger })
+              const result = await job.handler({
+                command: appRef.current!.commands,
+                log: logger,
+                app: appRef.current!,
+                db: infraMap.get('IDatabasePort') as IDatabasePort | undefined,
+                notification: infraMap.get('INotificationPort') as INotificationPort | undefined,
+              })
               return { status: 'success' as const, data: result, duration_ms: Date.now() - startedAt }
             } catch (err) {
               throw MantaError.wrap(err, `job:${job.name}`)

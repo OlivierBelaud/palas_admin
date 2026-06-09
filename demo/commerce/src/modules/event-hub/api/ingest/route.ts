@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import postgres from 'postgres'
+import { type RuntimeApp, resolveSql } from '../../../../utils/manta-runtime'
 import { verifyContactToken } from '../../../../utils/manta-uid'
 
 const COOKIE_NAME = 'muid'
@@ -28,26 +28,6 @@ const EVENT_NAME_MAP: Record<string, string> = {
 }
 
 type JsonRecord = Record<string, unknown>
-
-let sqlSingleton: postgres.Sql | null | undefined
-
-function getSql(): postgres.Sql | null {
-  if (sqlSingleton !== undefined) return sqlSingleton
-  const databaseUrl = process.env.DATABASE_URL
-  if (!databaseUrl) {
-    sqlSingleton = null
-    return null
-  }
-  const needsSsl =
-    process.env.NODE_ENV === 'production' || /neon\.tech|amazonaws\.com|render\.com|railway\.app/.test(databaseUrl)
-  sqlSingleton = postgres(databaseUrl, {
-    ssl: needsSsl ? 'require' : undefined,
-    max: 1,
-    prepare: false,
-    idle_timeout: 20,
-  })
-  return sqlSingleton
-}
 
 function isOriginAllowed(origin: string, patterns: string[]): boolean {
   for (const p of patterns) {
@@ -323,7 +303,8 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers })
   }
 
-  const sql = getSql()
+  const app = (req as Request & { app?: RuntimeApp }).app
+  const sql = resolveSql(app)
   if (!sql) {
     return Response.json({ ok: false, error: 'DB_UNAVAILABLE' }, { status: 503, headers })
   }

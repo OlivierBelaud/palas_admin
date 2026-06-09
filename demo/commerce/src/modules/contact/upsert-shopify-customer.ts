@@ -4,9 +4,9 @@
 //   - api/shopify-webhooks/customers/route.ts  (real-time, customers/create + customers/update)
 //   - scripts/backfill-shopify-customers.ts    (one-shot historical fill of the 250 missing)
 //
-// Direct postgres on purpose (same rationale as upsert-shopify-order.ts) — the
-// webhook runs on a serverless function where the 300ms Manta short-circuit
-// would race the upsert.
+// The SQL client is supplied by Manta's IDatabasePort. This keeps the module
+// independent from a concrete database transport: Neon HTTP on Workers/
+// serverless, postgres-js only behind the Node adapter.
 //
 // Matching strategy:
 //   1) shopify_customer_id direct (most stable for repeat customers)
@@ -20,7 +20,7 @@
 // wholesale channels; local `orders` classification + `order_contact` is the
 // source of truth for analytics aggregates.
 
-import type { Sql } from 'postgres'
+import type { RuntimeSql } from '../../utils/manta-runtime'
 import { reattachHistoryForContact } from './reattach-history'
 
 export interface ShopifyCustomerPayload {
@@ -54,8 +54,7 @@ export interface UpsertContactOutcome {
   carts_reattached: number
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: postgres-js tagged-template surface
-export type SqlClient = Sql<any>
+export type SqlClient = RuntimeSql
 
 interface ContactRow {
   id: string

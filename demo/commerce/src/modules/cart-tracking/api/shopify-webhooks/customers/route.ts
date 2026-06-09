@@ -10,22 +10,11 @@
 // Shopify retries non-2xx for up to 48h → handler is idempotent
 // (upsertShopifyCustomer is, via shopify_customer_id OR email match).
 
-import postgres from 'postgres'
+import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
 import { type ShopifyCustomerPayload, upsertShopifyCustomer } from '../../../../contact/upsert-shopify-customer'
 
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
 const SHOPIFY_API_VERSION = '2024-10'
-
-let sqlSingleton: ReturnType<typeof postgres> | null = null
-
-function getSql(): ReturnType<typeof postgres> | null {
-  if (sqlSingleton) return sqlSingleton
-  const dbUrl = process.env.DATABASE_URL
-  if (!dbUrl) return null
-  const needsSsl = /neon\.tech|amazonaws\.com|render\.com|railway\.app/.test(dbUrl)
-  sqlSingleton = postgres(dbUrl, { ssl: needsSsl ? 'require' : undefined, max: 1, prepare: false })
-  return sqlSingleton
-}
 
 export async function OPTIONS(_req: Request): Promise<Response> {
   return new Response(null, { status: 204 })
@@ -61,14 +50,14 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  const sql = getSql()
+  const app = (req as Request & { app?: RuntimeApp }).app
+  const sql = resolveSql(app)
   if (!sql) {
-    console.error('[shopify-webhook customers] DATABASE_URL missing')
+    console.error('[shopify-webhook customers] IDatabasePort missing')
     return new Response('Server Misconfigured', { status: 500 })
   }
   try {
     const outcome = await upsertShopifyCustomer(sql, customer)
-    const app = (req as Request & { app?: { emit?: (event: string, data: unknown) => Promise<void> } }).app
     const email = customer.email?.trim().toLowerCase()
     if (email && app?.emit) {
       app

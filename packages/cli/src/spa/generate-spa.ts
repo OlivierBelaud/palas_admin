@@ -5,8 +5,11 @@
 // - vite.config.ts (Vite build config)
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import type { DiscoveredSpa } from '../resource-loader'
+
+const localRequire = createRequire(import.meta.url)
 
 export interface SpaGenerateOptions {
   cwd: string
@@ -144,7 +147,7 @@ function generateEntry(spa: DiscoveredSpa, cwd: string, _outDir: string, dashboa
     // Resolve the CSS path relative to the generated entry file
     let cssImport = '// @manta/dashboard-core CSS not found'
     try {
-      const pkgDir = dirname(require.resolve('@manta/dashboard-core/package.json', { paths: [cwd] }))
+      const pkgDir = dirname(localRequire.resolve('@manta/dashboard-core/package.json', { paths: [cwd] }))
       const cssPath = join(pkgDir, 'src', 'index.css').replace(/\\/g, '/')
       cssImport = `import '${cssPath}'`
     } catch {
@@ -271,6 +274,7 @@ function generateViteConfig(
     `    emptyOutDir: true,`,
     `  },`,
     `  resolve: {`,
+    `    preserveSymlinks: false,`,
     `    alias: {`,
     `      '~spa': '${spa.path.replace(/\\/g, '/')}',`,
   ]
@@ -279,8 +283,82 @@ function generateViteConfig(
   // Point to the package directory so sub-path imports (react/jsx-runtime) still work
   for (const reactPkg of ['react', 'react-dom']) {
     try {
-      const pkgDir = dirname(require.resolve(`${reactPkg}/package.json`, { paths: [cwd] })).replace(/\\/g, '/')
+      const pkgDir = dirname(localRequire.resolve(`${reactPkg}/package.json`, { paths: [cwd] })).replace(/\\/g, '/')
       lines.push(`      '${reactPkg}': '${pkgDir}',`)
+    } catch {
+      /* not found */
+    }
+  }
+
+  // App pages often import peer UI deps directly. In a pnpm workspace those
+  // deps may live under a Manta package node_modules rather than the app root.
+  const depResolvePaths = [cwd]
+  const addDepResolvePath = (path: string) => {
+    if (!depResolvePaths.includes(path)) depResolvePaths.push(path)
+  }
+  try {
+    addDepResolvePath(dirname(localRequire.resolve('@manta/dashboard-core/package.json', { paths: [cwd] })))
+  } catch {
+    /* not found */
+  }
+  try {
+    addDepResolvePath(dirname(localRequire.resolve('@manta/dashboard/package.json', { paths: [cwd] })))
+  } catch {
+    /* not found */
+  }
+  try {
+    const uiDir = dirname(localRequire.resolve('@manta/ui/package.json', { paths: [cwd] }))
+    addDepResolvePath(uiDir)
+    addDepResolvePath(resolve(dirname(localRequire.resolve('radix-ui', { paths: [uiDir] })), '..'))
+  } catch {
+    /* not found */
+  }
+  const directPeerDeps = [
+    '@ai-sdk/react',
+    '@date-fns/tz',
+    '@hookform/resolvers',
+    '@tanstack/react-query',
+    '@tanstack/react-table',
+    'lucide-react',
+    'zod',
+    'react-router-dom',
+    'recharts',
+    'react-hook-form',
+    'react-helmet-async',
+    'motion',
+    'motion/react',
+    'radix-ui',
+    'react-day-picker',
+    'date-fns',
+    'cmdk',
+    'class-variance-authority',
+    'clsx',
+    'tailwind-merge',
+    'sonner',
+    '@radix-ui/react-slot',
+    '@radix-ui/react-checkbox',
+    '@radix-ui/react-dialog',
+    '@radix-ui/react-popover',
+    '@radix-ui/react-progress',
+    '@radix-ui/react-radio-group',
+    '@radix-ui/react-scroll-area',
+    '@radix-ui/react-select',
+    '@radix-ui/react-switch',
+    '@radix-ui/react-tabs',
+  ]
+  for (const depPkg of directPeerDeps) {
+    try {
+      let resolved = ''
+      let packageDir = ''
+      try {
+        packageDir = dirname(localRequire.resolve(`${depPkg}/package.json`, { paths: depResolvePaths }))
+        resolved = packageDir
+      } catch {
+        resolved = localRequire.resolve(depPkg, { paths: depResolvePaths })
+        packageDir = dirname(resolved)
+      }
+      addDepResolvePath(packageDir)
+      lines.push(`      '${depPkg}': '${resolved.replace(/\\/g, '/')}',`)
     } catch {
       /* not found */
     }
@@ -292,7 +370,7 @@ function generateViteConfig(
 
   for (const pkg of pkgsToResolve) {
     try {
-      const pkgDir = dirname(require.resolve(`${pkg}/package.json`, { paths: [cwd] }))
+      const pkgDir = dirname(localRequire.resolve(`${pkg}/package.json`, { paths: [cwd] }))
       const srcDir = join(pkgDir, 'src').replace(/\\/g, '/')
       // Detect actual entry file — some packages use .tsx, others .ts
       const hasTsx = existsSync(join(pkgDir, 'src', 'index.tsx'))

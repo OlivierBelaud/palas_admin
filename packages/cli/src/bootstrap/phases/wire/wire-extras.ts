@@ -20,6 +20,7 @@ export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise
     resolvedPlugins,
     adapter,
     contextRegistry,
+    options,
   } = ctx
 
   // [14] AI + Dashboard registry
@@ -122,17 +123,19 @@ export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise
 
   // GET /api/admin/registry — dashboard config
   let adminRegistry: Record<string, unknown> = { pages: {}, components: {}, navigation: [] }
-  try {
-    const { existsSync } = await import('node:fs')
-    const { resolve: resolvePath } = await import('node:path')
-    const registryPath = resolvePath(cwd, 'src', 'admin', 'registry.ts')
-    if (existsSync(registryPath)) {
-      const mod = await doImport(registryPath)
-      adminRegistry = (mod.default ?? mod) as Record<string, unknown>
-      logger.info('[dashboard] Registry loaded from src/admin/registry.ts')
+  if (!options.preloadedResources) {
+    try {
+      const { existsSync } = await import('node:fs')
+      const { resolve: resolvePath } = await import('node:path')
+      const registryPath = resolvePath(cwd, 'src', 'admin', 'registry.ts')
+      if (existsSync(registryPath)) {
+        const mod = await doImport(registryPath)
+        adminRegistry = (mod.default ?? mod) as Record<string, unknown>
+        logger.info('[dashboard] Registry loaded from src/admin/registry.ts')
+      }
+    } catch (err) {
+      logger.warn(`[dashboard] Failed to load registry: ${(err as Error).message}`)
     }
-  } catch (err) {
-    logger.warn(`[dashboard] Failed to load registry: ${(err as Error).message}`)
   }
 
   // Auto-generate navigation from discovered modules if registry has none.
@@ -178,8 +181,12 @@ export async function wireExtras(ctx: BootstrapContext, appRef: AppRef): Promise
 
   // [14b] Register custom API routes (plugins + local src/api/)
   {
-    const { mergePluginApiRoutes } = await import('../../../plugins/merge-resources')
-    const apiRoutes = await mergePluginApiRoutes(resolvedPlugins, cwd)
+    const apiRoutes = options.preloadedResources
+      ? []
+      : await (async () => {
+          const { mergePluginApiRoutes } = await import('../../../plugins/merge-resources')
+          return mergePluginApiRoutes(resolvedPlugins, cwd)
+        })()
     for (const route of apiRoutes) {
       const mod = await doImport(route.file)
       const handler = mod[route.exportName] as (req: Request) => Promise<Response> | Response

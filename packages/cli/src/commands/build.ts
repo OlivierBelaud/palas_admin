@@ -57,6 +57,12 @@ export async function buildCommand(
   const jobs = scanJobs(cwd)
   const links = scanLinks(cwd)
   const modules = scanModules(cwd)
+  const portabilityErrors = scanForbiddenRuntimeImports(cwd)
+  if (portabilityErrors.length > 0) {
+    result.exitCode = 1
+    result.errors.push(...portabilityErrors)
+    return result
+  }
 
   // Write manifest files
   writeFileSync(join(manifestDir, 'routes.json'), JSON.stringify({ routes }, null, 2))
@@ -130,7 +136,8 @@ export async function buildCommand(
         }
         console.log(`  ✓ SPA "${spa.name}" built`)
       } catch (err) {
-        result.warnings.push(`Failed to build SPA "${spa.name}": ${err instanceof Error ? err.message : String(err)}`)
+        result.exitCode = 1
+        result.errors.push(`Failed to build SPA "${spa.name}": ${err instanceof Error ? err.message : String(err)}`)
       }
     }
   }
@@ -278,6 +285,49 @@ function generateVercelConfig(cwd: string, jobs: ManifestJobEntry[], spas: Array
   // commit-time hooks. JSON.stringify omits it.
   writeFileSync(resolve(cwd, 'vercel.json'), `${JSON.stringify(vercelJson, null, 2)}\n`)
   console.log('  ✓ vercel.json generated')
+}
+
+function scanForbiddenRuntimeImports(cwd: string): string[] {
+  const srcDir = resolve(cwd, 'src')
+  if (!existsSync(srcDir)) return []
+
+  const forbidden = [
+    { id: 'postgres', reason: 'use IDatabasePort/getPool() so Neon HTTP can run on Workers/serverless' },
+    { id: 'pg', reason: 'use IDatabasePort instead of a concrete PostgreSQL transport' },
+    { id: '@neondatabase/serverless', reason: 'wire Neon through the database adapter, not app code' },
+    { id: 'resend', reason: 'use INotificationPort instead of importing the provider SDK in app code' },
+    { id: '@vercel/blob', reason: 'use IFilePort instead of importing a platform SDK in app code' },
+    { id: '@upstash/redis', reason: 'use ICachePort/IEventBusPort instead of importing the provider SDK in app code' },
+    { id: '@upstash/qstash', reason: 'use IQueuePort instead of importing the provider SDK in app code' },
+  ]
+  const errors: string[] = []
+  for (const file of walkTsFiles(srcDir)) {
+    const text = readFileSync(file, 'utf-8')
+    for (const entry of forbidden) {
+      const escaped = entry.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const importRe = new RegExp(
+        `(?:import\\s+(?:type\\s+)?[^'"]*?from\\s*['"]${escaped}['"]|import\\s*\\(\\s*['"]${escaped}['"]\\s*\\)|require\\s*\\(\\s*['"]${escaped}['"]\\s*\\))`,
+      )
+      if (importRe.test(text)) {
+        errors.push(`Forbidden runtime import in ${relative(cwd, file)}: "${entry.id}" — ${entry.reason}.`)
+      }
+    }
+  }
+  return errors
+}
+
+function walkTsFiles(dir: string): string[] {
+  const files: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue
+    const path = resolve(dir, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...walkTsFiles(path))
+    } else if (entry.isFile() && /\.(ts|tsx|mts|cts)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+      files.push(path)
+    }
+  }
+  return files
 }
 
 // ──────────────────────────────────────────────

@@ -9,7 +9,11 @@ export default defineSpa({
       icon: 'ShoppingCart',
       label: 'Paniers',
       to: '/paniers',
-      items: [{ label: 'Paniers abandonnés', to: '/paniers-abandonnes' }],
+      items: [
+        { label: 'Paniers abandonnés', to: '/paniers-abandonnes' },
+        { label: 'Relances emails', to: '/paniers-abandonnes/emails' },
+        { label: 'Checks relance', to: '/paniers-abandonnes/checks' },
+      ],
     },
     {
       icon: 'Receipt',

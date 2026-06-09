@@ -73,6 +73,7 @@ export {
   BootConfigSchema,
   BUILT_IN_PRESETS,
   ConfigManager,
+  cloudflarePreset,
   DatabaseConfigSchema,
   defineConfig,
   definePreset,

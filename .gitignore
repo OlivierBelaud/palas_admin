@@ -85,4 +85,8 @@ coverage/
 
 # ── Claude Code — entirely local, never committed ──
 .claude/
+.codex/
 .gstack/
+
+# ── Provider local state ──
+**/.wrangler/

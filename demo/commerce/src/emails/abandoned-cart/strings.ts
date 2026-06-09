@@ -16,6 +16,9 @@ export interface AbandonedCartStrings {
   body: string
   /** Optional emphasized fragment appended to body, rendered in bold. */
   bodyEmphasis?: string
+  discountIntro: string
+  discountCodeLabel: string
+  discountFootnote: string
   cta1: string
   cta2: string
   suggestedHeading: string
@@ -41,9 +44,10 @@ export const STRINGS: Record<Locale, AbandonedCartStrings> = {
     preview: 'Mais pas pour longtemps !',
     heading: 'Vos bijoux favoris vous attendent',
     subHeading: 'Mais pas pour longtemps !',
-    // TEMPORAIRE — opération Fête des Mères 2026. À ré-évaluer post-25/05/2026.
-    body: 'Et pour la fête des mères, ',
-    bodyEmphasis: 'profitez de -15% sur toute la collection 💝',
+    body: 'Votre panier est encore disponible. Revenez quand vous voulez pour finaliser votre commande.',
+    discountIntro: 'Comme vous n’avez encore jamais commandé chez Palas, votre code de bienvenue 10% est disponible :',
+    discountCodeLabel: 'Code promo',
+    discountFootnote: 'Il est aussi attaché au lien ci-dessous et sera proposé au moment de finaliser votre commande.',
     cta1: 'FINALISER MA COMMANDE',
     cta2: 'RETROUVER MON PANIER',
     suggestedHeading: 'Ça devrait aussi vous plaire',
@@ -68,9 +72,10 @@ export const STRINGS: Record<Locale, AbandonedCartStrings> = {
     preview: 'But not for long!',
     heading: 'Your favorite jewels are waiting',
     subHeading: 'But not for long!',
-    // TEMPORARY — Mother's Day 2026 promo. Re-evaluate after 25/05/2026.
-    body: "And for Mother's Day, ",
-    bodyEmphasis: 'enjoy -15% off the entire collection 💝',
+    body: 'Your cart is still available. Come back whenever you want to complete your order.',
+    discountIntro: 'Because this would be your first Palas order, your 10% welcome code is ready:',
+    discountCodeLabel: 'Promo code',
+    discountFootnote: 'It is also attached to the link below and will be applied when you complete your order.',
     cta1: 'COMPLETE MY ORDER',
     cta2: 'RETURN TO MY CART',
     suggestedHeading: 'You may also like',

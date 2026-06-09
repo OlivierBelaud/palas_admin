@@ -13,6 +13,7 @@ import type { IEventBusPort } from '../ports/event-bus'
 import type { IFilePort } from '../ports/file'
 import type { ILockingPort } from '../ports/locking'
 import type { ILoggerPort } from '../ports/logger'
+import type { INotificationPort } from '../ports/notification'
 
 // ── Types ──────────────────────────────────────
 
@@ -24,6 +25,8 @@ export interface MantaInfra {
   file: IFilePort
   /** Database adapter — present when a database is configured. Typed as unknown to avoid coupling to any specific ORM. */
   db?: unknown
+  /** Notification adapter — present when configured. */
+  notification?: INotificationPort
 }
 
 /**
@@ -39,7 +42,6 @@ export interface MantaInfra {
  * Module type registry — augmented by .manta/types/app.d.ts codegen.
  * When codegen runs, `app.modules.catalog.listProducts()` gets full autocomplete.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: augmented by codegen via declare global
 export interface MantaAppModules extends MantaGeneratedAppModules, Record<string, unknown> {}
 
 export interface MantaApp<
@@ -254,6 +256,8 @@ function registerInfraInMap(resolveMap: Map<string, unknown>, infra: MantaInfra)
   resolveMap.set('ILockingPort', infra.locking)
   resolveMap.set('IFilePort', infra.file)
   if (infra.db) resolveMap.set('db', infra.db)
+  if (infra.db) resolveMap.set('IDatabasePort', infra.db)
+  if (infra.notification) resolveMap.set('INotificationPort', infra.notification)
 }
 
 function buildApp<
@@ -262,7 +266,7 @@ function buildApp<
   TCommands extends Record<string, (input: unknown) => Promise<unknown>>,
 >(
   modulesMap: Map<string, unknown>,
-  workflowsMap: Map<string, Function>,
+  workflowsMap: Map<string, (...args: unknown[]) => Promise<unknown>>,
   commandsMap: Map<string, (input: unknown) => Promise<unknown>>,
   commandRegistry: CommandRegistry | null,
   extraResolve: Map<string, unknown>,

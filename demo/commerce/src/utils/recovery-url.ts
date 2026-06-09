@@ -1,11 +1,14 @@
 // Build a recovery URL to send back to a customer whose cart went stale.
 //
 // Cascade (most to least useful):
-//   1. checkout_token → Shopify checkout recovery URL (email + address + shipping prefilled)
-//   2. items + cart_token → Shopify cart permalink (cart prefilled, but no checkout state)
-//   3. nothing reliable → front base URL (better than broken link)
+//   1. items + cart_token → Shopify cart permalink (cart prefilled, valid storefront route)
+//   2. nothing reliable → front base URL (better than broken link)
 //
 // Base URL comes from FRONT_BASE_URL (defaults to https://fancypalas.com).
+//
+// Do not fabricate `/checkouts/cn/<token>/recover` from `checkout_token`.
+// Shopify recovery links are only safe when Shopify gives us the full recovery
+// URL; a bare checkout token can 404 on the storefront domain.
 
 export interface RecoveryCartItem {
   id?: string | number | null
@@ -18,12 +21,19 @@ export interface RecoveryCart {
   items?: RecoveryCartItem[] | null
 }
 
-export function buildRecoveryUrl(cart: RecoveryCart): string {
-  const base = (process.env.FRONT_BASE_URL ?? 'https://fancypalas.com').replace(/\/+$/, '')
+export interface RecoveryUrlOptions {
+  discountCode?: string | null
+}
 
-  if (cart.checkout_token) {
-    return `${base}/checkouts/cn/${encodeURIComponent(cart.checkout_token)}/recover`
-  }
+function appendDiscount(url: string, code?: string | null): string {
+  const cleaned = code?.trim()
+  if (!cleaned) return url
+  const joiner = url.includes('?') ? '&' : '?'
+  return `${url}${joiner}discount=${encodeURIComponent(cleaned)}`
+}
+
+export function buildRecoveryUrl(cart: RecoveryCart, opts?: RecoveryUrlOptions): string {
+  const base = (process.env.FRONT_BASE_URL ?? 'https://fancypalas.com').replace(/\/+$/, '')
 
   const items = Array.isArray(cart.items) ? cart.items : []
   const pairs: string[] = []
@@ -34,9 +44,12 @@ export function buildRecoveryUrl(cart: RecoveryCart): string {
     pairs.push(`${id}:${qty}`)
   }
   if (pairs.length > 0) {
-    const ref = cart.cart_token ? `?ref=${encodeURIComponent(cart.cart_token)}` : ''
-    return `${base}/cart/${pairs.join(',')}${ref}`
+    const params = new URLSearchParams()
+    if (cart.cart_token) params.set('ref', cart.cart_token)
+    if (opts?.discountCode) params.set('discount', opts.discountCode)
+    const query = params.toString()
+    return `${base}/cart/${pairs.join(',')}${query ? `?${query}` : ''}`
   }
 
-  return `${base}/`
+  return appendDiscount(`${base}/`, opts?.discountCode)
 }

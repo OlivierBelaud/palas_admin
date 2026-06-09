@@ -1,6 +1,6 @@
 // SPEC-010, SPEC-053, SPEC-055 — Config module re-exports
 
-export { BUILT_IN_PRESETS, devPreset, vercelPreset } from './built-in-presets'
+export { BUILT_IN_PRESETS, cloudflarePreset, devPreset, vercelPreset } from './built-in-presets'
 export { ConfigManager } from './config-manager'
 export { defineConfig } from './define-config'
 export { FlagRouter } from './feature-flags'

@@ -243,7 +243,7 @@ export interface MantaConfig {
   plugins: Array<string | { resolve: string; options?: Record<string, unknown> }>
   featureFlags: Record<string, boolean>
   strict: boolean
-  /** Preset name ('dev', 'vercel') or inline PresetDefinition */
+  /** Preset name ('dev', 'vercel', 'cloudflare') or inline PresetDefinition */
   preset?: string | import('./presets').PresetDefinition
   /** Per-port adapter overrides (merged on top of preset) */
   adapters?: Record<string, { adapter: string; options?: Record<string, unknown> }>

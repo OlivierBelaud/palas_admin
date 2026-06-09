@@ -1,28 +1,28 @@
-// Direct sender for abandoned-cart emails — bypasses Manta `defineCommand`
-// (which short-circuits at 300ms and runs the actual work in the host process,
-// killed when a Vercel serverless function returns). Used by:
+// Direct sender for abandoned-cart emails. Used by:
 //   - the production cron `detect-abandoned-carts.ts`
 //   - the one-off `scripts/send-may-8-real.ts`
 //
 // Same business logic as `notify-abandoned-carts-helper.ts` (selection,
-// rendering, mark, PostHog), but talks to postgres + Resend SDK directly
-// so the caller can `await` the full pipeline before the function returns.
+// rendering, mark, PostHog), but talks through Manta ports in app runtime so
+// Cloudflare/Vercel can use Neon HTTP and provider adapters without importing
+// concrete transports into business code.
 //
 // Two windowing modes (mutually exclusive):
 //   - LIVE: last_action_at ∈ [now − maxAgeHours, now − minIdleHours]
 //   - DATED: forDate set → last_action_at ∈ that calendar day in Europe/Paris
 
-import type postgres from 'postgres'
-import type { Resend } from 'resend'
 import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
+import type { RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
 import { sendPosthogEvent } from './posthog-ingest'
 import { buildRecoveryUrl } from './recovery-url'
 import { signUnsubscribeToken } from './unsubscribe-token'
 
 export interface RunOptions {
-  sql: ReturnType<typeof postgres>
-  resend: Resend | null
+  sql: RuntimeSql
+  notification?: RuntimeNotificationPort | null
+  /** Legacy script-only Resend-shaped client. App runtime should use notification. */
+  resend?: LegacyResendClient | null
   adminBase: string
   fromEmail: string
   replyTo?: string
@@ -36,6 +36,24 @@ export interface RunOptions {
   log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void }
   /** Per-cart hook fired between sends; throw to abort. Used by scripts to throttle. */
   onAfterSend?: (i: number, total: number) => Promise<void> | void
+}
+
+interface LegacyResendClient {
+  emails: {
+    send: (
+      payload: {
+        from: string
+        to: string
+        subject: string
+        html: string
+        text: string
+        replyTo?: string
+        headers?: Record<string, string>
+        tags?: Array<{ name: string; value: string }>
+      },
+      options?: { idempotencyKey?: string },
+    ) => Promise<{ data?: { id?: string }; error?: { name?: string; message?: string } }>
+  }
 }
 
 export interface RunResult {
@@ -108,6 +126,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
   const {
     sql,
     resend,
+    notification,
     adminBase,
     fromEmail,
     replyTo,
@@ -150,7 +169,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
           WHERE LOWER(ke.email) = LOWER(c.email)
             AND ke.occurred_at >= ${klaviyoSince}
             AND (
-              ke.metric IN ${sql(KLAVIYO_ABANDON_METRICS)}
+              ke.metric = ANY(${KLAVIYO_ABANDON_METRICS})
               OR (ke.metric = 'Received Email' AND (
                 ke.subject ILIKE '%oublié quelque chose%'
                 OR ke.subject ILIKE '%pensez encore%'
@@ -185,7 +204,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
           WHERE LOWER(ke.email) = LOWER(c.email)
             AND ke.occurred_at >= ${klaviyoSince}
             AND (
-              ke.metric IN ${sql(KLAVIYO_ABANDON_METRICS)}
+              ke.metric = ANY(${KLAVIYO_ABANDON_METRICS})
               OR (ke.metric = 'Received Email' AND (
                 ke.subject ILIKE '%oublié quelque chose%'
                 OR ke.subject ILIKE '%pensez encore%'
@@ -242,40 +261,42 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
       log.info(`[abandoned-cart] dry cart=${c.id} email=${c.email} locale=${locale}`)
       continue
     }
-    if (!resend) {
+    if (!notification && !resend) {
       counters.errors++
-      log.error('[abandoned-cart] resend client missing — skipping')
+      log.error('[abandoned-cart] notification port missing — skipping')
       continue
     }
 
     try {
       const idempotencyKey = `${campaign}:${c.id}:1`
-      const result = await resend.emails.send(
-        {
-          from: fromEmail,
-          to: c.email,
-          subject,
-          html,
-          text,
-          replyTo,
-          headers: {
-            'List-Unsubscribe': `<${unsubscribeUrl}>`,
-            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-          },
-          tags: [
-            { name: 'category', value: 'abandoned-cart' },
-            { name: 'cart_id', value: c.id },
-            { name: 'locale', value: locale },
-            { name: 'campaign', value: campaign },
-          ],
+      const payload = {
+        from: fromEmail,
+        to: c.email,
+        subject,
+        html,
+        text,
+        replyTo,
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
         },
-        { idempotencyKey },
-      )
-      if (result.error) {
+        tags: [
+          { name: 'category', value: 'abandoned-cart' },
+          { name: 'cart_id', value: c.id },
+          { name: 'locale', value: locale },
+          { name: 'campaign', value: campaign },
+        ],
+      }
+      const result = notification
+        ? await notification.send({ ...payload, channel: 'email', idempotency_key: idempotencyKey })
+        : await resend!.emails.send(payload, { idempotencyKey })
+      const error = 'error' in result ? result.error : undefined
+      if (error) {
         counters.errors++
-        log.error(`[abandoned-cart] Resend error cart=${c.id} ${result.error.message}`)
+        log.error(`[abandoned-cart] notification error cart=${c.id} ${error.message}`)
         continue
       }
+      const messageId = 'id' in result ? result.id : result.data?.id
 
       // Mark with a guarded UPDATE — won't double-mark on race.
       await sql`
@@ -310,7 +331,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
       }
 
       counters.sent++
-      log.info(`[abandoned-cart] sent cart=${c.id} email=${c.email} msg=${result.data?.id ?? '-'}`)
+      log.info(`[abandoned-cart] sent cart=${c.id} email=${c.email} msg=${messageId ?? '-'}`)
     } catch (err) {
       counters.errors++
       log.error(`[abandoned-cart] threw cart=${c.id}: ${(err as Error).message}`)

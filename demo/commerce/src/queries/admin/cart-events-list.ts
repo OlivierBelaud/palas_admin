@@ -4,12 +4,6 @@
 
 import { formatMoney } from '../../utils/currency'
 
-interface PosthogRow {
-  event: string
-  timestamp: string
-  properties: Record<string, unknown>
-}
-
 export default defineQuery({
   name: 'cart-events-list',
   description: 'Get all events for a cart (PostHog source of truth), most recent first',

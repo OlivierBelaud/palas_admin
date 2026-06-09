@@ -20,18 +20,19 @@
     "@ai-sdk/mistral": "^3.0.24",
     "@ai-sdk/openai": "^3.0.41",
     "@manta/adapter-database-pg": "workspace:*",
-    "ai": "^4.0.0",
     "@manta/adapter-h3": "workspace:*",
     "@manta/adapter-logger-pino": "workspace:*",
     "@manta/core": "workspace:*",
     "@manta/host-nitro": "workspace:*",
+    "ai": "^4.0.0",
     "chokidar": "^4.0.0",
     "commander": "^12.0.0",
     "dotenv": "^16.4.0",
-    "jiti": "^2.6.0",
     "drizzle-orm": "^0.35.0",
+    "jiti": "^2.6.0",
     "postgres": "^3.4.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

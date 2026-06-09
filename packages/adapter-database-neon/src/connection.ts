@@ -4,8 +4,6 @@
 import { neon } from '@neondatabase/serverless'
 import { drizzle as drizzleNeonHttp } from 'drizzle-orm/neon-http'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js'
-import postgres from 'postgres'
 
 export interface NeonDatabaseOptions {
   /** Connection string (postgresql://...) */
@@ -42,8 +40,14 @@ export interface NeonDatabase {
  * - On Vercel / serverless + Neon: uses HTTP driver (stateless, no WebSocket needed)
  * - On local dev: uses postgres.js (TCP connection)
  */
-export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
-  const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
+export async function createNeonDatabase(options: NeonDatabaseOptions): Promise<NeonDatabase> {
+  const isCloudflare =
+    process.env.MANTA_DEPLOY_PRESET === 'cloudflare' ||
+    process.env.NITRO_PRESET === 'cloudflare_module' ||
+    !!process.env.CLOUDFLARE ||
+    !!process.env.CF_PAGES ||
+    !!process.env.WORKERS_CI
+  const isServerless = isCloudflare || !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
   const isNeon = options.url.includes('neon.tech') || options.url.includes('neon.')
 
   // Serverless + Neon → use HTTP driver for everything (no WebSocket dependency)
@@ -75,6 +79,11 @@ export function createNeonDatabase(options: NeonDatabaseOptions): NeonDatabase {
   }
 
   // Local dev or non-Neon → use postgres.js TCP driver
+  const [{ drizzle: drizzlePg }, postgresModule] = await Promise.all([
+    import('drizzle-orm/postgres-js'),
+    import('postgres'),
+  ])
+  const postgres = postgresModule.default
   const pgSql = postgres(options.url, {
     ssl: isNeon ? 'require' : undefined,
     max: isServerless ? 1 : 5,

@@ -8,8 +8,10 @@
 //     await command.cleanupDraftProducts({ olderThanDays: 30 })
 //   })
 
+import type { MantaApp } from '../app'
 import type { MantaCommands } from '../command/types'
 import { MantaError } from '../errors/manta-error'
+import type { IDatabasePort, INotificationPort } from '../ports'
 import type { ILoggerPort } from '../ports/logger'
 
 /**
@@ -20,6 +22,12 @@ import type { ILoggerPort } from '../ports/logger'
 export interface JobScope {
   command: MantaCommands
   log: ILoggerPort
+  /** Fully booted app, for advanced jobs that need framework ports. */
+  app: MantaApp
+  /** Database port. Use this instead of importing a concrete database adapter. */
+  db?: IDatabasePort
+  /** Notification port. Use this instead of importing a concrete email/SMS SDK. */
+  notification?: INotificationPort
 }
 
 /**

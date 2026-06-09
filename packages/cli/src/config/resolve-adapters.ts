@@ -12,7 +12,7 @@ export interface ResolvedAdapter {
 
 /**
  * Resolve the preset from config or auto-detect from environment.
- * Priority: explicit config.preset > VERCEL env → vercelPreset > devPreset.
+ * Priority: explicit config.preset > deploy env → matching prod preset > devPreset.
  */
 export function resolvePreset(config: LoadedConfig): PresetDefinition {
   const presetValue = config.preset
@@ -34,6 +34,14 @@ export function resolvePreset(config: LoadedConfig): PresetDefinition {
   // Auto-detect from environment
   if (process.env.VERCEL) {
     return BUILT_IN_PRESETS.vercel!
+  }
+  if (
+    process.env.CLOUDFLARE ||
+    process.env.CF_PAGES ||
+    process.env.WORKERS_CI ||
+    process.env.NITRO_PRESET === 'cloudflare_module'
+  ) {
+    return BUILT_IN_PRESETS.cloudflare!
   }
 
   return devPreset

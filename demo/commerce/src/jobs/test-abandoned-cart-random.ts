@@ -2,15 +2,9 @@
 // abandoned-cart email to the hardcoded test inbox. Does NOT mark the cart,
 // no PostHog event.
 //
-// IMPORTANT: this job does NOT route through `defineCommand` because Manta
-// commands return `{ runId, status: 'running' }` after a 300ms short-circuit
-// (WORKFLOW_PROGRESS.md §6.1). On Vercel serverless the function dies as
-// soon as the HTTP handler returns, killing the background continuation
-// before Resend has a chance to send. We bypass with direct postgres + Resend
-// calls — the job can `await` the full pipeline before returning.
+// Uses Manta ports directly so the job can await the full pipeline before
+// returning without importing concrete DB or email transports.
 
-import postgres from 'postgres'
-import { Resend } from 'resend'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
 import { buildRecoveryUrl } from '../utils/recovery-url'
 import { signUnsubscribeToken } from '../utils/unsubscribe-token'
@@ -40,7 +34,7 @@ interface JobResult {
 
 const EMPTY: JobResult = { picked: null, sent: false, candidates: 0 }
 
-export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ command, log }) => {
+export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ command, db, notification, log }) => {
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[test-random] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
@@ -48,18 +42,16 @@ export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ com
   // command parameter is unused here — we go around it on purpose (see file header).
   void command
 
-  const dbUrl = process.env.DATABASE_URL
-  const resendKey = process.env.RESEND_API_KEY
-  if (!dbUrl) {
-    log.error('[test-random] DATABASE_URL not set')
-    return { ...EMPTY, error: 'DATABASE_URL not set' }
+  const sql = db?.getPool()
+  if (!db || typeof sql !== 'function') {
+    log.error('[test-random] IDatabasePort not set')
+    return { ...EMPTY, error: 'IDatabasePort not set' }
   }
-  if (!resendKey) {
-    log.error('[test-random] RESEND_API_KEY not set')
-    return { ...EMPTY, error: 'RESEND_API_KEY not set' }
+  if (!notification) {
+    log.error('[test-random] INotificationPort not set')
+    return { ...EMPTY, error: 'INotificationPort not set' }
   }
 
-  const sql = postgres(dbUrl, { ssl: 'require', max: 1, prepare: false })
   try {
     const candidates = await sql<CartRow[]>`
       SELECT id, cart_token, checkout_token, email, first_name, country_code, items, total_price, currency
@@ -110,50 +102,42 @@ export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ com
       unsubscribeUrl,
     })
 
-    const resend = new Resend(resendKey)
     const minuteBucket = new Date().toISOString().slice(0, 16)
     const idempotencyKey = `test-random:${pick.id}:${minuteBucket}`
 
-    const result = await resend.emails.send(
-      {
-        from: process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>',
-        to: TEST_TO,
-        subject,
-        html,
-        text,
-        replyTo: process.env.RESEND_REPLY_TO,
-        headers: {
-          'List-Unsubscribe': `<${unsubscribeUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        },
-        tags: [
-          { name: 'category', value: 'abandoned-cart-test' },
-          { name: 'cart_id', value: pick.id },
-        ],
+    const result = await notification.send({
+      channel: 'email',
+      from: process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>',
+      to: TEST_TO,
+      subject,
+      html,
+      text,
+      replyTo: process.env.RESEND_REPLY_TO,
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
-      { idempotencyKey },
-    )
+      tags: [
+        { name: 'category', value: 'abandoned-cart-test' },
+        { name: 'cart_id', value: pick.id },
+      ],
+      idempotency_key: idempotencyKey,
+    })
 
-    if (result.error) {
-      log.error(
-        `[test-random] Resend error cart=${pick.id} name=${result.error.name} msg=${result.error.message ?? '-'}`,
-      )
-      return { picked: pick.id, sent: false, candidates: candidates.length, error: result.error.message }
+    if (result.status === 'FAILURE') {
+      log.error(`[test-random] notification error cart=${pick.id} msg=${result.error?.message ?? '-'}`)
+      return { picked: pick.id, sent: false, candidates: candidates.length, error: result.error?.message }
     }
-    log.info(
-      `[test-random] sent cart=${pick.id} to=${TEST_TO} subject="${subject}" messageId=${result.data?.id ?? '-'}`,
-    )
+    log.info(`[test-random] sent cart=${pick.id} to=${TEST_TO} subject="${subject}" messageId=${result.id ?? '-'}`)
     return {
       picked: pick.id,
       sent: true,
       to: TEST_TO,
-      messageId: result.data?.id,
+      messageId: result.id,
       candidates: candidates.length,
     }
   } catch (err) {
     log.error(`[test-random] threw: ${(err as Error).message}`)
     return { ...EMPTY, error: (err as Error).message }
-  } finally {
-    await sql.end({ timeout: 1 })
   }
 })

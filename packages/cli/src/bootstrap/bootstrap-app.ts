@@ -12,7 +12,6 @@
 // Ne gere PAS : le serveur HTTP, le routing, le dashboard admin.
 
 import { DrizzlePgAdapter } from '@manta/adapter-database-pg'
-import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
 import type { ILockingPort, ILoggerPort, MantaApp } from '@manta/core'
 // Static value imports for registerGlobals — these are bundled by Nitro at build time.
 // CRITICAL: do NOT use `await import('@manta/core')` for globals registration — on Vercel,
@@ -91,6 +90,86 @@ export interface BootstrappedApp {
   shutdown: () => Promise<void>
 }
 
+export class ConsoleLoggerAdapter implements ILoggerPort {
+  private _level: string
+  private _activities = new Map<string, string>()
+
+  constructor(options: { level?: string } = {}) {
+    this._level = options.level ?? 'info'
+  }
+
+  private static readonly LEVELS: Record<string, number> = {
+    panic: -1,
+    error: 0,
+    warn: 1,
+    info: 2,
+    http: 3,
+    verbose: 4,
+    debug: 5,
+    silly: 6,
+  }
+
+  private _log(level: string, msg: string, ...args: unknown[]): void {
+    if (!this.shouldLog(level)) return
+    const method = level === 'panic' || level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'
+    console[method](`[${level}] ${msg}`, ...args)
+  }
+
+  error(msg: string, ...args: unknown[]): void {
+    this._log('error', msg, ...args)
+  }
+  warn(msg: string, ...args: unknown[]): void {
+    this._log('warn', msg, ...args)
+  }
+  info(msg: string, ...args: unknown[]): void {
+    this._log('info', msg, ...args)
+  }
+  http(msg: string, ...args: unknown[]): void {
+    this._log('http', msg, ...args)
+  }
+  verbose(msg: string, ...args: unknown[]): void {
+    this._log('verbose', msg, ...args)
+  }
+  debug(msg: string, ...args: unknown[]): void {
+    this._log('debug', msg, ...args)
+  }
+  silly(msg: string, ...args: unknown[]): void {
+    this._log('silly', msg, ...args)
+  }
+  panic(data: unknown): void {
+    this._log('panic', 'PANIC', data)
+  }
+
+  activity(msg: string): string {
+    const id = crypto.randomUUID()
+    this._activities.set(id, msg)
+    this.info(`[activity:${id}] ${msg}`)
+    return id
+  }
+  progress(id: string, msg: string): void {
+    this.info(`[progress:${id}] ${msg}`)
+  }
+  success(id: string, msg: string): void {
+    this.info(`[success:${id}] ${msg}`)
+    this._activities.delete(id)
+  }
+  failure(id: string, msg: string): void {
+    this.error(`[failure:${id}] ${msg}`)
+    this._activities.delete(id)
+  }
+  shouldLog(level: string): boolean {
+    const threshold = ConsoleLoggerAdapter.LEVELS[this._level] ?? 2
+    const requested = ConsoleLoggerAdapter.LEVELS[level] ?? 2
+    return level === 'panic' || requested <= threshold
+  }
+  setLogLevel(level: string): void {
+    this._level = level
+  }
+  unsetLogLevel(): void {
+    this._level = 'info'
+  }
+}
+
 /**
  * Adapter factory map — maps adapter package names to factory functions.
  * Production adapters use dynamic imports so they are only loaded when the preset requires them.
@@ -103,7 +182,11 @@ export const ADAPTER_FACTORIES: Record<
   string,
   (options: Record<string, unknown>, infraMap?: Map<string, unknown>) => unknown | Promise<unknown>
 > = {
-  '@manta/adapter-logger-pino': (opts) => new PinoLoggerAdapter(opts),
+  '@manta/adapter-logger-pino': async (opts) => {
+    const { PinoLoggerAdapter } = await import('@manta/adapter-logger-pino')
+    return new PinoLoggerAdapter(opts)
+  },
+  '@manta/core/ConsoleLoggerAdapter': (opts) => new ConsoleLoggerAdapter(opts as { level?: string }),
   '@manta/adapter-database-pg': () => new DrizzlePgAdapter(),
   '@manta/adapter-database-neon': async () => {
     const { NeonDrizzleAdapter } = await import('@manta/adapter-database-neon')

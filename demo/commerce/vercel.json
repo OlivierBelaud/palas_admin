@@ -35,12 +35,28 @@
   ],
   "crons": [
     {
+      "path": "/api/crons/backfill-cart-abandoned-may-8",
+      "schedule": "* 4-7 * * *"
+    },
+    {
       "path": "/api/crons/detect-abandoned-carts",
       "schedule": "0 * * * *"
     },
     {
       "path": "/api/crons/purge-event-hub-logs",
       "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/crons/reconcile-shopify-daily",
+      "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/crons/reconcile-shopify-orders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/crons/refresh-visitor-lifecycle-facts",
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/crons/sync-from-shopify",
@@ -53,6 +69,10 @@
     {
       "path": "/api/crons/sync-posthog-events",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/crons/test-abandoned-cart-random",
+      "schedule": "* * * * *"
     }
   ]
 }

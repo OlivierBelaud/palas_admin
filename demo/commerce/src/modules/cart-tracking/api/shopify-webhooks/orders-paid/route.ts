@@ -13,26 +13,12 @@
 // Shopify guarantees retries for up to 48h on non-2xx responses → handler
 // must be idempotent (upsertShopifyOrder is, via shopify_order_id match).
 
-import postgres from 'postgres'
+import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
 import type { ShopifyOrderPayload } from '../../../upsert-shopify-order'
 import { upsertShopifyOrder } from '../../../upsert-shopify-order'
 
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
 const SHOPIFY_API_VERSION = '2024-10'
-
-// Re-use a single postgres pool across invocations on long-running hosts.
-// On Vercel serverless this module is reloaded per cold start anyway, so
-// the pool is bounded by max:1.
-let sqlSingleton: ReturnType<typeof postgres> | null = null
-
-function getSql(): ReturnType<typeof postgres> | null {
-  if (sqlSingleton) return sqlSingleton
-  const dbUrl = process.env.DATABASE_URL
-  if (!dbUrl) return null
-  const needsSsl = /neon\.tech|amazonaws\.com|render\.com|railway\.app/.test(dbUrl)
-  sqlSingleton = postgres(dbUrl, { ssl: needsSsl ? 'require' : undefined, max: 1, prepare: false })
-  return sqlSingleton
-}
 
 export async function OPTIONS(_req: Request): Promise<Response> {
   // Shopify never sends preflight (server-to-server), but reply correctly
@@ -81,14 +67,14 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // 4) Upsert. Errors → 500 so Shopify retries.
-  const sql = getSql()
+  const app = (req as Request & { app?: RuntimeApp }).app
+  const sql = resolveSql(app)
   if (!sql) {
-    console.error('[shopify-webhook orders-paid] DATABASE_URL missing')
+    console.error('[shopify-webhook orders-paid] IDatabasePort missing')
     return new Response('Server Misconfigured', { status: 500 })
   }
   try {
     const outcome = await upsertShopifyOrder(sql, order)
-    const app = (req as Request & { app?: { emit?: (event: string, data: unknown) => Promise<void> } }).app
     if (app?.emit) {
       app
         .emit('order.refresh-requested', {

@@ -7,15 +7,14 @@
 // blip, downtime, replay window expired), this catches it. The 48h window
 // covers Shopify's own 48h retry window plus a margin.
 //
-// Direct postgres + Shopify REST inline — same rationale as the abandoned
-// carts cron (300ms short-circuit on `defineCommand`). See
-// `detect-abandoned-carts.ts` header for the long version.
+// Shopify REST inline, database through Manta IDatabasePort. No concrete DB
+// transport is imported here; the active deployment preset chooses it.
 //
 // Production-only — local `manta dev` no-ops to avoid hitting prod data.
 
-import postgres from 'postgres'
 import { type RawDb, refreshCartSnapshot } from '../modules/cart-tracking/refresh-cart'
 import { type ShopifyOrderPayload, upsertShopifyOrder } from '../modules/cart-tracking/upsert-shopify-order'
+import type { RuntimeSql } from '../utils/manta-runtime'
 
 interface ReconcileResult {
   scanned: number
@@ -55,27 +54,26 @@ interface ShopifyOrdersResponse {
   orders: ShopifyOrderPayload[]
 }
 
-export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ log }) => {
+export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ db, log }) => {
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[reconcile-shopify-daily] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
   }
-  const dbUrl = process.env.DATABASE_URL
   const shopifyToken =
     process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN
   const shopifyDomain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
   const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2025-10'
 
-  if (!dbUrl || !shopifyToken) {
-    log.error('[reconcile-shopify-daily] DATABASE_URL or SHOPIFY_ADMIN_ACCESS_TOKEN missing')
+  const pool = db?.getPool()
+  if (!db || typeof pool !== 'function' || !shopifyToken) {
+    log.error('[reconcile-shopify-daily] IDatabasePort or SHOPIFY_ADMIN_ACCESS_TOKEN missing')
     return { ...EMPTY, errors: 1 }
   }
+  const sql = pool as RuntimeSql
 
   const t0 = Date.now()
-  const sql = postgres(dbUrl, { ssl: 'require', max: 1, prepare: false })
-  const db: RawDb = {
-    raw: async <T>(query: string, params?: unknown[]): Promise<T[]> =>
-      (await sql.unsafe(query, (params ?? []) as never[])) as T[],
+  const rawDb: RawDb = {
+    raw: async <T>(query: string, params?: unknown[]): Promise<T[]> => db.raw<T>(query, params),
   }
   const result: ReconcileResult = { ...EMPTY }
 
@@ -104,7 +102,7 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ log }
       for (const order of orders) {
         try {
           const outcome = await upsertShopifyOrder(sql, order)
-          await refreshCartSnapshot(db, {
+          await refreshCartSnapshot(rawDb, {
             cart_id: outcome.cart_id,
             cart_token: order.cart_token ?? null,
             checkout_token: order.checkout_token ?? null,
@@ -133,7 +131,10 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ log }
       `[reconcile-shopify-daily] scanned=${result.scanned} upserted=${result.upserted} matched_cart_token=${result.matched_cart_token} matched_email=${result.matched_email} inserted_new=${result.inserted_new} already_completed=${result.already_completed} errors=${result.errors} duration_ms=${result.duration_ms}`,
     )
     return result
-  } finally {
-    await sql.end({ timeout: 1 })
+  } catch (err) {
+    result.errors++
+    result.duration_ms = Date.now() - t0
+    log.error(`[reconcile-shopify-daily] failed: ${(err as Error).message}`)
+    return result
   }
 })

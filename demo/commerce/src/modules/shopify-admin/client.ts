@@ -1,4 +1,4 @@
-// Minimal Shopify Admin GraphQL client — read-only.
+// Minimal Shopify Admin GraphQL client.
 //
 // Kept framework-free (no defineModule globals) so it can be imported from
 // queries, commands, or standalone maintenance scripts alike. Two env vars:

@@ -112,6 +112,22 @@ describe('renderAbandonedCart', () => {
     expect(out.html).not.toMatch(/€\s*\d/)
   })
 
+  it('renders welcome discount code when supplied', async () => {
+    const out = await renderAbandonedCart({
+      locale: 'fr',
+      firstName: 'Alice',
+      items: [FIXTURE_ITEMS[0]],
+      recoveryUrl: `${RECOVERY}?discount=PALAS10-ABC1234`,
+      unsubscribeUrl: UNSUB,
+      discountCode: 'PALAS10-ABC1234',
+    })
+
+    expect(out.html).toContain('PALAS10-ABC1234')
+    expect(out.html).toContain('Code promo')
+    expect(out.html).toContain('discount=PALAS10-ABC1234')
+    expect(out.text).toContain('PALAS10-ABC1234')
+  })
+
   it('handles empty items array without crashing (no suggested grid)', async () => {
     const out = await renderAbandonedCart({
       locale: 'fr',

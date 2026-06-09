@@ -43,8 +43,33 @@ export const vercelPreset: PresetDefinition = definePreset({
   },
 })
 
+/**
+ * Cloudflare Workers preset — Neon over HTTP + fetch-compatible adapters.
+ *
+ * Keep the service shape close to Vercel, but avoid Vercel-only storage and
+ * cron primitives. Cloudflare cron bindings are handled at the Nitro/Wrangler
+ * layer; Manta still exposes the same HTTP-triggerable job scheduler contract.
+ */
+export const cloudflarePreset: PresetDefinition = definePreset({
+  name: 'cloudflare',
+  profile: 'prod',
+  adapters: {
+    ILoggerPort: { adapter: '@manta/core/ConsoleLoggerAdapter', options: { level: 'info' } },
+    IDatabasePort: { adapter: '@manta/adapter-database-neon' },
+    ISchemaGenerator: { adapter: '@manta/adapter-database-pg/DrizzleSchemaGenerator' },
+    IRepositoryFactory: { adapter: '@manta/adapter-database-pg/DrizzleRepositoryFactory' },
+    ICachePort: { adapter: '@manta/adapter-cache-upstash' },
+    IEventBusPort: { adapter: '@manta/adapter-eventbus-upstash' },
+    ILockingPort: { adapter: '@manta/adapter-locking-neon' },
+    IFilePort: { adapter: '@manta/core/InMemoryFileAdapter' },
+    IJobSchedulerPort: { adapter: '@manta/adapter-jobs-vercel-cron' },
+    IHttpPort: { adapter: '@manta/adapter-h3' },
+  },
+})
+
 /** Map of built-in preset names to their definitions */
 export const BUILT_IN_PRESETS: Record<string, PresetDefinition> = {
   dev: devPreset,
   vercel: vercelPreset,
+  cloudflare: cloudflarePreset,
 }

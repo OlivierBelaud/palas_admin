@@ -34,8 +34,9 @@ export interface BuildResult {
 export async function buildForProduction(options: BuildOptions): Promise<BuildResult> {
   const { cwd, preset, outputDir = '.output' } = options
   const { resolve, dirname } = await import('node:path')
-  const { execSync } = await import('node:child_process')
-  const { copyFileSync, mkdirSync, existsSync } = await import('node:fs')
+  const { execFileSync } = await import('node:child_process')
+  const { copyFileSync, mkdirSync, existsSync, writeFileSync } = await import('node:fs')
+  const { createRequire } = await import('node:module')
   const { fileURLToPath } = await import('node:url')
 
   // Copy framework server templates to .manta/server/ BEFORE running Nitro build.
@@ -66,19 +67,29 @@ export async function buildForProduction(options: BuildOptions): Promise<BuildRe
   // If no manifest.ts exists (non-serverless preset), fall back to the dev template.
   const manifestPath = resolve(targetDir, 'manifest.ts')
   if (existsSync(manifestPath)) {
+    const deploymentPreset = preset === 'cloudflare' ? 'cloudflare' : preset === 'vercel' ? 'vercel' : ''
     const prodBootstrap = `// @ts-nocheck — Auto-generated PRODUCTION bootstrap (manifest with lazy imports)
 import { bootstrapApp } from '@manta/cli/bootstrap'
-import { loadEnv } from '@manta/cli/env'
-import mantaConfigModule from './manta.config'
 import { moduleImports, preloadedResources, preloadedPluginResources } from './manifest'
 
+const deploymentPreset = ${JSON.stringify(deploymentPreset)}
 let _bootstrapped: any = null
+let _promise: Promise<any> | null = null
 
 async function bootstrap() {
   if (_bootstrapped) return _bootstrapped
-  const cwd = process.cwd()
-  loadEnv(cwd)
-  const config = mantaConfigModule.default ?? mantaConfigModule
+  const cwd = typeof process.cwd === 'function' ? process.cwd() : '/'
+
+  // Cloudflare exposes env during the request lifecycle. Do not read .env from
+  // the filesystem or include the load-env module in the Worker bundle.
+${deploymentPreset === 'cloudflare' ? "  const cfEnv = (globalThis as any).__env__ as Record<string, unknown> | undefined\n  if (cfEnv) {\n    for (const [key, value] of Object.entries(cfEnv)) {\n      if (process.env[key] === undefined && ['string', 'number', 'boolean'].includes(typeof value)) {\n        process.env[key] = String(value)\n      }\n    }\n  }\n" : "  const { loadEnv } = await import('@manta/cli/env')\n  loadEnv(cwd)\n"}
+  if (deploymentPreset) {
+    process.env.MANTA_DEPLOY_PRESET = deploymentPreset
+  }
+
+  const mantaConfigModule = await import('./manta.config')
+  const rawConfig = mantaConfigModule.default ?? mantaConfigModule
+  const config = deploymentPreset && !rawConfig.preset ? { ...rawConfig, preset: deploymentPreset } : rawConfig
 
   // Resolve all lazy imports AFTER globals are registered inside bootstrapApp.
   // The lazy imports are () => import('...') functions that only execute when called.
@@ -106,20 +117,26 @@ async function bootstrap() {
   return _bootstrapped
 }
 
-const _promise = bootstrap()
-export async function getMantaAdapter() { const { adapter } = await _promise; return adapter }
-export async function getMantaApp() { const { app } = await _promise; return app }
+function bootPromise() {
+  if (!_promise) _promise = bootstrap()
+  return _promise
+}
+
+export async function getMantaAdapter() { const { adapter } = await bootPromise(); return adapter }
+export async function getMantaApp() { const { app } = await bootPromise(); return app }
 `
-    const { writeFileSync: wfs } = require('node:fs') as typeof import('node:fs')
-    wfs(resolve(targetDir, 'manta-bootstrap.ts'), prodBootstrap)
+    writeFileSync(resolve(targetDir, 'manta-bootstrap.ts'), prodBootstrap)
   } else {
     // No manifest → use the dev template (jiti-based runtime discovery)
     copyFileSync(resolve(templatesDir, 'manta-bootstrap.ts'), resolve(targetDir, 'manta-bootstrap.ts'))
   }
 
-  const presetArg = preset === 'node' ? 'node-server' : preset
+  const presetArg = preset === 'node' ? 'node-server' : preset === 'cloudflare' ? 'cloudflare_module' : preset
+  const nodeRequire = createRequire(import.meta.url)
+  const nitroPkgPath = nodeRequire.resolve('nitro/package.json')
+  const nitroCliPath = resolve(dirname(nitroPkgPath), 'dist', 'cli', 'index.mjs')
 
-  execSync(`npx nitro build --preset ${presetArg}`, {
+  execFileSync(process.execPath, [nitroCliPath, 'build', '--preset', presetArg], {
     cwd,
     stdio: 'inherit',
     env: { ...process.env, NODE_ENV: 'production' },

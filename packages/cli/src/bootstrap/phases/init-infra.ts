@@ -6,7 +6,6 @@ import {
   DrizzleWorkflowStorage,
   DrizzleWorkflowStore,
 } from '@manta/adapter-database-pg'
-import { PinoLoggerAdapter } from '@manta/adapter-logger-pino'
 import type { IEventBusPort, ILockingPort, ILoggerPort, IProgressChannelPort } from '@manta/core'
 import {
   createApp,
@@ -17,10 +16,10 @@ import {
   InMemoryProgressChannel,
   MantaError,
 } from '@manta/core'
-import type { ICachePort, IFilePort, IRepositoryFactory } from '@manta/core/ports'
+import type { ICachePort, IFilePort, INotificationPort, IRepositoryFactory } from '@manta/core/ports'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
-import { resolveAdapters, resolvePreset } from '../../config/resolve-adapters'
-import { ADAPTER_FACTORIES } from '../bootstrap-app'
+import { type ResolvedAdapter, resolveAdapters, resolvePreset } from '../../config/resolve-adapters'
+import { ADAPTER_FACTORIES, ConsoleLoggerAdapter } from '../bootstrap-app'
 import type { AppRef, BootstrapContext } from '../bootstrap-context'
 import { ensureFrameworkSchema } from '../bootstrap-helpers'
 
@@ -58,15 +57,15 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   const resolvedAdapters = resolveAdapters(config, preset)
 
   // [2] Initialize logger
-  const loggerEntry = resolvedAdapters.find((a: any) => a.port === 'ILoggerPort')
+  const loggerEntry = resolvedAdapters.find((a: ResolvedAdapter) => a.port === 'ILoggerPort')
   const loggerOpts = { level: verbose ? 'debug' : 'info', pretty: mode === 'dev', ...loggerEntry?.options }
   const loggerFactory = ADAPTER_FACTORIES[loggerEntry?.adapter ?? '@manta/adapter-logger-pino']
-  const logger = (loggerFactory ? loggerFactory(loggerOpts) : new PinoLoggerAdapter(loggerOpts)) as ILoggerPort
+  const logger = (loggerFactory ? await loggerFactory(loggerOpts) : new ConsoleLoggerAdapter(loggerOpts)) as ILoggerPort
   ctx.logger = logger
 
   // [3] Initialize database
   logger.info('Connecting to database...')
-  const dbEntry = resolvedAdapters.find((a: any) => a.port === 'IDatabasePort')
+  const dbEntry = resolvedAdapters.find((a: ResolvedAdapter) => a.port === 'IDatabasePort')
   const dbFactory = dbEntry ? ADAPTER_FACTORIES[dbEntry.adapter] : undefined
   const db = (dbFactory ? await dbFactory(dbEntry!.options) : new DrizzlePgAdapter()) as DrizzlePgAdapter
   ctx.db = db
@@ -77,8 +76,13 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   })
 
   const healthy = await db.healthCheck()
-  if (!healthy) throw new MantaError('INVALID_STATE', 'Database health check failed. Is PostgreSQL running?')
-  logger.info('Database connected')
+  if (healthy) {
+    logger.info('Database connected')
+  } else {
+    logger.error(
+      'Database initialized but readiness probe failed; continuing boot and reporting /health/ready as not_ready',
+    )
+  }
 
   // [4] Framework schema — versioned migration, safe on every boot (serverless
   //     cold starts serialize on a Postgres advisory lock, and a version gate
@@ -90,10 +94,14 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   //     to their own concerns. Log loudly and continue; the migration retries
   //     on the next cold start, and framework-dependent endpoints surface the
   //     real problem on their first hit.
-  try {
-    await ensureFrameworkSchema(db.getPool(), logger)
-  } catch (err) {
-    logger.error(`[manta-schema] framework migration failed; continuing boot — ${(err as Error).message}`)
+  if (healthy) {
+    try {
+      await ensureFrameworkSchema(db.getPool(), logger)
+    } catch (err) {
+      logger.error(`[manta-schema] framework migration failed; continuing boot — ${(err as Error).message}`)
+    }
+  } else {
+    logger.warn('[manta-schema] skipped framework migration because database readiness failed')
   }
 
   // [5] Collect infra adapters, then build app via MantaAppBuilder
@@ -114,7 +122,7 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
   ctx.infraMap = infraMap
 
   // Register remaining adapters (sorted: IJobSchedulerPort last)
-  const sortedAdapters = [...resolvedAdapters].sort((a: any, b: any) => {
+  const sortedAdapters = [...resolvedAdapters].sort((a: ResolvedAdapter, b: ResolvedAdapter) => {
     if (a.port === 'IJobSchedulerPort') return 1
     if (b.port === 'IJobSchedulerPort') return -1
     return 0
@@ -154,6 +162,7 @@ export async function initializeInfra(ctx: BootstrapContext, _appRef: AppRef): P
       cache: (infraMap.get('ICachePort') ?? new InMemoryCacheAdapter()) as ICachePort,
       locking: (infraMap.get('ILockingPort') ?? new InMemoryLockingAdapter()) as ILockingPort,
       file: (infraMap.get('IFilePort') ?? new InMemoryFileAdapter()) as IFilePort,
+      notification: infraMap.get('INotificationPort') as INotificationPort | undefined,
       db: db.getClient(),
     },
   })

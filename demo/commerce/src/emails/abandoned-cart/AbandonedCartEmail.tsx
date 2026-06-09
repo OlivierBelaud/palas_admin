@@ -61,7 +61,7 @@ export interface AbandonedCartItem {
   id: string | number | null
   title: string
   quantity: number
-  /** Net line price (post existing cart discount, pre Mother's Day -15%). */
+  /** Net line price. Kept for future variants, not rendered in V1 emails. */
   line_price?: number | null
   image_url?: string | null
 }
@@ -70,40 +70,15 @@ export interface AbandonedCartEmailProps {
   locale: Locale
   firstName?: string | null
   items: AbandonedCartItem[]
-  /** ISO currency code (EUR, USD, …) — used to format prices. Defaults to 'EUR'. */
+  /** ISO currency code (EUR, USD, …). Kept for compatibility with callers. */
   currency?: string
   recoveryUrl: string
   unsubscribeUrl: string
-}
-
-// Mother's Day 2026 promo: -15% off catalog. TEMPORAIRE — see strings.ts header.
-const PROMO_DISCOUNT = 0.15
-
-function formatMoney(amount: number, currency: string, locale: Locale): string {
-  const intlLocale = locale === 'fr' ? 'fr-FR' : 'en-US'
-  try {
-    return new Intl.NumberFormat(intlLocale, { style: 'currency', currency }).format(amount)
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`
-  }
-}
-
-interface PricePair {
-  original: string
-  discounted: string
-}
-
-function priceFor(item: AbandonedCartItem, currency: string, locale: Locale): PricePair | null {
-  if (typeof item.line_price !== 'number' || !Number.isFinite(item.line_price) || item.line_price <= 0) return null
-  return {
-    original: formatMoney(item.line_price, currency, locale),
-    discounted: formatMoney(item.line_price * (1 - PROMO_DISCOUNT), currency, locale),
-  }
+  discountCode?: string | null
 }
 
 export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactElement {
-  const { locale, items, recoveryUrl, unsubscribeUrl } = props
-  const currency = props.currency ?? 'EUR'
+  const { locale, items, recoveryUrl, unsubscribeUrl, discountCode } = props
   const t = STRINGS[locale]
   const showSuggested = items.length >= 1 && items.length <= 2
   const suggested: SuggestedProduct[] = showSuggested
@@ -163,21 +138,37 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
             </Text>
           </Section>
 
+          {discountCode && (
+            <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
+              <Text style={{ fontSize: 14, lineHeight: 1.5, margin: '0 0 10px', color: '#000000' }}>
+                {t.discountIntro}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 18,
+                  lineHeight: 1.2,
+                  margin: '0 auto 10px',
+                  color: '#000000',
+                  fontWeight: 700,
+                  letterSpacing: 0,
+                  fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+                }}
+              >
+                {t.discountCodeLabel} : {discountCode}
+              </Text>
+              <Text style={{ fontSize: 12, lineHeight: 1.5, margin: 0, color: '#555555' }}>{t.discountFootnote}</Text>
+            </Section>
+          )}
+
           {/* ── Primary CTA ──────────────────────────────────────────── */}
           <Section style={{ textAlign: 'center', padding: '0 18px 24px' }}>
             <CTAButton href={recoveryUrl} label={t.cta1} />
           </Section>
 
           {/* ── Cart items — adaptive layout ─────────────────────────── */}
-          {items.length === 1 && (
-            <HeroProduct item={items[0]} recoveryUrl={recoveryUrl} currency={currency} locale={locale} />
-          )}
-          {items.length === 2 && (
-            <DuoGrid items={items} recoveryUrl={recoveryUrl} currency={currency} locale={locale} />
-          )}
-          {items.length >= 3 && (
-            <ListLayout items={items} recoveryUrl={recoveryUrl} currency={currency} locale={locale} />
-          )}
+          {items.length === 1 && <HeroProduct item={items[0]} recoveryUrl={recoveryUrl} />}
+          {items.length === 2 && <DuoGrid items={items} recoveryUrl={recoveryUrl} />}
+          {items.length >= 3 && <ListLayout items={items} recoveryUrl={recoveryUrl} />}
 
           {/* ── Secondary CTA ────────────────────────────────────────── */}
           <Section style={{ textAlign: 'center', padding: '24px 18px 24px' }}>
@@ -307,18 +298,7 @@ function CTAButton({ href, label }: { href: string; label: string }): React.Reac
 }
 
 // Layout 1 — Hero Product (single product, big image + serif title).
-function HeroProduct({
-  item,
-  recoveryUrl,
-  currency,
-  locale,
-}: {
-  item: AbandonedCartItem
-  recoveryUrl: string
-  currency: string
-  locale: Locale
-}): React.ReactElement {
-  const price = priceFor(item, currency, locale)
+function HeroProduct({ item, recoveryUrl }: { item: AbandonedCartItem; recoveryUrl: string }): React.ReactElement {
   return (
     <Section style={{ padding: '0 24px 8px', textAlign: 'center' }}>
       <Link href={recoveryUrl} style={{ textDecoration: 'none' }}>
@@ -349,28 +329,12 @@ function HeroProduct({
       >
         {item.title}
       </Text>
-      {price && (
-        <Text style={{ fontSize: 18, lineHeight: 1.3, margin: '10px 0 0', textAlign: 'center', color: '#000000' }}>
-          <span style={{ textDecoration: 'line-through', color: '#888888', marginRight: 8 }}>{price.original}</span>
-          <strong style={{ color: CTA_COLOR }}>{price.discounted}</strong>
-        </Text>
-      )}
     </Section>
   )
 }
 
 // Layout 2 — Duo (2 products as 2-column grid, like "you may also like").
-function DuoGrid({
-  items,
-  recoveryUrl,
-  currency,
-  locale,
-}: {
-  items: AbandonedCartItem[]
-  recoveryUrl: string
-  currency: string
-  locale: Locale
-}): React.ReactElement {
+function DuoGrid({ items, recoveryUrl }: { items: AbandonedCartItem[]; recoveryUrl: string }): React.ReactElement {
   return (
     <Section style={{ padding: '0 24px' }}>
       <Row>
@@ -383,7 +347,6 @@ function DuoGrid({
             title={item.title}
             widthPct="50%"
             maxImg={260}
-            price={priceFor(item, currency, locale)}
           />
         ))}
       </Row>
@@ -395,17 +358,7 @@ function DuoGrid({
 // image size 260px, same white background, same black titles), just chunked
 // into pairs. Odd count → the last item is centered via 25% / 50% / 25%
 // flanking columns.
-function ListLayout({
-  items,
-  recoveryUrl,
-  currency,
-  locale,
-}: {
-  items: AbandonedCartItem[]
-  recoveryUrl: string
-  currency: string
-  locale: Locale
-}): React.ReactElement {
+function ListLayout({ items, recoveryUrl }: { items: AbandonedCartItem[]; recoveryUrl: string }): React.ReactElement {
   const pairs: Array<[AbandonedCartItem, AbandonedCartItem | null]> = []
   for (let i = 0; i < items.length; i += 2) {
     pairs.push([items[i], items[i + 1] ?? null])
@@ -423,7 +376,6 @@ function ListLayout({
               title={a.title}
               widthPct="50%"
               maxImg={260}
-              price={priceFor(a, currency, locale)}
             />
             <ProductCard
               href={recoveryUrl}
@@ -431,7 +383,6 @@ function ListLayout({
               title={b.title}
               widthPct="50%"
               maxImg={260}
-              price={priceFor(b, currency, locale)}
             />
           </Row>
         ) : (
@@ -444,7 +395,6 @@ function ListLayout({
               title={a.title}
               widthPct="50%"
               maxImg={260}
-              price={priceFor(a, currency, locale)}
             />
             <Column className="stack" style={{ width: '25%' }} />
           </Row>
@@ -460,14 +410,12 @@ function ProductCard({
   title,
   widthPct,
   maxImg,
-  price,
 }: {
   href: string
   image: string
   title: string
   widthPct: string
   maxImg: number
-  price?: PricePair | null
 }): React.ReactElement {
   return (
     <Column
@@ -503,12 +451,6 @@ function ProductCard({
           {title}
         </Text>
       </Link>
-      {price && (
-        <Text style={{ fontSize: 13, lineHeight: 1.3, margin: '4px 0 0', textAlign: 'center', color: '#000000' }}>
-          <span style={{ textDecoration: 'line-through', color: '#888888', marginRight: 6 }}>{price.original}</span>
-          <strong style={{ color: CTA_COLOR }}>{price.discounted}</strong>
-        </Text>
-      )}
     </Column>
   )
 }

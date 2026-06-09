@@ -5,10 +5,10 @@
 //   - jobs/reconcile-shopify-daily.ts            (safety net, catches missed webhooks)
 //   - scripts/backfill-shopify-completions.ts    (one-shot historical fill)
 //
-// Direct postgres on purpose — both the cron and the script need to run the
-// full pipeline inline on serverless (Manta `defineCommand` short-circuits
-// at 300ms via Promise.race). See `detect-abandoned-carts.ts` header for
-// the long version of the rationale.
+// The SQL client is intentionally structural: app runtime code receives it
+// from Manta's IDatabasePort. On Cloudflare/Vercel this is Neon HTTP; on
+// Node/local it can be postgres-js behind the adapter. Do not import a
+// concrete database transport here.
 //
 // Matching strategy (same as before extraction):
 //   1) cart_token exact, then LIKE `${token}?key=%` (the pixel persists
@@ -22,7 +22,8 @@
 // up to 48h after the first delivery.
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { Sql } from 'postgres'
+import type { RuntimeSql } from '../../utils/manta-runtime'
+import { jsonParam } from '../../utils/manta-runtime'
 
 const MATCH_WINDOW_DAYS = 30
 
@@ -65,11 +66,7 @@ export interface UpsertOutcome {
   already_completed: boolean
 }
 
-// We use the postgres-js tagged-template `Sql` shape directly. Typed loosely
-// at the call sites (rows array shape) because postgres-js leaves the row
-// type to consumer assertion. Generic parameter intentionally unconstrained.
-// biome-ignore lint/suspicious/noExplicitAny: postgres-js tagged-template surface
-export type SqlClient = Sql<any>
+export type SqlClient = RuntimeSql
 
 // ── HMAC verification ────────────────────────────────────────────────
 
@@ -220,7 +217,7 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
     VALUES
       (gen_random_uuid(), ${shopifyOrderId}, ${email}, ${orderNumber}, ${status},
        ${payload.financial_status ?? null}, ${payload.fulfillment_status ?? null},
-       ${totalPrice}, ${currency}, ${sql.json(items as never)}, ${createdAt}, ${cancelledAt},
+       ${totalPrice}, ${currency}, ${jsonParam(sql, items)}::jsonb, ${createdAt}, ${cancelledAt},
        ${now}, ${now}, ${now})
     ON CONFLICT (shopify_order_id) DO UPDATE SET
       email = COALESCE(orders.email, EXCLUDED.email),
@@ -358,7 +355,7 @@ export async function upsertShopifyOrder(
              total_price = ${totalPrice},
              subtotal_price = COALESCE(subtotal_price, ${subtotalPrice}),
              email = ${nextEmail},
-             items = ${sql.json(nextItems as never)},
+             items = ${jsonParam(sql, nextItems)}::jsonb,
              currency = ${nextCurrency},
              updated_at = NOW()
        WHERE id = ${cart.id}`
@@ -383,7 +380,7 @@ export async function upsertShopifyOrder(
        item_count, created_at, updated_at)
     VALUES
       (gen_random_uuid(), ${syntheticToken}, ${checkoutToken}, ${email},
-       ${sql.json(lineItems as never)}, ${totalPrice}, ${subtotalPrice}, ${currency},
+       ${jsonParam(sql, lineItems)}::jsonb, ${totalPrice}, ${subtotalPrice}, ${currency},
        'checkout:completed', ${createdAt}, ${createdAt}, 'completed', 'completed',
        ${shopifyOrderId}, ${lineItems.length}, NOW(), NOW())
     RETURNING id`) as Array<{ id: string }>

@@ -197,8 +197,8 @@ export async function sendAbandonedCartEmailForCart(
   const unsubscribeUrl = `${adminBase}/api/contact/unsubscribe?t=${unsubscribeToken}`
 
   // 4. Render once. Even in dry-run we render so the script can preview.
-  //    Currency drives the per-item strikethrough/discounted price formatting
-  //    (Mother's Day -15% trial). Falls back to EUR — pilot is FR-first.
+  //    Currency is still passed through for future template variants. V1 keeps
+  //    product prices out of the email.
   const { subject, html, text } = await renderAbandonedCart({
     locale,
     firstName: cart.first_name,
