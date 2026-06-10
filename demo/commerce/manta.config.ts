@@ -1,6 +1,9 @@
 // biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@mantajs/core'
 
+process.env.UPSTASH_REDIS_REST_URL ??= process.env.UPSTASH_REDIS_KV_REST_API_URL
+process.env.UPSTASH_REDIS_REST_TOKEN ??= process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+
 const upstashRedisUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
 const upstashRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
 
