@@ -64,10 +64,16 @@ export default function SettingsPage() {
               </p>
             </div>
           </div>
-          <Button onClick={handleLogout} isLoading={isLoggingOut} variant="secondary">
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            data-testid="admin-logout-button"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
             <LogOut className="size-4" />
-            Log out
-          </Button>
+            {isLoggingOut ? 'Logging out...' : 'Log out'}
+          </button>
         </div>
       </section>
 
