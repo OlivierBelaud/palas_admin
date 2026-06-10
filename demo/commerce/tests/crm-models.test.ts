@@ -3,7 +3,7 @@
 // pipeline (sync workers, admin pages) is going to depend on.
 //
 // We don't load the modules at runtime here because demo code lints
-// against importing from '@manta/core' to register globals, and the
+// against importing from '@mantajs/core' to register globals, and the
 // monorepo smoke test already runs `tsc --noEmit` across every model
 // file (see tests/smoke.test.ts). This test is a faster, source-level
 // regression catcher for the column list itself — drop a column and

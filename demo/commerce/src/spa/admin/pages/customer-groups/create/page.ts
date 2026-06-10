@@ -1,4 +1,4 @@
-import { defineForm } from '@manta/dashboard-core'
+import { defineForm } from '@mantajs/dashboard'
 
 export default defineForm({
   title: 'Create Customer Group',

@@ -1,4 +1,4 @@
-import { defineSpa } from '@manta/dashboard-core'
+import { defineSpa } from '@mantajs/dashboard'
 
 export default defineSpa({
   title: 'CRM Shopify',

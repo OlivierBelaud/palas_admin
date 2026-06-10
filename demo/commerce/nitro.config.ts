@@ -8,12 +8,16 @@ const repoRoot = resolve('../..')
 const dependencyPaths = [process.cwd(), repoRoot, resolve(repoRoot, 'node_modules/.pnpm/node_modules')]
 const nitroDir = dirname(nodeRequire.resolve('nitro/package.json', { paths: dependencyPaths }))
 
-const workspacePackage = (name: string) => {
-  const packageName = name.replace('@manta/', '')
-  return resolve(repoRoot, 'packages', packageName, 'src', 'index.ts')
-}
 const dependency = (name: string, paths: string[] = dependencyPaths) => {
   return nodeRequire.resolve(name, { paths })
+}
+const packageRoot = (name: string, paths: string[] = dependencyPaths) => {
+  const entry = dependency(name, paths)
+  const dir = dirname(entry)
+  return dir.endsWith('/dist') || dir.endsWith('/src') ? dirname(dir) : dir
+}
+const mantaPackage = (name: string) => {
+  return dependency(name)
 }
 
 export default {
@@ -23,7 +27,7 @@ export default {
   alias: {
     h3: nodeRequire.resolve('h3/cloudflare', { paths: [nitroDir] }),
     zod: dependency('zod'),
-    pino: dependency('pino', [resolve(repoRoot, 'packages/adapter-logger-pino')]),
+    pino: dependency('pino', [packageRoot('@mantajs/adapter-logger-pino')]),
     resend: dependency('resend'),
     svix: dependency('svix'),
     standardwebhooks: dependency('standardwebhooks'),
@@ -32,26 +36,22 @@ export default {
     'async-retry': dependency('async-retry'),
     neverthrow: dependency('neverthrow'),
     '@fastify/busboy': dependency('@fastify/busboy'),
-    'form-data': dependency('form-data'),
-    'combined-stream': dependency('combined-stream'),
-    'delayed-stream': dependency('delayed-stream'),
-    'mime-types': dependency('mime-types'),
     prismjs: dependency('prismjs'),
     deepmerge: dependency('deepmerge'),
-    '@manta/adapter-cache-upstash': workspacePackage('@manta/adapter-cache-upstash'),
-    '@manta/adapter-database-neon': workspacePackage('@manta/adapter-database-neon'),
-    '@manta/adapter-database-pg': workspacePackage('@manta/adapter-database-pg'),
-    '@manta/adapter-eventbus-upstash': workspacePackage('@manta/adapter-eventbus-upstash'),
-    '@manta/adapter-file-vercel-blob': workspacePackage('@manta/adapter-file-vercel-blob'),
-    '@manta/adapter-h3': workspacePackage('@manta/adapter-h3'),
-    '@manta/adapter-jobs-vercel-cron': workspacePackage('@manta/adapter-jobs-vercel-cron'),
-    '@manta/adapter-locking-neon': workspacePackage('@manta/adapter-locking-neon'),
-    '@manta/adapter-logger-pino': workspacePackage('@manta/adapter-logger-pino'),
-    '@manta/adapter-notification-resend': workspacePackage('@manta/adapter-notification-resend'),
-    '@manta/adapter-queue-qstash': workspacePackage('@manta/adapter-queue-qstash'),
+    '@mantajs/adapter-cache-upstash': mantaPackage('@mantajs/adapter-cache-upstash'),
+    '@mantajs/adapter-database-neon': mantaPackage('@mantajs/adapter-database-neon'),
+    '@mantajs/adapter-database-pg': mantaPackage('@mantajs/adapter-database-pg'),
+    '@mantajs/adapter-eventbus-upstash': mantaPackage('@mantajs/adapter-eventbus-upstash'),
+    '@mantajs/adapter-file-vercel-blob': mantaPackage('@mantajs/adapter-file-vercel-blob'),
+    '@mantajs/adapter-h3': mantaPackage('@mantajs/adapter-h3'),
+    '@mantajs/adapter-jobs-vercel-cron': mantaPackage('@mantajs/adapter-jobs-vercel-cron'),
+    '@mantajs/adapter-locking-neon': mantaPackage('@mantajs/adapter-locking-neon'),
+    '@mantajs/adapter-logger-pino': mantaPackage('@mantajs/adapter-logger-pino'),
+    '@mantajs/adapter-notification-resend': mantaPackage('@mantajs/adapter-notification-resend'),
+    '@mantajs/adapter-queue-qstash': mantaPackage('@mantajs/adapter-queue-qstash'),
   },
   externals: {
-    inline: [/^@manta\//, 'h3', 'zod'],
+    inline: [/^@mantajs\//, 'h3', 'zod'],
   },
   // NOTE: do NOT externalize 'zod' or other deps — on Vercel serverless, external
   // packages must be in node_modules at runtime which isn't guaranteed. Let Nitro

@@ -44,6 +44,27 @@ beforeEach(() => {
   process.env.SHOPIFY_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
 })
 
+function withRuntimeApp(req: Request): Request {
+  const sql = Object.assign(() => Promise.resolve([]), {
+    unsafe: () => Promise.resolve([]),
+  })
+  Object.defineProperty(req, 'app', {
+    value: {
+      resolve(key: string) {
+        if (key !== 'IDatabasePort' && key !== 'db') return undefined
+        return {
+          getPool: () => sql,
+          raw: () => Promise.resolve([]),
+        }
+      },
+      emit: async () => {},
+    },
+    enumerable: true,
+    configurable: true,
+  })
+  return req
+}
+
 describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
   it('returns 200 when Shopify confirms the customer id', async () => {
     const fetchMock = vi.fn(async (url: string | URL) => {
@@ -74,7 +95,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
     })
-    const res = await POST(req)
+    const res = await POST(withRuntimeApp(req))
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('OK')
     expect(upsertCalls.length).toBe(1)

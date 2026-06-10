@@ -1,4 +1,4 @@
-import { definePage } from '@manta/dashboard-core'
+import { definePage } from '@mantajs/dashboard'
 
 export default definePage({
   header: {

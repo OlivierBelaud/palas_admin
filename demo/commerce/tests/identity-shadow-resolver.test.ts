@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  type ContactIdentityRow,
   compareIdentityResolvers,
   extractIdentitySignals,
-  resolveIdentityV2,
-  type ContactIdentityRow,
   type IdentityServiceLike,
+  resolveIdentityV2,
 } from '../src/modules/identity/resolve-event-identity'
 import { signContactToken } from '../src/utils/manta-uid'
 
@@ -13,7 +13,9 @@ function services(contacts: ContactIdentityRow[] = [], exchanges: Array<{ exchan
     contact: {
       list: vi.fn(async (filters: Record<string, unknown>) => {
         return contacts.filter((contact) => {
-          return Object.entries(filters).every(([key, value]) => (contact as Record<string, unknown>)[key] === value)
+          return Object.entries(filters).every(
+            ([key, value]) => (contact as unknown as Record<string, unknown>)[key] === value,
+          )
         })
       }),
     },
@@ -53,7 +55,15 @@ describe('identity shadow resolver', () => {
   })
 
   it('resolves V2 from event email and links an existing contact', async () => {
-    const svc = services([{ id: 'contact_1', email: 'alice@test.com', distinct_id: null, shopify_customer_id: null, klaviyo_profile_id: null }])
+    const svc = services([
+      {
+        id: 'contact_1',
+        email: 'alice@test.com',
+        distinct_id: null,
+        shopify_customer_id: null,
+        klaviyo_profile_id: null,
+      },
+    ])
 
     const result = await compareIdentityResolvers(
       {
@@ -72,7 +82,15 @@ describe('identity shadow resolver', () => {
   it('resolves V2 from a Manta email token when V1 has no email', async () => {
     process.env.MANTA_UID_SECRET = 'test-secret-for-identity-shadow-resolver'
     const token = signContactToken('alice@test.com')
-    const svc = services([{ id: 'contact_1', email: 'alice@test.com', distinct_id: null, shopify_customer_id: null, klaviyo_profile_id: null }])
+    const svc = services([
+      {
+        id: 'contact_1',
+        email: 'alice@test.com',
+        distinct_id: null,
+        shopify_customer_id: null,
+        klaviyo_profile_id: null,
+      },
+    ])
 
     const result = await compareIdentityResolvers(
       {
@@ -91,8 +109,20 @@ describe('identity shadow resolver', () => {
   it('resolves V2 from local aliases before any external lookup', async () => {
     const svc = services(
       [
-        { id: 'contact_distinct', email: 'distinct@test.com', distinct_id: 'ph_known', shopify_customer_id: null, klaviyo_profile_id: null },
-        { id: 'contact_klaviyo', email: 'klaviyo@test.com', distinct_id: null, shopify_customer_id: null, klaviyo_profile_id: null },
+        {
+          id: 'contact_distinct',
+          email: 'distinct@test.com',
+          distinct_id: 'ph_known',
+          shopify_customer_id: null,
+          klaviyo_profile_id: null,
+        },
+        {
+          id: 'contact_klaviyo',
+          email: 'klaviyo@test.com',
+          distinct_id: null,
+          shopify_customer_id: null,
+          klaviyo_profile_id: null,
+        },
       ],
       [{ exchange_id: 'kx.token', email: 'klaviyo@test.com' }],
     )

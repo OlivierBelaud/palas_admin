@@ -19,7 +19,7 @@
 // UX degrades gracefully.
 
 import { createHash } from 'node:crypto'
-import { UpstashCacheAdapter } from '@manta/adapter-cache-upstash'
+import { UpstashCacheAdapter } from '@mantajs/adapter-cache-upstash'
 import { nowEpochSec } from '../../../../utils/visitor-codes'
 import {
   type ContactModuleLike,

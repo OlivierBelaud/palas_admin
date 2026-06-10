@@ -3,7 +3,7 @@
 // (range_orders-chart vs range_revenue-chart). Synthetic data via the
 // `charts-lab-data` named query. Replace with real queries once STATS-09 lands.
 
-import { definePage } from '@manta/dashboard-core'
+import { definePage } from '@mantajs/dashboard'
 
 export default definePage({
   header: {

@@ -17,7 +17,7 @@
 // "table missing" case and return empty rows + meta — ChartCard shows
 // the "Aucune donnée" placeholder instead of crashing.
 
-import { definePage } from '@manta/dashboard-core'
+import { definePage } from '@mantajs/dashboard'
 
 export default definePage({
   header: {

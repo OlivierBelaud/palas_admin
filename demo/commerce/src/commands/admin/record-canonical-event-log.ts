@@ -1,10 +1,10 @@
+import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
+import { mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 import {
   compareIdentityResolvers,
   type IdentityServiceLike,
   type RawPosthogEvent,
 } from '../../modules/identity/resolve-event-identity'
-import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
-import { mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 
 interface EventLogService {
   create(data: Record<string, unknown>): Promise<unknown>
@@ -41,10 +41,15 @@ export default defineCommand({
     }
 
     const comparison = await compareIdentityResolvers(event, services)
-    const canonical = normalizePosthogEventToCanonical(event, comparison, {
-      forwarded: input.posthog_forwarded,
-      status: input.posthog_status ?? null,
-    }, input.source_context ?? {})
+    const canonical = normalizePosthogEventToCanonical(
+      event,
+      comparison,
+      {
+        forwarded: input.posthog_forwarded,
+        status: input.posthog_status ?? null,
+      },
+      input.source_context ?? {},
+    )
 
     if (!canonical) {
       return { ok: true, skipped: true, reason: 'not_canonical_business_event' }
@@ -88,7 +93,7 @@ export default defineCommand({
         sent_at: null,
         attempt_count: 0,
         http_status: null,
-        error_code: ga4.ok ? null : ga4.errors[0] ?? 'ga4_invalid_payload',
+        error_code: ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
         error_message: ga4.ok ? null : ga4.errors.join(', '),
         request_payload: ga4.payload,
         response_payload: null,

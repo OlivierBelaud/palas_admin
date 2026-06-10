@@ -1,4 +1,4 @@
-import { definePage, type HeaderDef } from '@manta/dashboard-core'
+import { definePage, type HeaderDef } from '@mantajs/dashboard'
 
 export default definePage({
   // HeaderDef doesn't yet declare `linkLabelField` or `query`; cast to preserve

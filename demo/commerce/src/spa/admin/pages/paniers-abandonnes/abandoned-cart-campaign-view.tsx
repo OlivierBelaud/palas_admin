@@ -1,4 +1,4 @@
-import { useQuery } from '@manta/sdk'
+import { useQuery } from '@mantajs/sdk'
 import {
   Badge,
   Button,
@@ -17,7 +17,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-} from '@manta/ui'
+} from '@mantajs/ui'
 import {
   AlertTriangle,
   CheckCircle2,

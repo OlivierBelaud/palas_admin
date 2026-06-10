@@ -184,12 +184,12 @@ export default defineQuery({
         identity: user.contact_id
           ? 'contact'
           : row.identity_email_sha256
-          ? 'email'
-          : row.identity_muid
-            ? 'muid'
-            : row.distinct_id
-              ? 'posthog'
-              : 'anon',
+            ? 'email'
+            : row.identity_muid
+              ? 'muid'
+              : row.distinct_id
+                ? 'posthog'
+                : 'anon',
         identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
         contact_id: typeof user.contact_id === 'string' ? user.contact_id : null,
         matched_v1: user.matched_v1 === true,

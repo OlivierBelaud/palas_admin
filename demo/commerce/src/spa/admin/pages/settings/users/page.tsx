@@ -1,5 +1,5 @@
-import { useDashboardContext } from '@manta/dashboard-core'
-import { Alert, Badge, Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@manta/ui'
+import { useDashboardContext } from '@mantajs/dashboard'
+import { Alert, Badge, Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@mantajs/ui'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 

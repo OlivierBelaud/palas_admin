@@ -1,1 +1,1 @@
-../../packages/core/docs/AGENT.md
+../../../../mantajs/packages/core/docs/AGENT.md

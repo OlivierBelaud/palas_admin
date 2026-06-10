@@ -1,12 +1,12 @@
-// Single source of truth for cart-tracking event names.
+// Shared event names for cart-tracking runtime code.
 // Used by:
-//  - cart entity enum (modules/cart-tracking/entities/cart/model.ts)
 //  - ingestCartEvent command (src/commands/admin/ingest-cart-event.ts)
 //  - posthog-cart-tracker subscriber (src/subscribers/posthog-cart-tracker.ts)
 //  - admin cart detail page (src/spa/admin/pages/paniers/[id]/page.ts)
 //
-// IMPORTANT: keep these names in sync with what the PostHog JS SDK actually
-// emits from the storefront — any drift means events get silently dropped.
+// IMPORTANT: keep these names in sync with the cart entity enum and with what
+// the PostHog JS SDK actually emits from the storefront — any drift means
+// events get silently dropped.
 
 export const CART_EVENT_NAMES = [
   'cart:product_added',

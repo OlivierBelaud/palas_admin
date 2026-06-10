@@ -75,11 +75,7 @@ export default defineCommand({
 
       await services.identityResolutionLog.create({
         event_id:
-          typeof event.uuid === 'string'
-            ? event.uuid
-            : typeof props.$insert_id === 'string'
-              ? props.$insert_id
-              : null,
+          typeof event.uuid === 'string' ? event.uuid : typeof props.$insert_id === 'string' ? props.$insert_id : null,
         event_name: typeof event.event === 'string' ? event.event : 'unknown',
         observed_at: toDate(typeof event.timestamp === 'string' ? event.timestamp : null),
         resolved_at: new Date(),

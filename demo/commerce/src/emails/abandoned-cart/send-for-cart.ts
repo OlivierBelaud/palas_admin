@@ -13,7 +13,7 @@ import { signUnsubscribeToken } from '../../utils/unsubscribe-token'
 import type { AbandonedCartItem } from './AbandonedCartEmail'
 
 // Local structural shape of the INotificationPort `send` we depend on. We
-// can't import the full type from @manta/core in app code (lint forbids it
+// can't import the full type from @mantajs/core in app code (lint forbids it
 // because the framework's primitives are globals at runtime). Keeping the
 // shape duplicated here is intentional: it locks the local contract and
 // fails loudly if the framework's port surface drifts.

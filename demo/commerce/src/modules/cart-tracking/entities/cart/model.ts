@@ -1,4 +1,18 @@
-import { CART_EVENT_NAMES } from '../../events'
+const CART_EVENT_NAMES = [
+  'cart:product_added',
+  'cart:product_removed',
+  'cart:updated',
+  'cart:cleared',
+  'cart:viewed',
+  'cart:closed',
+  'cart:discount_applied',
+  'checkout:started',
+  'checkout:contact_info_submitted',
+  'checkout:address_info_submitted',
+  'checkout:shipping_info_submitted',
+  'checkout:payment_info_submitted',
+  'checkout:completed',
+] as const
 
 export default defineModel('Cart', {
   // ── Identity ──────────────────────────────────────────────────────

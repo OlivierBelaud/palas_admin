@@ -18,7 +18,7 @@ async function globalSetup(): Promise<void> {
     return
   }
 
-  const { createTestDatabase, waitForPg } = await import('@manta/test-utils/pg')
+  const { createTestDatabase, waitForPg } = await import('@mantajs/test-utils/pg')
 
   await waitForPg()
   const { url: dbUrl } = await createTestDatabase(

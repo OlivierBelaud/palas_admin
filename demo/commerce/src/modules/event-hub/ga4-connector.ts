@@ -122,10 +122,7 @@ function mapItems(items: unknown[]): Array<Record<string, unknown>> {
   })
 }
 
-export function mapCanonicalToGa4(
-  canonicalEventName: string,
-  canonicalPayload: Record<string, unknown>,
-): Ga4MapResult {
+export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: Record<string, unknown>): Ga4MapResult {
   const errors: string[] = []
   const user = obj(canonicalPayload.user)
   const context = obj(canonicalPayload.context)
@@ -145,10 +142,15 @@ export function mapCanonicalToGa4(
   const currency = str(ecommerce.currency, 8)
   const transactionId = str(ecommerce.transaction_id, 180) || str(checkout.shopify_order_id, 180)
 
-  if (['view_item', 'view_item_list', 'add_to_cart', 'remove_from_cart'].includes(canonicalEventName) && items.length === 0) {
+  if (
+    ['view_item', 'view_item_list', 'add_to_cart', 'remove_from_cart'].includes(canonicalEventName) &&
+    items.length === 0
+  ) {
     errors.push('ga4_items_missing')
   }
-  if (['add_to_cart', 'begin_checkout', 'add_shipping_info', 'add_payment_info', 'purchase'].includes(canonicalEventName)) {
+  if (
+    ['add_to_cart', 'begin_checkout', 'add_shipping_info', 'add_payment_info', 'purchase'].includes(canonicalEventName)
+  ) {
     if (value == null) errors.push('ga4_value_missing')
     if (!currency) errors.push('ga4_currency_missing')
   }

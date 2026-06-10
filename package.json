@@ -1,24 +1,23 @@
 {
-  "name": "manta-framework",
+  "name": "palas-commerce-crm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.3.0",
   "workspaces": [
-    "packages/*",
-    "demo/*"
+    "demo/commerce",
+    "../../mantajs/packages/*"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run demo/commerce/tests",
     "test:watch": "vitest",
-    "test:conformance": "vitest run packages/core/tests/conformance/",
-    "test:sanity-dist": "node scripts/test-sanity-dist.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/dashboard-core && tsc --noEmit -p packages/dashboard && tsc --noEmit -p packages/dashboard-medusa && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/ui",
-    "lint": "biome check packages/ demo/",
-    "lint:fix": "biome check --write packages/ demo/",
-    "format": "biome format --write packages/ demo/",
-    "check": "biome check --write packages/ demo/ && tsc --noEmit && vitest run && pnpm check:runtime",
-    "check:fast": "biome check packages/ demo/ && tsc --noEmit",
-    "check:runtime": "node scripts/check-runtime-preflight.mjs && playwright test --config playwright.config.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check demo/ tests/ playwright.config.ts vitest.config.ts",
+    "lint:fix": "biome check --write demo/ tests/ playwright.config.ts vitest.config.ts",
+    "format": "biome format --write demo/ tests/ playwright.config.ts vitest.config.ts",
+    "check": "biome check --write demo/ tests/ playwright.config.ts vitest.config.ts && tsc --noEmit && vitest run demo/commerce/tests && pnpm check:runtime",
+    "check:fast": "biome check demo/ tests/ playwright.config.ts vitest.config.ts && tsc --noEmit",
+    "check:runtime": "playwright test --config playwright.config.ts",
     "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
@@ -30,6 +29,8 @@
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.18.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "simple-git-hooks": "^2.13.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",

@@ -159,7 +159,8 @@ function validationErrors(eventName: string, eventId: string | null, payload: Re
     if (!str(ecommerce.currency, 8)) errors.push('currency_missing')
   }
   if (eventName === 'purchase') {
-    if (!str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180)) errors.push('transaction_id_missing')
+    if (!str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180))
+      errors.push('transaction_id_missing')
   }
 
   return errors
@@ -176,7 +177,8 @@ export function normalizePosthogEventToCanonical(
 
   const props = obj(event.properties)
   const signals = comparison.signals ?? extractIdentitySignals(event)
-  const currentUrl = signals.current_url || str(props.$current_url, 4096) || str(props.current_url, 4096) || str(props.url, 4096)
+  const currentUrl =
+    signals.current_url || str(props.$current_url, 4096) || str(props.current_url, 4096) || str(props.url, 4096)
   const pageType = inferPageType(currentUrl)
   const cartEvent = normalizeCartEvent(event as PosthogEvent)
 
@@ -213,7 +215,8 @@ export function normalizePosthogEventToCanonical(
       email_sha256: emailSha256(comparison.v2.email),
       distinct_id: signals.posthog_distinct_id,
       session_id: signals.session_id,
-      ga_client_id: str(sourceContext.ga_client_id, 128) || str(props.ga_client_id, 128) || str(props.$ga_client_id, 128),
+      ga_client_id:
+        str(sourceContext.ga_client_id, 128) || str(props.ga_client_id, 128) || str(props.$ga_client_id, 128),
       ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
       fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
       fbc: str(sourceContext.fbc, 256) || str(props.fbc, 256) || str(props._fbc, 256),
@@ -245,7 +248,8 @@ export function normalizePosthogEventToCanonical(
     },
     dispatch: {
       posthog: {
-        status: forward.forwarded === false ? 'unknown' : forward.status && forward.status >= 400 ? 'error' : 'forwarded',
+        status:
+          forward.forwarded === false ? 'unknown' : forward.status && forward.status >= 400 ? 'error' : 'forwarded',
         http_status: forward.status ?? null,
       },
       ga4: {

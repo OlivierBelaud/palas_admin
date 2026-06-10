@@ -19,7 +19,7 @@ describe('GA4 connector mapping', () => {
       },
     })
 
-    expect(mapped.ok).toBe(false)
+    if (mapped.ok) throw new Error('Expected GA4 mapping to be invalid')
     expect(mapped.errors).toContain('ga4_client_id_missing')
   })
 

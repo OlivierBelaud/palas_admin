@@ -1,4 +1,4 @@
-import { definePage, type HeaderDef } from '@manta/dashboard-core'
+import { definePage, type HeaderDef } from '@mantajs/dashboard'
 
 // Client detail — mirrors the cart-detail page (paniers/[id]) layout:
 // header with titleField + a deep link to Shopify, then a stack of cards

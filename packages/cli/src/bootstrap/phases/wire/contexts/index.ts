@@ -1,5 +1,0 @@
-export { buildContextRegistry } from './context-registry'
-export { cqrsRoutes } from './cqrs-routes'
-export { queryEndpoints } from './query-endpoints'
-export { spaWarnings } from './spa-warnings'
-export { userRoutes } from './user-routes'

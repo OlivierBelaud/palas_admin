@@ -30,7 +30,7 @@ export type RuntimeApp = {
     notification?: unknown
   }
   emit?: (eventName: string, data: unknown) => Promise<void>
-  resolve?: <T = unknown>(key: string) => T
+  resolve?: (key: string) => unknown
 }
 
 export function resolveDatabase(app: RuntimeApp | undefined): RuntimeDatabasePort | null {

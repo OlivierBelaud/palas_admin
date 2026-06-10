@@ -1,10 +1,9 @@
 # ══════════════════════════════════════════════════════════════════
-# Manta monorepo — only packages/ and demo/commerce are tracked.
-# Everything else is internal dev tooling, experiments, docs, or
-# other demos that don't ship to production.
+# Palas commerce CRM app. Manta framework code lives in
+# /home/olivier/BRUTAL/mantajs and is consumed as an external workspace.
 # ══════════════════════════════════════════════════════════════════
 
-# ── Root-level files to IGNORE (keep only package.json, pnpm-*, tsconfig, biome) ──
+# ── Root-level files to IGNORE (keep only app config/manifests) ──
 /ARCHITECTURE_V2.md
 /CLAUDE.md
 /DESIGN.md
@@ -31,6 +30,7 @@
 /SPEC/
 /TEST/
 /IMPL/
+/packages/
 
 # ── Demo projects to IGNORE (keep only demo/commerce) ──
 /demo/manta/

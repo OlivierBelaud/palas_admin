@@ -8,7 +8,7 @@ import { STRINGS } from './strings'
 
 // Local fake adapter — duplicates just enough of InMemoryNotificationAdapter
 // to keep these tests at the helper level. We can't import the real one from
-// @manta/core (lint forbids it in app code).
+// @mantajs/core (lint forbids it in app code).
 type SendInput = Parameters<NotificationSend['send']>[0]
 type SendResult = Awaited<ReturnType<NotificationSend['send']>>
 

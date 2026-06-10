@@ -1,4 +1,4 @@
-import { definePage, type HeaderDef } from '@manta/dashboard-core'
+import { definePage, type HeaderDef } from '@mantajs/dashboard'
 
 // Order detail page — same layout as paniers/[id]: header with titleField
 // + Shopify deep link, then a stack of cards in the main column. Items are

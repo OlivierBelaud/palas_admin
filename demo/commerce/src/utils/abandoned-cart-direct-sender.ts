@@ -288,15 +288,21 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
         ],
       }
       const result = notification
-        ? await notification.send({ ...payload, channel: 'email', idempotency_key: idempotencyKey })
-        : await resend!.emails.send(payload, { idempotencyKey })
-      const error = 'error' in result ? result.error : undefined
+        ? {
+            ...(await notification.send({ ...payload, channel: 'email', idempotency_key: idempotencyKey })),
+            messageIdSource: 'notification' as const,
+          }
+        : {
+            ...(await resend!.emails.send(payload, { idempotencyKey })),
+            messageIdSource: 'resend' as const,
+          }
+      const error = result.error
       if (error) {
         counters.errors++
         log.error(`[abandoned-cart] notification error cart=${c.id} ${error.message}`)
         continue
       }
-      const messageId = 'id' in result ? result.id : result.data?.id
+      const messageId = result.messageIdSource === 'notification' ? result.id : result.data?.id
 
       // Mark with a guarded UPDATE — won't double-mark on race.
       await sql`

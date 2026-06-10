@@ -1,5 +1,5 @@
-import { useQuery } from '@manta/sdk'
-import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@manta/ui'
+import { useQuery } from '@mantajs/sdk'
+import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@mantajs/ui'
 import * as React from 'react'
 
 interface TrackingHealthData {
@@ -94,9 +94,15 @@ export default function TrackingHealthPage() {
     return Array.from(names).sort()
   }, [data?.event_types, eventName])
 
-  React.useEffect(() => {
+  const selectHours = (value: number) => {
+    setHours(value)
     setPageIndex(0)
-  }, [hours, eventName])
+  }
+
+  const selectEventName = (value: string) => {
+    setEventName(value)
+    setPageIndex(0)
+  }
 
   const live = getLiveState(data, query.isError)
 
@@ -122,7 +128,7 @@ export default function TrackingHealthPage() {
           <select
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={hours}
-            onChange={(event: { target: { value: string } }) => setHours(Number(event.target.value))}
+            onChange={(event: { target: { value: string } }) => selectHours(Number(event.target.value))}
           >
             {HOURS_OPTIONS.map((value) => (
               <option key={value} value={value}>
@@ -133,7 +139,7 @@ export default function TrackingHealthPage() {
           <select
             className="h-9 min-w-44 rounded-md border border-input bg-background px-3 text-sm"
             value={eventName}
-            onChange={(event: { target: { value: string } }) => setEventName(event.target.value)}
+            onChange={(event: { target: { value: string } }) => selectEventName(event.target.value)}
           >
             <option value="all">Tous les events</option>
             {eventOptions.map((name: string) => (
@@ -150,7 +156,7 @@ export default function TrackingHealthPage() {
       {data ? (
         <>
           <Kpis data={data} />
-          <EventTypeTable rows={data.event_types} active={eventName} setActive={setEventName} />
+          <EventTypeTable rows={data.event_types} active={eventName} setActive={selectEventName} />
           <LiveEventTable data={data} pageIndex={pageIndex} setPageIndex={setPageIndex} />
         </>
       ) : null}
@@ -286,7 +292,9 @@ function LiveEventTable({
           <Table.Body>
             {events.map((event) => (
               <Table.Row key={event.id} className="align-top">
-                <Table.Cell className="whitespace-nowrap text-muted-foreground">{formatTime(event.received_at)}</Table.Cell>
+                <Table.Cell className="whitespace-nowrap text-muted-foreground">
+                  {formatTime(event.received_at)}
+                </Table.Cell>
                 <Table.Cell className="font-medium">{event.event_name}</Table.Cell>
                 <Table.Cell className="text-muted-foreground">{event.raw_event_name}</Table.Cell>
                 <Table.Cell>{event.page_type ?? '-'}</Table.Cell>
@@ -307,14 +315,19 @@ function LiveEventTable({
                 <Table.Cell>{event.item_count ?? '-'}</Table.Cell>
                 <Table.Cell>
                   <Badge variant={event.posthog_status === 'forwarded' ? 'secondary' : 'outline'}>
-                    {event.posthog_http_status ? `${event.posthog_status} ${event.posthog_http_status}` : event.posthog_status}
+                    {event.posthog_http_status
+                      ? `${event.posthog_status} ${event.posthog_http_status}`
+                      : event.posthog_status}
                   </Badge>
                 </Table.Cell>
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
                     <Badge variant={ga4BadgeVariant(event.ga4_status)}>{formatGa4Status(event)}</Badge>
                     {event.ga4_error_code ? (
-                      <span className="max-w-[180px] truncate text-xs text-muted-foreground" title={event.ga4_error_message ?? event.ga4_error_code}>
+                      <span
+                        className="max-w-[180px] truncate text-xs text-muted-foreground"
+                        title={event.ga4_error_message ?? event.ga4_error_code}
+                      >
                         {event.ga4_error_code}
                       </span>
                     ) : null}

@@ -9,20 +9,27 @@
 import { describe, expect, it, vi } from 'vitest'
 import { type RawDb, reattachHistoryForContact } from '../src/modules/contact/reattach-history'
 
-function makeDb(returnIds: string[]): RawDb & { sqls: string[]; params: unknown[][] } {
+function makeDb(
+  cartIds: string[],
+  contactId: string | null = null,
+  orderIds: string[] = [],
+): RawDb & { sqls: string[]; params: unknown[][] } {
   const sqls: string[] = []
   const params: unknown[][] = []
   const raw = vi.fn(async (sql: string, p: unknown[] = []): Promise<unknown[]> => {
     sqls.push(sql)
     params.push(p)
-    return returnIds.map((id) => ({ id }))
+    if (/UPDATE carts/i.test(sql)) return cartIds.map((id) => ({ id }))
+    if (/SELECT id::text AS id FROM contacts/i.test(sql)) return contactId ? [{ id: contactId }] : []
+    if (/order_contact/i.test(sql)) return orderIds.map((id) => ({ id }))
+    return []
   })
   return { sqls, params, raw: raw as unknown as RawDb['raw'] }
 }
 
 describe('reattachHistoryForContact', () => {
   it('updates anonymous carts matching the email and reports the count', async () => {
-    const db = makeDb(['cart-a', 'cart-b', 'cart-c'])
+    const db = makeDb(['cart-a', 'cart-b', 'cart-c'], 'contact-1')
     const out = await reattachHistoryForContact(db, {
       email: 'Jane@Example.COM',
       shopify_customer_id: '12345',

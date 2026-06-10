@@ -9,18 +9,33 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "@manta/core": ["./packages/core/src/index.ts"],
-      "@manta/test-utils": ["./packages/test-utils/src/index.ts"],
-      "@manta/test-utils/pg": ["./packages/test-utils/src/pg.ts"],
-      "@manta/adapter-cache-upstash": ["./packages/adapter-cache-upstash/src/index.ts"],
-      "@manta/adapter-locking-neon": ["./packages/adapter-locking-neon/src/index.ts"],
-      "@manta/adapter-file-vercel-blob": ["./packages/adapter-file-vercel-blob/src/index.ts"],
-      "@manta/adapter-jobs-vercel-cron": ["./packages/adapter-jobs-vercel-cron/src/index.ts"],
-      "@manta/adapter-notification-resend": ["./packages/adapter-notification-resend/src/index.ts"],
-      "@manta/adapter-eventbus-upstash": ["./packages/adapter-eventbus-upstash/src/index.ts"],
-      "@manta/adapter-h3": ["./packages/adapter-h3/src/index.ts"]
+      "@mantajs/core": ["../../mantajs/packages/core/src/index.ts"],
+      "@mantajs/test-utils": ["../../mantajs/packages/test-utils/src/index.ts"],
+      "@mantajs/test-utils/pg": ["../../mantajs/packages/test-utils/src/pg.ts"],
+      "@mantajs/adapter-cache-upstash": ["../../mantajs/packages/adapter-cache-upstash/src/index.ts"],
+      "@mantajs/adapter-database-pg": ["../../mantajs/packages/adapter-database-pg/src/index.ts"],
+      "@mantajs/adapter-h3": ["../../mantajs/packages/adapter-h3/src/index.ts"],
+      "@mantajs/adapter-jobs-vercel-cron": ["../../mantajs/packages/adapter-jobs-vercel-cron/src/index.ts"],
+      "@mantajs/adapter-logger-pino": ["../../mantajs/packages/adapter-logger-pino/src/index.ts"],
+      "@mantajs/adapter-notification-resend": ["../../mantajs/packages/adapter-notification-resend/src/index.ts"],
+      "@mantajs/adapter-queue-qstash": ["../../mantajs/packages/adapter-queue-qstash/src/index.ts"],
+      "@mantajs/cli": ["../../mantajs/packages/cli/src/index.ts"],
+      "@mantajs/dashboard": ["../../mantajs/packages/dashboard/src/index.tsx"],
+      "@mantajs/dashboard-core": ["../../mantajs/packages/dashboard-core/src/index.ts"],
+      "@mantajs/host-nitro": ["../../mantajs/packages/host-nitro/src/index.ts"],
+      "@mantajs/plugin-posthog-proxy": ["../../mantajs/packages/plugin-posthog-proxy/src/index.ts"],
+      "@mantajs/sdk": ["../../mantajs/packages/sdk/src/index.ts"],
+      "@mantajs/ui": ["../../mantajs/packages/ui/src/index.ts"]
     }
   },
-  "include": ["tests/**/*.ts", "packages/**/*.ts", "demo/**/*.ts", "demo/**/*.tsx", "demo/**/.manta/generated.d.ts"],
-  "exclude": ["packages/dashboard/**", "packages/dashboard-core/**", "packages/dashboard-medusa/**", "packages/sdk/**", "packages/ui/**", "**/dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**", "tests/runtime/**"]
+  "include": [
+    "../../mantajs/packages/core/src/globals.d.ts",
+    "tests/**/*.ts",
+    "demo/commerce/manta.config.ts",
+    "demo/commerce/src/**/*.ts",
+    "demo/commerce/src/**/*.tsx",
+    "demo/commerce/tests/**/*.ts",
+    "demo/commerce/.manta/generated.d.ts"
+  ],
+  "exclude": ["**/dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**", "tests/runtime/**"]
 }

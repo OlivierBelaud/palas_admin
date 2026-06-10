@@ -32,7 +32,7 @@ openssl rand -hex 32
 
 | Variable | Rôle |
 |----------|------|
-| `RESEND_API_KEY` | Clé API Resend (à récupérer sur le dashboard Resend → API Keys). Utilisée par `@manta/adapter-notification-resend` pour envoyer les emails. |
+| `RESEND_API_KEY` | Clé API Resend (à récupérer sur le dashboard Resend → API Keys). Utilisée par `@mantajs/adapter-notification-resend` pour envoyer les emails. |
 | `RESEND_FROM_EMAIL` | Adresse `From` par défaut. Ex : `Fancy Palas <hello@fancypalas.com>`. Le domaine doit être vérifié dans Resend (DNS SPF + DKIM). |
 | `RESEND_REPLY_TO` | (Optionnel) `Reply-To` par défaut. Ex : `support@fancypalas.com`. |
 

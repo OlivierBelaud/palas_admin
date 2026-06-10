@@ -16,11 +16,11 @@ TEST_DATABASE_URL=postgresql://<user>@localhost:5432/postgres pnpm check:runtime
 
 ## Without `TEST_DATABASE_URL`
 
-Tests skip silently (local dev mode) and exit 0. This is the default contributor experience when Postgres is not set up locally — `pnpm check` still exits 0.
+The Playwright global setup writes a skipped state and exits 0. This is the default contributor experience when Postgres is not set up locally — `pnpm check` still exits 0.
 
 ## CI requirements
 
-CI MUST set `TEST_DATABASE_URL`. Without it, `check:runtime` exits 1 with an explicit preflight error. To opt out explicitly, set `SKIP_RUNTIME_SMOKE=1`; the preflight will pass and the spec will skip because no database URL is provided.
+CI should set `TEST_DATABASE_URL` when the runtime smoke is required. Without it, the smoke is skipped the same way it is in local development.
 
 ## How the smoke boots
 

@@ -31,7 +31,7 @@ describe('demo/commerce smoke tests', () => {
     //  - All demo files parse
     //  - z, defineCommand, defineQuery, etc. are available as globals
     //  - Generated types (.manta/generated.d.ts) exist and are valid
-    //  - Cross-package imports (@manta/core, @manta/sdk) resolve
+    //  - Cross-package imports (@mantajs/core, @mantajs/sdk) resolve
     const monorepoRoot = resolve(DEMO_ROOT, '..', '..')
     try {
       execSync('npx tsc --noEmit', { cwd: monorepoRoot, stdio: 'pipe' })

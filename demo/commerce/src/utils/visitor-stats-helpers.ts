@@ -5,7 +5,7 @@
 // avoid duplicating the boilerplate across five query files.
 
 // Local minimal type for the query.graph dependency — we don't import
-// QueryService from @manta/core (the app-code lint rule forbids it,
+// QueryService from @mantajs/core (the app-code lint rule forbids it,
 // and QueryService.graph<E> is over-narrowed for our generic helper).
 // The real `query.graph` is structurally compatible; we just call it
 // through this type to keep the helper signature framework-free.

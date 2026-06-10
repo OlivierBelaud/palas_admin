@@ -81,7 +81,7 @@ function str(value: unknown, max = 1024): string | null {
 
 function normalizeEmail(value: unknown): string | null {
   const email = str(value, 320)?.toLowerCase() ?? null
-  return email && email.includes('@') ? email : null
+  return email?.includes('@') ? email : null
 }
 
 function obj(value: unknown): Record<string, unknown> {
@@ -153,17 +153,25 @@ export function extractIdentitySignals(event: RawPosthogEvent): ExtractedIdentit
     current_url: currentUrl,
     email,
     manta_uid_token:
-      extractQueryParam(currentUrl, 'u') || str(obj(props.user).manta_uid_token, 4096) || str(props.manta_uid_token, 4096),
+      extractQueryParam(currentUrl, 'u') ||
+      str(obj(props.user).manta_uid_token, 4096) ||
+      str(props.manta_uid_token, 4096),
     klaviyo_exchange_id: klaviyoExchangeId,
     klaviyo_profile_id: str($set.klaviyo_profile_id, 180) || str(props.klaviyo_profile_id, 180),
     shopify_customer_id:
-      str(checkout.shopify_customer_id, 180) || str(props.shopify_customer_id, 180) || str($set.shopify_customer_id, 180) || str($set.id, 180),
+      str(checkout.shopify_customer_id, 180) ||
+      str(props.shopify_customer_id, 180) ||
+      str($set.shopify_customer_id, 180) ||
+      str($set.id, 180),
     cart_token: str(cart.token, 180) || str(props.cart_token, 180),
     checkout_token: str(checkout.token, 180) || str(props.checkout_token, 180),
   }
 }
 
-async function findContactByEmail(services: IdentityServiceLike, email: string | null): Promise<ContactIdentityRow | null> {
+async function findContactByEmail(
+  services: IdentityServiceLike,
+  email: string | null,
+): Promise<ContactIdentityRow | null> {
   if (!email) return null
   const rows = await services.contact.list({ email: email.trim().toLowerCase() }, { take: 1 })
   return rows[0] ?? null

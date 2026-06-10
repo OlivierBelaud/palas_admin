@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ResendNotificationAdapter } from '@manta/adapter-notification-resend'
+import { ResendNotificationAdapter } from '@mantajs/adapter-notification-resend'
 import postgres from 'postgres'
 import { sendAbandonedCartEmailForCart } from '../src/emails/abandoned-cart/send-for-cart'
 

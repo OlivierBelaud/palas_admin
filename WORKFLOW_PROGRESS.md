@@ -374,7 +374,7 @@ A reusable `<WorkflowStatus runId={...} />` component is also exported from `das
 ### 8.1.1 Public API
 
 ```ts
-import { toastWorkflowRun } from '@manta/dashboard-core'
+import { toastWorkflowRun } from '@mantajs/dashboard-core'
 
 toastWorkflowRun(runId, {
   commandName: 'import-products',     // used as fallback label

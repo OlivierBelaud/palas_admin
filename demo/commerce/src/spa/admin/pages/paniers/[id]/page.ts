@@ -1,4 +1,4 @@
-import { definePage, type HeaderDef } from '@manta/dashboard-core'
+import { definePage, type HeaderDef } from '@mantajs/dashboard'
 
 // Enriched cart detail page — Shopify, Klaviyo, PostHog data via named queries.
 // Named queries run server-side: they load the cart email, then query PostHog HogQL.
