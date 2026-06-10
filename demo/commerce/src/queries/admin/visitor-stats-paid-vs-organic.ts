@@ -8,8 +8,8 @@ export default defineQuery({
   name: 'visitor-stats-paid-vs-organic',
   description: 'Per-day session count split by is_paid_session.',
   input: z.object({
-    from: z.string(),
-    to: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {

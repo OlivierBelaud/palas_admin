@@ -22,8 +22,10 @@ import {
   buildAllDaysFromTo,
   dayKey,
   emptyResponse,
+  normalizeVisitorStatsRange,
   type QueryGraphPort,
   toDate,
+  type VisitorStatsRangeInput,
 } from '../../utils/visitor-stats-helpers'
 
 interface CartLite {
@@ -34,7 +36,7 @@ interface CartLite {
 
 // Standalone cart pull (separate from pullSessions which is session-bound)
 async function pullCarts(
-  input: { from: string; to: string },
+  input: VisitorStatsRangeInput,
   query: {
     graph:
       | QueryGraphPort['graph']
@@ -47,8 +49,9 @@ async function pullCarts(
   },
   log: { warn: (m: string) => void },
 ): Promise<{ carts: CartLite[]; from: Date; to: Date } | null> {
-  const from = new Date(input.from)
-  const to = new Date(input.to)
+  const range = normalizeVisitorStatsRange(input)
+  const from = new Date(range.from)
+  const to = new Date(range.to)
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid range from=${input.from} to=${input.to}`)
   }
@@ -86,8 +89,8 @@ export default defineQuery({
   description:
     'Per-day cart-creation cohort funnel: total carts created vs converted. Source = carts table (authoritative).',
   input: z.object({
-    from: z.string(),
-    to: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {

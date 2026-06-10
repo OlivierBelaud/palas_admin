@@ -8,8 +8,8 @@ export default defineQuery({
   name: 'visitor-stats-carts-updated-funnel',
   description: 'Per-day total vs converted carts updated in session. Total = SUM(carts_updated_in_session).',
   input: z.object({
-    from: z.string(),
-    to: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {

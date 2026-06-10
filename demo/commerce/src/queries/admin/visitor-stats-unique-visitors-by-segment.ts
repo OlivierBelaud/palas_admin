@@ -16,8 +16,8 @@ export default defineQuery({
   name: 'visitor-stats-unique-visitors-by-segment',
   description: 'Per-day unique visitors split by segment. One row per day, one numeric column per segment.',
   input: z.object({
-    from: z.string(),
-    to: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {

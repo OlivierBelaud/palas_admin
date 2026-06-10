@@ -23,6 +23,11 @@ export const MS_PER_DAY = 86_400_000
 
 export type Segment = 'unknown' | 'known_no_purchase' | 'returning_customer'
 
+export interface VisitorStatsRangeInput {
+  from?: string
+  to?: string
+}
+
 export interface SessionLite {
   distinct_id: string
   started_at: Date | string
@@ -48,6 +53,16 @@ export function toDate(v: Date | string): Date {
   return v instanceof Date ? v : new Date(v)
 }
 
+export function normalizeVisitorStatsRange(input: VisitorStatsRangeInput): { from: string; to: string } {
+  if (input.from && input.to) return { from: input.from, to: input.to }
+  const to = new Date()
+  const from = new Date(to.getTime() - 30 * MS_PER_DAY)
+  return {
+    from: input.from ?? from.toISOString(),
+    to: input.to ?? to.toISOString(),
+  }
+}
+
 /**
  * Pull visitor_sessions for [from - 7d, to). The 7d lookback exists so
  * had_paid_7d can be computed for sessions near `from`. Callers that
@@ -58,12 +73,13 @@ export function toDate(v: Date | string): Date {
  * `null` so the caller can degrade gracefully to an empty response.
  */
 export async function pullSessions(
-  input: { from: string; to: string },
+  input: VisitorStatsRangeInput,
   query: QueryGraphPort,
   log: { warn: (m: string) => void },
 ): Promise<{ sessions: SessionLite[]; from: Date; to: Date } | null> {
-  const from = new Date(input.from)
-  const to = new Date(input.to)
+  const range = normalizeVisitorStatsRange(input)
+  const from = new Date(range.from)
+  const to = new Date(range.to)
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid date range from=${input.from} to=${input.to}`)
   }
@@ -115,11 +131,12 @@ export interface ChartResponse<TRow> {
   }
 }
 
-export function emptyResponse(input: { from: string; to: string }): ChartResponse<never> {
+export function emptyResponse(input: VisitorStatsRangeInput): ChartResponse<never> {
+  const range = normalizeVisitorStatsRange(input)
   return {
     rows: [],
     meta: {
-      range: { from: new Date(input.from).toISOString(), to: new Date(input.to).toISOString() },
+      range: { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() },
       granularity: 'day',
       xFormat: 'date',
     },

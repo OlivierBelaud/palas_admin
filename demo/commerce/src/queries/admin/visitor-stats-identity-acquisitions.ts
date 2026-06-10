@@ -6,8 +6,8 @@ export default defineQuery({
   name: 'visitor-stats-identity-acquisitions',
   description: 'Per-day count of sessions that acquired email identity, split by newsletter vs checkout_started.',
   input: z.object({
-    from: z.string(),
-    to: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
   handler: async (input, { query, log }) => {
