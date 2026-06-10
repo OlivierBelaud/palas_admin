@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "cd ../.. && pnpm install --config.minimum-release-age=0",
+  "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && ./node_modules/.bin/manta build --preset vercel --no-migrate",
   "redirects": [
     {
