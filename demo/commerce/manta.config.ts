@@ -1,6 +1,9 @@
 // biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@mantajs/core'
 
+const upstashRedisUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
+const upstashRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+
 export default defineConfig({
   database: {
     url: process.env.DATABASE_URL ?? 'postgresql://localhost:5432/commerce',
@@ -10,9 +13,18 @@ export default defineConfig({
   },
   plugins: ['@mantajs/plugin-posthog-proxy'],
 
-  // All adapters in-memory — no external services needed beyond Neon Postgres.
+  // Production auth needs a durable cache for logout/reset revocation state.
   adapters: {
-    ICachePort: { adapter: '@mantajs/core/InMemoryCacheAdapter' },
+    ICachePort:
+      upstashRedisUrl && upstashRedisToken
+        ? {
+            adapter: '@mantajs/adapter-cache-upstash',
+            options: {
+              url: upstashRedisUrl,
+              token: upstashRedisToken,
+            },
+          }
+        : { adapter: '@mantajs/core/InMemoryCacheAdapter' },
     IEventBusPort: { adapter: '@mantajs/core/InMemoryEventBusAdapter' },
     ILockingPort: { adapter: '@mantajs/core/InMemoryLockingAdapter' },
     IFilePort: { adapter: '@mantajs/core/InMemoryFileAdapter' },
