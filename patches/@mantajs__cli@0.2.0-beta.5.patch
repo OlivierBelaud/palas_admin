@@ -1,0 +1,17 @@
+diff --git a/dist/spa/generate-spa.js b/dist/spa/generate-spa.js
+index 9c60860ed4880c41fa64b03694b324571f0f66d1..424bc1951e83a90f396d9a72b2136bd2af6a113f 100644
+--- a/dist/spa/generate-spa.js
++++ b/dist/spa/generate-spa.js
+@@ -339,6 +339,12 @@ function generateViteConfig(spa, cwd, outDir, dashboard, _preset, port = 3000, m
+             const hasTsx = existsSync(join(pkgDir, 'src', 'index.tsx'));
+             const entryFile = hasDist ? 'dist/index.js' : hasTsx ? 'src/index.tsx' : 'src/index.ts';
+             // Exact import → entry file, sub-path imports (e.g. /index.css) → package source/build directory
++            if (pkg === '@mantajs/dashboard') {
++                const cssPath = hasDist ? join(pkgDir, 'dist', 'index.css') : join(pkgDir, 'src', 'index.css');
++                if (existsSync(cssPath)) {
++                    lines.push(`      '${pkg}/index.css': '${cssPath.replace(/\\/g, '/')}',`);
++                }
++            }
+             lines.push(`      '${pkg}': '${join(pkgDir, entryFile).replace(/\\/g, '/')}',`);
+             lines.push(`      '${pkg}/': '${sourceDir.replace(/\\/g, '/')}/',`);
+         }

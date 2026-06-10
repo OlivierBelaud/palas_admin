@@ -1,5 +1,4 @@
 import { defineSpa } from '@mantajs/dashboard'
-import '@mantajs/dashboard/index.css'
 
 export default defineSpa({
   title: 'CRM Shopify',
