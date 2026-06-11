@@ -17,6 +17,8 @@ export default defineQuery({
         'email',
         'case_type',
         'status',
+        'current_sequence_version',
+        'sequence_started_at',
         'stage_at_open',
         'last_cart_action_at',
         'opened_at',
@@ -34,6 +36,8 @@ export default defineQuery({
         email: string
         case_type: string
         status: string
+        current_sequence_version: number
+        sequence_started_at: Date | string | null
         stage_at_open: string | null
         last_cart_action_at: Date | string
         opened_at: Date | string
@@ -52,13 +56,25 @@ export default defineQuery({
         : ((await query.graph({
             entity: 'abandonedCartMessage',
             filters: { case_id: { $in: caseIds } },
-            fields: ['id', 'case_id', 'message_type', 'status', 'scheduled_for', 'sent_at', 'skip_reason'],
+            fields: [
+              'id',
+              'case_id',
+              'message_type',
+              'sequence_version',
+              'sequence_started_at',
+              'status',
+              'scheduled_for',
+              'sent_at',
+              'skip_reason',
+            ],
             sort: { scheduled_for: 'asc' },
             pagination: { limit: 5000 },
           })) as Array<{
             id: string
             case_id: string
             message_type: string
+            sequence_version: number
+            sequence_started_at: Date | string | null
             status: string
             scheduled_for: Date | string
             sent_at: Date | string | null
@@ -83,6 +99,9 @@ export default defineQuery({
     return {
       items: cases.map((c) => {
         const list = byCase.get(c.id) ?? []
+        const activeSequence = Number(c.current_sequence_version ?? 1)
+        const activeList = list.filter((m) => m.sequence_version === activeSequence)
+        const totalSequences = Math.max(activeSequence, ...list.map((m) => m.sequence_version))
         const sent = list.filter((m) => m.status === 'sent')
         const lastSent = sent
           .map((m) => (m.sent_at ? new Date(m.sent_at).getTime() : 0))
@@ -90,10 +109,13 @@ export default defineQuery({
           .sort((a, b) => b - a)[0]
         return {
           ...c,
-          email_1: formatMessage(list, 'abandoned_cart_1'),
-          email_2: formatMessage(list, 'abandoned_cart_2'),
-          email_3: formatMessage(list, 'abandoned_cart_3'),
-          payment_help: formatMessage(list, 'payment_help_1'),
+          current_sequence_version: activeSequence,
+          total_sequences: totalSequences,
+          sequence_started_at: c.sequence_started_at ? new Date(c.sequence_started_at).toISOString() : null,
+          email_1: formatMessage(activeList, 'abandoned_cart_1'),
+          email_2: formatMessage(activeList, 'abandoned_cart_2'),
+          email_3: formatMessage(activeList, 'abandoned_cart_3'),
+          payment_help: formatMessage(activeList, 'payment_help_1'),
           messages_sent: sent.length,
           last_sent_at: lastSent ? new Date(lastSent).toISOString() : null,
           recovered_by_message_type: list.find((m) => m.id === c.recovered_source_message_id)?.message_type ?? null,

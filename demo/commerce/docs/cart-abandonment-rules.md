@@ -51,6 +51,27 @@ Au-delà de J+3, **aucun email supplémentaire**. Le cart bascule en `dead` à J
 
 > ⚠️ Si on change cette cadence, il faut mettre à jour **la fenêtre d'attribution** (§4) et **le seuil `dead`** (§1) en cohérence.
 
+### Séquences relancées quand le panier rebouge
+
+Une relance Manta n'est plus seulement identifiée par son numéro (`Email 1`,
+`Email 2`, `Email 3`) : elle appartient aussi à une `sequence_version`.
+
+Règle produit :
+
+1. Une séquence démarre sur une activité panier/checkout (`sequence_started_at =
+   cart.last_action_at`).
+2. Si un email de la séquence active a déjà été envoyé puis que le panier
+   rebouge (`cart.last_action_at > last_sent_at`), la séquence active est
+   annulée fonctionnellement.
+3. Le dossier passe à `sequence_version + 1`, ancré sur le nouveau
+   `last_action_at`.
+4. Le prochain message redevient donc `Email 1` de cette nouvelle séquence,
+   après la fenêtre d'inactivité.
+
+Exemple : `Email 1 · S1` est envoyé, la personne revient au checkout et modifie
+son panier, puis abandonne à nouveau. On n'envoie pas `Email 2 · S1`; on attend
+la nouvelle fenêtre d'inactivité et on envoie `Email 1 · S2`.
+
 ---
 
 ## 3. Attribution d'un email à un cart (fenêtre 2j)

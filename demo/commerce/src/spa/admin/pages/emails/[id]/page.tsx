@@ -9,6 +9,8 @@ interface EmailDetailData {
     id: string
     email: string
     message_type: string
+    sequence_version: number
+    sequence_started_at: string | null
     status: string
     scheduled_for: string
     sent_at: string | null
@@ -96,6 +98,7 @@ export default function EmailDetailPage() {
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">{data.message.subject ?? 'Email Palas'}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Badge variant="outline">{messageLabel(data.message.message_type)}</Badge>
+            <Badge variant="outline">S{data.message.sequence_version}</Badge>
             <Badge
               variant={
                 data.message.status === 'sent' ? 'green' : data.message.status === 'failed' ? 'orange' : 'outline'
@@ -145,6 +148,11 @@ export default function EmailDetailPage() {
         <div className="flex flex-col gap-4">
           <SideCard icon={Mail} title="Envoi">
             <Field label="Destinataire" value={data.message.email} />
+            <Field label="Séquence" value={`S${data.message.sequence_version}`} />
+            <Field
+              label="Début séquence"
+              value={data.message.sequence_started_at ? formatDateTime(data.message.sequence_started_at) : '-'}
+            />
             <Field label="Prévu" value={formatDateTime(data.message.scheduled_for)} />
             <Field label="Envoyé" value={data.message.sent_at ? formatDateTime(data.message.sent_at) : '-'} />
             <Field label="Provider" value={data.message.provider ?? '-'} />

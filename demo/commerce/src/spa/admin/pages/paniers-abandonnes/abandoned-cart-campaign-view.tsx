@@ -91,6 +91,9 @@ interface CaseItem {
   email: string
   case_type: string
   status: string
+  current_sequence_version: number
+  sequence_started_at: string | null
+  total_sequences: number
   stage_at_open: string | null
   opened_at: string
   last_cart_action_at: string
@@ -117,6 +120,8 @@ interface MessageItem {
   case_type: string | null
   stage_at_open: string | null
   message_type: string
+  sequence_version: number
+  sequence_started_at: string | null
   status: string
   scheduled_for: string
   sent_at: string | null
@@ -608,6 +613,7 @@ function CasesTable({ rows }: { rows: CaseItem[] }) {
               <th className="py-2 pr-3 font-medium">Client</th>
               <th className="py-2 pr-3 font-medium">Type</th>
               <th className="py-2 pr-3 font-medium">Statut</th>
+              <th className="py-2 pr-3 font-medium">Séq.</th>
               <th className="py-2 pr-3 font-medium">Stage</th>
               <th className="py-2 pr-3 font-medium">Email 1</th>
               <th className="py-2 pr-3 font-medium">Email 2</th>
@@ -633,6 +639,14 @@ function CasesTable({ rows }: { rows: CaseItem[] }) {
                 </td>
                 <td className="py-3 pr-3">
                   <StatusBadge value={row.status} />
+                </td>
+                <td className="py-3 pr-3">
+                  <div className="flex flex-col gap-1">
+                    <Badge variant="outline">S{row.current_sequence_version}</Badge>
+                    {row.total_sequences > 1 ? (
+                      <span className="text-xs text-muted-foreground">{row.total_sequences} séq.</span>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="py-3 pr-3 text-muted-foreground">{humanize(row.stage_at_open ?? '-')}</td>
                 <td className="py-3 pr-3">
@@ -688,6 +702,7 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="py-2 pr-3 font-medium">Client</th>
               <th className="py-2 pr-3 font-medium">Email</th>
+              <th className="py-2 pr-3 font-medium">Séq.</th>
               <th className="py-2 pr-3 font-medium">Statut</th>
               <th className="py-2 pr-3 font-medium">Type dossier</th>
               <th className="py-2 pr-3 font-medium">Prévu</th>
@@ -716,6 +731,14 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
                   <Link to={`/emails/${row.id}`} className="hover:underline">
                     <Badge variant="outline">{messageLabel(row.message_type)}</Badge>
                   </Link>
+                </td>
+                <td className="py-3 pr-3">
+                  <div className="flex flex-col gap-1">
+                    <Badge variant="outline">S{row.sequence_version}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {row.sequence_started_at ? formatDateTime(row.sequence_started_at) : '-'}
+                    </span>
+                  </div>
                 </td>
                 <td className="py-3 pr-3">
                   <StatusBadge value={row.status} />

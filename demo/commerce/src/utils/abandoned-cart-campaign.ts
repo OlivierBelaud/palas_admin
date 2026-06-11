@@ -71,14 +71,23 @@ interface CandidateRow {
 interface CaseRow {
   id: string
   status: string
+  current_sequence_version: number
+  sequence_started_at: Date | string | null
 }
 
 interface MessageRow {
   id: string
   message_type: MessageType | 'klaviyo_abandoned'
+  sequence_version: number
+  sequence_started_at: Date | string | null
   status: 'pending' | 'sent' | 'skipped' | 'failed'
   sent_at: Date | string | null
   scheduled_for: Date | string
+}
+
+interface ActiveSequence {
+  version: number
+  startedAt: Date
 }
 
 interface ShopifyOrderMatch {
@@ -208,15 +217,51 @@ function nextMessage(
   return null
 }
 
+async function maybeRestartSequence(
+  sql: RuntimeSql,
+  cartCase: CaseRow,
+  c: CandidateRow,
+  persist: boolean,
+): Promise<ActiveSequence> {
+  const currentVersion = Number(cartCase.current_sequence_version ?? 1)
+  const currentStartedAt = cartCase.sequence_started_at ? toDate(cartCase.sequence_started_at) : toDate(c.last_action_at)
+  const rows = await sql<Array<{ last_sent_at: Date | string | null }>>`
+    SELECT MAX(sent_at) AS last_sent_at
+    FROM abandoned_cart_messages
+    WHERE case_id = ${cartCase.id}
+      AND sequence_version = ${currentVersion}
+      AND status = 'sent'
+      AND sent_at IS NOT NULL`
+  const lastSentAt = rows[0]?.last_sent_at ? toDate(rows[0].last_sent_at) : null
+  const cartActionAt = toDate(c.last_action_at)
+
+  if (!lastSentAt || cartActionAt.getTime() <= lastSentAt.getTime()) {
+    return { version: currentVersion, startedAt: currentStartedAt }
+  }
+
+  const nextVersion = currentVersion + 1
+  if (persist) {
+    await sql`
+      UPDATE abandoned_cart_cases
+      SET current_sequence_version = ${nextVersion},
+          sequence_started_at = ${cartActionAt},
+          last_cart_action_at = ${cartActionAt},
+          stage_at_open = ${c.highest_stage},
+          updated_at = NOW()
+      WHERE id = ${cartCase.id}`
+  }
+  return { version: nextVersion, startedAt: cartActionAt }
+}
+
 async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
   const rows = await sql<CaseRow[]>`
     INSERT INTO abandoned_cart_cases (
       id, cart_id, contact_id, email, cart_token, checkout_token, case_type, status,
-      stage_at_open, last_cart_action_at, opened_at, created_at, updated_at
+      current_sequence_version, sequence_started_at, stage_at_open, last_cart_action_at, opened_at, created_at, updated_at
     )
     VALUES (
       ${newId('acc')}, ${c.id}, ${c.contact_id}, ${c.email.toLowerCase()}, ${c.cart_token}, ${c.checkout_token},
-      ${caseTypeForStage(c.highest_stage)}, 'open', ${c.highest_stage}, ${toDate(c.last_action_at)}, NOW(), NOW(), NOW()
+      ${caseTypeForStage(c.highest_stage)}, 'open', 1, ${toDate(c.last_action_at)}, ${c.highest_stage}, ${toDate(c.last_action_at)}, NOW(), NOW(), NOW()
     )
     ON CONFLICT (cart_id) DO UPDATE SET
       contact_id = COALESCE(EXCLUDED.contact_id, abandoned_cart_cases.contact_id),
@@ -225,16 +270,16 @@ async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
       checkout_token = EXCLUDED.checkout_token,
       last_cart_action_at = EXCLUDED.last_cart_action_at,
       updated_at = NOW()
-    RETURNING id, status`
+    RETURNING id, status, current_sequence_version, sequence_started_at`
   return rows[0]
 }
 
 async function loadMessages(sql: RuntimeSql, caseId: string): Promise<MessageRow[]> {
   return await sql<MessageRow[]>`
-    SELECT id, message_type, status, sent_at, scheduled_for
+    SELECT id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for
     FROM abandoned_cart_messages
     WHERE case_id = ${caseId}
-    ORDER BY scheduled_for ASC, created_at ASC`
+    ORDER BY sequence_version ASC, scheduled_for ASC, created_at ASC`
 }
 
 async function createPendingMessage(
@@ -243,22 +288,27 @@ async function createPendingMessage(
   caseId: string,
   type: MessageType,
   scheduledFor: Date,
+  sequence: ActiveSequence,
 ): Promise<MessageRow> {
   const rows = await sql<MessageRow[]>`
     INSERT INTO abandoned_cart_messages (
-      id, case_id, cart_id, email, message_type, status, scheduled_for, created_at, updated_at
+      id, case_id, cart_id, email, message_type, sequence_version, sequence_started_at, status, scheduled_for, created_at, updated_at
     )
-    VALUES (${newId('acm')}, ${caseId}, ${c.id}, ${c.email.toLowerCase()}, ${type}, 'pending', ${scheduledFor}, NOW(), NOW())
-    ON CONFLICT (case_id, message_type) DO UPDATE SET
+    VALUES (
+      ${newId('acm')}, ${caseId}, ${c.id}, ${c.email.toLowerCase()}, ${type},
+      ${sequence.version}, ${sequence.startedAt}, 'pending', ${scheduledFor}, NOW(), NOW()
+    )
+    ON CONFLICT (case_id, sequence_version, message_type) DO UPDATE SET
       scheduled_for = EXCLUDED.scheduled_for,
+      sequence_started_at = EXCLUDED.sequence_started_at,
       updated_at = NOW()
     WHERE abandoned_cart_messages.status = 'pending'
-    RETURNING id, message_type, status, sent_at, scheduled_for`
+    RETURNING id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for`
   if (rows[0]) return rows[0]
   const existing = await sql<MessageRow[]>`
-    SELECT id, message_type, status, sent_at, scheduled_for
+    SELECT id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for
     FROM abandoned_cart_messages
-    WHERE case_id = ${caseId} AND message_type = ${type}
+    WHERE case_id = ${caseId} AND sequence_version = ${sequence.version} AND message_type = ${type}
     LIMIT 1`
   return existing[0]
 }
@@ -634,14 +684,16 @@ export async function runAbandonedCartCampaign(
     const cartCase = await ensureCase(sql, c)
     if (cartCase.status !== 'open') continue
     const messages = await loadMessages(sql, cartCase.id)
-    const next = nextMessage(c, messages, now)
+    const sequence = await maybeRestartSequence(sql, cartCase, c, !dryRun)
+    const activeMessages = messages.filter((message) => message.sequence_version === sequence.version)
+    const next = nextMessage(c, activeMessages, now)
     if (!next) continue
 
     result.due += 1
     const items = coerceItems(c.items)
     if (items.length === 0) {
       if (!dryRun) {
-        const msg = await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor)
+        const msg = await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor, sequence)
         await markSkipped(sql, cartCase.id, msg.id, 'no_products')
       }
       result.skipped++
@@ -649,7 +701,9 @@ export async function runAbandonedCartCampaign(
       continue
     }
 
-    const message = dryRun ? null : await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor)
+    const message = dryRun
+      ? null
+      : await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor, sequence)
     const messageId = message?.id ?? null
 
     if (c.email_marketing_opt_out_at || c.klaviyo_suppressed === true) {
@@ -721,7 +775,9 @@ export async function runAbandonedCartCampaign(
           })
     const rendered = await renderMessage({ cart: c, messageType: next.type, adminBase, discountGrant })
     if (dryRun) {
-      log.info(`[abandoned-cart-campaign] dry cart=${c.id} email=${c.email} type=${next.type}`)
+      log.info(
+        `[abandoned-cart-campaign] dry cart=${c.id} email=${c.email} type=${next.type} sequence=${sequence.version}`,
+      )
       result.skipped++
       continue
     }
@@ -743,7 +799,7 @@ export async function runAbandonedCartCampaign(
       continue
     }
 
-    const idempotencyKey = `abandoned-cart:${next.type}:${c.id}`
+    const idempotencyKey = `abandoned-cart:${next.type}:s${sequence.version}:${c.id}`
     const snapshot = await archiveEmailSnapshot(file, {
       messageId,
       subject: rendered.subject,
@@ -771,6 +827,7 @@ export async function runAbandonedCartCampaign(
           { name: 'category', value: next.type === 'payment_help_1' ? 'payment-help' : 'abandoned-cart' },
           { name: 'cart_id', value: c.id },
           { name: 'message_type', value: next.type },
+          { name: 'sequence_version', value: String(sequence.version) },
           { name: 'locale', value: rendered.locale },
           ...(rendered.discountGrant ? [{ name: 'discount_source', value: rendered.discountGrant.source }] : []),
         ],
@@ -785,7 +842,9 @@ export async function runAbandonedCartCampaign(
 
       await markSent(sql, c, messageId, next.type, rendered, sendResult.id, idempotencyKey, snapshot)
       result.sent++
-      log.info(`[abandoned-cart-campaign] sent cart=${c.id} email=${c.email} type=${next.type}`)
+      log.info(
+        `[abandoned-cart-campaign] sent cart=${c.id} email=${c.email} type=${next.type} sequence=${sequence.version}`,
+      )
 
       try {
         await sendPosthogEvent({
@@ -796,6 +855,8 @@ export async function runAbandonedCartCampaign(
             cart_id: c.id,
             cart_token: c.cart_token,
             message_type: next.type,
+            sequence_version: sequence.version,
+            sequence_started_at: sequence.startedAt.toISOString(),
             locale: rendered.locale,
             total_price: c.total_price ?? 0,
             currency: c.currency ?? 'EUR',

@@ -10,6 +10,8 @@ export default defineModel('AbandonedCartCase', {
     .enum(['open', 'recovered', 'closed_order_found', 'closed_unsubscribed', 'expired'])
     .default('open')
     .index(),
+  current_sequence_version: field.number().default(1).index(),
+  sequence_started_at: field.dateTime().nullable().index(),
   stage_at_open: field.text().nullable(),
   last_cart_action_at: field.dateTime().index(),
   opened_at: field.dateTime().index(),

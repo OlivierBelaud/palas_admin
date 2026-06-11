@@ -10,6 +10,8 @@ type MessageRow = {
   cart_id: string
   email: string
   message_type: string
+  sequence_version: number
+  sequence_started_at: string | Date | null
   status: string
   scheduled_for: string | Date
   sent_at: string | Date | null
@@ -91,6 +93,8 @@ export default defineQuery({
         'cart_id',
         'email',
         'message_type',
+        'sequence_version',
+        'sequence_started_at',
         'status',
         'scheduled_for',
         'sent_at',

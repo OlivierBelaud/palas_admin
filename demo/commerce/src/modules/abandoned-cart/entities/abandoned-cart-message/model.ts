@@ -6,6 +6,8 @@ export default defineModel('AbandonedCartMessage', {
   message_type: field
     .enum(['abandoned_cart_1', 'abandoned_cart_2', 'abandoned_cart_3', 'payment_help_1', 'klaviyo_abandoned'])
     .index(),
+  sequence_version: field.number().default(1).index(),
+  sequence_started_at: field.dateTime().nullable().index(),
   status: field.enum(['pending', 'sent', 'skipped', 'failed']).default('pending').index(),
   scheduled_for: field.dateTime().index(),
   sent_at: field.dateTime().nullable().index(),

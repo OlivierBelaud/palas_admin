@@ -7,6 +7,8 @@ interface CaseRow {
   email: string
   case_type: string
   status: string
+  current_sequence_version: number
+  sequence_started_at: Date | string | null
   stage_at_open: string | null
   last_cart_action_at: Date | string
   opened_at: Date | string
@@ -22,6 +24,8 @@ interface MessageRow {
   cart_id: string
   email: string
   message_type: MessageType
+  sequence_version: number
+  sequence_started_at: Date | string | null
   status: MessageStatus
   scheduled_for: Date | string
   sent_at: Date | string | null
@@ -84,6 +88,8 @@ export default defineQuery({
               'email',
               'case_type',
               'status',
+              'current_sequence_version',
+              'sequence_started_at',
               'stage_at_open',
               'last_cart_action_at',
               'opened_at',
@@ -105,6 +111,8 @@ export default defineQuery({
               'cart_id',
               'email',
               'message_type',
+              'sequence_version',
+              'sequence_started_at',
               'status',
               'scheduled_for',
               'sent_at',
@@ -252,8 +260,15 @@ export default defineQuery({
 
 function enrichCase(row: CaseRow, messages: MessageRow[], checks: CheckRow[], recoveredMessageIds: Set<string>) {
   const sent = messages.filter((message) => message.status === 'sent')
+  const activeSequenceMessages = messages.filter(
+    (message) => message.sequence_version === Number(row.current_sequence_version ?? 1),
+  )
+  const totalSequences = Math.max(
+    row.current_sequence_version ?? 1,
+    ...messages.map((message) => message.sequence_version),
+  )
   const lastSent = newest(sent.map((message) => message.sent_at).filter(Boolean) as Array<Date | string>)
-  const pending = messages
+  const pending = activeSequenceMessages
     .filter((message) => message.status === 'pending')
     .sort((a, b) => timeValue(a.scheduled_for) - timeValue(b.scheduled_for))[0]
   const latestActivity = newest(
@@ -265,14 +280,17 @@ function enrichCase(row: CaseRow, messages: MessageRow[], checks: CheckRow[], re
     email: row.email,
     case_type: row.case_type,
     status: row.status,
+    current_sequence_version: row.current_sequence_version ?? 1,
+    sequence_started_at: row.sequence_started_at ? iso(row.sequence_started_at) : null,
+    total_sequences: totalSequences,
     stage_at_open: row.stage_at_open,
     opened_at: iso(row.opened_at),
     last_cart_action_at: iso(row.last_cart_action_at),
     last_activity_at: latestActivity ? iso(latestActivity) : iso(row.opened_at),
-    email_1: messageLabel(messages, 'abandoned_cart_1'),
-    email_2: messageLabel(messages, 'abandoned_cart_2'),
-    email_3: messageLabel(messages, 'abandoned_cart_3'),
-    payment_help: messageLabel(messages, 'payment_help_1'),
+    email_1: messageLabel(activeSequenceMessages, 'abandoned_cart_1'),
+    email_2: messageLabel(activeSequenceMessages, 'abandoned_cart_2'),
+    email_3: messageLabel(activeSequenceMessages, 'abandoned_cart_3'),
+    payment_help: messageLabel(activeSequenceMessages, 'payment_help_1'),
     messages_sent: sent.length,
     last_sent_at: lastSent ? iso(lastSent) : null,
     next_due_at: pending ? iso(pending.scheduled_for) : null,
@@ -294,6 +312,8 @@ function enrichMessage(row: MessageRow, cartCase: CaseRow | undefined, recovered
     case_type: cartCase?.case_type ?? null,
     stage_at_open: cartCase?.stage_at_open ?? null,
     message_type: row.message_type,
+    sequence_version: row.sequence_version ?? 1,
+    sequence_started_at: row.sequence_started_at ? iso(row.sequence_started_at) : null,
     status: row.status,
     scheduled_for: iso(row.scheduled_for),
     sent_at: row.sent_at ? iso(row.sent_at) : null,
