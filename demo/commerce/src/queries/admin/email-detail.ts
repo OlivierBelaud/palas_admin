@@ -1,5 +1,6 @@
 import { renderAbandonedCart } from '../../emails/abandoned-cart/render'
 import type { Locale } from '../../emails/abandoned-cart/strings'
+import { type RuntimeApp, type RuntimeFilePort, resolveFile } from '../../utils/manta-runtime'
 import { buildRecoveryUrl } from '../../utils/recovery-url'
 import { signUnsubscribeToken } from '../../utils/unsubscribe-token'
 
@@ -78,7 +79,9 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
+  handler: async (input, ctx) => {
+    const { query } = ctx
+    const file = resolveFile((ctx as { app?: RuntimeApp }).app)
     const messages = (await query.graph({
       entity: 'abandonedCartMessage',
       filters: { id: input.id },
@@ -158,7 +161,7 @@ export default defineQuery({
 
     const cart = carts[0] ?? null
     const contact = contacts[0] ?? null
-    const preview = await resolvePreview(message, cart)
+    const preview = await resolvePreview(message, cart, file)
 
     return {
       message: {
@@ -176,21 +179,24 @@ export default defineQuery({
   },
 })
 
-async function resolvePreview(message: MessageRow, cart: CartRow | null) {
-  const snapshot = await loadSnapshotPreview(message)
+async function resolvePreview(message: MessageRow, cart: CartRow | null, file: RuntimeFilePort | null) {
+  const snapshot = await loadSnapshotPreview(message, file)
   if (snapshot) return snapshot
   return renderPreview(message, cart)
 }
 
-async function loadSnapshotPreview(message: MessageRow) {
+async function loadSnapshotPreview(message: MessageRow, file: RuntimeFilePort | null) {
+  const fileSnapshot = await loadSnapshotFromFilePort(message, file)
+  if (fileSnapshot) return fileSnapshot
+
   if (!message.snapshot_html_url) return null
   try {
-    const htmlRes = await fetch(message.snapshot_html_url)
+    const htmlRes = await fetchWithTimeout(message.snapshot_html_url)
     if (!htmlRes.ok) return null
     const [html, text] = await Promise.all([
       htmlRes.text(),
       message.snapshot_text_url
-        ? fetch(message.snapshot_text_url).then((res) => (res.ok ? res.text() : null))
+        ? fetchWithTimeout(message.snapshot_text_url).then((res) => (res.ok ? res.text() : null))
         : Promise.resolve(null),
     ])
     return {
@@ -204,6 +210,37 @@ async function loadSnapshotPreview(message: MessageRow) {
     }
   } catch {
     return null
+  }
+}
+
+async function loadSnapshotFromFilePort(message: MessageRow, file: RuntimeFilePort | null) {
+  if (!file || !message.snapshot_html_key) return null
+  try {
+    const [htmlBuffer, textBuffer] = await Promise.all([
+      file.getAsBuffer(message.snapshot_html_key),
+      message.snapshot_text_key ? file.getAsBuffer(message.snapshot_text_key).catch(() => null) : Promise.resolve(null),
+    ])
+    return {
+      html: htmlBuffer.toString('utf8'),
+      text: textBuffer?.toString('utf8') ?? null,
+      subject: message.snapshot_subject ?? message.subject,
+      source: 'snapshot' as const,
+      snapshot_saved_at: serializeDate(message.snapshot_saved_at),
+      snapshot_sha256: message.snapshot_sha256,
+      snapshot_error: message.snapshot_error,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function fetchWithTimeout(url: string) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2500)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
