@@ -1,0 +1,5 @@
+@import "@mantajs/dashboard/index.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../../../node_modules/@mantajs/dashboard/dist/**/*.{js,mjs}";
+@source "../../../node_modules/@mantajs/ui/dist/**/*.{js,mjs}";

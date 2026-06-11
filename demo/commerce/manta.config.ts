@@ -23,6 +23,9 @@ export default defineConfig({
     port: 3000,
   },
   plugins: ['@mantajs/plugin-posthog-proxy'],
+  spa: {
+    admin: { mountPath: '/' },
+  },
 
   // Production auth needs a durable cache for logout/reset revocation state.
   adapters: {

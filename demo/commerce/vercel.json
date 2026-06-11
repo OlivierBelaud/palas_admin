@@ -2,37 +2,42 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "cd ../.. && pnpm install",
-  "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && ./node_modules/.bin/manta build --preset vercel --no-migrate",
+  "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && node scripts/prepare-root-spa-public.mjs && ./node_modules/.bin/manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
   "redirects": [
     {
-      "source": "/",
-      "destination": "/admin",
+      "source": "/admin/login",
+      "destination": "/login",
       "permanent": false
     },
     {
-      "source": "/login",
-      "destination": "/admin/login",
+      "source": "/admin/reset-password",
+      "destination": "/reset-password",
       "permanent": false
     },
     {
-      "source": "/reset-password",
-      "destination": "/admin/reset-password",
+      "source": "/admin/accept-invite",
+      "destination": "/accept-invite",
       "permanent": false
     },
     {
-      "source": "/accept-invite",
-      "destination": "/admin/accept-invite",
+      "source": "/admin",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/admin/:path*",
+      "destination": "/:path*",
       "permanent": false
     }
   ],
   "rewrites": [
     {
-      "source": "/admin",
-      "destination": "/admin/index.html"
+      "source": "/",
+      "destination": "/index.html"
     },
     {
-      "source": "/admin/:path*",
-      "destination": "/admin/index.html"
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ],
   "crons": [

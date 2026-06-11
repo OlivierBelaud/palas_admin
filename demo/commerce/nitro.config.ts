@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 
+const rootSpaBuildExists = existsSync('./public/index.html')
 const adminBuildExists = existsSync('./public/admin')
 const nodeRequire = createRequire(import.meta.url)
 const repoRoot = resolve('../..')
@@ -23,7 +24,11 @@ const mantaPackage = (name: string) => {
 export default {
   compatibilityDate: '2025-01-01',
   serverDir: '.manta/server',
-  publicAssets: adminBuildExists ? [{ dir: 'public/admin', baseURL: '/admin' }] : [],
+  publicAssets: rootSpaBuildExists
+    ? [{ dir: 'public', baseURL: '/' }]
+    : adminBuildExists
+      ? [{ dir: 'public/admin', baseURL: '/admin' }]
+      : [],
   alias: {
     h3: nodeRequire.resolve('h3/cloudflare', { paths: [nitroDir] }),
     zod: dependency('zod'),
