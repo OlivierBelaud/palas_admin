@@ -26,6 +26,7 @@
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
 import { type HogQLEventRow, ingestHogQLRows, rowToPosthogEvent } from '../../modules/cart-tracking/posthog-sync'
 import { extractSessionId } from '../../modules/visitor-session/attribution'
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 const MAX_EVENTS_PER_RUN = 5000
 
@@ -34,8 +35,7 @@ export default defineCommand({
   description: 'Pull recent cart/checkout events from PostHog and dispatch ingestCartEvent for each',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required for syncPosthogEvents')
     }
@@ -83,20 +83,13 @@ export default defineCommand({
                         ORDER BY timestamp ASC
                         LIMIT ${MAX_EVENTS_PER_RUN}`
 
-        const res = await fetch(`${host}/api/projects/@current/query/`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: { kind: 'HogQLQuery', query: hogql } }),
-          signal: ctx.signal,
-        })
-        if (!res.ok) {
-          throw new MantaError('UNEXPECTED_STATE', `PostHog HogQL ${res.status} ${await res.text().catch(() => '')}`)
-        }
-        const data = (await res.json()) as { results?: unknown[][] }
         // PostHog returns each row as `[uuid, event, distinct_id, timestamp, properties]`.
         // The HogQL query above selects exactly those 5 columns so the tuple shape is
         // guaranteed at runtime — go through `unknown` to satisfy the strict tuple type.
-        const rows = (data.results ?? []) as unknown as HogQLEventRow[]
+        const rows = (await runPosthogHogQL(hogql, {
+          privateKey: key,
+          signal: ctx.signal,
+        })) as unknown as HogQLEventRow[]
 
         log.info(`[syncPosthogEvents] HogQL returned ${rows.length} event(s)`)
 

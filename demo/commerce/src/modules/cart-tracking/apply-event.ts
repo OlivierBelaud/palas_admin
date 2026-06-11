@@ -56,6 +56,18 @@ export async function applyEvent(
       'SELECT * FROM carts WHERE cart_token = $1 LIMIT 1',
       [n.cart_token],
     )
+    if (existing.length === 0 && n.checkout_token) {
+      existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
+        'SELECT * FROM carts WHERE checkout_token = $1 LIMIT 1',
+        [n.checkout_token],
+      )
+    }
+    if (existing.length === 0) {
+      existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
+        'SELECT * FROM carts WHERE checkout_token = $1 LIMIT 1',
+        [n.cart_token],
+      )
+    }
     if (existing.length === 0 && n.distinct_id) {
       existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
         'SELECT * FROM carts WHERE distinct_id = $1 LIMIT 1',

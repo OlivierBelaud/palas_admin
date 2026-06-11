@@ -13,6 +13,7 @@
 
 import { computeActivityState } from '../../modules/cart-tracking/abandonment'
 import { paginateConnection, ShopifyAdminClient } from '../../modules/shopify-admin/client'
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 type CartRow = {
   id: string
@@ -311,8 +312,7 @@ async function fetchShopifyCustomers(
 
 async function fetchKlaviyoProfiles(emails: string[], log: { warn: (m: string) => void }): Promise<Set<string>> {
   if (emails.length === 0) return new Set()
-  const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-  const key = process.env.POSTHOG_API_KEY
+  const key = posthogPrivateKey()
   if (!key) {
     log.warn('[tracking-coverage] POSTHOG_API_KEY not set — klaviyo profiles skipped')
     return new Set()
@@ -320,29 +320,17 @@ async function fetchKlaviyoProfiles(emails: string[], log: { warn: (m: string) =
   const emailsList = emails.map((e) => `'${e.replace(/'/g, "''")}'`).join(',')
 
   try {
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: {
-          kind: 'HogQLQuery',
-          query: `
+    const results = await runPosthogHogQL(
+      `
             SELECT DISTINCT lower(kp.email) AS email
             FROM klaviyo_profiles kp
             WHERE lower(kp.email) IN (${emailsList})
             LIMIT 10000
           `,
-        },
-        refresh: 'force_blocking',
-      }),
-    })
-    if (!res.ok) {
-      log.warn(`[tracking-coverage] HogQL profiles ${res.status}`)
-      return new Set()
-    }
-    const data = (await res.json()) as { results?: unknown[][] }
+      { privateKey: key, refresh: 'force_blocking' },
+    )
     const set = new Set<string>()
-    for (const r of data.results ?? []) {
+    for (const r of results ?? []) {
       const email = r[0] as string | null
       if (email) set.add(email)
     }
@@ -358,20 +346,14 @@ async function fetchKlaviyoAbandonEmails(
   log: { warn: (m: string) => void },
 ): Promise<Map<string, { sent_at: string; metric: string }>> {
   if (emails.length === 0) return new Map()
-  const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-  const key = process.env.POSTHOG_API_KEY
+  const key = posthogPrivateKey()
   if (!key) return new Map()
   const emailsList = emails.map((e) => `'${e.replace(/'/g, "''")}'`).join(',')
   const out = new Map<string, { sent_at: string; metric: string }>()
 
   try {
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: {
-          kind: 'HogQLQuery',
-          query: `
+    const results = await runPosthogHogQL(
+      `
             SELECT
               lower(kp.email) AS email,
               max(ke.datetime) AS sent_at,
@@ -398,16 +380,9 @@ async function fetchKlaviyoAbandonEmails(
             GROUP BY lower(kp.email)
             LIMIT 10000
           `,
-        },
-        refresh: 'force_blocking',
-      }),
-    })
-    if (!res.ok) {
-      log.warn(`[tracking-coverage] HogQL klaviyo emails ${res.status}`)
-      return out
-    }
-    const data = (await res.json()) as { results?: unknown[][] }
-    for (const r of data.results ?? []) {
+      { privateKey: key, refresh: 'force_blocking' },
+    )
+    for (const r of results ?? []) {
       const email = r[0] as string | null
       if (!email) continue
       out.set(email, { sent_at: String(r[1] ?? ''), metric: String(r[2] ?? '') })

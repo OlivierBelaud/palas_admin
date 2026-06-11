@@ -13,12 +13,16 @@
 // 'klaviyo'` (only when not already notified) so that
 // `cart.abandon_notified_at` is a unified record across Manta + Klaviyo.
 
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from '../../utils/sync-klaviyo-events-mark-helper'
 
-const POSTHOG_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
 const HOGQL_LIMIT = 5000
 const FALLBACK_LOOKBACK_MS = 365 * 86400 * 1000
 const OVERLAP_MS = 3600 * 1000 // 1h overlap to absorb Klaviyo eventual consistency
+
+function hogqlDateString(iso: string): string {
+  return iso.slice(0, 19)
+}
 
 interface IngestResult {
   scanned: number
@@ -42,7 +46,7 @@ async function pullEventsFromHogQL(args: {
   signal?: AbortSignal
   warn: (msg: string) => void
 }): Promise<KlaviyoEventRow[]> {
-  const phKey = process.env.POSTHOG_API_KEY
+  const phKey = posthogPrivateKey()
   if (!phKey) {
     args.warn('[sync-klaviyo-events] POSTHOG_API_KEY missing — skip')
     return []
@@ -74,7 +78,7 @@ async function pullEventsFromHogQL(args: {
       FROM klaviyo_events ke
       JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
       JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
-      WHERE ke.datetime >= toDateTime64('${args.sinceIso}', 6)
+      WHERE ke.datetime >= '${hogqlDateString(args.sinceIso)}'
         AND lower(kp.email) != ''
         AND (
           km.name = 'Shopify_Checkout_Abandonned'
@@ -96,18 +100,17 @@ async function pullEventsFromHogQL(args: {
       LIMIT ${HOGQL_LIMIT} OFFSET ${offset}
     `
 
-    const res = await fetch(`${POSTHOG_HOST}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${phKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: { kind: 'HogQLQuery', query: sql }, refresh: 'force_blocking' }),
-      signal: args.signal,
-    })
-    if (!res.ok) {
-      args.warn(`[sync-klaviyo-events] HogQL ${res.status} — abort`)
+    let rows: unknown[][]
+    try {
+      rows = await runPosthogHogQL(sql, {
+        privateKey: phKey,
+        refresh: 'force_blocking',
+        signal: args.signal,
+      })
+    } catch (err) {
+      args.warn(`[sync-klaviyo-events] ${(err as Error).message} — abort`)
       break
     }
-    const data = (await res.json()) as { results?: unknown[][] }
-    const rows = data.results ?? []
     if (rows.length === 0) break
 
     for (const r of rows) {

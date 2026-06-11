@@ -1,5 +1,7 @@
 // Named query: fetch Shopify orders from PostHog Data Warehouse
 
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+
 export default defineQuery({
   name: 'cart-shopify-orders',
   description: 'Shopify order history for a cart customer',
@@ -15,21 +17,16 @@ export default defineQuery({
     log.info(`[cart-shopify-orders] cart=${input.id} email=${email ?? '(none)'}`)
     if (!email) return []
 
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       log.warn('[cart-shopify-orders] POSTHOG_API_KEY not set')
       return []
     }
 
     try {
-      const res = await fetch(`${host}/api/projects/@current/query/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: {
-            kind: 'HogQLQuery',
-            query: `
+      const columns = ['order_name', 'status', 'total', 'currency', 'created_at']
+      const results = await runPosthogHogQL(
+        `
               SELECT
                 so.name AS order_name,
                 so.display_financial_status AS status,
@@ -41,18 +38,12 @@ export default defineQuery({
               ORDER BY so.created_at DESC
               LIMIT 20
             `,
-          },
-        }),
-      })
-      if (!res.ok) {
-        log.warn(`[cart-shopify-orders] PostHog ${res.status}`)
-        return []
-      }
-      const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
-      if (!data.results || !data.columns) return []
-      return data.results.map((row) => {
+        { privateKey: key },
+      )
+      if (!results) return []
+      return results.map((row) => {
         const obj: Record<string, unknown> = {}
-        data.columns!.forEach((col, i) => {
+        columns.forEach((col, i) => {
           obj[col] = row[i]
         })
         return obj

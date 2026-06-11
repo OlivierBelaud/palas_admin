@@ -1,3 +1,4 @@
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 import { ShopifyAdminClient } from '../shopify-admin/client'
 import { type ContactSignal, type ContactSnapshot, normalizeContactEmail, planContactMerge } from './merge-contact'
 
@@ -277,9 +278,8 @@ async function fetchKlaviyoContactSignal(email: string): Promise<ContactSignal[]
 }
 
 async function fetchPosthogContactSignal(email: string): Promise<ContactSignal[]> {
-  const key = process.env.POSTHOG_API_KEY
+  const key = posthogPrivateKey()
   if (!key) return []
-  const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
   const safe = email.replace(/'/g, "''")
   const query = `
     SELECT distinct_id, timestamp, properties.$current_url
@@ -288,14 +288,8 @@ async function fetchPosthogContactSignal(email: string): Promise<ContactSignal[]
     ORDER BY timestamp DESC
     LIMIT 1
   `
-  const res = await fetch(`${host}/api/projects/@current/query/`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
-  })
-  if (!res.ok) throw new MantaError('UNEXPECTED_STATE', `PostHog ${res.status}`)
-  const data = (await res.json()) as { results?: unknown[][] }
-  const row = data.results?.[0]
+  const rows = await runPosthogHogQL(query, { privateKey: key })
+  const row = rows?.[0]
   const distinctId = readString(row?.[0])
   if (!distinctId) return []
   return [

@@ -1,6 +1,8 @@
 // Named query: fetch Shopify customer stats from PostHog Data Warehouse
 // Resolves cart email first, then queries shopify_customers via HogQL.
 
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+
 export default defineQuery({
   name: 'cart-shopify-customer',
   description: 'Shopify customer lifetime stats for a cart',
@@ -15,21 +17,25 @@ export default defineQuery({
     const email = carts[0]?.email
     if (!email) return {}
 
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       log.warn('[cart-shopify-customer] POSTHOG_API_KEY not set')
       return {}
     }
 
     try {
-      const res = await fetch(`${host}/api/projects/@current/query/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: {
-            kind: 'HogQLQuery',
-            query: `
+      const columns = [
+        'id',
+        'first_name',
+        'last_name',
+        'number_of_orders',
+        'lifetime_revenue',
+        'lifetime_duration',
+        'customer_since',
+        'marketing_state',
+      ]
+      const results = await runPosthogHogQL(
+        `
               SELECT
                 sc.id,
                 sc.first_name, sc.last_name, sc.number_of_orders,
@@ -41,18 +47,12 @@ export default defineQuery({
               WHERE JSONExtractString(sc.default_email_address, 'emailAddress') = '${email.replace(/'/g, "''")}'
               LIMIT 1
             `,
-          },
-        }),
-      })
-      if (!res.ok) {
-        log.warn(`[cart-shopify-customer] PostHog ${res.status}`)
-        return {}
-      }
-      const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
-      if (!data.results?.[0] || !data.columns) return {}
+        { privateKey: key },
+      )
+      if (!results?.[0]) return {}
       const row: Record<string, unknown> = {}
-      data.columns.forEach((col, i) => {
-        row[col] = data.results![0][i]
+      columns.forEach((col, i) => {
+        row[col] = results[0][i]
       })
 
       // Shopify admin URL — resolved server-side so the dashboard link stays static.

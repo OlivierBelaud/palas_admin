@@ -36,6 +36,7 @@ import { enrichEventWithEmail, resolveEmailsBatch } from '../../modules/cart-tra
 import { normalizeCartEvent } from '../../modules/cart-tracking/posthog-adapter'
 import { parsePosthogProperties } from '../../modules/cart-tracking/posthog-sync'
 import { repairCartSnapshots } from '../../modules/cart-tracking/refresh-cart'
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 const POSTHOG_PAGE_SIZE = 1000
 const LOG_INSERT_BATCH = 200 // rows per multi-values INSERT — keeps payload well under Neon's 64 MB cap
@@ -70,8 +71,7 @@ export default defineCommand({
     // ── Step 1: fetch-events — incremental sync from PostHog ───────
     const fetchEvents = step.action('fetch-events', {
       invoke: async (_i: unknown, ctx): Promise<{ total: number; newlyInserted: number }> => {
-        const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-        const key = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
+        const key = posthogPrivateKey()
         if (!key) throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required')
 
         const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
@@ -98,20 +98,11 @@ export default defineCommand({
 
         // Count ALL events in PostHog (for determinate progress bar) and
         // the subset we still need to fetch.
-        const countRes = await fetch(`${host}/api/projects/@current/query/`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: {
-              kind: 'HogQLQuery',
-              query: `SELECT count() FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%')${sinceFilter}`,
-            },
-          }),
-          signal: ctx.signal,
-        })
-        if (!countRes.ok) throw new MantaError('UNEXPECTED_STATE', `PostHog count ${countRes.status}`)
-        const countData = (await countRes.json()) as { results?: unknown[][] }
-        const newEventsInPosthog = Number(countData.results?.[0]?.[0] ?? 0) || 0
+        const countRows = await runPosthogHogQL(
+          `SELECT count() FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%')${sinceFilter}`,
+          { privateKey: key, signal: ctx.signal },
+        )
+        const newEventsInPosthog = Number(countRows?.[0]?.[0] ?? 0) || 0
         log.info(`[rebuildCarts] PostHog has ${newEventsInPosthog} events to sync`)
 
         ctx.progress?.(0, newEventsInPosthog || null, `Syncing ${newEventsInPosthog} new events`)
@@ -124,22 +115,12 @@ export default defineCommand({
             throw new MantaError('CONFLICT', 'Cancelled during fetch', { code: 'WORKFLOW_CANCELLED' })
           }
 
-          const res = await fetch(`${host}/api/projects/@current/query/`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query: {
-                kind: 'HogQLQuery',
-                query: `SELECT uuid, event, distinct_id, timestamp, properties FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%')${sinceFilter} ORDER BY timestamp ASC LIMIT ${POSTHOG_PAGE_SIZE} OFFSET ${offset}`,
-              },
-            }),
-            signal: ctx.signal,
-          })
-          if (!res.ok) throw new MantaError('UNEXPECTED_STATE', `PostHog ${res.status}`)
-          const data = (await res.json()) as { results?: unknown[][] }
-          if (!data.results) throw new MantaError('UNEXPECTED_STATE', 'No results from PostHog')
+          const results = await runPosthogHogQL(
+            `SELECT uuid, event, distinct_id, timestamp, properties FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%')${sinceFilter} ORDER BY timestamp ASC LIMIT ${POSTHOG_PAGE_SIZE} OFFSET ${offset}`,
+            { privateKey: key, signal: ctx.signal },
+          )
 
-          const batch = data.results.map(
+          const batch = (results ?? []).map(
             // biome-ignore lint/suspicious/noExplicitAny: PostHog row shape
             (row: any): PosthogEvent => ({
               uuid: String(row[0]),

@@ -101,6 +101,7 @@ export default defineCommand({
     // the shape we actually use below.
     type CartRow = {
       id: string
+      cart_token?: string | null
       highest_stage: (typeof STAGES)[number]
       status: string
       distinct_id?: string | null
@@ -137,10 +138,16 @@ export default defineCommand({
     }
 
     // 1. Find or create the Cart head
-    // First try by cart_token (exact match). If not found and we have a distinct_id,
-    // fall back to distinct_id match — Shopify sends checkout_token as cart_token
-    // for checkout:* events, so the token won't match the original cart:* event.
+    // First try by cart_token (exact match). If a checkout event only carries
+    // the Shopify checkout token, match the existing row by checkout_token
+    // before falling back to distinct_id.
     let existingCarts = await svc.cart.list({ cart_token: input.cart_token })
+    if (existingCarts.length === 0 && input.checkout_token) {
+      existingCarts = await svc.cart.list({ checkout_token: input.checkout_token })
+    }
+    if (existingCarts.length === 0) {
+      existingCarts = await svc.cart.list({ checkout_token: input.cart_token })
+    }
     if (existingCarts.length === 0 && input.distinct_id) {
       existingCarts = await svc.cart.list({ distinct_id: input.distinct_id })
     }
@@ -173,7 +180,7 @@ export default defineCommand({
     // semantics (set-once on create vs. conditional on update) and are
     // handled below.
     const cartData = {
-      cart_token: input.cart_token,
+      cart_token: existing?.cart_token ?? input.cart_token,
       distinct_id: merge(input.distinct_id, existing?.distinct_id),
       email: merge(input.email, existing?.email),
       first_name: merge(input.first_name, existing?.first_name),

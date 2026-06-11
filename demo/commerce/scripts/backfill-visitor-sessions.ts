@@ -44,6 +44,7 @@ import {
   planSessionUpsert,
   type SessionSegment,
 } from '../src/modules/visitor-session/upsert-session'
+import { runPosthogHogQL } from '../src/utils/posthog-query'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -88,7 +89,6 @@ if (!DATABASE_URL) {
   console.error('DATABASE_URL missing')
   process.exit(1)
 }
-const PH_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
 const PH_KEY = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
 if (!PH_KEY) {
   console.error('[backfill-visitor-sessions] missing POSTHOG_PERSONAL_API_KEY / POSTHOG_API_KEY env')
@@ -103,28 +103,19 @@ const PAGE = 10000
 async function hogql(query: string, retries = 8): Promise<unknown[][]> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const res = await fetch(`${PH_HOST}/api/projects/@current/query/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${PH_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
-      })
-      if (!res.ok) {
-        const txt = await res.text()
-        if (res.status === 429 || res.status >= 500) {
-          const wait = 5000 * (attempt + 1)
-          console.log(`  HogQL ${res.status} retry ${attempt + 1}/${retries} in ${wait}ms`)
-          await new Promise((r) => setTimeout(r, wait))
-          continue
-        }
-        throw new Error(`HogQL ${res.status} ${txt}`)
-      }
-      const data = (await res.json()) as { results?: unknown[][] }
-      return data.results ?? []
+      return await runPosthogHogQL(query, { privateKey: PH_KEY })
     } catch (e) {
       const code = (e as { code?: string; cause?: { code?: string } }).cause?.code ?? (e as { code?: string }).code
       if (code === 'EADDRNOTAVAIL' || code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'UND_ERR_SOCKET') {
         const wait = 5000 * (attempt + 1)
         console.log(`  network ${code} retry ${attempt + 1}/${retries} in ${wait}ms`)
+        await new Promise((r) => setTimeout(r, wait))
+        continue
+      }
+      const message = (e as Error).message
+      if (message.includes('HogQL 429') || message.includes('HogQL 5')) {
+        const wait = 5000 * (attempt + 1)
+        console.log(`  ${message.slice(0, 80)} retry ${attempt + 1}/${retries} in ${wait}ms`)
         await new Promise((r) => setTimeout(r, wait))
         continue
       }
@@ -340,7 +331,8 @@ try {
       SELECT uuid, event, distinct_id, timestamp, properties, person.properties.email
         FROM events
        WHERE timestamp >= toDateTime('${SINCE_ISO}')
-         AND (event LIKE 'cart:%' OR event LIKE 'checkout:%' OR event = '$identify' OR event = '$pageview')
+         AND distinct_id IS NOT NULL
+         AND properties.$session_id IS NOT NULL
        ORDER BY timestamp ASC
        LIMIT ${PAGE} OFFSET ${offset}
     `)

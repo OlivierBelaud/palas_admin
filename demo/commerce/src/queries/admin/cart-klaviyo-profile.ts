@@ -1,5 +1,7 @@
 // Named query: fetch Klaviyo profile from PostHog Data Warehouse
 
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+
 export default defineQuery({
   name: 'cart-klaviyo-profile',
   description: 'Klaviyo profile for a cart customer',
@@ -14,21 +16,26 @@ export default defineQuery({
     const email = carts[0]?.email
     if (!email) return {}
 
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       log.warn('[cart-klaviyo-profile] POSTHOG_API_KEY not set')
       return {}
     }
 
     try {
-      const res = await fetch(`${host}/api/projects/@current/query/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: {
-            kind: 'HogQLQuery',
-            query: `
+      const columns = [
+        'id',
+        'email',
+        'first_name',
+        'last_name',
+        'city',
+        'country',
+        'langue',
+        'subscribed_since',
+        'last_event_date',
+      ]
+      const results = await runPosthogHogQL(
+        `
               SELECT
                 kp.id,
                 kp.email, kp.first_name, kp.last_name,
@@ -41,18 +48,12 @@ export default defineQuery({
               WHERE kp.email = '${email.replace(/'/g, "''")}'
               LIMIT 1
             `,
-          },
-        }),
-      })
-      if (!res.ok) {
-        log.warn(`[cart-klaviyo-profile] PostHog ${res.status}`)
-        return {}
-      }
-      const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
-      if (!data.results?.[0] || !data.columns) return {}
+        { privateKey: key },
+      )
+      if (!results?.[0]) return {}
       const row: Record<string, unknown> = {}
-      data.columns.forEach((col, i) => {
-        row[col] = data.results![0][i]
+      columns.forEach((col, i) => {
+        row[col] = results[0][i]
       })
 
       // Klaviyo profile URL — resolved server-side.

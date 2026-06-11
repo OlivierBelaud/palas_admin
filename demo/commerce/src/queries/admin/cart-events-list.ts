@@ -3,6 +3,7 @@
 // pour ne pas stocker deux fois la même chose.
 
 import { formatMoney } from '../../utils/currency'
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 export default defineQuery({
   name: 'cart-events-list',
@@ -25,8 +26,7 @@ export default defineQuery({
 
     if (!cart) return []
 
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       throw new MantaError('INVALID_STATE', 'POSTHOG_PERSONAL_API_KEY required for cart timeline')
     }
@@ -48,16 +48,9 @@ export default defineQuery({
                     ORDER BY timestamp DESC
                     LIMIT 200`
 
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: { kind: 'HogQLQuery', query: hogql } }),
-    })
-    if (!res.ok) {
-      throw new MantaError('UNEXPECTED_STATE', `PostHog HogQL ${res.status}`)
-    }
-    const data = (await res.json()) as { results?: unknown[][] }
-    const rows = (data.results ?? []) as Array<[string, string, Record<string, unknown> | string]>
+    const rows = (await runPosthogHogQL(hogql, { privateKey: key })) as Array<
+      [string, string, Record<string, unknown> | string]
+    >
 
     const currency = cart.currency ?? 'EUR'
     return rows.map((row) => {

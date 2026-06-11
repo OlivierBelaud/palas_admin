@@ -1,5 +1,7 @@
 // Named query: unified timeline — PostHog cart events + Klaviyo events
 
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+
 export default defineQuery({
   name: 'cart-timeline',
   description: 'Unified timeline of PostHog navigation + Klaviyo events for a cart',
@@ -17,8 +19,7 @@ export default defineQuery({
     log.info(`[cart-timeline] cart=${input.id} email=${email ?? '(none)'} distinct_id=${distinctId ?? '(none)'}`)
     if (!email && !distinctId) return []
 
-    const host = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-    const key = process.env.POSTHOG_API_KEY
+    const key = posthogPrivateKey()
     if (!key) {
       log.warn('[cart-timeline] POSTHOG_API_KEY not set')
       return []
@@ -28,13 +29,9 @@ export default defineQuery({
     const safeDistinctId = distinctId ? distinctId.replace(/'/g, "''") : ''
 
     try {
-      const res = await fetch(`${host}/api/projects/@current/query/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: {
-            kind: 'HogQLQuery',
-            query: `
+      const columns = ['action', 'occurred_at', 'source', 'detail', 'amount']
+      const results = await runPosthogHogQL(
+        `
               WITH timeline AS (
                 SELECT
                   e.event AS action,
@@ -75,20 +72,13 @@ export default defineQuery({
               ORDER BY occurred_at DESC
               LIMIT 100
             `,
-          },
-        }),
-      })
-      if (!res.ok) {
-        const errText = await res.text()
-        log.error(`[cart-timeline] PostHog ${res.status}: ${errText.substring(0, 300)}`)
-        return []
-      }
-      const data = (await res.json()) as { results?: unknown[][]; columns?: string[] }
-      log.info(`[cart-timeline] PostHog returned ${data.results?.length ?? 0} rows, columns=${data.columns?.join(',')}`)
-      if (!data.results || !data.columns) return []
-      return data.results.map((row) => {
+        { privateKey: key },
+      )
+      log.info(`[cart-timeline] PostHog returned ${results?.length ?? 0} rows, columns=${columns.join(',')}`)
+      if (!results) return []
+      return results.map((row) => {
         const obj: Record<string, unknown> = {}
-        data.columns!.forEach((col, i) => {
+        columns.forEach((col, i) => {
           obj[col] = row[i]
         })
         return obj

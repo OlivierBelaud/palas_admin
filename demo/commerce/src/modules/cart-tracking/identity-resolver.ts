@@ -21,6 +21,8 @@
 //
 // Metrics are collected per process and surfaced via `getIdentityMetrics()`.
 
+import { posthogHost, posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+
 interface CacheEntry {
   email: string | null
   expires_at: number
@@ -70,34 +72,25 @@ export async function resolveEmailByDistinctId(
     return cached.email
   }
 
-  const host = opts.host ?? process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-  const key = opts.apiKey ?? process.env.POSTHOG_API_KEY
+  const host = opts.host ?? posthogHost()
+  const key = opts.apiKey ?? posthogPrivateKey()
   if (!key) return null
 
   metrics.lookups += 1
   const safe = distinctId.replace(/'/g, "''")
   try {
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: {
-          kind: 'HogQLQuery',
-          query: `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
-        },
+    const rows = await runPosthogHogQL(
+      `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
+      {
+        host,
+        privateKey: key,
         // Bypass PostHog's server-side query cache — our single-user lookup
         // must reflect the latest $identify, otherwise newly-identified users
         // stay anonymous in our DB for up to the cache TTL.
         refresh: 'force_blocking',
-      }),
-    })
-    if (!res.ok) {
-      cache.set(distinctId, { email: null, expires_at: now + TTL_MS })
-      metrics.misses += 1
-      return null
-    }
-    const data = (await res.json()) as { results?: unknown[][] }
-    const email = (data.results?.[0]?.[0] as string | null | undefined) ?? null
+      },
+    )
+    const email = (rows?.[0]?.[0] as string | null | undefined) ?? null
     cache.set(distinctId, { email, expires_at: now + TTL_MS })
     if (email) metrics.recoveries += 1
     else metrics.misses += 1
@@ -117,32 +110,27 @@ export async function resolveEmailByDistinctId(
 export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Promise<Map<string, string>> {
   const map = new Map<string, string>()
 
-  const host = opts.host ?? process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-  const key = opts.apiKey ?? process.env.POSTHOG_API_KEY
+  const host = opts.host ?? posthogHost()
+  const key = opts.apiKey ?? posthogPrivateKey()
   if (!key) return map
 
   try {
-    const res = await fetch(`${host}/api/projects/@current/query/`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: {
-          kind: 'HogQLQuery',
-          // LIMIT 100000: PostHog HogQL defaults to 100 rows when no explicit
-          // LIMIT is set, which silently drops 90% of distinct_ids on a real
-          // store. Blow the ceiling high enough that we only have to worry
-          // about pagination once we genuinely cross this count.
-          query: `SELECT DISTINCT distinct_id, person.properties.email FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%') AND person.properties.email IS NOT NULL AND person.properties.email != '' LIMIT 100000`,
-        },
+    const rows = await runPosthogHogQL(
+      // LIMIT 100000: PostHog HogQL defaults to 100 rows when no explicit
+      // LIMIT is set, which silently drops 90% of distinct_ids on a real
+      // store. Blow the ceiling high enough that we only have to worry
+      // about pagination once we genuinely cross this count.
+      `SELECT DISTINCT distinct_id, person.properties.email FROM events WHERE (event LIKE 'cart:%' OR event LIKE 'checkout:%') AND person.properties.email IS NOT NULL AND person.properties.email != '' LIMIT 100000`,
+      {
+        host,
+        privateKey: key,
         // Bypass PostHog's server-side query cache. rebuildCarts is meant to
         // produce the authoritative snapshot; cached identity maps would
         // silently miss users who were identified since the last rebuild.
         refresh: 'force_blocking',
-      }),
-    })
-    if (!res.ok) return map
-    const data = (await res.json()) as { results?: unknown[][] }
-    for (const row of data.results ?? []) {
+      },
+    )
+    for (const row of rows ?? []) {
       const id = row[0] as string | null
       const email = row[1] as string | null
       if (id && email) {
