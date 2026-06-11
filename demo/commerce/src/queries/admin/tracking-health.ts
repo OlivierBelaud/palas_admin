@@ -32,6 +32,15 @@ type ContactRow = {
   distinct_id: string | null
 }
 
+type CartEmailRow = {
+  id: string
+  cart_token: string | null
+  checkout_token: string | null
+  distinct_id: string | null
+  email: string | null
+  updated_at: string | Date | null
+}
+
 export default defineQuery({
   name: 'tracking-health',
   description: 'Live Event Hub hot log for the last 24 hours',
@@ -108,28 +117,75 @@ export default defineQuery({
         .filter(Boolean) as string[],
     )
     const distinctIds = uniqueStrings(rows.map((row) => row.distinct_id).filter(Boolean) as string[])
-    const [contactsByIdRows, contactsByDistinctRows] = await Promise.all([
-      contactIds.length > 0
-        ? (query.graph({
-            entity: 'contact',
-            filters: { id: { $in: contactIds } },
-            fields: ['id', 'email', 'distinct_id'],
-            pagination: { limit: Math.max(contactIds.length, 1), offset: 0 },
-          }) as Promise<ContactRow[]>)
-        : Promise.resolve([]),
-      distinctIds.length > 0
-        ? (query.graph({
-            entity: 'contact',
-            filters: { distinct_id: { $in: distinctIds } },
-            fields: ['id', 'email', 'distinct_id'],
-            pagination: { limit: Math.max(distinctIds.length, 1), offset: 0 },
-          }) as Promise<ContactRow[]>)
-        : Promise.resolve([]),
-    ])
+    const cartTokens = uniqueStrings(
+      rows
+        .map((row) => {
+          const payload = row.payload_normalized ?? {}
+          const cart = (payload.cart ?? {}) as Record<string, unknown>
+          return typeof cart.token === 'string' ? cart.token : null
+        })
+        .filter(Boolean) as string[],
+    )
+    const checkoutTokens = uniqueStrings(
+      rows
+        .map((row) => {
+          const payload = row.payload_normalized ?? {}
+          const checkout = (payload.checkout ?? {}) as Record<string, unknown>
+          return typeof checkout.token === 'string' ? checkout.token : null
+        })
+        .filter(Boolean) as string[],
+    )
+    const [contactsByIdRows, contactsByDistinctRows, cartsByTokenRows, cartsByCheckoutRows, cartsByDistinctRows] =
+      await Promise.all([
+        contactIds.length > 0
+          ? (query.graph({
+              entity: 'contact',
+              filters: { id: { $in: contactIds } },
+              fields: ['id', 'email', 'distinct_id'],
+              pagination: { limit: Math.max(contactIds.length, 1), offset: 0 },
+            }) as Promise<ContactRow[]>)
+          : Promise.resolve([]),
+        distinctIds.length > 0
+          ? (query.graph({
+              entity: 'contact',
+              filters: { distinct_id: { $in: distinctIds } },
+              fields: ['id', 'email', 'distinct_id'],
+              pagination: { limit: Math.max(distinctIds.length, 1), offset: 0 },
+            }) as Promise<ContactRow[]>)
+          : Promise.resolve([]),
+        cartTokens.length > 0
+          ? (query.graph({
+              entity: 'cart',
+              filters: { cart_token: { $in: cartTokens } },
+              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
+              pagination: { limit: Math.max(cartTokens.length, 1), offset: 0 },
+            }) as Promise<CartEmailRow[]>)
+          : Promise.resolve([]),
+        checkoutTokens.length > 0
+          ? (query.graph({
+              entity: 'cart',
+              filters: { checkout_token: { $in: checkoutTokens } },
+              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
+              pagination: { limit: Math.max(checkoutTokens.length, 1), offset: 0 },
+            }) as Promise<CartEmailRow[]>)
+          : Promise.resolve([]),
+        distinctIds.length > 0
+          ? (query.graph({
+              entity: 'cart',
+              filters: { distinct_id: { $in: distinctIds } },
+              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
+              sort: { updated_at: 'desc' },
+              pagination: { limit: 1000, offset: 0 },
+            }) as Promise<CartEmailRow[]>)
+          : Promise.resolve([]),
+      ])
     const contactById = new Map(contactsByIdRows.map((row) => [row.id, row]))
     const contactByDistinctId = new Map(
       contactsByDistinctRows.filter((row) => row.distinct_id).map((row) => [row.distinct_id as string, row]),
     )
+    const cartEmailByToken = firstEmailBy(cartsByTokenRows, 'cart_token')
+    const cartEmailByCheckoutToken = firstEmailBy(cartsByCheckoutRows, 'checkout_token')
+    const cartEmailByDistinctId = firstEmailBy(cartsByDistinctRows, 'distinct_id')
 
     const typeRows = (await query.graph({
       entity: 'eventLog',
@@ -211,11 +267,17 @@ export default defineQuery({
       const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
       const ga4Log = dispatchByEventId.get(row.event_id)
       const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
-      const email = contactId
-        ? contactById.get(contactId)?.email
-        : row.distinct_id
-          ? contactByDistinctId.get(row.distinct_id)?.email
-          : null
+      const cartToken = typeof cart.token === 'string' ? cart.token : null
+      const checkoutToken = typeof checkout.token === 'string' ? checkout.token : null
+      const directEmail = typeof user.email === 'string' ? user.email : null
+      const email =
+        directEmail ??
+        (contactId ? contactById.get(contactId)?.email : null) ??
+        (cartToken ? cartEmailByToken.get(cartToken) : null) ??
+        (checkoutToken ? cartEmailByCheckoutToken.get(checkoutToken) : null) ??
+        (row.distinct_id ? cartEmailByDistinctId.get(row.distinct_id) : null) ??
+        (row.distinct_id ? contactByDistinctId.get(row.distinct_id)?.email : null) ??
+        null
       const hasEmailHash = Boolean(row.identity_email_sha256 || user.email_sha256)
       return {
         id: row.id,
@@ -245,8 +307,8 @@ export default defineQuery({
         value: ecommerce.value ?? null,
         currency: ecommerce.currency ?? null,
         item_count: ecommerce.item_count ?? null,
-        cart_token: cart.token ?? null,
-        checkout_token: checkout.token ?? null,
+        cart_token: cartToken,
+        checkout_token: checkoutToken,
         shopify_order_id: checkout.shopify_order_id ?? null,
         posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
         posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
@@ -311,4 +373,29 @@ function countStatus(map: Map<string, number>, status: string) {
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
+}
+
+function firstEmailBy(
+  rows: CartEmailRow[],
+  field: 'cart_token' | 'checkout_token' | 'distinct_id',
+): Map<string, string> {
+  const map = new Map<string, string>()
+  const sorted = [...rows].sort((a, b) => timeValue(b.updated_at) - timeValue(a.updated_at))
+  for (const row of sorted) {
+    const key = row[field]
+    const email = normalizeEmail(row.email)
+    if (key && email && !map.has(key)) map.set(key, email)
+  }
+  return map
+}
+
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const email = value.trim().toLowerCase()
+  return email.includes('@') ? email : null
+}
+
+function timeValue(value: string | Date | null): number {
+  if (!value) return 0
+  return new Date(value).getTime()
 }
