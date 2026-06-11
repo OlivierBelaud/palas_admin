@@ -47,6 +47,7 @@ export default defineConfig({
           adapter: '@mantajs/adapter-file-vercel-blob',
           options: {
             token: blobReadWriteToken,
+            access: 'private',
           },
         }
       : { adapter: '@mantajs/core/InMemoryFileAdapter' },

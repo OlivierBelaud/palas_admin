@@ -18,21 +18,4 @@ allowBuilds:
   sharp: true
   simple-git-hooks: true
 minimumReleaseAgeExclude:
-  - '@mantajs/adapter-cache-upstash@0.2.0-beta.6'
-  - '@mantajs/adapter-database-neon@0.2.0-beta.6'
-  - '@mantajs/adapter-database-pg@0.2.0-beta.6'
-  - '@mantajs/adapter-eventbus-upstash@0.2.0-beta.6'
-  - '@mantajs/adapter-file-vercel-blob@0.2.0-beta.6'
-  - '@mantajs/adapter-h3@0.2.0-beta.6'
-  - '@mantajs/adapter-jobs-vercel-cron@0.2.0-beta.6'
-  - '@mantajs/adapter-locking-neon@0.2.0-beta.6'
-  - '@mantajs/adapter-logger-pino@0.2.0-beta.6'
-  - '@mantajs/adapter-notification-resend@0.2.0-beta.6'
-  - '@mantajs/adapter-queue-qstash@0.2.0-beta.6'
-  - '@mantajs/cli@0.2.0-beta.6'
-  - '@mantajs/core@0.2.0-beta.6'
-  - '@mantajs/dashboard@0.2.0-beta.6'
-  - '@mantajs/host-nitro@0.2.0-beta.6'
-  - '@mantajs/plugin-posthog-proxy@0.2.0-beta.6'
-  - '@mantajs/sdk@0.2.0-beta.6'
-  - '@mantajs/ui@0.2.0-beta.6'
+  - '@mantajs/*'
