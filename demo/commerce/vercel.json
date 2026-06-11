@@ -5,6 +5,11 @@
   "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && node scripts/prepare-root-spa-public.mjs && ./node_modules/.bin/manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
   "redirects": [
     {
+      "source": "/",
+      "destination": "/paniers",
+      "permanent": false
+    },
+    {
       "source": "/admin/login",
       "destination": "/login",
       "permanent": false
