@@ -2,12 +2,11 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Button } from '@mantajs/ui'
 import { LogOut, ShieldCheck, UserRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 
 type CurrentUser = Awaited<ReturnType<ReturnType<typeof useDashboardContext>['authAdapter']['getCurrentUser']>>
 
 export default function SettingsPage() {
-  const navigate = useNavigate()
   const { authAdapter } = useDashboardContext()
   const [error, setError] = useState<string | null>(null)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
@@ -32,8 +31,15 @@ export default function SettingsPage() {
     setError(null)
     setIsLoggingOut(true)
     try {
-      await authAdapter.logout()
-      navigate('/login', { replace: true })
+      await globalThis.fetch('/api/admin/logout', {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      localStorage.removeItem('manta-auth-token')
+      localStorage.removeItem('manta-refresh-token')
+      localStorage.removeItem('manta-auth-state')
+      window.location.replace('/login')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to log out')
       setIsLoggingOut(false)
