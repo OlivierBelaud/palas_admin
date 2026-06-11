@@ -14,6 +14,7 @@ if (!process.env.UPSTASH_REDIS_REST_TOKEN && upstashKvRestToken) {
 
 const upstashRedisUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
 const upstashRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+const blobReadWriteToken = process.env.BLOB_READ_WRITE_TOKEN
 
 export default defineConfig({
   database: {
@@ -41,7 +42,14 @@ export default defineConfig({
         : { adapter: '@mantajs/core/InMemoryCacheAdapter' },
     IEventBusPort: { adapter: '@mantajs/core/InMemoryEventBusAdapter' },
     ILockingPort: { adapter: '@mantajs/core/InMemoryLockingAdapter' },
-    IFilePort: { adapter: '@mantajs/core/InMemoryFileAdapter' },
+    IFilePort: blobReadWriteToken
+      ? {
+          adapter: '@mantajs/adapter-file-vercel-blob',
+          options: {
+            token: blobReadWriteToken,
+          },
+        }
+      : { adapter: '@mantajs/core/InMemoryFileAdapter' },
     // VercelCronAdapter is registry-based: jobs are registered at boot,
     // Vercel Cron triggers them via HTTP at /api/crons/<name> (the
     // framework-owned catch-all wired by wire-cron-routes). The

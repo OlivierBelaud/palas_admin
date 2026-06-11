@@ -6,7 +6,7 @@
 // longer the authoritative send path.
 
 import { runAbandonedCartCampaign } from '../../utils/abandoned-cart-campaign'
-import { resolveNotification, resolveSql } from '../../utils/manta-runtime'
+import { resolveFile, resolveNotification, resolveSql } from '../../utils/manta-runtime'
 
 export default defineCommand({
   name: 'notifyAbandonedCarts',
@@ -21,6 +21,7 @@ export default defineCommand({
       invoke: async (_i: unknown, ctx) => {
         const sql = resolveSql(ctx.app)
         const notification = resolveNotification(ctx.app)
+        const file = resolveFile(ctx.app)
         if (!sql || !notification) {
           throw new MantaError('UNEXPECTED_STATE', 'Database or notification port missing')
         }
@@ -29,6 +30,7 @@ export default defineCommand({
           {
             sql,
             notification,
+            file,
             adminBase: (process.env.ADMIN_BASE_URL ?? 'https://admin.fancypalas.com').replace(/\/+$/, ''),
             fromEmail: process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>',
             replyTo: process.env.RESEND_REPLY_TO ?? 'hello@fancypalas.com',

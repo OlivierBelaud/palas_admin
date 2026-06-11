@@ -17,7 +17,7 @@
 // Production-only — local `manta dev` no-ops to avoid hitting prod data.
 
 import { type AbandonedCartCampaignResult, runAbandonedCartCampaign } from '../utils/abandoned-cart-campaign'
-import type { RuntimeSql } from '../utils/manta-runtime'
+import { type RuntimeSql, resolveFile } from '../utils/manta-runtime'
 
 const EMPTY: AbandonedCartCampaignResult = {
   scanned: 0,
@@ -33,7 +33,7 @@ const EMPTY: AbandonedCartCampaignResult = {
   errors: 0,
 }
 
-export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ db, notification, log }) => {
+export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db, notification, log }) => {
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[detect-abandoned-carts] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
@@ -52,6 +52,7 @@ export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ db, not
   const result = await runAbandonedCartCampaign({
     sql,
     notification,
+    file: resolveFile(app),
     adminBase,
     fromEmail,
     replyTo,

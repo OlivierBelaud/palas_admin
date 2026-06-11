@@ -2,7 +2,8 @@ import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
 import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
-import type { RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
+import { archiveEmailSnapshot, type EmailSnapshotResult } from './email-snapshot'
+import type { RuntimeFilePort, RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
 import { sendPosthogEvent } from './posthog-ingest'
 import { buildRecoveryUrl } from './recovery-url'
 import { signUnsubscribeToken } from './unsubscribe-token'
@@ -20,6 +21,7 @@ type SkipReason =
 export interface AbandonedCartCampaignOptions {
   sql: RuntimeSql
   notification: RuntimeNotificationPort
+  file?: RuntimeFilePort | null
   adminBase: string
   fromEmail: string
   replyTo?: string
@@ -312,6 +314,7 @@ async function markSent(
   rendered: RenderedMessage,
   providerMessageId: string | undefined,
   idempotencyKey: string,
+  snapshot: EmailSnapshotResult | null,
 ): Promise<void> {
   await sql`
     UPDATE abandoned_cart_messages
@@ -326,6 +329,14 @@ async function markSent(
         discount_code = ${rendered.discountGrant?.code ?? null},
         discount_source = ${rendered.discountGrant?.source ?? null},
         discount_shopify_id = ${rendered.discountGrant?.shopifyDiscountId ?? null},
+        snapshot_html_key = ${snapshot?.html_key ?? null},
+        snapshot_html_url = ${snapshot?.html_url ?? null},
+        snapshot_text_key = ${snapshot?.text_key ?? null},
+        snapshot_text_url = ${snapshot?.text_url ?? null},
+        snapshot_subject = ${snapshot?.subject ?? rendered.subject},
+        snapshot_sha256 = ${snapshot?.sha256 ?? null},
+        snapshot_saved_at = ${snapshot?.saved_at ?? null},
+        snapshot_error = ${snapshot?.error ?? null},
         updated_at = NOW()
     WHERE id = ${messageId}`
 
@@ -561,6 +572,7 @@ export async function runAbandonedCartCampaign(
   const {
     sql,
     notification,
+    file,
     adminBase,
     fromEmail,
     replyTo,
@@ -714,6 +726,16 @@ export async function runAbandonedCartCampaign(
     }
 
     const idempotencyKey = `abandoned-cart:${next.type}:${c.id}`
+    const snapshot = await archiveEmailSnapshot(file, {
+      messageId,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    })
+    if (snapshot.error) {
+      log.warn(`[abandoned-cart-campaign] snapshot failed message=${messageId}: ${snapshot.error}`)
+    }
+
     try {
       const sendResult = await notification.send({
         to: c.email,
@@ -743,7 +765,7 @@ export async function runAbandonedCartCampaign(
         continue
       }
 
-      await markSent(sql, c, messageId, next.type, rendered, sendResult.id, idempotencyKey)
+      await markSent(sql, c, messageId, next.type, rendered, sendResult.id, idempotencyKey, snapshot)
       result.sent++
       log.info(`[abandoned-cart-campaign] sent cart=${c.id} email=${c.email} type=${next.type}`)
 

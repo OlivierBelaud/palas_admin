@@ -26,6 +26,12 @@ type DispatchLogRow = {
   last_attempt_at: string | Date | null
 }
 
+type ContactRow = {
+  id: string
+  email: string
+  distinct_id: string | null
+}
+
 export default defineQuery({
   name: 'tracking-health',
   description: 'Live Event Hub hot log for the last 24 hours',
@@ -92,6 +98,38 @@ export default defineQuery({
           })) as unknown as DispatchLogRow[])
         : []
     const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
+    const contactIds = uniqueStrings(
+      rows
+        .map((row) => {
+          const payload = row.payload_normalized ?? {}
+          const user = (payload.user ?? {}) as Record<string, unknown>
+          return typeof user.contact_id === 'string' ? user.contact_id : null
+        })
+        .filter(Boolean) as string[],
+    )
+    const distinctIds = uniqueStrings(rows.map((row) => row.distinct_id).filter(Boolean) as string[])
+    const [contactsByIdRows, contactsByDistinctRows] = await Promise.all([
+      contactIds.length > 0
+        ? (query.graph({
+            entity: 'contact',
+            filters: { id: { $in: contactIds } },
+            fields: ['id', 'email', 'distinct_id'],
+            pagination: { limit: Math.max(contactIds.length, 1), offset: 0 },
+          }) as Promise<ContactRow[]>)
+        : Promise.resolve([]),
+      distinctIds.length > 0
+        ? (query.graph({
+            entity: 'contact',
+            filters: { distinct_id: { $in: distinctIds } },
+            fields: ['id', 'email', 'distinct_id'],
+            pagination: { limit: Math.max(distinctIds.length, 1), offset: 0 },
+          }) as Promise<ContactRow[]>)
+        : Promise.resolve([]),
+    ])
+    const contactById = new Map(contactsByIdRows.map((row) => [row.id, row]))
+    const contactByDistinctId = new Map(
+      contactsByDistinctRows.filter((row) => row.distinct_id).map((row) => [row.distinct_id as string, row]),
+    )
 
     const typeRows = (await query.graph({
       entity: 'eventLog',
@@ -172,6 +210,13 @@ export default defineQuery({
       const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
       const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
       const ga4Log = dispatchByEventId.get(row.event_id)
+      const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
+      const email = contactId
+        ? contactById.get(contactId)?.email
+        : row.distinct_id
+          ? contactByDistinctId.get(row.distinct_id)?.email
+          : null
+      const hasEmailHash = Boolean(row.identity_email_sha256 || user.email_sha256)
       return {
         id: row.id,
         event_id: row.event_id,
@@ -191,7 +236,9 @@ export default defineQuery({
                 ? 'posthog'
                 : 'anon',
         identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
-        contact_id: typeof user.contact_id === 'string' ? user.contact_id : null,
+        contact_id: contactId,
+        email: email ?? null,
+        email_status: email ? 'resolved' : hasEmailHash ? 'hashed' : 'unknown',
         matched_v1: user.matched_v1 === true,
         valid: row.valid,
         validation_errors: row.validation_errors ?? [],
@@ -260,4 +307,8 @@ function countBy<T>(rows: T[], key: (row: T) => string) {
 
 function countStatus(map: Map<string, number>, status: string) {
   return map.get(status) ?? 0
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)))
 }

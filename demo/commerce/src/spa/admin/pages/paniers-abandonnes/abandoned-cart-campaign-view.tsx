@@ -125,6 +125,8 @@ interface MessageItem {
   provider_message_id: string | null
   locale: string | null
   subject: string | null
+  snapshot_html_url: string | null
+  snapshot_error: string | null
   skip_reason: string | null
   error_message: string | null
   recovered: boolean
@@ -670,7 +672,7 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
         <CardTitle>Emails envoyés, prévus et skippés</CardTitle>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <table className="w-full min-w-[1240px] text-sm">
+        <table className="w-full min-w-[1340px] text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="py-2 pr-3 font-medium">Client</th>
@@ -679,6 +681,7 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
               <th className="py-2 pr-3 font-medium">Type dossier</th>
               <th className="py-2 pr-3 font-medium">Prévu</th>
               <th className="py-2 pr-3 font-medium">Envoyé</th>
+              <th className="py-2 pr-3 font-medium">Snapshot</th>
               <th className="py-2 pr-3 font-medium">Skip / erreur</th>
               <th className="py-2 pr-3 font-medium">Recovery</th>
               <th className="py-2 pr-3 font-medium">Sujet</th>
@@ -694,7 +697,9 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
                   </Link>
                 </td>
                 <td className="py-3 pr-3">
-                  <Badge variant="outline">{messageLabel(row.message_type)}</Badge>
+                  <Link to={`/emails/${row.id}`} className="hover:underline">
+                    <Badge variant="outline">{messageLabel(row.message_type)}</Badge>
+                  </Link>
                 </td>
                 <td className="py-3 pr-3">
                   <StatusBadge value={row.status} />
@@ -702,11 +707,24 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
                 <td className="py-3 pr-3 text-muted-foreground">{humanize(row.case_type ?? '-')}</td>
                 <td className="py-3 pr-3">{formatDateTime(row.scheduled_for)}</td>
                 <td className="py-3 pr-3">{row.sent_at ? formatDateTime(row.sent_at) : '-'}</td>
+                <td className="py-3 pr-3">
+                  {row.snapshot_html_url ? (
+                    <Badge variant="green">Snapshot</Badge>
+                  ) : row.snapshot_error ? (
+                    <Badge variant="orange">Snapshot err</Badge>
+                  ) : (
+                    <Badge variant="outline">Reconstr.</Badge>
+                  )}
+                </td>
                 <td className="max-w-[260px] truncate py-3 pr-3 text-muted-foreground">
                   {humanize(row.skip_reason ?? row.error_message ?? '-')}
                 </td>
                 <td className="py-3 pr-3">{row.recovered ? <Badge variant="green">Recovered</Badge> : '-'}</td>
-                <td className="max-w-[280px] truncate py-3 pr-3">{row.subject ?? '-'}</td>
+                <td className="max-w-[280px] truncate py-3 pr-3">
+                  <Link to={`/emails/${row.id}`} className="hover:underline">
+                    {row.subject ?? '-'}
+                  </Link>
+                </td>
                 <td className="py-3 text-right">{row.recovered_amount > 0 ? fmtMoney(row.recovered_amount) : '-'}</td>
               </tr>
             ))}

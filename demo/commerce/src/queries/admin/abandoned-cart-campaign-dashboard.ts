@@ -30,6 +30,8 @@ interface MessageRow {
   template_key: string | null
   locale: string | null
   subject: string | null
+  snapshot_html_url: string | null
+  snapshot_error: string | null
   skip_reason: string | null
   error_message: string | null
   created_at: Date | string | null
@@ -111,6 +113,8 @@ export default defineQuery({
               'template_key',
               'locale',
               'subject',
+              'snapshot_html_url',
+              'snapshot_error',
               'skip_reason',
               'error_message',
               'created_at',
@@ -298,6 +302,8 @@ function enrichMessage(row: MessageRow, cartCase: CaseRow | undefined, recovered
     provider_message_id: row.provider_message_id,
     locale: row.locale,
     subject: row.subject,
+    snapshot_html_url: row.snapshot_html_url,
+    snapshot_error: row.snapshot_error,
     skip_reason: row.skip_reason,
     error_message: row.error_message,
     recovered: recoveredMessageIds.has(row.id),

@@ -27,6 +27,11 @@ export default defineSpa({
       to: '/clients',
     },
     {
+      icon: 'Mail',
+      label: 'Emails',
+      to: '/emails',
+    },
+    {
       icon: 'BarChart3',
       label: 'Charts lab',
       to: '/charts-lab',

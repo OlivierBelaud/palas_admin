@@ -19,6 +19,14 @@ export default defineModel('AbandonedCartMessage', {
   discount_code: field.text().nullable().index(),
   discount_source: field.enum(['klaviyo_welcome', 'shopify_generated']).nullable().index(),
   discount_shopify_id: field.text().nullable(),
+  snapshot_html_key: field.text().nullable(),
+  snapshot_html_url: field.text().nullable(),
+  snapshot_text_key: field.text().nullable(),
+  snapshot_text_url: field.text().nullable(),
+  snapshot_subject: field.text().nullable(),
+  snapshot_sha256: field.text().nullable().index(),
+  snapshot_saved_at: field.dateTime().nullable().index(),
+  snapshot_error: field.text().nullable(),
   skip_reason: field
     .enum([
       'shopify_order_found',

@@ -24,10 +24,16 @@ export interface RuntimeNotificationPort {
   }): Promise<{ status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: Error }>
 }
 
+export interface RuntimeFilePort {
+  upload(key: string, data: Buffer | ReadableStream, contentType?: string): Promise<{ key: string; url: string }>
+  getAsBuffer(key: string): Promise<Buffer>
+}
+
 export type RuntimeApp = {
   infra?: {
     db?: unknown
     notification?: unknown
+    file?: unknown
   }
   emit?: (eventName: string, data: unknown) => Promise<void>
   resolve?: (key: string) => unknown
@@ -44,6 +50,12 @@ export function resolveDatabase(app: RuntimeApp | undefined): RuntimeDatabasePor
 export function resolveNotification(app: RuntimeApp | undefined): RuntimeNotificationPort | null {
   const notification = app?.infra?.notification ?? safeResolve(app, 'INotificationPort')
   if (isNotificationPort(notification)) return notification
+  return null
+}
+
+export function resolveFile(app: RuntimeApp | undefined): RuntimeFilePort | null {
+  const file = app?.infra?.file ?? safeResolve(app, 'IFilePort')
+  if (isFilePort(file)) return file
   return null
 }
 
@@ -78,4 +90,13 @@ function isDatabasePort(value: unknown): value is RuntimeDatabasePort {
 
 function isNotificationPort(value: unknown): value is RuntimeNotificationPort {
   return !!value && typeof value === 'object' && typeof (value as RuntimeNotificationPort).send === 'function'
+}
+
+function isFilePort(value: unknown): value is RuntimeFilePort {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as RuntimeFilePort).upload === 'function' &&
+    typeof (value as RuntimeFilePort).getAsBuffer === 'function'
+  )
 }

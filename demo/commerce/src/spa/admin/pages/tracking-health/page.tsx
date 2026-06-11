@@ -48,6 +48,8 @@ interface TrackingHealthData {
     identity: 'contact' | 'email' | 'muid' | 'posthog' | 'anon'
     identity_source: string | null
     contact_id: string | null
+    email: string | null
+    email_status: 'resolved' | 'hashed' | 'unknown'
     matched_v1: boolean
     valid: boolean
     validation_errors: string[]
@@ -273,7 +275,7 @@ function LiveEventTable({
         <span className="text-sm text-muted-foreground">50 lignes par page</span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <Table className="min-w-[1260px]">
+        <Table className="min-w-[1380px]">
           <Table.Header>
             <Table.Row>
               <Table.Head>Reçu</Table.Head>
@@ -281,6 +283,7 @@ function LiveEventTable({
               <Table.Head>Raw</Table.Head>
               <Table.Head>Page</Table.Head>
               <Table.Head>Identité</Table.Head>
+              <Table.Head>Email</Table.Head>
               <Table.Head>Valeur</Table.Head>
               <Table.Head>Articles</Table.Head>
               <Table.Head>PostHog</Table.Head>
@@ -308,6 +311,17 @@ function LiveEventTable({
                       {event.identity_source ?? 'no identity'}
                     </span>
                   </div>
+                </Table.Cell>
+                <Table.Cell className="max-w-[220px]">
+                  {event.email ? (
+                    <span className="block truncate" title={event.email}>
+                      {event.email}
+                    </span>
+                  ) : event.email_status === 'hashed' ? (
+                    <Badge variant="outline">hashé</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
                 </Table.Cell>
                 <Table.Cell>
                   {event.value == null ? '-' : `${fmtNumber(event.value)} ${event.currency ?? ''}`}
@@ -347,7 +361,7 @@ function LiveEventTable({
             ))}
             {events.length === 0 ? (
               <Table.Row>
-                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={11}>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={12}>
                   Aucun event reçu.
                 </Table.Cell>
               </Table.Row>

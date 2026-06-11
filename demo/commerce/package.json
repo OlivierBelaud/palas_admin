@@ -16,6 +16,7 @@
   "dependencies": {
     "@mantajs/adapter-cache-upstash": "0.2.0-beta.6",
     "@mantajs/adapter-database-pg": "0.2.0-beta.6",
+    "@mantajs/adapter-file-vercel-blob": "0.2.0-beta.6",
     "@mantajs/adapter-h3": "0.2.0-beta.6",
     "@mantajs/adapter-jobs-vercel-cron": "0.2.0-beta.6",
     "@mantajs/adapter-logger-pino": "0.2.0-beta.6",
