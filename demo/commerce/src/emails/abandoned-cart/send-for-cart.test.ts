@@ -125,9 +125,9 @@ describe('sendAbandonedCartEmailForCart', () => {
     expect(sent[0].notification.headers?.['List-Unsubscribe']).toMatch(/\/api\/contact\/unsubscribe\?t=/)
   })
 
-  it('sends EN email when contact locale is en-US', async () => {
+  it('uses contact locale (en-US) only as last resort, when no nav/country signal', async () => {
     const out = await sendAbandonedCartEmailForCart({
-      cart: baseCart,
+      cart: { ...baseCart, country_code: null, browser_locale: null },
       contact: { locale: 'en-US' },
       notification,
       dryRun: false,
@@ -137,6 +137,36 @@ describe('sendAbandonedCartEmailForCart', () => {
     expect(out.sent).toBe(true)
     expect(out.locale).toBe('en')
     expect(out.subject).toBe(STRINGS.en.subject)
+  })
+
+  it('navigation language (browser_locale) wins over a stale contact locale', async () => {
+    const out = await sendAbandonedCartEmailForCart({
+      // FR shopper whose Shopify contact locale is wrongly en-US, but who
+      // browsed the store in French → email must be French.
+      cart: { ...baseCart, country_code: 'FR', browser_locale: 'fr-FR' },
+      contact: { locale: 'en-US' },
+      notification,
+      dryRun: false,
+      log,
+    })
+
+    expect(out.sent).toBe(true)
+    expect(out.locale).toBe('fr')
+    expect(out.subject).toBe(STRINGS.fr.subject)
+  })
+
+  it('FR country beats a stale en-US contact locale (the bug fix)', async () => {
+    const out = await sendAbandonedCartEmailForCart({
+      cart: { ...baseCart, country_code: 'FR', browser_locale: null },
+      contact: { locale: 'en-US' },
+      notification,
+      dryRun: false,
+      log,
+    })
+
+    expect(out.sent).toBe(true)
+    expect(out.locale).toBe('fr')
+    expect(out.subject).toBe(STRINGS.fr.subject)
   })
 
   it('falls back to country code when no contact locale', async () => {

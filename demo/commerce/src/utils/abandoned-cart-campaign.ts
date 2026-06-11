@@ -55,6 +55,7 @@ interface CandidateRow {
   email: string
   first_name: string | null
   country_code: string | null
+  browser_locale: string | null
   items: unknown
   total_price: number | null
   currency: string | null
@@ -473,7 +474,11 @@ async function renderMessage(opts: {
   discountGrant: DiscountGrant | null
 }): Promise<RenderedMessage> {
   const items = coerceItems(opts.cart.items)
-  const locale = pickLocale({ contactLocale: opts.cart.contact_locale, countryCode: opts.cart.country_code })
+  const locale = pickLocale({
+    browserLocale: opts.cart.browser_locale,
+    contactLocale: opts.cart.contact_locale,
+    countryCode: opts.cart.country_code,
+  })
   const recoveryUrl = buildRecoveryUrl(
     {
       checkout_token: opts.cart.checkout_token,
@@ -589,7 +594,7 @@ export async function runAbandonedCartCampaign(
   const candidates = await sql<CandidateRow[]>`
     SELECT
       c.id, c.cart_token, c.checkout_token, c.distinct_id, c.email,
-      c.first_name, c.country_code, c.items, c.total_price, c.currency,
+      c.first_name, c.country_code, c.browser_locale, c.items, c.total_price, c.currency,
       c.last_action_at, c.highest_stage,
       ct.id AS contact_id,
       ct.locale AS contact_locale,
@@ -720,6 +725,19 @@ export async function runAbandonedCartCampaign(
       result.skipped++
       continue
     }
+
+    // Persist the navigation language back onto the contact fiche, so the
+    // contact's locale reflects their last browse. Only when we actually have
+    // a navigation signal (`browser_locale`) — never overwrite from a
+    // country/default-derived guess, which would clobber a real signal.
+    if (c.contact_id && c.browser_locale) {
+      await sql`
+        UPDATE contacts
+        SET locale = ${rendered.locale}, updated_at = NOW()
+        WHERE id = ${c.contact_id}
+          AND lower(split_part(COALESCE(locale, ''), '-', 1)) IS DISTINCT FROM ${rendered.locale}`
+    }
+
     if (!messageId) {
       result.errors++
       continue

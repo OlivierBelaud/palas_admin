@@ -59,6 +59,9 @@ export interface NormalizedCartEvent {
   phone: string | null
   city: string | null
   country_code: string | null
+  // Navigation language: storefront display locale (store_locale super property)
+  // if present, else the browser language ($browser_language). See pick-locale.ts.
+  browser_locale: string | null
   shopify_customer_id: string | null
 
   // Cart snapshot (from properties.cart)
@@ -212,6 +215,13 @@ export function normalizeCartEvent(evt: PosthogEvent): NormalizedCartEvent | nul
     phone,
     city: ($set.city as string | null | undefined) ?? null,
     country_code: ($set.country as string | null | undefined) ?? null,
+    // Storefront display locale (super property) preferred, browser language
+    // as fallback. `$set.locale` is a last resort for older payloads.
+    browser_locale:
+      localeStr(props.store_locale) ??
+      localeStr(props.$browser_language) ??
+      localeStr(props.locale) ??
+      localeStr($set.locale),
     shopify_customer_id: shopifyCustomerId,
 
     items,
@@ -258,6 +268,7 @@ export function toIngestInput(evt: PosthogEvent): Record<string, unknown> | null
     phone: n.phone,
     city: n.city,
     country_code: n.country_code,
+    browser_locale: n.browser_locale,
     shopify_customer_id: n.shopify_customer_id,
     items: n.items,
     changed_items: n.changed_items,
@@ -283,6 +294,14 @@ function num(v: unknown): number | null {
   if (v == null) return null
   const n = Number(v)
   return Number.isFinite(n) ? n : null
+}
+
+// Trim a free-form locale-ish value to a bounded string, or null when absent.
+// pickLocale normalizes the base (fr/en) downstream, so we keep the raw value.
+function localeStr(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const trimmed = v.trim()
+  return trimmed.length > 0 ? trimmed.slice(0, 32) : null
 }
 
 // Re-export for convenience

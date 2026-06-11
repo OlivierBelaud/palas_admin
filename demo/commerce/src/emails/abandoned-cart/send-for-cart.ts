@@ -43,6 +43,7 @@ interface CartLike {
   email: string | null
   first_name: string | null
   country_code: string | null
+  browser_locale?: string | null
   items: unknown
   total_price: number | null
   currency: string | null
@@ -157,10 +158,11 @@ export async function sendAbandonedCartEmailForCart(
     }
   }
 
-  // 2. Resolve locale (explicit override > contact > country code) and recovery URL.
+  // 2. Resolve locale (explicit override > navigation language > country > contact) and recovery URL.
   const locale =
     input.localeOverride ??
     pickLocale({
+      browserLocale: cart.browser_locale ?? null,
       contactLocale: contact?.locale ?? null,
       countryCode: cart.country_code,
     })

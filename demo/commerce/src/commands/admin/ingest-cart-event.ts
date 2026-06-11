@@ -73,6 +73,7 @@ export default defineCommand({
     phone: z.string().nullable().optional(),
     city: z.string().nullable().optional(),
     country_code: z.string().nullable().optional(),
+    browser_locale: z.string().nullable().optional(),
     shopify_customer_id: z.string().nullable().optional(),
     items: z.array(CartItemSchema).default([]),
     changed_items: z.array(ChangedItemSchema).nullable().optional(),
@@ -109,6 +110,7 @@ export default defineCommand({
       phone?: string | null
       city?: string | null
       country_code?: string | null
+      browser_locale?: string | null
       shopify_customer_id?: string | null
       checkout_token?: string | null
       order_id?: string | null
@@ -179,6 +181,9 @@ export default defineCommand({
       phone: merge(input.phone, existing?.phone),
       city: merge(input.city, existing?.city),
       country_code: merge(input.country_code, existing?.country_code),
+      // Navigation language: refresh whenever a new event carries one (latest
+      // browse wins), else keep the previously captured value.
+      browser_locale: merge(input.browser_locale, existing?.browser_locale),
       shopify_customer_id: merge(input.shopify_customer_id, existing?.shopify_customer_id),
       checkout_token: merge(input.checkout_token, existing?.checkout_token),
       items: input.items,

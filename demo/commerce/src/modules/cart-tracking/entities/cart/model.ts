@@ -24,6 +24,11 @@ export default defineModel('Cart', {
   phone: field.text().nullable(),
   city: field.text().nullable(),
   country_code: field.text().nullable(),
+  // Navigation language captured from the storefront: the display locale the
+  // visitor browsed in if available, else the browser language
+  // ($browser_language). Set on ingestion, used (with country_code) to pick the
+  // abandoned-cart email language — see emails/abandoned-cart/pick-locale.ts.
+  browser_locale: field.text().nullable(),
   shopify_customer_id: field.text().nullable().index(),
 
   // ── Current cart state (snapshot, overwritten on every event) ──────

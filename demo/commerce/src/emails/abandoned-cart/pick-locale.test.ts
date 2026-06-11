@@ -4,12 +4,37 @@ import { pickLocale } from './pick-locale'
 describe('pickLocale', () => {
   const cases: Array<{
     name: string
-    input: { contactLocale?: string | null; countryCode?: string | null }
+    input: { browserLocale?: string | null; contactLocale?: string | null; countryCode?: string | null }
     expected: 'fr' | 'en'
   }> = [
-    { name: 'fr-FR contact locale', input: { contactLocale: 'fr-FR' }, expected: 'fr' },
-    { name: 'en-US contact locale', input: { contactLocale: 'en-US' }, expected: 'en' },
-    { name: 'en-GB contact locale', input: { contactLocale: 'en-GB' }, expected: 'en' },
+    // ── Navigation language wins over everything ──────────────────────
+    { name: 'browser fr-FR wins', input: { browserLocale: 'fr-FR' }, expected: 'fr' },
+    { name: 'browser en-US wins', input: { browserLocale: 'en-US' }, expected: 'en' },
+    {
+      name: 'browser fr beats wrong contact locale en-US',
+      input: { browserLocale: 'fr-FR', contactLocale: 'en-US' },
+      expected: 'fr',
+    },
+    {
+      name: 'browser fr beats non-FR country',
+      input: { browserLocale: 'fr', countryCode: 'US' },
+      expected: 'fr',
+    },
+    {
+      name: 'unknown browser base de-DE ignored, falls through to country FR',
+      input: { browserLocale: 'de-DE', countryCode: 'FR' },
+      expected: 'fr',
+    },
+    // ── THE BUG FIX: FR country must NOT get English from a stale contact locale ──
+    {
+      name: 'FR country beats wrong contact locale en-US (no nav signal)',
+      input: { contactLocale: 'en-US', countryCode: 'FR' },
+      expected: 'fr',
+    },
+    // ── Contact locale only as last resort ────────────────────────────
+    { name: 'fr-FR contact locale (last resort)', input: { contactLocale: 'fr-FR' }, expected: 'fr' },
+    { name: 'en-US contact locale (last resort)', input: { contactLocale: 'en-US' }, expected: 'en' },
+    { name: 'en-GB contact locale (last resort)', input: { contactLocale: 'en-GB' }, expected: 'en' },
     {
       name: 'unknown locale base de-DE falls back to country FR',
       input: { contactLocale: 'de-DE', countryCode: 'FR' },
