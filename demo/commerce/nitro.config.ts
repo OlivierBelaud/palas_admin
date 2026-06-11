@@ -29,7 +29,6 @@ export default {
     zod: dependency('zod'),
     pino: dependency('pino', [packageRoot('@mantajs/adapter-logger-pino')]),
     resend: dependency('resend'),
-    svix: dependency('svix'),
     standardwebhooks: dependency('standardwebhooks'),
     '@stablelib/base64': dependency('@stablelib/base64'),
     'fast-sha256': dependency('fast-sha256'),
