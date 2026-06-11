@@ -14,10 +14,11 @@ type NotificationPort = {
 type MantaRequest = Request & {
   app?: {
     infra?: {
-      db?: RawDb
+      db?: unknown
       notification?: NotificationPort
     }
   }
+  scope?: { resolve: <T>(key: string) => T }
   authContext?: { id?: string; type?: string }
   verifyAuth?: (context: string) => Promise<unknown>
 }
@@ -39,9 +40,13 @@ type InviteRow = {
 }
 
 function dbFrom(req: MantaRequest): RawDb {
-  const db = req.app?.infra?.db
+  const db = hasRawDb(req.app?.infra?.db) ? req.app?.infra?.db : req.scope?.resolve<RawDb>('IDatabasePort')
   if (!db) throw new MantaError('UNEXPECTED_STATE', 'Database unavailable')
   return db
+}
+
+function hasRawDb(value: unknown): value is RawDb {
+  return !!value && typeof value === 'object' && typeof (value as { raw?: unknown }).raw === 'function'
 }
 
 async function requireAdmin(req: MantaRequest): Promise<Response | null> {
