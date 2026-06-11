@@ -30,7 +30,7 @@ import {
   ShoppingCart,
 } from 'lucide-react'
 import * as React from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts'
 
 type ViewMode = 'overview' | 'emails' | 'checks'
@@ -666,13 +666,24 @@ function CasesTable({ rows }: { rows: CaseItem[] }) {
 }
 
 function MessagesTable({ rows }: { rows: MessageItem[] }) {
+  const navigate = useNavigate()
+
+  const openMessage = (id: string) => {
+    navigate(`/emails/${id}`)
+  }
+
+  const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>, id: string) => {
+    if ((event.target as HTMLElement).closest('a,button')) return
+    openMessage(id)
+  }
+
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-2">
-        <CardTitle>Emails envoyés, prévus et skippés</CardTitle>
+        <CardTitle>Emails de relance</CardTitle>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <table className="w-full min-w-[1340px] text-sm">
+        <table className="w-full min-w-[1440px] text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="py-2 pr-3 font-medium">Client</th>
@@ -686,13 +697,18 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
               <th className="py-2 pr-3 font-medium">Recovery</th>
               <th className="py-2 pr-3 font-medium">Sujet</th>
               <th className="py-2 text-right font-medium">CA</th>
+              <th className="py-2 pl-3 text-right font-medium">Action</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-b last:border-0">
+              <tr
+                key={row.id}
+                className="cursor-pointer border-b transition-colors hover:bg-muted/40 focus:bg-muted/40 focus:outline-none last:border-0"
+                onClick={(event) => handleRowClick(event, row.id)}
+              >
                 <td className="py-3 pr-3 font-medium">
-                  <Link to={`/paniers/${row.cart_id}`} className="hover:underline">
+                  <Link to={`/emails/${row.id}`} className="hover:underline">
                     {row.email}
                   </Link>
                 </td>
@@ -704,7 +720,14 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
                 <td className="py-3 pr-3">
                   <StatusBadge value={row.status} />
                 </td>
-                <td className="py-3 pr-3 text-muted-foreground">{humanize(row.case_type ?? '-')}</td>
+                <td className="py-3 pr-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-muted-foreground">{humanize(row.case_type ?? '-')}</span>
+                    <Link to={`/paniers/${row.cart_id}`} className="text-xs text-primary hover:underline">
+                      Panier
+                    </Link>
+                  </div>
+                </td>
                 <td className="py-3 pr-3">{formatDateTime(row.scheduled_for)}</td>
                 <td className="py-3 pr-3">{row.sent_at ? formatDateTime(row.sent_at) : '-'}</td>
                 <td className="py-3 pr-3">
@@ -726,6 +749,11 @@ function MessagesTable({ rows }: { rows: MessageItem[] }) {
                   </Link>
                 </td>
                 <td className="py-3 text-right">{row.recovered_amount > 0 ? fmtMoney(row.recovered_amount) : '-'}</td>
+                <td className="py-3 pl-3 text-right">
+                  <Link className="text-primary hover:underline" to={`/emails/${row.id}`}>
+                    Voir
+                  </Link>
+                </td>
               </tr>
             ))}
           </tbody>
