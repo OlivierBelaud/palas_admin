@@ -18,6 +18,7 @@ type MantaRequest = Request & {
       notification?: NotificationPort
     }
   }
+  authContext?: { id?: string; type?: string }
   verifyAuth?: (context: string) => Promise<unknown>
 }
 
@@ -44,8 +45,8 @@ function dbFrom(req: MantaRequest): RawDb {
 }
 
 async function requireAdmin(req: MantaRequest): Promise<Response | null> {
-  const auth = await req.verifyAuth?.('admin')
-  if (!auth) {
+  const auth = req.authContext ?? (await req.verifyAuth?.('admin').catch(() => null))
+  if (!auth || (typeof auth === 'object' && 'type' in auth && auth.type !== 'admin')) {
     return Response.json({ type: 'UNAUTHORIZED', message: 'Authentication required' }, { status: 401 })
   }
   return null
