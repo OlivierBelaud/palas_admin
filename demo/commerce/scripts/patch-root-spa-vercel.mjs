@@ -1,6 +1,9 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 
 const functionRegions = ['fra1']
+const require = createRequire(import.meta.url)
 
 const selfRedirects = new Map([
   ['^/login/?$', '/login'],
@@ -132,6 +135,53 @@ function patchOutputConfig() {
   writeJson(path, config)
 }
 
+function installFastFunction({ source, route }) {
+  const sourceDir = 'vercel-fast-functions'
+  const functionDir = `.vercel/output/functions/${route}.func`
+  rmSync(functionDir, { recursive: true, force: true })
+  mkdirSync(functionDir, { recursive: true })
+
+  cpSync(`${sourceDir}/${source}`, `${functionDir}/index.mjs`)
+  cpSync(`${sourceDir}/runtime.mjs`, `${functionDir}/runtime.mjs`)
+  writeJson(`${functionDir}/.vc-config.json`, {
+    handler: 'index.mjs',
+    launcherType: 'Nodejs',
+    shouldAddHelpers: false,
+    supportsResponseStreaming: true,
+    runtime: 'nodejs24.x',
+    regions: functionRegions,
+  })
+
+  const postgresDir = resolvePackageRoot('postgres')
+  mkdirSync(`${functionDir}/node_modules`, { recursive: true })
+  cpSync(postgresDir, `${functionDir}/node_modules/postgres`, { recursive: true })
+}
+
+function resolvePackageRoot(packageName) {
+  let dir = dirname(require.resolve(packageName))
+  while (dir !== dirname(dir)) {
+    const packageJsonPath = join(dir, 'package.json')
+    if (existsSync(packageJsonPath)) {
+      const packageJson = readJson(packageJsonPath)
+      if (packageJson.name === packageName) return dir
+    }
+    dir = dirname(dir)
+  }
+  throw new Error(`Unable to resolve package root for ${packageName}`)
+}
+
+function installFastFunctions() {
+  installFastFunction({
+    source: 'admin-system-dashboard.mjs',
+    route: 'api/cart-tracking/admin-system-dashboard',
+  })
+  installFastFunction({
+    source: 'admin-tracking-health.mjs',
+    route: 'api/cart-tracking/admin-tracking-health',
+  })
+}
+
 patchVercelJson()
 patchOutputConfig()
 patchFunctionConfigs()
+installFastFunctions()
