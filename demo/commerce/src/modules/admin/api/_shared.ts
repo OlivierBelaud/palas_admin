@@ -1,4 +1,4 @@
-import { hasRawDb, type RawDb } from '../../../utils/raw-db'
+import { hasRawDb, type RawDb, rawDbFromPool } from '../../../utils/raw-db'
 
 export type AdminApiRequest = Request & {
   app?: {
@@ -13,9 +13,13 @@ export type AdminApiRequest = Request & {
 
 export function dbFrom(req: AdminApiRequest): RawDb {
   const direct = req.app?.infra?.db
+  const directPool = rawDbFromPool(direct)
+  if (directPool) return directPool
   if (hasRawDb(direct)) return direct
 
   const scoped = req.scope?.resolve<unknown>('IDatabasePort')
+  const scopedPool = rawDbFromPool(scoped)
+  if (scopedPool) return scopedPool
   if (hasRawDb(scoped)) return scoped
 
   throw new MantaError('UNEXPECTED_STATE', 'Database unavailable')
