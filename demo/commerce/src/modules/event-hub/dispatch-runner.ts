@@ -30,6 +30,13 @@ type FlushDestinationDispatchesInput = {
   signal?: AbortSignal
 }
 
+type FlushDispatchLogByKeyInput = {
+  db: RawDispatchDb
+  connector: DestinationConnector
+  eventDestinationKey: string
+  signal?: AbortSignal
+}
+
 function parsePayload(value: DispatchRow['request_payload']): Record<string, unknown> | null {
   if (!value) return null
   if (typeof value === 'string') {
@@ -55,25 +62,13 @@ function countResult(status: DispatchStatus, counters: FlushDestinationDispatche
   else counters.error += 1
 }
 
-export async function flushDestinationDispatches({
-  db,
-  connector,
-  batchLimit,
-  signal,
-}: FlushDestinationDispatchesInput): Promise<FlushDestinationDispatchesResult> {
-  const configured = connector.isConfigured()
-  const rows = await db.raw<DispatchRow>(
-    `SELECT id, event_id, canonical_event_name, status, attempt_count, request_payload
-       FROM dispatch_logs
-      WHERE destination = $1
-        AND ($2::text IS NULL OR canonical_event_name = $2)
-        AND status = ANY($3::text[])
-        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-      ORDER BY event_received_at ASC
-      LIMIT $4`,
-    [connector.destination, connector.eventNameFilter ?? null, connector.pendingStatuses, batchLimit],
-  )
-
+async function flushRows(
+  rows: DispatchRow[],
+  db: RawDispatchDb,
+  connector: DestinationConnector,
+  configured: boolean,
+  signal?: AbortSignal,
+): Promise<FlushDestinationDispatchesResult> {
   const counters: FlushDestinationDispatchesResult = {
     scanned: rows.length,
     sent: 0,
@@ -172,4 +167,47 @@ export async function flushDestinationDispatches({
   }
 
   return counters
+}
+
+export async function flushDestinationDispatches({
+  db,
+  connector,
+  batchLimit,
+  signal,
+}: FlushDestinationDispatchesInput): Promise<FlushDestinationDispatchesResult> {
+  const configured = connector.isConfigured()
+  const rows = await db.raw<DispatchRow>(
+    `SELECT id, event_id, canonical_event_name, status, attempt_count, request_payload
+       FROM dispatch_logs
+      WHERE destination = $1
+        AND ($2::text IS NULL OR canonical_event_name = $2)
+        AND status = ANY($3::text[])
+        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+      ORDER BY event_received_at ASC
+      LIMIT $4`,
+    [connector.destination, connector.eventNameFilter ?? null, connector.pendingStatuses, batchLimit],
+  )
+
+  return flushRows(rows, db, connector, configured, signal)
+}
+
+export async function flushDispatchLogByEventDestinationKey({
+  db,
+  connector,
+  eventDestinationKey,
+  signal,
+}: FlushDispatchLogByKeyInput): Promise<FlushDestinationDispatchesResult> {
+  const configured = connector.isConfigured()
+  const rows = await db.raw<DispatchRow>(
+    `SELECT id, event_id, canonical_event_name, status, attempt_count, request_payload
+       FROM dispatch_logs
+      WHERE destination = $1
+        AND event_destination_key = $2
+        AND status = ANY($3::text[])
+        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+      LIMIT 1`,
+    [connector.destination, eventDestinationKey, connector.pendingStatuses],
+  )
+
+  return flushRows(rows, db, connector, configured, signal)
 }

@@ -1,6 +1,7 @@
 import { isGa4CanonicalEventName } from '../../modules/event-hub/canonical-contract'
 import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
-import { mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
+import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
+import { ga4DestinationConnector, mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
 import {
   compareIdentityResolvers,
@@ -28,7 +29,7 @@ function isDuplicateError(err: unknown): boolean {
 
 export default defineCommand({
   name: 'recordCanonicalEventLog',
-  description: 'Shadow-normalize one inbound PostHog event into the Event Hub hot log. No dispatch side effects.',
+  description: 'Normalize one inbound PostHog event into Event Hub and immediately dispatch ready GA4 payloads.',
   input: z.object({
     event: z.record(z.unknown()),
     posthog_forwarded: z.boolean().optional(),
@@ -104,6 +105,26 @@ export default defineCommand({
         })
       } catch (err) {
         if (!isDuplicateError(err)) throw err
+      }
+
+      if (ga4.ok) {
+        await step.action('flush-live-ga4-dispatch', {
+          invoke: async (_i: unknown, ctx) => {
+            const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
+            if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
+
+            return flushDispatchLogByEventDestinationKey({
+              db,
+              connector: ga4DestinationConnector,
+              eventDestinationKey: `${canonical.event_id}:ga4`,
+              signal: ctx.signal,
+            })
+          },
+          compensate: async () => {
+            // Dispatch rows are idempotent by event_destination_key; the cron
+            // retry path resumes pending/retry rows after partial progress.
+          },
+        })({})
       }
     }
 

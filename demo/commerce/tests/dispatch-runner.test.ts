@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { DestinationConnector } from '../src/modules/event-hub/destination-connector'
-import { flushDestinationDispatches, type RawDispatchDb } from '../src/modules/event-hub/dispatch-runner'
+import {
+  flushDestinationDispatches,
+  flushDispatchLogByEventDestinationKey,
+  type RawDispatchDb,
+} from '../src/modules/event-hub/dispatch-runner'
 
 function makeDb(rows: Array<Record<string, unknown>>) {
   const updates: Array<{ query: string; params?: unknown[] }> = []
@@ -115,5 +119,28 @@ describe('Event Hub dispatch runner', () => {
       JSON.stringify({ error: 'rate_limited' }),
       2,
     ])
+  })
+
+  it('flushes a specific live dispatch row by event destination key', async () => {
+    const { db, updates } = makeDb([
+      {
+        id: 'row_live',
+        event_id: 'evt_live',
+        canonical_event_name: 'page_view',
+        status: 'pending',
+        attempt_count: 0,
+        request_payload: { client_id: 'muid_1', events: [{ name: 'page_view', params: {} }] },
+      },
+    ])
+
+    const result = await flushDispatchLogByEventDestinationKey({
+      db,
+      connector: connector(),
+      eventDestinationKey: 'evt_live:ga4',
+    })
+
+    expect(result).toMatchObject({ scanned: 1, sent: 1, configured: true })
+    expect(updates[0].params).toEqual(['row_live', 1])
+    expect(updates[1].params).toEqual(['row_live', 'sent', 204, null, null, JSON.stringify({}), null])
   })
 })

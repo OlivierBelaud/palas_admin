@@ -6,7 +6,8 @@ import {
   validateCanonicalEvent,
   validationErrorsForSupportedDestinations,
 } from '../../canonical-contract'
-import { ga4ContextFromHeaders, mapCanonicalToGa4 } from '../../ga4-connector'
+import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../dispatch-runner'
+import { ga4ContextFromHeaders, ga4DestinationConnector, mapCanonicalToGa4 } from '../../ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../google-ads-connector'
 
 const COOKIE_NAME = 'muid'
@@ -38,6 +39,9 @@ const EVENT_NAME_MAP: Record<string, string> = {
 }
 
 type JsonRecord = Record<string, unknown>
+type RuntimeSql = {
+  unsafe<T = JsonRecord>(query: string, params?: unknown[]): Promise<T[]>
+}
 type ConsentState = {
   analyticsStorage: boolean
   adStorage: boolean
@@ -136,6 +140,12 @@ function num(value: unknown): number | null {
 
 function obj(value: unknown): JsonRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {}
+}
+
+function dispatchDb(sql: RuntimeSql): RawDispatchDb {
+  return {
+    raw: (query, params) => sql.unsafe(query, params),
+  }
 }
 
 function arr(value: unknown): unknown[] {
@@ -595,11 +605,26 @@ export async function POST(req: Request) {
     )
   }
 
+  const liveDispatch: Record<string, unknown> = {}
+  if (ga4.ok && isGa4CanonicalEventName(eventName)) {
+    liveDispatch.ga4 = await flushDispatchLogByEventDestinationKey({
+      db: dispatchDb(sql),
+      connector: ga4DestinationConnector,
+      eventDestinationKey: `${eventId}:ga4`,
+    })
+  }
+
   if (identity.muid) {
     headers['Set-Cookie'] = cookieHeader(req, identity.muid)
   }
   return Response.json(
-    { ok: true, event_id: eventId, event_name: eventName, received_at: eventTime.toISOString() },
+    {
+      ok: true,
+      event_id: eventId,
+      event_name: eventName,
+      received_at: eventTime.toISOString(),
+      live_dispatch: liveDispatch,
+    },
     { headers },
   )
 }
