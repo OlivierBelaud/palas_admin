@@ -21,7 +21,7 @@
     },
     {
       "source": "/admin",
-      "destination": "/",
+      "destination": "/dashboard",
       "permanent": false
     },
     {
@@ -51,6 +51,10 @@
     },
     {
       "path": "/api/crons/flush-ga4-dispatches",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crons/flush-google-ads-dispatches",
       "schedule": "* * * * *"
     },
     {

@@ -3,6 +3,7 @@ import { type RuntimeApp, resolveSql } from '../../../../utils/manta-runtime'
 import { verifyContactToken } from '../../../../utils/manta-uid'
 import { validateCanonicalEvent, validationErrorsForSupportedDestinations } from '../../canonical-contract'
 import { ga4ContextFromHeaders, mapCanonicalToGa4 } from '../../ga4-connector'
+import { mapCanonicalToGoogleAds } from '../../google-ads-connector'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
@@ -254,6 +255,15 @@ function pageTypeFromUrl(url: string | null): string | null {
   return 'other'
 }
 
+function queryParamFromUrl(url: string | null, key: string): string | null {
+  if (!url) return null
+  try {
+    return str(new URL(url).searchParams.get(key), 512)
+  } catch {
+    return null
+  }
+}
+
 function summarizePayload(
   body: JsonRecord,
   eventName: string,
@@ -288,6 +298,8 @@ function summarizePayload(
     str(pageData.url) ||
     str(body.url) ||
     str(props.url)
+  const user = obj(body.user)
+  const userData = obj(body.user_data)
   const itemCount =
     num(cart.total_items) ??
     num(cart.item_count) ??
@@ -306,7 +318,14 @@ function summarizePayload(
       ga_client_id: str(sourceContext.ga_client_id, 128),
       fbp: str(sourceContext.fbp, 256),
       fbc: str(sourceContext.fbc, 256),
-      gclid: str(sourceContext.gclid, 512),
+      gclid:
+        str(user.gclid, 512) ||
+        str(userData.gclid, 512) ||
+        queryParamFromUrl(url, 'gclid') ||
+        str(sourceContext.gclid, 512),
+      gbraid: str(user.gbraid, 512) || str(userData.gbraid, 512) || queryParamFromUrl(url, 'gbraid'),
+      wbraid: str(user.wbraid, 512) || str(userData.wbraid, 512) || queryParamFromUrl(url, 'wbraid'),
+      phone_sha256: str(user.phone_sha256, 128) || str(userData.phone_sha256, 128),
       user_agent: str(sourceContext.user_agent, 1024),
       client_ip: str(sourceContext.client_ip, 256),
     },
@@ -400,6 +419,7 @@ export async function POST(req: Request) {
   })
   normalized.validation = validation
   const ga4 = mapCanonicalToGa4(eventName, normalized)
+  const googleAds = mapCanonicalToGoogleAds(eventName, normalized)
   const errors = Array.from(
     new Set([...validationErrorsForSupportedDestinations(validation), ...(ga4.ok ? [] : ga4.errors)]),
   )
@@ -480,6 +500,46 @@ export async function POST(req: Request) {
       JSON.stringify({ ...ga4.metadata, ready: ga4.ok, errors: ga4.ok ? [] : ga4.errors }),
     ],
   )
+
+  if (googleAds.supported) {
+    await sql.unsafe(
+      `INSERT INTO dispatch_logs (
+         id, event_destination_key, event_id, canonical_event_name, source_event_name,
+         destination, status, event_received_at, first_attempt_at, last_attempt_at,
+         next_attempt_at, sent_at, attempt_count, http_status, error_code,
+         error_message, request_payload, response_payload, metadata, created_at, updated_at
+       ) VALUES (
+         gen_random_uuid(), $1, $2, $3, $4,
+         'google_ads', $5, $6, NULL, NULL,
+         $7, NULL, 0, NULL, $8,
+         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+       )
+       ON CONFLICT (event_destination_key) DO UPDATE SET
+         canonical_event_name = EXCLUDED.canonical_event_name,
+         source_event_name = EXCLUDED.source_event_name,
+         status = EXCLUDED.status,
+         event_received_at = EXCLUDED.event_received_at,
+         next_attempt_at = EXCLUDED.next_attempt_at,
+         error_code = EXCLUDED.error_code,
+         error_message = EXCLUDED.error_message,
+         request_payload = EXCLUDED.request_payload,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      [
+        `${eventId}:google_ads`,
+        eventId,
+        eventName,
+        str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
+        googleAds.ok ? 'pending' : 'invalid',
+        eventTime,
+        googleAds.ok ? new Date() : null,
+        googleAds.ok ? null : (googleAds.errors[0] ?? 'google_ads_invalid_payload'),
+        googleAds.ok ? null : googleAds.errors.join(', '),
+        JSON.stringify(googleAds.payload),
+        JSON.stringify({ ...googleAds.metadata, ready: googleAds.ok, errors: googleAds.ok ? [] : googleAds.errors }),
+      ],
+    )
+  }
 
   if (identity.muid) {
     headers['Set-Cookie'] = cookieHeader(req, identity.muid)
