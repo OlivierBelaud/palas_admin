@@ -9,7 +9,7 @@ export default defineSpa({
     {
       icon: 'LayoutDashboard',
       label: 'Dashboard',
-      to: '/',
+      to: '/dashboard',
     },
     {
       icon: 'ShoppingCart',

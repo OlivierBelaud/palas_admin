@@ -1,4 +1,4 @@
-import { useQuery } from '@mantajs/sdk'
+import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@mantajs/ui'
 import * as React from 'react'
 
@@ -92,21 +92,70 @@ interface TrackingHealthData {
 const HOURS_OPTIONS = [1, 4, 12, 24]
 const PAGE_SIZE = 50
 const LIVE_STALE_MS = 2 * 60 * 1000
+const REFRESH_INTERVAL_MS = 15_000
 const kpiGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }
 
+function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAdapter']) {
+  return {
+    'Content-Type': 'application/json',
+    ...authAdapter.getAuthHeaders(),
+  }
+}
+
 export default function TrackingHealthPage() {
+  const { authAdapter } = useDashboardContext()
   const [hours, setHours] = React.useState(4)
   const [eventName, setEventName] = React.useState('all')
   const [pageIndex, setPageIndex] = React.useState(0)
+  const [data, setData] = React.useState<TrackingHealthData | null>(null)
+  const [error, setError] = React.useState<Error | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
   const params = React.useMemo(
     () => ({ hours, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE, event_name: eventName }),
     [hours, eventName, pageIndex],
   )
-  const query = useQuery<TrackingHealthData>('tracking-health', params, {
-    staleTime: 0,
-    refetchInterval: 1000,
-  })
-  const data = query.data
+  const fetchTrackingHealth = React.useCallback(async () => {
+    const search = new URLSearchParams()
+    search.set('hours', String(params.hours))
+    search.set('limit', String(params.limit))
+    search.set('offset', String(params.offset))
+    search.set('event_name', params.event_name)
+
+    const res = await window.fetch(`/api/admin/tracking-health?${search.toString()}`, {
+      headers: authHeaders(authAdapter),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new MantaError('UNEXPECTED_STATE', body.message ?? 'Impossible de charger le tracking health')
+    }
+    const body = (await res.json()) as { data?: TrackingHealthData }
+    if (!body.data) throw new MantaError('UNEXPECTED_STATE', 'Réponse tracking health invalide')
+    return body.data
+  }, [authAdapter, params])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        const nextData = await fetchTrackingHealth()
+        if (!cancelled) {
+          setData(nextData)
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err : new Error(String(err)))
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    void run()
+    const interval = window.setInterval(() => void run(), REFRESH_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [fetchTrackingHealth])
 
   const eventOptions = React.useMemo(() => {
     const names = new Set(data?.event_types.map((row) => row.event_name) ?? [])
@@ -124,7 +173,7 @@ export default function TrackingHealthPage() {
     setPageIndex(0)
   }
 
-  const live = getLiveState(data, query.isError)
+  const live = getLiveState(data ?? undefined, Boolean(error))
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -171,8 +220,8 @@ export default function TrackingHealthPage() {
         </div>
       </div>
 
-      {query.isLoading ? <LoadingState /> : null}
-      {query.isError ? <ErrorState message={query.error.message} /> : null}
+      {isLoading ? <LoadingState /> : null}
+      {error ? <ErrorState message={error.message} /> : null}
       {data ? (
         <>
           <Kpis data={data} />

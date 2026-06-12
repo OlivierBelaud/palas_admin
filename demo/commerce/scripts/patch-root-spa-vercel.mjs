@@ -7,6 +7,7 @@ const selfRedirects = new Map([
 ])
 
 const legacyAdminPaths = [
+  'dashboard',
   'paniers',
   'paniers-abandonnes',
   'paniers-abandonnes/emails',
@@ -30,14 +31,14 @@ const legacyAdminOutputRedirects = [
     status: 307,
     headers: { Location: `/${path}` },
   })),
-  { src: '^/admin/?$', status: 307, headers: { Location: '/' } },
+  { src: '^/admin/?$', status: 307, headers: { Location: '/dashboard' } },
 ]
 
 const legacyAdminVercelRedirects = [
   { source: '/admin/login', destination: '/login', permanent: false },
   { source: '/admin/reset-password', destination: '/reset-password', permanent: false },
   { source: '/admin/accept-invite', destination: '/accept-invite', permanent: false },
-  { source: '/admin', destination: '/', permanent: false },
+  { source: '/admin', destination: '/dashboard', permanent: false },
   { source: '/admin/:path*', destination: '/:path*', permanent: false },
 ]
 

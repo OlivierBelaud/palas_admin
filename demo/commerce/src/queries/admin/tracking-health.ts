@@ -1,3 +1,5 @@
+import { type RawDb, resolveRawDb } from '../../utils/raw-db'
+
 type EventLogRow = {
   id: string
   event_id: string
@@ -12,6 +14,7 @@ type EventLogRow = {
   valid: boolean
   validation_errors: string[] | null
   payload_normalized: Record<string, unknown> | null
+  total_count?: string | number
 }
 
 type DispatchLogRow = {
@@ -41,6 +44,29 @@ type CartEmailRow = {
   updated_at: string | Date | null
 }
 
+type EventTypeRow = {
+  event_name: string
+  count: string | number
+  valid: string | number
+  invalid: string | number
+  latest_at: string | Date | null
+}
+
+type StatRow = {
+  total: string | number
+  valid: string | number
+  identified: string | number
+  ga4_ready: string | number
+  posthog_forwarded: string | number
+  consent_analytics_granted: string | number
+  consent_ads_granted: string | number
+}
+
+type StatusCountRow = {
+  status: string
+  count: string | number
+}
+
 type DestinationSummary = {
   destination: string
   supported: boolean
@@ -49,7 +75,7 @@ type DestinationSummary = {
 }
 
 export default defineQuery({
-  name: 'tracking-health',
+  name: 'tracking-health-loader',
   description: 'Live Event Hub hot log for the last 24 hours',
   input: z.object({
     hours: z.number().int().positive().max(24).default(4),
@@ -57,354 +83,344 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
     event_name: z.string().optional(),
   }),
-  handler: async (input, { query }) => {
-    const hours = input.hours ?? 4
-    const limit = input.limit ?? 50
-    const offset = input.offset ?? 0
-    const to = new Date()
-    const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
-    const baseFilters: Record<string, unknown> = {
-      received_at: { $gte: from.toISOString(), $lte: to.toISOString() },
-    }
-    const filters: Record<string, unknown> = { ...baseFilters }
-    if (input.event_name && input.event_name !== 'all') filters.event_name = input.event_name
-
-    const fields = [
-      'id',
-      'event_id',
-      'event_name',
-      'source',
-      'received_at',
-      'page_type',
-      'market',
-      'identity_muid',
-      'identity_email_sha256',
-      'distinct_id',
-      'valid',
-      'validation_errors',
-      'payload_normalized',
-    ]
-
-    const [rows, total] = (await query.graphAndCount({
-      entity: 'eventLog',
-      filters,
-      fields,
-      sort: { received_at: 'desc' },
-      pagination: { limit, offset },
-    })) as unknown as [EventLogRow[], number]
-    const pageEventIds = rows.map((row) => row.event_id).filter(Boolean)
-    const pageDispatchRows =
-      pageEventIds.length > 0
-        ? ((await query.graph({
-            entity: 'dispatchLog',
-            filters: { destination: 'ga4', event_id: { $in: pageEventIds } },
-            fields: [
-              'event_id',
-              'destination',
-              'status',
-              'http_status',
-              'error_code',
-              'error_message',
-              'attempt_count',
-              'sent_at',
-              'last_attempt_at',
-            ],
-            sort: { event_received_at: 'desc' },
-            pagination: { limit: Math.max(limit, pageEventIds.length), offset: 0 },
-          })) as unknown as DispatchLogRow[])
-        : []
-    const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
-    const contactIds = uniqueStrings(
-      rows
-        .map((row) => {
-          const payload = row.payload_normalized ?? {}
-          const user = (payload.user ?? {}) as Record<string, unknown>
-          return typeof user.contact_id === 'string' ? user.contact_id : null
-        })
-        .filter(Boolean) as string[],
-    )
-    const distinctIds = uniqueStrings(rows.map((row) => row.distinct_id).filter(Boolean) as string[])
-    const cartTokens = uniqueStrings(
-      rows
-        .map((row) => {
-          const payload = row.payload_normalized ?? {}
-          const cart = (payload.cart ?? {}) as Record<string, unknown>
-          return typeof cart.token === 'string' ? cart.token : null
-        })
-        .filter(Boolean) as string[],
-    )
-    const checkoutTokens = uniqueStrings(
-      rows
-        .map((row) => {
-          const payload = row.payload_normalized ?? {}
-          const checkout = (payload.checkout ?? {}) as Record<string, unknown>
-          return typeof checkout.token === 'string' ? checkout.token : null
-        })
-        .filter(Boolean) as string[],
-    )
-    const [contactsByIdRows, contactsByDistinctRows, cartsByTokenRows, cartsByCheckoutRows, cartsByDistinctRows] =
-      await Promise.all([
-        contactIds.length > 0
-          ? (query.graph({
-              entity: 'contact',
-              filters: { id: { $in: contactIds } },
-              fields: ['id', 'email', 'distinct_id'],
-              pagination: { limit: Math.max(contactIds.length, 1), offset: 0 },
-            }) as Promise<ContactRow[]>)
-          : Promise.resolve([]),
-        distinctIds.length > 0
-          ? (query.graph({
-              entity: 'contact',
-              filters: { distinct_id: { $in: distinctIds } },
-              fields: ['id', 'email', 'distinct_id'],
-              pagination: { limit: Math.max(distinctIds.length, 1), offset: 0 },
-            }) as Promise<ContactRow[]>)
-          : Promise.resolve([]),
-        cartTokens.length > 0
-          ? (query.graph({
-              entity: 'cart',
-              filters: { cart_token: { $in: cartTokens } },
-              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
-              pagination: { limit: Math.max(cartTokens.length, 1), offset: 0 },
-            }) as Promise<CartEmailRow[]>)
-          : Promise.resolve([]),
-        checkoutTokens.length > 0
-          ? (query.graph({
-              entity: 'cart',
-              filters: { checkout_token: { $in: checkoutTokens } },
-              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
-              pagination: { limit: Math.max(checkoutTokens.length, 1), offset: 0 },
-            }) as Promise<CartEmailRow[]>)
-          : Promise.resolve([]),
-        distinctIds.length > 0
-          ? (query.graph({
-              entity: 'cart',
-              filters: { distinct_id: { $in: distinctIds } },
-              fields: ['id', 'cart_token', 'checkout_token', 'distinct_id', 'email', 'updated_at'],
-              sort: { updated_at: 'desc' },
-              pagination: { limit: 1000, offset: 0 },
-            }) as Promise<CartEmailRow[]>)
-          : Promise.resolve([]),
-      ])
-    const contactById = new Map(contactsByIdRows.map((row) => [row.id, row]))
-    const contactByDistinctId = new Map(
-      contactsByDistinctRows.filter((row) => row.distinct_id).map((row) => [row.distinct_id as string, row]),
-    )
-    const cartEmailByToken = firstEmailBy(cartsByTokenRows, 'cart_token')
-    const cartEmailByCheckoutToken = firstEmailBy(cartsByCheckoutRows, 'checkout_token')
-    const cartEmailByDistinctId = firstEmailBy(cartsByDistinctRows, 'distinct_id')
-
-    const typeRows = (await query.graph({
-      entity: 'eventLog',
-      filters: baseFilters,
-      fields,
-      sort: { received_at: 'desc' },
-      pagination: { limit: 10000, offset: 0 },
-    })) as unknown as EventLogRow[]
-
-    const statRows =
-      input.event_name && input.event_name !== 'all'
-        ? ((await query.graph({
-            entity: 'eventLog',
-            filters,
-            fields,
-            sort: { received_at: 'desc' },
-            pagination: { limit: 10000, offset: 0 },
-          })) as unknown as EventLogRow[])
-        : typeRows
-    const dispatchStatRows = (await query.graph({
-      entity: 'dispatchLog',
-      filters: {
-        destination: 'ga4',
-        event_received_at: { $gte: from.toISOString(), $lte: to.toISOString() },
-      },
-      fields: ['event_id', 'status', 'http_status', 'error_code', 'attempt_count', 'sent_at', 'last_attempt_at'],
-      sort: { event_received_at: 'desc' },
-      pagination: { limit: 10000, offset: 0 },
-    })) as unknown as DispatchLogRow[]
-
-    const byType = new Map<
-      string,
-      { event_name: string; count: number; valid: number; invalid: number; latest_at: string | null }
-    >()
-    let identified = 0
-    let valid = 0
-    let ga4Ready = 0
-    let posthogForwarded = 0
-    let analyticsConsentGranted = 0
-    let analyticsConsentDenied = 0
-    let adsConsentGranted = 0
-    let adsConsentDenied = 0
-    const ga4StatusCounts = countBy(dispatchStatRows, (row) => row.status)
-    const latestAt = typeRows[0]?.received_at ? new Date(typeRows[0].received_at).toISOString() : null
-
-    for (const row of statRows) {
-      const payload = row.payload_normalized ?? {}
-      const user = (payload.user ?? {}) as Record<string, unknown>
-      const consent = (payload.consent ?? {}) as Record<string, unknown>
-      const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
-      const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
-      const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
-
-      if (user.contact_id || row.identity_email_sha256 || row.identity_muid || row.distinct_id) identified += 1
-      if (row.valid) valid += 1
-      if (ga4.ready === true) ga4Ready += 1
-      if (posthog.status === 'forwarded') posthogForwarded += 1
-      if (consent.analytics_storage === true) analyticsConsentGranted += 1
-      else analyticsConsentDenied += 1
-      if (consent.ad_storage === true && consent.ad_user_data === true && consent.ad_personalization === true) {
-        adsConsentGranted += 1
-      } else {
-        adsConsentDenied += 1
-      }
-    }
-
-    for (const row of typeRows) {
-      const item = byType.get(row.event_name) ?? {
-        event_name: row.event_name,
-        count: 0,
-        valid: 0,
-        invalid: 0,
-        latest_at: null,
-      }
-      item.count += 1
-      if (row.valid) item.valid += 1
-      else item.invalid += 1
-      const receivedAt = new Date(row.received_at).toISOString()
-      if (!item.latest_at || receivedAt > item.latest_at) item.latest_at = receivedAt
-      byType.set(row.event_name, item)
-    }
-
-    const events = rows.map((row) => {
-      const payload = row.payload_normalized ?? {}
-      const ecommerce = (payload.ecommerce ?? {}) as Record<string, unknown>
-      const cart = (payload.cart ?? {}) as Record<string, unknown>
-      const checkout = (payload.checkout ?? {}) as Record<string, unknown>
-      const user = (payload.user ?? {}) as Record<string, unknown>
-      const consent = (payload.consent ?? {}) as Record<string, unknown>
-      const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
-      const validation = (payload.validation ?? {}) as Record<string, unknown>
-      const validationDestinations = (validation.destinations ?? {}) as Record<string, unknown>
-      const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
-      const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
-      const ga4Log = dispatchByEventId.get(row.event_id)
-      const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
-      const cartToken = typeof cart.token === 'string' ? cart.token : null
-      const checkoutToken = typeof checkout.token === 'string' ? checkout.token : null
-      const directEmail = typeof user.email === 'string' ? user.email : null
-      const email =
-        directEmail ??
-        (contactId ? contactById.get(contactId)?.email : null) ??
-        (cartToken ? cartEmailByToken.get(cartToken) : null) ??
-        (checkoutToken ? cartEmailByCheckoutToken.get(checkoutToken) : null) ??
-        (row.distinct_id ? cartEmailByDistinctId.get(row.distinct_id) : null) ??
-        (row.distinct_id ? contactByDistinctId.get(row.distinct_id)?.email : null) ??
-        null
-      const hasEmailHash = Boolean(row.identity_email_sha256 || user.email_sha256)
-      return {
-        id: row.id,
-        event_id: row.event_id,
-        event_name: row.event_name,
-        raw_event_name: typeof payload.raw_event_name === 'string' ? payload.raw_event_name : row.event_name,
-        source: row.source,
-        received_at: new Date(row.received_at).toISOString(),
-        page_type: row.page_type,
-        market: row.market,
-        identity: user.contact_id
-          ? 'contact'
-          : row.identity_email_sha256
-            ? 'email'
-            : row.identity_muid
-              ? 'muid'
-              : row.distinct_id
-                ? 'posthog'
-                : 'anon',
-        profile_tracking_id:
-          contactId ??
-          row.identity_muid ??
-          (row.distinct_id ? `posthog:${row.distinct_id}` : null) ??
-          (row.identity_email_sha256 ? `sha256:${row.identity_email_sha256}` : null),
-        identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
-        contact_id: contactId,
-        email: email ?? null,
-        email_status: email ? 'resolved' : hasEmailHash ? 'hashed' : 'unknown',
-        matched_v1: user.matched_v1 === true,
-        consent: {
-          analytics_storage: consent.analytics_storage === true,
-          ad_storage: consent.ad_storage === true,
-          ad_user_data: consent.ad_user_data === true,
-          ad_personalization: consent.ad_personalization === true,
-          source: typeof consent.source === 'string' ? consent.source : 'unknown',
-        },
-        valid: row.valid,
-        validation_errors: row.validation_errors ?? [],
-        value: ecommerce.value ?? null,
-        currency: ecommerce.currency ?? null,
-        item_count: ecommerce.item_count ?? null,
-        cart_token: cartToken,
-        checkout_token: checkoutToken,
-        shopify_order_id: checkout.shopify_order_id ?? null,
-        posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
-        posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
-        ga4_ready: ga4Log ? ['pending', 'sending', 'sent', 'retry'].includes(ga4Log.status) : ga4.ready === true,
-        ga4_status: ga4Log?.status ?? (typeof ga4.status === 'string' ? ga4.status : 'not_configured'),
-        ga4_http_status: ga4Log?.http_status ?? null,
-        ga4_error_code: ga4Log?.error_code ?? null,
-        ga4_error_message: ga4Log?.error_message ?? null,
-        ga4_attempt_count: ga4Log?.attempt_count ?? 0,
-        ga4_sent_at: ga4Log?.sent_at ? new Date(ga4Log.sent_at).toISOString() : null,
-        ad_destinations: ['meta_capi', 'google_ads', 'tiktok'].map((destination) =>
-          destinationSummary(destination, validationDestinations[destination]),
-        ),
-      }
-    })
-
-    return {
-      meta: {
-        range: { from: from.toISOString(), to: to.toISOString() },
-        generated_at: new Date().toISOString(),
-        latest_event_at: latestAt,
-        retention_hours: 24,
-        pagination: {
-          limit,
-          offset,
-          total,
-          page: Math.floor(offset / limit) + 1,
-          page_count: Math.max(1, Math.ceil(total / limit)),
-        },
-      },
-      kpis: {
-        total,
-        valid,
-        invalid: total - valid,
-        identified,
-        anonymous: total - identified,
-        ga4_ready: ga4Ready,
-        ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
-        ga4_sent: countStatus(ga4StatusCounts, 'sent'),
-        ga4_invalid: countStatus(ga4StatusCounts, 'invalid'),
-        ga4_error:
-          countStatus(ga4StatusCounts, 'error') +
-          countStatus(ga4StatusCounts, 'not_configured') +
-          countStatus(ga4StatusCounts, 'sending'),
-        posthog_forwarded: posthogForwarded,
-        consent_analytics_granted: analyticsConsentGranted,
-        consent_analytics_denied: analyticsConsentDenied,
-        consent_ads_granted: adsConsentGranted,
-        consent_ads_denied: adsConsentDenied,
-      },
-      event_types: Array.from(byType.values()).sort((a, b) => b.count - a.count),
-      events,
-    }
+  handler: async (input, ctx) => {
+    return loadTrackingHealthData(input, resolveRawDb(ctx))
   },
 })
 
-function countBy<T>(rows: T[], key: (row: T) => string) {
-  const map = new Map<string, number>()
-  for (const row of rows) {
-    const k = key(row)
-    map.set(k, (map.get(k) ?? 0) + 1)
+export async function loadTrackingHealthData(
+  input: { hours?: number; limit?: number; offset?: number; event_name?: string },
+  db: RawDb,
+) {
+  const hours = input.hours ?? 4
+  const limit = input.limit ?? 50
+  const offset = input.offset ?? 0
+  const to = new Date()
+  const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
+  const eventName = input.event_name && input.event_name !== 'all' ? input.event_name : null
+
+  const [rows, typeRows, statRows, dispatchStatRows] = await Promise.all([
+    loadPageRows(db, from, to, eventName, limit, offset),
+    loadEventTypes(db, from, to),
+    loadStats(db, from, to, eventName),
+    loadGa4StatusCounts(db, from, to),
+  ])
+  const total = toNumber(rows[0]?.total_count)
+  const stats = statRows[0] ?? emptyStats()
+  const latestAt = latestEventAt(typeRows)
+
+  const pageEventIds = rows.map((row) => row.event_id).filter(Boolean)
+  const pageDispatchRows = pageEventIds.length > 0 ? await loadPageDispatches(db, pageEventIds) : []
+  const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
+
+  const contactIds = uniqueStrings(
+    rows
+      .map((row) => {
+        const user = userPayload(row)
+        return typeof user.contact_id === 'string' ? user.contact_id : null
+      })
+      .filter(Boolean) as string[],
+  )
+  const distinctIds = uniqueStrings(rows.map((row) => row.distinct_id).filter(Boolean) as string[])
+  const cartTokens = uniqueStrings(
+    rows
+      .map((row) => {
+        const cart = cartPayload(row)
+        return typeof cart.token === 'string' ? cart.token : null
+      })
+      .filter(Boolean) as string[],
+  )
+  const checkoutTokens = uniqueStrings(
+    rows
+      .map((row) => {
+        const checkout = checkoutPayload(row)
+        return typeof checkout.token === 'string' ? checkout.token : null
+      })
+      .filter(Boolean) as string[],
+  )
+
+  const [contactsByIdRows, contactsByDistinctRows, cartsByTokenRows, cartsByCheckoutRows, cartsByDistinctRows] =
+    await Promise.all([
+      contactIds.length > 0 ? loadContactsById(db, contactIds) : Promise.resolve([]),
+      distinctIds.length > 0 ? loadContactsByDistinctId(db, distinctIds) : Promise.resolve([]),
+      cartTokens.length > 0 ? loadCartsByField(db, 'cart_token', cartTokens) : Promise.resolve([]),
+      checkoutTokens.length > 0 ? loadCartsByField(db, 'checkout_token', checkoutTokens) : Promise.resolve([]),
+      distinctIds.length > 0 ? loadCartsByField(db, 'distinct_id', distinctIds) : Promise.resolve([]),
+    ])
+  const contactById = new Map(contactsByIdRows.map((row) => [row.id, row]))
+  const contactByDistinctId = new Map(
+    contactsByDistinctRows.filter((row) => row.distinct_id).map((row) => [row.distinct_id as string, row]),
+  )
+  const cartEmailByToken = firstEmailBy(cartsByTokenRows, 'cart_token')
+  const cartEmailByCheckoutToken = firstEmailBy(cartsByCheckoutRows, 'checkout_token')
+  const cartEmailByDistinctId = firstEmailBy(cartsByDistinctRows, 'distinct_id')
+
+  const events = rows.map((row) => {
+    const payload = row.payload_normalized ?? {}
+    const ecommerce = (payload.ecommerce ?? {}) as Record<string, unknown>
+    const cart = cartPayload(row)
+    const checkout = checkoutPayload(row)
+    const user = userPayload(row)
+    const consent = (payload.consent ?? {}) as Record<string, unknown>
+    const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
+    const validation = (payload.validation ?? {}) as Record<string, unknown>
+    const validationDestinations = (validation.destinations ?? {}) as Record<string, unknown>
+    const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
+    const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
+    const ga4Log = dispatchByEventId.get(row.event_id)
+    const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
+    const cartToken = typeof cart.token === 'string' ? cart.token : null
+    const checkoutToken = typeof checkout.token === 'string' ? checkout.token : null
+    const directEmail = typeof user.email === 'string' ? user.email : null
+    const email =
+      directEmail ??
+      (contactId ? contactById.get(contactId)?.email : null) ??
+      (cartToken ? cartEmailByToken.get(cartToken) : null) ??
+      (checkoutToken ? cartEmailByCheckoutToken.get(checkoutToken) : null) ??
+      (row.distinct_id ? cartEmailByDistinctId.get(row.distinct_id) : null) ??
+      (row.distinct_id ? contactByDistinctId.get(row.distinct_id)?.email : null) ??
+      null
+    const hasEmailHash = Boolean(row.identity_email_sha256 || user.email_sha256)
+    return {
+      id: row.id,
+      event_id: row.event_id,
+      event_name: row.event_name,
+      raw_event_name: typeof payload.raw_event_name === 'string' ? payload.raw_event_name : row.event_name,
+      source: row.source,
+      received_at: new Date(row.received_at).toISOString(),
+      page_type: row.page_type,
+      market: row.market,
+      identity: user.contact_id
+        ? 'contact'
+        : row.identity_email_sha256
+          ? 'email'
+          : row.identity_muid
+            ? 'muid'
+            : row.distinct_id
+              ? 'posthog'
+              : 'anon',
+      profile_tracking_id:
+        contactId ??
+        row.identity_muid ??
+        (row.distinct_id ? `posthog:${row.distinct_id}` : null) ??
+        (row.identity_email_sha256 ? `sha256:${row.identity_email_sha256}` : null),
+      identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
+      contact_id: contactId,
+      email: email ?? null,
+      email_status: email ? 'resolved' : hasEmailHash ? 'hashed' : 'unknown',
+      matched_v1: user.matched_v1 === true,
+      consent: {
+        analytics_storage: consent.analytics_storage === true,
+        ad_storage: consent.ad_storage === true,
+        ad_user_data: consent.ad_user_data === true,
+        ad_personalization: consent.ad_personalization === true,
+        source: typeof consent.source === 'string' ? consent.source : 'unknown',
+      },
+      valid: row.valid,
+      validation_errors: Array.isArray(row.validation_errors) ? row.validation_errors : [],
+      value: ecommerce.value ?? null,
+      currency: ecommerce.currency ?? null,
+      item_count: ecommerce.item_count ?? null,
+      cart_token: cartToken,
+      checkout_token: checkoutToken,
+      shopify_order_id: checkout.shopify_order_id ?? null,
+      posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
+      posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
+      ga4_ready: ga4Log ? ['pending', 'sending', 'sent', 'retry'].includes(ga4Log.status) : ga4.ready === true,
+      ga4_status: ga4Log?.status ?? (typeof ga4.status === 'string' ? ga4.status : 'not_configured'),
+      ga4_http_status: ga4Log?.http_status ?? null,
+      ga4_error_code: ga4Log?.error_code ?? null,
+      ga4_error_message: ga4Log?.error_message ?? null,
+      ga4_attempt_count: ga4Log?.attempt_count ?? 0,
+      ga4_sent_at: ga4Log?.sent_at ? new Date(ga4Log.sent_at).toISOString() : null,
+      ad_destinations: ['meta_capi', 'google_ads', 'tiktok'].map((destination) =>
+        destinationSummary(destination, validationDestinations[destination]),
+      ),
+    }
+  })
+
+  const valid = toNumber(stats.valid)
+  const identified = toNumber(stats.identified)
+  const ga4StatusCounts = countByStatus(dispatchStatRows)
+  return {
+    meta: {
+      range: { from: from.toISOString(), to: to.toISOString() },
+      generated_at: new Date().toISOString(),
+      latest_event_at: latestAt,
+      retention_hours: hours,
+      pagination: {
+        limit,
+        offset,
+        total,
+        page: Math.floor(offset / limit) + 1,
+        page_count: Math.max(1, Math.ceil(total / limit)),
+      },
+    },
+    kpis: {
+      total,
+      valid,
+      invalid: total - valid,
+      identified,
+      anonymous: total - identified,
+      ga4_ready: toNumber(stats.ga4_ready),
+      ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
+      ga4_sent: countStatus(ga4StatusCounts, 'sent'),
+      ga4_invalid: countStatus(ga4StatusCounts, 'invalid'),
+      ga4_error:
+        countStatus(ga4StatusCounts, 'error') +
+        countStatus(ga4StatusCounts, 'not_configured') +
+        countStatus(ga4StatusCounts, 'sending'),
+      posthog_forwarded: toNumber(stats.posthog_forwarded),
+      consent_analytics_granted: toNumber(stats.consent_analytics_granted),
+      consent_analytics_denied: total - toNumber(stats.consent_analytics_granted),
+      consent_ads_granted: toNumber(stats.consent_ads_granted),
+      consent_ads_denied: total - toNumber(stats.consent_ads_granted),
+    },
+    event_types: typeRows.map((row) => ({
+      event_name: row.event_name,
+      count: toNumber(row.count),
+      valid: toNumber(row.valid),
+      invalid: toNumber(row.invalid),
+      latest_at: row.latest_at ? new Date(row.latest_at).toISOString() : null,
+    })),
+    events,
   }
+}
+
+function loadPageRows(db: RawDb, from: Date, to: Date, eventName: string | null, limit: number, offset: number) {
+  return db.raw<EventLogRow>(
+    `SELECT id, event_id, event_name, source, received_at, page_type, market,
+            identity_muid, identity_email_sha256, distinct_id, valid,
+            validation_errors, payload_normalized, COUNT(*) OVER()::text AS total_count
+       FROM event_logs
+      WHERE deleted_at IS NULL
+        AND received_at >= $1
+        AND received_at <= $2
+        AND ($3::text IS NULL OR event_name = $3)
+      ORDER BY received_at DESC
+      LIMIT $4 OFFSET $5`,
+    [from.toISOString(), to.toISOString(), eventName, limit, offset],
+  )
+}
+
+function loadEventTypes(db: RawDb, from: Date, to: Date) {
+  return db.raw<EventTypeRow>(
+    `SELECT event_name,
+            COUNT(*)::text AS count,
+            COUNT(*) FILTER (WHERE valid)::text AS valid,
+            COUNT(*) FILTER (WHERE NOT valid)::text AS invalid,
+            MAX(received_at) AS latest_at
+       FROM event_logs
+      WHERE deleted_at IS NULL
+        AND received_at >= $1
+        AND received_at <= $2
+      GROUP BY event_name
+      ORDER BY COUNT(*) DESC, event_name ASC`,
+    [from.toISOString(), to.toISOString()],
+  )
+}
+
+function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
+  return db.raw<StatRow>(
+    `SELECT COUNT(*)::text AS total,
+            COUNT(*) FILTER (WHERE valid)::text AS valid,
+            COUNT(*) FILTER (
+              WHERE payload_normalized #>> '{user,contact_id}' IS NOT NULL
+                 OR identity_email_sha256 IS NOT NULL
+                 OR identity_muid IS NOT NULL
+                 OR distinct_id IS NOT NULL
+            )::text AS identified,
+            COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,ga4,ready}' = 'true')::text AS ga4_ready,
+            COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,posthog,status}' = 'forwarded')::text AS posthog_forwarded,
+            COUNT(*) FILTER (WHERE payload_normalized #>> '{consent,analytics_storage}' = 'true')::text
+              AS consent_analytics_granted,
+            COUNT(*) FILTER (
+              WHERE payload_normalized #>> '{consent,ad_storage}' = 'true'
+                AND payload_normalized #>> '{consent,ad_user_data}' = 'true'
+                AND payload_normalized #>> '{consent,ad_personalization}' = 'true'
+            )::text AS consent_ads_granted
+       FROM event_logs
+      WHERE deleted_at IS NULL
+        AND received_at >= $1
+        AND received_at <= $2
+        AND ($3::text IS NULL OR event_name = $3)`,
+    [from.toISOString(), to.toISOString(), eventName],
+  )
+}
+
+function loadGa4StatusCounts(db: RawDb, from: Date, to: Date) {
+  return db.raw<StatusCountRow>(
+    `SELECT status, COUNT(*)::text AS count
+       FROM dispatch_logs
+      WHERE deleted_at IS NULL
+        AND destination = 'ga4'
+        AND event_received_at >= $1
+        AND event_received_at <= $2
+      GROUP BY status`,
+    [from.toISOString(), to.toISOString()],
+  )
+}
+
+function loadPageDispatches(db: RawDb, eventIds: string[]) {
+  return db.raw<DispatchLogRow>(
+    `SELECT event_id, destination, status, http_status, error_code, error_message,
+            attempt_count, sent_at, last_attempt_at
+       FROM dispatch_logs
+      WHERE deleted_at IS NULL
+        AND destination = 'ga4'
+        AND event_id = ANY($1::text[])
+      ORDER BY event_received_at DESC`,
+    [eventIds],
+  )
+}
+
+function loadContactsById(db: RawDb, ids: string[]) {
+  return db.raw<ContactRow>(
+    `SELECT id, email, distinct_id
+       FROM contacts
+      WHERE deleted_at IS NULL
+        AND id = ANY($1::uuid[])`,
+    [ids],
+  )
+}
+
+function loadContactsByDistinctId(db: RawDb, distinctIds: string[]) {
+  return db.raw<ContactRow>(
+    `SELECT id, email, distinct_id
+       FROM contacts
+      WHERE deleted_at IS NULL
+        AND distinct_id = ANY($1::text[])`,
+    [distinctIds],
+  )
+}
+
+function loadCartsByField(db: RawDb, field: 'cart_token' | 'checkout_token' | 'distinct_id', values: string[]) {
+  return db.raw<CartEmailRow>(
+    `SELECT id, cart_token, checkout_token, distinct_id, email, updated_at
+       FROM carts
+      WHERE deleted_at IS NULL
+        AND ${field} = ANY($1::text[])
+      ORDER BY updated_at DESC
+      LIMIT 1000`,
+    [values],
+  )
+}
+
+function emptyStats(): StatRow {
+  return {
+    total: 0,
+    valid: 0,
+    identified: 0,
+    ga4_ready: 0,
+    posthog_forwarded: 0,
+    consent_analytics_granted: 0,
+    consent_ads_granted: 0,
+  }
+}
+
+function countByStatus(rows: StatusCountRow[]) {
+  const map = new Map<string, number>()
+  for (const row of rows) map.set(row.status, toNumber(row.count))
   return map
 }
 
@@ -414,6 +430,18 @@ function countStatus(map: Map<string, number>, status: string) {
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
+}
+
+function userPayload(row: EventLogRow): Record<string, unknown> {
+  return (row.payload_normalized?.user ?? {}) as Record<string, unknown>
+}
+
+function cartPayload(row: EventLogRow): Record<string, unknown> {
+  return (row.payload_normalized?.cart ?? {}) as Record<string, unknown>
+}
+
+function checkoutPayload(row: EventLogRow): Record<string, unknown> {
+  return (row.payload_normalized?.checkout ?? {}) as Record<string, unknown>
 }
 
 function firstEmailBy(
@@ -430,6 +458,16 @@ function firstEmailBy(
   return map
 }
 
+function latestEventAt(rows: EventTypeRow[]): string | null {
+  let latest: string | null = null
+  for (const row of rows) {
+    if (!row.latest_at) continue
+    const value = new Date(row.latest_at).toISOString()
+    if (!latest || value > latest) latest = value
+  }
+  return latest
+}
+
 function normalizeEmail(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const email = value.trim().toLowerCase()
@@ -439,6 +477,11 @@ function normalizeEmail(value: unknown): string | null {
 function timeValue(value: string | Date | null): number {
   if (!value) return 0
   return new Date(value).getTime()
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : 0
+  return Number.isFinite(n) ? n : 0
 }
 
 function destinationSummary(destination: string, value: unknown): DestinationSummary {

@@ -1,6 +1,7 @@
-import { useQuery } from '@mantajs/sdk'
+import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@mantajs/ui'
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, ExternalLink, RefreshCw, XCircle } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 type SystemStatus = 'ok' | 'warning' | 'critical' | 'unknown'
@@ -83,17 +84,59 @@ const statusCopy: Record<SystemStatus, { label: string; className: string; dot: 
   },
 }
 
-export default function SystemDashboardPage() {
-  const query = useQuery<SystemDashboardData>('system-dashboard', {}, { staleTime: 60_000, refetchInterval: 60_000 })
-  const data = query.data
+function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAdapter']) {
+  return {
+    'Content-Type': 'application/json',
+    ...authAdapter.getAuthHeaders(),
+  }
+}
 
-  if (query.isLoading) return <LoadingState />
-  if (query.isError) {
+export default function SystemDashboardPage() {
+  const { authAdapter } = useDashboardContext()
+  const [data, setData] = useState<SystemDashboardData | null>(null)
+  const [error, setError] = useState<Error | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  const loadDashboard = useCallback(async () => {
+    setError(null)
+    const res = await window.fetch('/api/admin/system-dashboard', {
+      headers: authHeaders(authAdapter),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new MantaError('UNEXPECTED_STATE', body.message ?? 'Impossible de charger le dashboard')
+    }
+    const body = (await res.json()) as { data?: SystemDashboardData }
+    if (!body.data) throw new MantaError('UNEXPECTED_STATE', 'Réponse dashboard invalide')
+    setData(body.data)
+  }, [authAdapter])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        await loadDashboard()
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err : new Error(String(err)))
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+    void run()
+    const interval = window.setInterval(() => void run(), 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [loadDashboard])
+
+  if (isLoading) return <LoadingState />
+  if (error) {
     return (
       <div className="flex max-w-3xl flex-col gap-4">
         <h1 className="text-2xl font-semibold tracking-normal">Dashboard</h1>
         <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Impossible de charger le dashboard: {query.error.message}
+          Impossible de charger le dashboard: {error.message}
         </div>
       </div>
     )
@@ -123,7 +166,9 @@ export default function SystemDashboardPage() {
         </div>
         <button
           type="button"
-          onClick={() => query.refetch()}
+          onClick={() => {
+            void loadDashboard().catch((err) => setError(err instanceof Error ? err : new Error(String(err))))
+          }}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <RefreshCw className="size-4" />

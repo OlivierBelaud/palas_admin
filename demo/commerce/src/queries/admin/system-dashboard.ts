@@ -1,4 +1,5 @@
-import { computeActivityState } from '../../modules/cart-tracking/abandonment'
+import { sqlActivityStateCase } from '../../modules/cart-tracking/abandonment'
+import { type RawDb, resolveRawDb } from '../../utils/raw-db'
 import type { SystemHealthCard, SystemStatus } from '../../utils/system-audit'
 
 type AuditRunRow = {
@@ -25,28 +26,16 @@ type AuditFindingRow = {
   observed_at: string | Date
 }
 
-type CartRow = {
-  highest_stage: string | null
-  last_action_at: string | Date | null
-  total_price: number | null
-}
-
-type EventRow = {
-  valid: boolean
-  identity_muid: string | null
-  identity_email_sha256: string | null
-  distinct_id: string | null
-  received_at: string | Date
-}
-
-type MessageRow = {
-  status: string
-  sent_at: string | Date | null
-}
-
-type CaseRow = {
-  recovered_at: string | Date | null
-  recovered_amount: number | string | null
+type BusinessKpiRow = {
+  carts_30d: string | number
+  active_carts_30d: string | number
+  completed_30d: string | number
+  abandoned_revenue_30d: string | number | null
+  identified_events_24h: string | number
+  events_24h: string | number
+  sent_recovery_emails_30d: string | number
+  recovered_cases_30d: string | number
+  recovered_revenue_30d: string | number | null
 }
 
 const DEFAULT_HEALTH: SystemHealthCard[] = [
@@ -93,156 +82,146 @@ const DEFAULT_HEALTH: SystemHealthCard[] = [
 ]
 
 export default defineQuery({
-  name: 'system-dashboard',
+  name: 'system-dashboard-loader',
   description: 'Landing dashboard for Palas business KPIs and persisted nightly system health audits.',
   input: z.object({}),
-  handler: async (_input, { query }) => {
-    const now = new Date()
-    const [auditRuns, business] = await Promise.all([loadLatestAudit(query), loadBusinessKpis(query, now)])
-    const latestRun = auditRuns[0] ?? null
-    const findings = latestRun ? await loadFindings(query, latestRun.id) : []
-    const health = latestRun?.summary?.health?.length ? latestRun.summary.health : DEFAULT_HEALTH
-    const auditStatus = latestRun?.overall_status ?? 'unknown'
-    const status = latestRun?.status === 'failed' ? 'critical' : auditStatus
-
-    return {
-      meta: {
-        generated_at: now.toISOString(),
-        audit_run: latestRun
-          ? {
-              id: latestRun.id,
-              trigger: latestRun.trigger,
-              status: latestRun.status,
-              overall_status: latestRun.overall_status,
-              started_at: iso(latestRun.started_at),
-              finished_at: latestRun.finished_at ? iso(latestRun.finished_at) : null,
-              error_message: latestRun.error_message,
-            }
-          : null,
-      },
-      status,
-      business,
-      health,
-      findings: findings.map((finding) => ({
-        id: finding.id,
-        source: finding.source,
-        key: finding.key,
-        severity: finding.severity,
-        title: finding.title,
-        summary: finding.summary,
-        count: finding.count,
-        href: finding.href ?? '/',
-        details: finding.details ?? [],
-        observed_at: iso(finding.observed_at),
-      })),
-      audits: health.map((item) => ({
-        key: item.key,
-        label: item.label,
-        status: item.status === 'ok' ? 'passing' : item.status === 'unknown' ? 'unknown' : 'failing',
-        last_run_at: latestRun?.finished_at ? iso(latestRun.finished_at) : null,
-        href: item.href,
-      })),
-    }
+  handler: async (_input, ctx) => {
+    return loadSystemDashboardData(resolveRawDb(ctx))
   },
 })
 
-async function loadLatestAudit(query: { graph(input: unknown): Promise<unknown> }): Promise<AuditRunRow[]> {
-  try {
-    return (await query.graph({
-      entity: 'systemAuditRun',
-      fields: ['id', 'trigger', 'status', 'overall_status', 'started_at', 'finished_at', 'summary', 'error_message'],
-      sort: { started_at: 'desc' },
-      pagination: { limit: 1, offset: 0 },
-    })) as AuditRunRow[]
-  } catch {
-    return []
-  }
-}
-
-async function loadFindings(
-  query: { graph(input: unknown): Promise<unknown> },
-  runId: string,
-): Promise<AuditFindingRow[]> {
-  try {
-    const rows = (await query.graph({
-      entity: 'systemAuditFinding',
-      filters: { run_id: runId },
-      fields: ['id', 'source', 'key', 'severity', 'title', 'summary', 'count', 'href', 'details', 'observed_at'],
-      sort: { observed_at: 'desc' },
-      pagination: { limit: 50, offset: 0 },
-    })) as AuditFindingRow[]
-    return rows.sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
-  } catch {
-    return []
-  }
-}
-
-async function loadBusinessKpis(query: { graph(input: unknown): Promise<unknown> }, now: Date) {
-  const from30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
-  const from24 = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
-  const [carts, events, messages, cases] = await Promise.all([
-    safeGraph<CartRow>(query, {
-      entity: 'cart',
-      filters: { last_action_at: { $gte: from30 } },
-      fields: ['highest_stage', 'last_action_at', 'total_price'],
-      pagination: { limit: 5000, offset: 0 },
-    }),
-    safeGraph<EventRow>(query, {
-      entity: 'eventLog',
-      filters: { received_at: { $gte: from24 } },
-      fields: ['valid', 'identity_muid', 'identity_email_sha256', 'distinct_id', 'received_at'],
-      pagination: { limit: 10000, offset: 0 },
-    }),
-    safeGraph<MessageRow>(query, {
-      entity: 'abandonedCartMessage',
-      filters: { sent_at: { $gte: from30 } },
-      fields: ['status', 'sent_at'],
-      pagination: { limit: 5000, offset: 0 },
-    }),
-    safeGraph<CaseRow>(query, {
-      entity: 'abandonedCartCase',
-      filters: { recovered_at: { $gte: from30 } },
-      fields: ['recovered_at', 'recovered_amount'],
-      pagination: { limit: 5000, offset: 0 },
-    }),
-  ])
-
-  let completed = 0
-  let abandonedRevenue = 0
-  let active = 0
-  for (const cart of carts) {
-    const activity = computeActivityState(cart, now.getTime())
-    const price = money(cart.total_price)
-    if (activity === 'completed') completed++
-    else if (activity === 'browsing' || activity === 'dormant') active++
-    else if (price > 0) abandonedRevenue += price
-  }
-
-  const identifiedEvents = events.filter(
-    (event) => event.identity_muid || event.identity_email_sha256 || event.distinct_id,
-  )
-  const sentMessages = messages.filter((message) => message.status === 'sent')
-  const recoveredRevenue = cases.reduce((sum, row) => sum + money(row.recovered_amount), 0)
+export async function loadSystemDashboardData(db: RawDb) {
+  const now = new Date()
+  const [auditRuns, business] = await Promise.all([loadLatestAudit(db), loadBusinessKpis(db)])
+  const latestRun = auditRuns[0] ?? null
+  const findings = latestRun ? await loadFindings(db, latestRun.id) : []
+  const health = latestRun?.summary?.health?.length ? latestRun.summary.health : DEFAULT_HEALTH
+  const auditStatus = latestRun?.overall_status ?? 'unknown'
+  const status = latestRun?.status === 'failed' ? 'critical' : auditStatus
 
   return {
-    carts_30d: carts.length,
-    active_carts_30d: active,
-    completed_30d: completed,
-    abandoned_revenue_30d: roundMoney(abandonedRevenue),
-    identified_event_rate_24h: rate(identifiedEvents.length, events.length),
-    events_24h: events.length,
-    sent_recovery_emails_30d: sentMessages.length,
-    recovered_cases_30d: cases.length,
-    recovery_rate_30d: rate(cases.length, sentMessages.length),
-    recovered_revenue_30d: roundMoney(recoveredRevenue),
+    meta: {
+      generated_at: now.toISOString(),
+      audit_run: latestRun
+        ? {
+            id: latestRun.id,
+            trigger: latestRun.trigger,
+            status: latestRun.status,
+            overall_status: latestRun.overall_status,
+            started_at: iso(latestRun.started_at),
+            finished_at: latestRun.finished_at ? iso(latestRun.finished_at) : null,
+            error_message: latestRun.error_message,
+          }
+        : null,
+    },
+    status,
+    business,
+    health,
+    findings: findings.map((finding) => ({
+      id: finding.id,
+      source: finding.source,
+      key: finding.key,
+      severity: finding.severity,
+      title: finding.title,
+      summary: finding.summary,
+      count: finding.count,
+      href: finding.href ?? '/',
+      details: finding.details ?? [],
+      observed_at: iso(finding.observed_at),
+    })),
+    audits: health.map((item) => ({
+      key: item.key,
+      label: item.label,
+      status: item.status === 'ok' ? 'passing' : item.status === 'unknown' ? 'unknown' : 'failing',
+      last_run_at: latestRun?.finished_at ? iso(latestRun.finished_at) : null,
+      href: item.href,
+    })),
   }
 }
 
-async function safeGraph<T>(query: { graph(input: unknown): Promise<unknown> }, input: unknown): Promise<T[]> {
-  try {
-    return (await query.graph(input)) as T[]
-  } catch {
-    return []
+async function loadLatestAudit(db: RawDb): Promise<AuditRunRow[]> {
+  return db.raw<AuditRunRow>(
+    `SELECT id, trigger, status, overall_status, started_at, finished_at, summary, error_message
+       FROM system_audit_runs
+      WHERE deleted_at IS NULL
+      ORDER BY started_at DESC
+      LIMIT 1`,
+  )
+}
+
+async function loadFindings(db: RawDb, runId: string): Promise<AuditFindingRow[]> {
+  return db.raw<AuditFindingRow>(
+    `SELECT id, source, key, severity, title, summary, count, href, details, observed_at
+       FROM system_audit_findings
+      WHERE run_id = $1
+        AND deleted_at IS NULL
+      ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+               observed_at DESC
+      LIMIT 50`,
+    [runId],
+  )
+}
+
+async function loadBusinessKpis(db: RawDb) {
+  const [row] = await db.raw<BusinessKpiRow>(
+    `WITH carts_30 AS (
+       SELECT highest_stage, last_action_at, total_price, ${sqlActivityStateCase()} AS activity_state
+         FROM carts
+        WHERE deleted_at IS NULL
+          AND last_action_at >= NOW() - INTERVAL '30 days'
+     ),
+     events_24 AS (
+       SELECT identity_muid, identity_email_sha256, distinct_id
+         FROM event_logs
+        WHERE deleted_at IS NULL
+          AND received_at >= NOW() - INTERVAL '24 hours'
+     ),
+     messages_30 AS (
+       SELECT status
+         FROM abandoned_cart_messages
+        WHERE deleted_at IS NULL
+          AND sent_at >= NOW() - INTERVAL '30 days'
+     ),
+     cases_30 AS (
+       SELECT recovered_amount
+         FROM abandoned_cart_cases
+        WHERE deleted_at IS NULL
+          AND recovered_at >= NOW() - INTERVAL '30 days'
+     )
+     SELECT
+       (SELECT COUNT(*) FROM carts_30)::text AS carts_30d,
+       (SELECT COUNT(*) FROM carts_30 WHERE activity_state IN ('browsing', 'dormant'))::text AS active_carts_30d,
+       (SELECT COUNT(*) FROM carts_30 WHERE activity_state = 'completed')::text AS completed_30d,
+       (SELECT COALESCE(SUM(COALESCE(total_price, 0)), 0)
+          FROM carts_30
+         WHERE activity_state NOT IN ('browsing', 'dormant', 'completed'))::text AS abandoned_revenue_30d,
+       (SELECT COUNT(*) FROM events_24)::text AS events_24h,
+       (SELECT COUNT(*)
+          FROM events_24
+         WHERE identity_muid IS NOT NULL
+            OR identity_email_sha256 IS NOT NULL
+            OR distinct_id IS NOT NULL)::text AS identified_events_24h,
+       (SELECT COUNT(*) FROM messages_30 WHERE status = 'sent')::text AS sent_recovery_emails_30d,
+       (SELECT COUNT(*) FROM cases_30)::text AS recovered_cases_30d,
+       (SELECT COALESCE(SUM(COALESCE(recovered_amount::numeric, 0)), 0) FROM cases_30)::text AS recovered_revenue_30d`,
+  )
+
+  const events = toNumber(row?.events_24h)
+  const identifiedEvents = toNumber(row?.identified_events_24h)
+  const sentMessages = toNumber(row?.sent_recovery_emails_30d)
+  const recoveredCases = toNumber(row?.recovered_cases_30d)
+
+  return {
+    carts_30d: toNumber(row?.carts_30d),
+    active_carts_30d: toNumber(row?.active_carts_30d),
+    completed_30d: toNumber(row?.completed_30d),
+    abandoned_revenue_30d: roundMoney(toNumber(row?.abandoned_revenue_30d)),
+    identified_event_rate_24h: rate(identifiedEvents, events),
+    events_24h: events,
+    sent_recovery_emails_30d: sentMessages,
+    recovered_cases_30d: recoveredCases,
+    recovery_rate_30d: rate(recoveredCases, sentMessages),
+    recovered_revenue_30d: roundMoney(toNumber(row?.recovered_revenue_30d)),
   }
 }
 
@@ -250,7 +229,7 @@ function iso(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 }
 
-function money(value: number | string | null | undefined): number {
+function toNumber(value: number | string | null | undefined): number {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : 0
   return Number.isFinite(n) ? n : 0
 }
@@ -261,10 +240,4 @@ function roundMoney(value: number): number {
 
 function rate(part: number, total: number): number {
   return total > 0 ? Math.round((part / total) * 10000) / 10000 : 0
-}
-
-function severityRank(severity: AuditFindingRow['severity']): number {
-  if (severity === 'critical') return 0
-  if (severity === 'warning') return 1
-  return 2
 }
