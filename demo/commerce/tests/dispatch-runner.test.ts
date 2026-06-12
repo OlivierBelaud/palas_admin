@@ -8,14 +8,18 @@ import {
 
 function makeDb(rows: Array<Record<string, unknown>>) {
   const updates: Array<{ query: string; params?: unknown[] }> = []
+  const selects: Array<{ query: string; params?: unknown[] }> = []
   const db: RawDispatchDb = {
     raw: async <T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> => {
-      if (query.trim().startsWith('SELECT')) return rows as T[]
+      if (query.trim().startsWith('SELECT')) {
+        selects.push({ query, params })
+        return rows as T[]
+      }
       updates.push({ query, params })
       return [] as T[]
     },
   }
-  return { db, updates }
+  return { db, updates, selects }
 }
 
 function connector(overrides: Partial<DestinationConnector> = {}): DestinationConnector {
@@ -142,5 +146,14 @@ describe('Event Hub dispatch runner', () => {
     expect(result).toMatchObject({ scanned: 1, sent: 1, configured: true })
     expect(updates[0].params).toEqual(['row_live', 1])
     expect(updates[1].params).toEqual(['row_live', 'sent', 204, null, null, JSON.stringify({}), null])
+  })
+
+  it('recovers stale sending rows during scheduled flushes', async () => {
+    const { db, selects } = makeDb([])
+
+    await flushDestinationDispatches({ db, connector: connector(), batchLimit: 10 })
+
+    expect(selects[0].query).toContain("status = 'sending'")
+    expect(selects[0].query).toContain("last_attempt_at <= NOW() - INTERVAL '2 minutes'")
   })
 })

@@ -181,8 +181,10 @@ export async function flushDestinationDispatches({
        FROM dispatch_logs
       WHERE destination = $1
         AND ($2::text IS NULL OR canonical_event_name = $2)
-        AND status = ANY($3::text[])
-        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+        AND (
+          (status = ANY($3::text[]) AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
+          OR (status = 'sending' AND last_attempt_at <= NOW() - INTERVAL '2 minutes')
+        )
       ORDER BY event_received_at ASC
       LIMIT $4`,
     [connector.destination, connector.eventNameFilter ?? null, connector.pendingStatuses, batchLimit],
@@ -203,8 +205,10 @@ export async function flushDispatchLogByEventDestinationKey({
        FROM dispatch_logs
       WHERE destination = $1
         AND event_destination_key = $2
-        AND status = ANY($3::text[])
-        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+        AND (
+          (status = ANY($3::text[]) AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
+          OR (status = 'sending' AND last_attempt_at <= NOW() - INTERVAL '2 minutes')
+        )
       LIMIT 1`,
     [connector.destination, eventDestinationKey, connector.pendingStatuses],
   )
