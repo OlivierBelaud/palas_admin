@@ -205,4 +205,53 @@ describe('canonical PostHog normalizer', () => {
     expect(validation.destinations.ga4.ready).toBe(true)
     expect(validation.destinations.google_ads.ready).toBe(true)
   })
+
+  it('keeps acquisition and ads tracking fields from PostHog URLs and properties', () => {
+    const url =
+      'https://fancypalas.com/products/bague-test?gclid=gclid_url&gbraid=gbraid_url&wbraid=wbraid_url&fbclid=fbclid_url&ttclid=ttclid_url&utm_source=google&utm_medium=cpc&utm_campaign=brand&utm_term=palas&utm_content=search-ad&utm_id=utm_1&campaign_id=camp_1&ad_group_id=group_1&ad_id=ad_1&creative_id=creative_1'
+    const event = normalizePosthogEventToCanonical(
+      {
+        uuid: 'evt_ads',
+        event: '$pageview',
+        distinct_id: 'ph_1',
+        timestamp: '2026-06-09T10:00:00.000Z',
+        properties: {
+          $current_url: url,
+          muid: 'muid_1',
+          fbp: 'fb.1.123.xyz',
+          fbc: 'fb.1.123.abc',
+        },
+      },
+      comparison({ signals: { ...comparison().signals, event_id: 'evt_ads', current_url: url } }),
+      { forwarded: true, status: 200 },
+    )
+
+    expect(event?.payload_normalized.user).toMatchObject({
+      muid: 'muid_1',
+      ga_client_id: 'muid_1',
+      gclid: 'gclid_url',
+      gbraid: 'gbraid_url',
+      wbraid: 'wbraid_url',
+      fbclid: 'fbclid_url',
+      ttclid: 'ttclid_url',
+      fbp: 'fb.1.123.xyz',
+      fbc: 'fb.1.123.abc',
+    })
+    expect(event?.payload_normalized.context).toMatchObject({
+      utm: {
+        source: 'google',
+        medium: 'cpc',
+        campaign: 'brand',
+        term: 'palas',
+        content: 'search-ad',
+        id: 'utm_1',
+      },
+      ads: {
+        campaign_id: 'camp_1',
+        ad_group_id: 'group_1',
+        ad_id: 'ad_1',
+        creative_id: 'creative_1',
+      },
+    })
+  })
 })

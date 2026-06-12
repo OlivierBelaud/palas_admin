@@ -101,6 +101,11 @@ function parseUrl(url: string | null): URL | null {
   }
 }
 
+function queryParamFromUrl(url: string | null, key: string, max = 512): string | null {
+  const parsed = parseUrl(url)
+  return parsed ? str(parsed.searchParams.get(key), max) : null
+}
+
 export function inferPageType(currentUrl: string | null): string | null {
   const url = parseUrl(currentUrl)
   if (!url) return null
@@ -247,6 +252,7 @@ export function normalizePosthogEventToCanonical(
     event_time: signals.observed_at,
     search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
+      muid: str(sourceContext.muid, 128) || str(props.muid, 128) || null,
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
       contact_id: comparison.v2.contact_id,
@@ -263,7 +269,11 @@ export function normalizePosthogEventToCanonical(
       ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
       fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
       fbc: str(sourceContext.fbc, 256) || str(props.fbc, 256) || str(props._fbc, 256),
-      gclid: str(sourceContext.gclid, 512) || str(props.gclid, 512),
+      gclid: str(sourceContext.gclid, 512) || str(props.gclid, 512) || queryParamFromUrl(currentUrl, 'gclid'),
+      gbraid: str(sourceContext.gbraid, 512) || str(props.gbraid, 512) || queryParamFromUrl(currentUrl, 'gbraid'),
+      wbraid: str(sourceContext.wbraid, 512) || str(props.wbraid, 512) || queryParamFromUrl(currentUrl, 'wbraid'),
+      fbclid: str(sourceContext.fbclid, 512) || str(props.fbclid, 512) || queryParamFromUrl(currentUrl, 'fbclid'),
+      ttclid: str(sourceContext.ttclid, 512) || str(props.ttclid, 512) || queryParamFromUrl(currentUrl, 'ttclid'),
       client_ip: str(sourceContext.client_ip, 256),
       user_agent: str(sourceContext.user_agent, 1024),
       matched_v1: comparison.matched_v1,
@@ -275,9 +285,71 @@ export function normalizePosthogEventToCanonical(
       market: inferMarket(props, currentUrl),
       locale: str(props.$browser_language, 32) || str(props.locale, 32),
       utm: {
-        source: str(props.utm_source, 160),
-        medium: str(props.utm_medium, 160),
-        campaign: str(props.utm_campaign, 240),
+        source:
+          str(props.utm_source, 160) ||
+          str(props.$utm_source, 160) ||
+          str(props.$initial_utm_source, 160) ||
+          queryParamFromUrl(currentUrl, 'utm_source', 160),
+        medium:
+          str(props.utm_medium, 160) ||
+          str(props.$utm_medium, 160) ||
+          str(props.$initial_utm_medium, 160) ||
+          queryParamFromUrl(currentUrl, 'utm_medium', 160),
+        campaign:
+          str(props.utm_campaign, 240) ||
+          str(props.$utm_campaign, 240) ||
+          str(props.$initial_utm_campaign, 240) ||
+          queryParamFromUrl(currentUrl, 'utm_campaign', 240),
+        term:
+          str(props.utm_term, 240) ||
+          str(props.$utm_term, 240) ||
+          str(props.$initial_utm_term, 240) ||
+          queryParamFromUrl(currentUrl, 'utm_term', 240),
+        content:
+          str(props.utm_content, 240) ||
+          str(props.$utm_content, 240) ||
+          str(props.$initial_utm_content, 240) ||
+          queryParamFromUrl(currentUrl, 'utm_content', 240),
+        id:
+          str(props.utm_id, 160) ||
+          str(props.$utm_id, 160) ||
+          str(props.$initial_utm_id, 160) ||
+          queryParamFromUrl(currentUrl, 'utm_id', 160),
+        source_platform:
+          str(props.utm_source_platform, 160) || queryParamFromUrl(currentUrl, 'utm_source_platform', 160),
+        creative_format:
+          str(props.utm_creative_format, 160) || queryParamFromUrl(currentUrl, 'utm_creative_format', 160),
+        marketing_tactic:
+          str(props.utm_marketing_tactic, 160) || queryParamFromUrl(currentUrl, 'utm_marketing_tactic', 160),
+      },
+      ads: {
+        campaign_id:
+          str(props.campaign_id, 160) ||
+          str(props.google_ads_campaign_id, 160) ||
+          queryParamFromUrl(currentUrl, 'campaign_id', 160),
+        ad_group_id:
+          str(props.ad_group_id, 160) ||
+          str(props.adgroup_id, 160) ||
+          str(props.google_ads_ad_group_id, 160) ||
+          queryParamFromUrl(currentUrl, 'ad_group_id', 160) ||
+          queryParamFromUrl(currentUrl, 'adgroup_id', 160),
+        adset_id:
+          str(props.adset_id, 160) ||
+          str(props.facebook_adset_id, 160) ||
+          queryParamFromUrl(currentUrl, 'adset_id', 160),
+        ad_id:
+          str(props.ad_id, 160) ||
+          str(props.google_ads_ad_id, 160) ||
+          str(props.facebook_ad_id, 160) ||
+          queryParamFromUrl(currentUrl, 'ad_id', 160),
+        creative_id: str(props.creative_id, 160) || queryParamFromUrl(currentUrl, 'creative_id', 160),
+        campaign_name: str(props.campaign_name, 240) || queryParamFromUrl(currentUrl, 'campaign_name', 240),
+        ad_group_name: str(props.ad_group_name, 240) || queryParamFromUrl(currentUrl, 'ad_group_name', 240),
+        adset_name: str(props.adset_name, 240) || queryParamFromUrl(currentUrl, 'adset_name', 240),
+        ad_name: str(props.ad_name, 240) || queryParamFromUrl(currentUrl, 'ad_name', 240),
+        placement: str(props.placement, 160) || queryParamFromUrl(currentUrl, 'placement', 160),
+        network: str(props.network, 160) || queryParamFromUrl(currentUrl, 'network', 160),
+        matchtype: str(props.matchtype, 80) || queryParamFromUrl(currentUrl, 'matchtype', 80),
       },
     },
     ecommerce,

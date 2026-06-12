@@ -42,6 +42,10 @@ function compact<T extends Record<string, unknown>>(input: T): Record<string, un
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value != null && value !== ''))
 }
 
+function isSha256(value: string | null): value is string {
+  return Boolean(value && /^[a-f0-9]{64}$/i.test(value))
+}
+
 export function getGa4Config(env: NodeJS.ProcessEnv = process.env): Ga4Config {
   const debug = !(env.GA4_DEBUG === 'false' || env.GOOGLE_ANALYTICS_DEBUG === 'false')
   return {
@@ -112,6 +116,7 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
   const ecommerce = obj(canonicalPayload.ecommerce)
   const checkout = obj(canonicalPayload.checkout)
   const utm = obj(context.utm)
+  const ads = obj(context.ads)
 
   if (!GA4_CANONICAL_EVENT_NAMES.has(canonicalEventName)) {
     errors.push('ga4_event_not_supported')
@@ -160,17 +165,51 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
     source: str(utm.source, 160),
     medium: str(utm.medium, 160),
     campaign: str(utm.campaign, 240),
+    term: str(utm.term, 240),
+    content: str(utm.content, 240),
+    utm_id: str(utm.id, 160),
+    utm_source_platform: str(utm.source_platform, 160),
+    utm_creative_format: str(utm.creative_format, 160),
+    utm_marketing_tactic: str(utm.marketing_tactic, 160),
+    gclid: str(user.gclid, 512),
+    gbraid: str(user.gbraid, 512),
+    wbraid: str(user.wbraid, 512),
+    fbclid: str(user.fbclid, 512),
+    fbc: str(user.fbc, 256),
+    fbp: str(user.fbp, 256),
+    ttclid: str(user.ttclid, 512),
+    campaign_id: str(ads.campaign_id, 160),
+    ad_group_id: str(ads.ad_group_id, 160),
+    adset_id: str(ads.adset_id, 160),
+    ad_id: str(ads.ad_id, 160),
+    creative_id: str(ads.creative_id, 160),
+    campaign_name: str(ads.campaign_name, 240),
+    ad_group_name: str(ads.ad_group_name, 240),
+    adset_name: str(ads.adset_name, 240),
+    ad_name: str(ads.ad_name, 240),
+    placement: str(ads.placement, 160),
+    network: str(ads.network, 160),
+    matchtype: str(ads.matchtype, 80),
+  })
+
+  const emailSha256 = str(user.email_sha256, 128)
+  const phoneSha256 = str(user.phone_sha256, 128)
+  const userData = compact({
+    sha256_email_address: isSha256(emailSha256) ? [emailSha256] : null,
+    sha256_phone_number: isSha256(phoneSha256) ? [phoneSha256] : null,
+  })
+
+  const userProperties = compact({
+    identity_source: { value: str(user.identity_source, 120) ?? 'unknown' },
+    palas_muid: { value: str(user.muid, 128) },
+    posthog_distinct_id: { value: str(user.distinct_id, 180) },
   })
 
   const payload = compact({
     client_id: clientId,
-    user_id: str(user.contact_id, 180) || str(user.email_sha256, 180),
-    user_properties: user.email_sha256
-      ? {
-          email_sha256: { value: user.email_sha256 },
-          identity_source: { value: str(user.identity_source, 120) ?? 'unknown' },
-        }
-      : null,
+    user_id: str(user.contact_id, 180) || str(user.muid, 128) || str(user.distinct_id, 180),
+    user_properties: Object.keys(userProperties).length > 0 ? userProperties : null,
+    user_data: Object.keys(userData).length > 0 ? userData : null,
     events: [
       {
         name: canonicalEventName,
