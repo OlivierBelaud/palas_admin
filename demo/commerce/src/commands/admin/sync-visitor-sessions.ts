@@ -13,7 +13,10 @@ type RawDb = {
   raw<T = unknown>(query: string, params?: unknown[]): Promise<T[]>
 }
 
-const MAX_EVENTS_PER_RUN = 5000
+// Keep the cron comfortably inside Vercel's serverless window. Each event can
+// dispatch an idempotent sub-command, so a 5k batch may leave the workflow run
+// stuck as `pending` if the function is killed before the runner finalizes.
+const MAX_EVENTS_PER_RUN = 250
 const DEFAULT_LOOKBACK_MINUTES = 15
 
 export default defineCommand({
@@ -30,7 +33,7 @@ export default defineCommand({
 
     return await step.action('sync-visitor-sessions', {
       invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.infra.db as RawDb | undefined
+        const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
         const startedAt = Date.now()

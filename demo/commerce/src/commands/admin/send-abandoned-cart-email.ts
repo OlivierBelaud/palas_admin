@@ -18,6 +18,7 @@ interface CartRow {
   email: string | null
   first_name: string | null
   country_code: string | null
+  browser_locale?: string | null
   items: unknown
   total_price: number | null
   currency: string | null

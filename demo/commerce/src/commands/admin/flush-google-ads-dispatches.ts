@@ -10,7 +10,7 @@ export default defineCommand({
   workflow: async (input, { step, log }) => {
     return await step.action('flush-google-ads-dispatches', {
       invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.infra.db as RawDispatchDb | undefined
+        const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
         const result = await flushDestinationDispatches({
@@ -38,6 +38,6 @@ export default defineCommand({
         // Dispatch rows are idempotent by event_destination_key. Partial
         // progress is expected; the next cron tick resumes pending/retry rows.
       },
-    })
+    })({})
   },
 })

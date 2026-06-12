@@ -55,9 +55,13 @@ interface DashboardData {
   by_type: TypeRow[]
   skip_reasons: Array<{ skip_reason: string; count: number }>
   daily: DailyRow[]
-  cases: CaseItem[]
-  messages: MessageItem[]
-  checks: CheckItem[]
+}
+
+interface PaginatedResult<T> {
+  items: T[]
+  count: number
+  limit: number
+  offset: number
 }
 
 interface TypeRow {
@@ -152,6 +156,7 @@ interface CheckItem {
 }
 
 const DEFAULT_RANGE: DateRangeValue = { kind: 'preset', preset: '30d' }
+const PAGE_SIZE = 50
 const headerGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }
 const chartGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
 const tabsGridStyle = { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', width: 'min(100%, 30rem)' }
@@ -176,27 +181,76 @@ const STATUS_LABELS: Record<string, string> = {
   failed: 'Erreur',
 }
 
+const CASE_STATUS_OPTIONS = ['open', 'recovered', 'closed_order_found', 'closed_unsubscribed', 'expired']
+const MESSAGE_STATUS_OPTIONS = [
+  'pending',
+  'sent',
+  'skipped',
+  'failed',
+  'abandoned_cart_1',
+  'abandoned_cart_2',
+  'abandoned_cart_3',
+  'payment_help_1',
+  'shopify_order_found',
+  'opt_out',
+  'klaviyo_email_found',
+]
+const CHECK_STATUS_OPTIONS = ['passed', 'blocked', 'error', 'shopify_order', 'opt_out', 'klaviyo_recent_email']
+
 export function AbandonedCartCampaignView({ mode }: { mode: ViewMode }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = React.useState('')
   const [status, setStatus] = React.useState('all')
+  const [pageIndex, setPageIndex] = React.useState(0)
   const range = React.useMemo(() => parseRange(searchParams.get('range')) ?? DEFAULT_RANGE, [searchParams])
   const resolved = React.useMemo(() => resolveRange(range), [range])
   const params = React.useMemo(
     () => ({
       from: resolved.from.toISOString(),
       to: resolved.to.toISOString(),
-      limit: 500,
     }),
     [resolved.from, resolved.to],
   )
   const query = useQuery<DashboardData>('abandoned-cart-campaign-dashboard', params, { staleTime: 60_000 })
   const data = query.data
+  const listParams = React.useMemo(
+    () => ({
+      ...params,
+      limit: PAGE_SIZE,
+      offset: pageIndex * PAGE_SIZE,
+      status,
+      search,
+    }),
+    [pageIndex, params, search, status],
+  )
+  const casesQuery = useQuery<PaginatedResult<CaseItem>>('abandoned-cart-campaign-case-list', listParams, {
+    enabled: mode === 'overview',
+    staleTime: 30_000,
+  })
+  const messagesQuery = useQuery<PaginatedResult<MessageItem>>('abandoned-cart-campaign-message-list', listParams, {
+    enabled: mode === 'emails',
+    staleTime: 30_000,
+  })
+  const checksQuery = useQuery<PaginatedResult<CheckItem>>('abandoned-cart-campaign-check-list', listParams, {
+    enabled: mode === 'checks',
+    staleTime: 30_000,
+  })
 
   const updateRange = (next: DateRangeValue) => {
+    setPageIndex(0)
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('range', serializeRange(next))
     setSearchParams(nextParams)
+  }
+
+  const updateSearch = (value: string) => {
+    setPageIndex(0)
+    setSearch(value)
+  }
+
+  const updateStatus = (value: string) => {
+    setPageIndex(0)
+    setStatus(value)
   }
 
   return (
@@ -213,7 +267,17 @@ export function AbandonedCartCampaignView({ mode }: { mode: ViewMode }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DateRangePicker value={range} onChange={updateRange} allowedPresets={['7d', '30d', '90d']} />
-          <Button variant="outline" size="small" onClick={() => query.refetch()} isLoading={query.isFetching}>
+          <Button
+            variant="outline"
+            size="small"
+            onClick={() => {
+              query.refetch()
+              if (mode === 'overview') casesQuery.refetch()
+              if (mode === 'emails') messagesQuery.refetch()
+              if (mode === 'checks') checksQuery.refetch()
+            }}
+            isLoading={query.isFetching || casesQuery.isFetching || messagesQuery.isFetching || checksQuery.isFetching}
+          >
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
             Refresh
           </Button>
@@ -228,13 +292,46 @@ export function AbandonedCartCampaignView({ mode }: { mode: ViewMode }) {
         <>
           <KpiGrid data={data} />
           {mode === 'overview' ? (
-            <Overview data={data} search={search} setSearch={setSearch} status={status} setStatus={setStatus} />
+            <Overview
+              data={data}
+              cases={casesQuery.data}
+              casesError={casesQuery.isError ? casesQuery.error.message : null}
+              isFetchingCases={casesQuery.isFetching}
+              pageIndex={pageIndex}
+              setPageIndex={setPageIndex}
+              search={search}
+              setSearch={updateSearch}
+              status={status}
+              setStatus={updateStatus}
+            />
           ) : null}
           {mode === 'emails' ? (
-            <EmailsView data={data} search={search} setSearch={setSearch} status={status} setStatus={setStatus} />
+            <EmailsView
+              data={data}
+              messages={messagesQuery.data}
+              messagesError={messagesQuery.isError ? messagesQuery.error.message : null}
+              isFetchingMessages={messagesQuery.isFetching}
+              pageIndex={pageIndex}
+              setPageIndex={setPageIndex}
+              search={search}
+              setSearch={updateSearch}
+              status={status}
+              setStatus={updateStatus}
+            />
           ) : null}
           {mode === 'checks' ? (
-            <ChecksView data={data} search={search} setSearch={setSearch} status={status} setStatus={setStatus} />
+            <ChecksView
+              data={data}
+              checks={checksQuery.data}
+              checksError={checksQuery.isError ? checksQuery.error.message : null}
+              isFetchingChecks={checksQuery.isFetching}
+              pageIndex={pageIndex}
+              setPageIndex={setPageIndex}
+              search={search}
+              setSearch={updateSearch}
+              status={status}
+              setStatus={updateStatus}
+            />
           ) : null}
         </>
       ) : null}
@@ -323,12 +420,22 @@ function KpiGrid({ data }: { data: DashboardData }) {
 
 function Overview({
   data,
+  cases,
+  casesError,
+  isFetchingCases,
+  pageIndex,
+  setPageIndex,
   search,
   setSearch,
   status,
   setStatus,
 }: {
   data: DashboardData
+  cases: PaginatedResult<CaseItem> | undefined
+  casesError: string | null
+  isFetchingCases: boolean
+  pageIndex: number
+  setPageIndex: (value: number) => void
   search: string
   setSearch: (value: string) => void
   status: string
@@ -358,9 +465,17 @@ function Overview({
             setSearch={setSearch}
             status={status}
             setStatus={setStatus}
-            statusOptions={caseStatusOptions(data.cases)}
+            statusOptions={CASE_STATUS_OPTIONS}
           />
-          <CasesTable rows={filterCases(data.cases, search, status)} />
+          {casesError ? <ErrorState message={casesError} /> : null}
+          <CasesTable rows={cases?.items ?? []} />
+          <PaginationFooter
+            count={cases?.count ?? 0}
+            isFetching={isFetchingCases}
+            pageIndex={pageIndex}
+            pageSize={PAGE_SIZE}
+            setPageIndex={setPageIndex}
+          />
         </TabsContent>
       </Tabs>
     </>
@@ -369,12 +484,22 @@ function Overview({
 
 function EmailsView({
   data,
+  messages,
+  messagesError,
+  isFetchingMessages,
+  pageIndex,
+  setPageIndex,
   search,
   setSearch,
   status,
   setStatus,
 }: {
   data: DashboardData
+  messages: PaginatedResult<MessageItem> | undefined
+  messagesError: string | null
+  isFetchingMessages: boolean
+  pageIndex: number
+  setPageIndex: (value: number) => void
   search: string
   setSearch: (value: string) => void
   status: string
@@ -388,21 +513,39 @@ function EmailsView({
         setSearch={setSearch}
         status={status}
         setStatus={setStatus}
-        statusOptions={messageStatusOptions(data.messages)}
+        statusOptions={MESSAGE_STATUS_OPTIONS}
       />
-      <MessagesTable rows={filterMessages(data.messages, search, status)} />
+      {messagesError ? <ErrorState message={messagesError} /> : null}
+      <MessagesTable rows={messages?.items ?? []} />
+      <PaginationFooter
+        count={messages?.count ?? 0}
+        isFetching={isFetchingMessages}
+        pageIndex={pageIndex}
+        pageSize={PAGE_SIZE}
+        setPageIndex={setPageIndex}
+      />
     </>
   )
 }
 
 function ChecksView({
   data,
+  checks,
+  checksError,
+  isFetchingChecks,
+  pageIndex,
+  setPageIndex,
   search,
   setSearch,
   status,
   setStatus,
 }: {
   data: DashboardData
+  checks: PaginatedResult<CheckItem> | undefined
+  checksError: string | null
+  isFetchingChecks: boolean
+  pageIndex: number
+  setPageIndex: (value: number) => void
   search: string
   setSearch: (value: string) => void
   status: string
@@ -416,9 +559,17 @@ function ChecksView({
         setSearch={setSearch}
         status={status}
         setStatus={setStatus}
-        statusOptions={checkStatusOptions(data.checks)}
+        statusOptions={CHECK_STATUS_OPTIONS}
       />
-      <ChecksTable rows={filterChecks(data.checks, search, status)} />
+      {checksError ? <ErrorState message={checksError} /> : null}
+      <ChecksTable rows={checks?.items ?? []} />
+      <PaginationFooter
+        count={checks?.count ?? 0}
+        isFetching={isFetchingChecks}
+        pageIndex={pageIndex}
+        pageSize={PAGE_SIZE}
+        setPageIndex={setPageIndex}
+      />
     </>
   )
 }
@@ -826,6 +977,50 @@ function ChecksTable({ rows }: { rows: CheckItem[] }) {
   )
 }
 
+function PaginationFooter({
+  count,
+  isFetching,
+  pageIndex,
+  pageSize,
+  setPageIndex,
+}: {
+  count: number
+  isFetching: boolean
+  pageIndex: number
+  pageSize: number
+  setPageIndex: (value: number) => void
+}) {
+  const pageCount = Math.max(1, Math.ceil(count / pageSize))
+  const from = count === 0 ? 0 : pageIndex * pageSize + 1
+  const to = Math.min(count, (pageIndex + 1) * pageSize)
+  return (
+    <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <div>{isFetching ? 'Chargement...' : `${fmtNumber(from)}-${fmtNumber(to)} sur ${fmtNumber(count)}`}</div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="small"
+          disabled={pageIndex <= 0 || isFetching}
+          onClick={() => setPageIndex(Math.max(0, pageIndex - 1))}
+        >
+          Précédent
+        </Button>
+        <span className="min-w-20 text-center">
+          Page {fmtNumber(pageIndex + 1)} / {fmtNumber(pageCount)}
+        </span>
+        <Button
+          variant="outline"
+          size="small"
+          disabled={pageIndex >= pageCount - 1 || isFetching}
+          onClick={() => setPageIndex(pageIndex + 1)}
+        >
+          Suivant
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function StatusBadge({ value }: { value: string }) {
   const variant =
     value === 'sent' || value === 'recovered' || value === 'passed'
@@ -856,54 +1051,6 @@ function LoadingState() {
 
 function ErrorState({ message }: { message: string }) {
   return <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm">{message}</div>
-}
-
-function filterCases(rows: CaseItem[], search: string, status: string): CaseItem[] {
-  return rows.filter((row) => {
-    if (status !== 'all' && row.status !== status && row.case_type !== status) return false
-    return searchable(row, search)
-  })
-}
-
-function filterMessages(rows: MessageItem[], search: string, status: string): MessageItem[] {
-  return rows.filter((row) => {
-    if (status !== 'all' && row.status !== status && row.message_type !== status && row.skip_reason !== status)
-      return false
-    return searchable(row, search)
-  })
-}
-
-function filterChecks(rows: CheckItem[], search: string, status: string): CheckItem[] {
-  return rows.filter((row) => {
-    if (status !== 'all' && row.status !== status && row.check_type !== status) return false
-    return searchable(row, search)
-  })
-}
-
-function searchable(row: unknown, search: string): boolean {
-  const q = search.trim().toLowerCase()
-  if (!q) return true
-  return JSON.stringify(row).toLowerCase().includes(q)
-}
-
-function caseStatusOptions(rows: CaseItem[]) {
-  return unique([...rows.map((row) => row.status), ...rows.map((row) => row.case_type)])
-}
-
-function messageStatusOptions(rows: MessageItem[]) {
-  return unique([
-    ...rows.map((row) => row.status),
-    ...rows.map((row) => row.message_type),
-    ...(rows.map((row) => row.skip_reason).filter(Boolean) as string[]),
-  ])
-}
-
-function checkStatusOptions(rows: CheckItem[]) {
-  return unique([...rows.map((row) => row.status), ...rows.map((row) => row.check_type)])
-}
-
-function unique(values: string[]): string[] {
-  return Array.from(new Set(values)).slice(0, 8)
 }
 
 function titleForMode(mode: ViewMode): string {

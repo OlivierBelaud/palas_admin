@@ -1,4 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+
+const functionRegions = ['fra1']
+const require = createRequire(import.meta.url)
 
 const selfRedirects = new Map([
   ['^/login/?$', '/login'],
@@ -7,6 +12,7 @@ const selfRedirects = new Map([
 ])
 
 const legacyAdminPaths = [
+  'dashboard',
   'paniers',
   'paniers-abandonnes',
   'paniers-abandonnes/emails',
@@ -30,14 +36,14 @@ const legacyAdminOutputRedirects = [
     status: 307,
     headers: { Location: `/${path}` },
   })),
-  { src: '^/admin/?$', status: 307, headers: { Location: '/' } },
+  { src: '^/admin/?$', status: 307, headers: { Location: '/dashboard' } },
 ]
 
 const legacyAdminVercelRedirects = [
   { source: '/admin/login', destination: '/login', permanent: false },
   { source: '/admin/reset-password', destination: '/reset-password', permanent: false },
   { source: '/admin/accept-invite', destination: '/accept-invite', permanent: false },
-  { source: '/admin', destination: '/', permanent: false },
+  { source: '/admin', destination: '/dashboard', permanent: false },
   { source: '/admin/:path*', destination: '/:path*', permanent: false },
 ]
 
@@ -54,6 +60,7 @@ function patchVercelJson() {
   if (!existsSync(path)) return
 
   const config = readJson(path)
+  config.regions = functionRegions
   const redirects = Array.isArray(config.redirects) ? config.redirects : []
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
@@ -85,6 +92,20 @@ function patchVercelJson() {
   writeJson(path, config)
 }
 
+function patchFunctionConfigs(dir = '.vercel/output/functions') {
+  if (!existsSync(dir)) return
+
+  for (const entry of readdirSync(dir)) {
+    const path = `${dir}/${entry}`
+    if (statSync(path).isDirectory()) patchFunctionConfigs(path)
+    if (entry !== '.vc-config.json') continue
+
+    const config = readJson(path)
+    config.regions = functionRegions
+    writeJson(path, config)
+  }
+}
+
 function patchOutputConfig() {
   const path = '.vercel/output/config.json'
   if (!existsSync(path)) return
@@ -114,5 +135,118 @@ function patchOutputConfig() {
   writeJson(path, config)
 }
 
+function installFastFunction({ source, route, extraSources = [] }) {
+  const sourceDir = 'vercel-fast-functions'
+  const functionDir = `.vercel/output/functions/${route}.func`
+  rmSync(functionDir, { recursive: true, force: true })
+  mkdirSync(functionDir, { recursive: true })
+
+  cpSync(`${sourceDir}/${source}`, `${functionDir}/index.mjs`)
+  cpSync(`${sourceDir}/runtime.mjs`, `${functionDir}/runtime.mjs`)
+  for (const extraSource of extraSources) {
+    cpSync(`${sourceDir}/${extraSource}`, `${functionDir}/${extraSource}`)
+  }
+  writeJson(`${functionDir}/.vc-config.json`, {
+    handler: 'index.mjs',
+    launcherType: 'Nodejs',
+    shouldAddHelpers: false,
+    supportsResponseStreaming: true,
+    runtime: 'nodejs24.x',
+    regions: functionRegions,
+  })
+
+  const postgresDir = resolvePackageRoot('postgres')
+  mkdirSync(`${functionDir}/node_modules`, { recursive: true })
+  cpSync(postgresDir, `${functionDir}/node_modules/postgres`, { recursive: true })
+}
+
+function resolvePackageRoot(packageName) {
+  let dir = dirname(require.resolve(packageName))
+  while (dir !== dirname(dir)) {
+    const packageJsonPath = join(dir, 'package.json')
+    if (existsSync(packageJsonPath)) {
+      const packageJson = readJson(packageJsonPath)
+      if (packageJson.name === packageName) return dir
+    }
+    dir = dirname(dir)
+  }
+  throw new Error(`Unable to resolve package root for ${packageName}`)
+}
+
+function installFastFunctions() {
+  const abandonedCartCampaignSources = ['abandoned-cart-campaign-common.mjs']
+  const visitorStatsRoutes = [
+    'visitor-stats-unique-visitors-by-segment',
+    'visitor-stats-carts-created-funnel',
+    'visitor-stats-carts-updated-funnel',
+    'visitor-stats-identity-acquisitions',
+    'visitor-stats-paid-vs-organic',
+  ]
+  installFastFunction({
+    source: 'admin-me.mjs',
+    route: 'api/admin/me',
+  })
+  installFastFunction({
+    source: 'admin-graph.mjs',
+    route: 'api/admin/graph',
+  })
+  installFastFunction({
+    source: 'admin-cart-stats.mjs',
+    route: 'api/admin/cart-stats',
+  })
+  installFastFunction({
+    source: 'admin-charts-lab-data.mjs',
+    route: 'api/admin/charts-lab-data',
+  })
+  installFastFunction({
+    source: 'admin-users.mjs',
+    route: 'api/admin/users',
+  })
+  installFastFunction({
+    source: 'admin-invitations.mjs',
+    route: 'api/admin/invitations',
+  })
+  installFastFunction({
+    source: 'admin-visitor-lifecycle-dashboard.mjs',
+    route: 'api/admin/visitor-lifecycle-dashboard',
+  })
+  for (const route of visitorStatsRoutes) {
+    installFastFunction({
+      source: 'admin-visitor-stats.mjs',
+      route: `api/admin/${route}`,
+    })
+  }
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-dashboard.mjs',
+    route: 'api/admin/abandoned-cart-campaign-dashboard',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-case-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-case-list',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-message-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-message-list',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-check-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-check-list',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-system-dashboard.mjs',
+    route: 'api/cart-tracking/admin-system-dashboard',
+  })
+  installFastFunction({
+    source: 'admin-tracking-health.mjs',
+    route: 'api/cart-tracking/admin-tracking-health',
+  })
+}
+
 patchVercelJson()
 patchOutputConfig()
+patchFunctionConfigs()
+installFastFunctions()
