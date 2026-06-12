@@ -38,6 +38,6 @@ export default defineCommand({
         // Dispatch rows are idempotent by event_destination_key. Partial
         // progress is expected; the next cron tick resumes pending/retry rows.
       },
-    })
+    })({})
   },
 })
