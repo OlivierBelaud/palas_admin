@@ -6,6 +6,7 @@ import {
   type IdentityShadowComparison,
   type RawPosthogEvent,
 } from '../identity/resolve-event-identity'
+import { validateCanonicalEvent, validationErrorsForSupportedDestinations } from './canonical-contract'
 
 export type CanonicalPosthogEvent = {
   event_id: string
@@ -105,9 +106,7 @@ export function inferPageType(currentUrl: string | null): string | null {
 }
 
 function canonicalPageViewName(pageType: string | null): string {
-  if (pageType === 'product') return 'view_item'
-  if (pageType === 'collection') return 'view_item_list'
-  if (pageType === 'search') return 'search'
+  void pageType
   return 'page_view'
 }
 
@@ -139,33 +138,6 @@ function normalizeItems(items: unknown[]): Array<Record<string, unknown>> {
   })
 }
 
-function validationErrors(eventName: string, eventId: string | null, payload: Record<string, unknown>): string[] {
-  const errors: string[] = []
-  if (!eventId) errors.push('event_id_missing')
-
-  const context = obj(payload.context)
-  const ecommerce = obj(payload.ecommerce)
-  const items = Array.isArray(ecommerce.items) ? ecommerce.items : []
-  const checkout = obj(payload.checkout)
-
-  if (!str(context.url, 4096) && ['page_view', 'view_item', 'view_item_list', 'search'].includes(eventName)) {
-    errors.push('url_missing')
-  }
-  if (['view_item', 'view_item_list', 'add_to_cart', 'remove_from_cart'].includes(eventName) && items.length === 0) {
-    errors.push('items_missing_for_ga4')
-  }
-  if (['add_to_cart', 'begin_checkout', 'add_shipping_info', 'add_payment_info', 'purchase'].includes(eventName)) {
-    if (num(ecommerce.value) == null) errors.push('value_missing')
-    if (!str(ecommerce.currency, 8)) errors.push('currency_missing')
-  }
-  if (eventName === 'purchase') {
-    if (!str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180))
-      errors.push('transaction_id_missing')
-  }
-
-  return errors
-}
-
 export function normalizePosthogEventToCanonical(
   event: RawPosthogEvent,
   comparison: IdentityShadowComparison,
@@ -189,8 +161,9 @@ export function normalizePosthogEventToCanonical(
   if (!canonicalName) return null
 
   const cartItems = cartEvent ? normalizeItems(cartEvent.items) : []
+  const eventIdFromSignal = signals.event_id
   const eventId =
-    signals.event_id ||
+    eventIdFromSignal ||
     `ph_${stableHash(`${rawEventName}|${signals.posthog_distinct_id ?? ''}|${signals.observed_at}|${currentUrl ?? ''}`).slice(0, 32)}`
 
   const ecommerce: Record<string, unknown> = {
@@ -246,6 +219,13 @@ export function normalizePosthogEventToCanonical(
       shopify_order_id: cartEvent?.shopify_order_id ?? null,
       is_first_order: cartEvent?.is_first_order ?? null,
     },
+    consent: {
+      analytics_storage: null,
+      ad_storage: null,
+      ad_user_data: null,
+      ad_personalization: null,
+      source: 'posthog_proxy_unavailable',
+    },
     dispatch: {
       posthog: {
         status:
@@ -259,7 +239,15 @@ export function normalizePosthogEventToCanonical(
     },
   }
 
-  const errors = validationErrors(canonicalName, eventId, payload)
+  const validation = validateCanonicalEvent({
+    eventName: canonicalName,
+    eventId,
+    eventTime: signals.observed_at,
+    eventIdWasGenerated: !eventIdFromSignal,
+    payload,
+  })
+  payload.validation = validation
+  const errors = validationErrorsForSupportedDestinations(validation)
   obj(obj(payload.dispatch).ga4).ready = errors.length === 0
 
   return {

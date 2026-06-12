@@ -1,3 +1,5 @@
+import { GA4_CANONICAL_EVENT_NAMES } from './canonical-contract'
+
 export type Ga4DispatchStatus = 'sent' | 'invalid' | 'error' | 'retry' | 'not_configured'
 
 export type Ga4Config = {
@@ -18,20 +20,6 @@ export type Ga4SendResult = {
   error_message: string | null
   response_payload: Record<string, unknown> | null
 }
-
-const GA4_SUPPORTED_EVENTS = new Set([
-  'page_view',
-  'view_item_list',
-  'view_item',
-  'search',
-  'add_to_cart',
-  'remove_from_cart',
-  'view_cart',
-  'begin_checkout',
-  'add_shipping_info',
-  'add_payment_info',
-  'purchase',
-])
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -130,7 +118,7 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
   const checkout = obj(canonicalPayload.checkout)
   const utm = obj(context.utm)
 
-  if (!GA4_SUPPORTED_EVENTS.has(canonicalEventName)) {
+  if (!GA4_CANONICAL_EVENT_NAMES.has(canonicalEventName)) {
     errors.push('ga4_event_not_supported')
   }
 

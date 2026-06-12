@@ -41,6 +41,13 @@ type CartEmailRow = {
   updated_at: string | Date | null
 }
 
+type DestinationSummary = {
+  destination: string
+  supported: boolean
+  ready: boolean
+  blockers: string[]
+}
+
 export default defineQuery({
   name: 'tracking-health',
   description: 'Live Event Hub hot log for the last 24 hours',
@@ -224,12 +231,17 @@ export default defineQuery({
     let valid = 0
     let ga4Ready = 0
     let posthogForwarded = 0
+    let analyticsConsentGranted = 0
+    let analyticsConsentDenied = 0
+    let adsConsentGranted = 0
+    let adsConsentDenied = 0
     const ga4StatusCounts = countBy(dispatchStatRows, (row) => row.status)
     const latestAt = typeRows[0]?.received_at ? new Date(typeRows[0].received_at).toISOString() : null
 
     for (const row of statRows) {
       const payload = row.payload_normalized ?? {}
       const user = (payload.user ?? {}) as Record<string, unknown>
+      const consent = (payload.consent ?? {}) as Record<string, unknown>
       const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
       const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
       const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
@@ -238,6 +250,13 @@ export default defineQuery({
       if (row.valid) valid += 1
       if (ga4.ready === true) ga4Ready += 1
       if (posthog.status === 'forwarded') posthogForwarded += 1
+      if (consent.analytics_storage === true) analyticsConsentGranted += 1
+      else analyticsConsentDenied += 1
+      if (consent.ad_storage === true && consent.ad_user_data === true && consent.ad_personalization === true) {
+        adsConsentGranted += 1
+      } else {
+        adsConsentDenied += 1
+      }
     }
 
     for (const row of typeRows) {
@@ -262,7 +281,10 @@ export default defineQuery({
       const cart = (payload.cart ?? {}) as Record<string, unknown>
       const checkout = (payload.checkout ?? {}) as Record<string, unknown>
       const user = (payload.user ?? {}) as Record<string, unknown>
+      const consent = (payload.consent ?? {}) as Record<string, unknown>
       const dispatch = (payload.dispatch ?? {}) as Record<string, unknown>
+      const validation = (payload.validation ?? {}) as Record<string, unknown>
+      const validationDestinations = (validation.destinations ?? {}) as Record<string, unknown>
       const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
       const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
       const ga4Log = dispatchByEventId.get(row.event_id)
@@ -297,11 +319,23 @@ export default defineQuery({
               : row.distinct_id
                 ? 'posthog'
                 : 'anon',
+        profile_tracking_id:
+          contactId ??
+          row.identity_muid ??
+          (row.distinct_id ? `posthog:${row.distinct_id}` : null) ??
+          (row.identity_email_sha256 ? `sha256:${row.identity_email_sha256}` : null),
         identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
         contact_id: contactId,
         email: email ?? null,
         email_status: email ? 'resolved' : hasEmailHash ? 'hashed' : 'unknown',
         matched_v1: user.matched_v1 === true,
+        consent: {
+          analytics_storage: consent.analytics_storage === true,
+          ad_storage: consent.ad_storage === true,
+          ad_user_data: consent.ad_user_data === true,
+          ad_personalization: consent.ad_personalization === true,
+          source: typeof consent.source === 'string' ? consent.source : 'unknown',
+        },
         valid: row.valid,
         validation_errors: row.validation_errors ?? [],
         value: ecommerce.value ?? null,
@@ -319,6 +353,9 @@ export default defineQuery({
         ga4_error_message: ga4Log?.error_message ?? null,
         ga4_attempt_count: ga4Log?.attempt_count ?? 0,
         ga4_sent_at: ga4Log?.sent_at ? new Date(ga4Log.sent_at).toISOString() : null,
+        ad_destinations: ['meta_capi', 'google_ads', 'tiktok'].map((destination) =>
+          destinationSummary(destination, validationDestinations[destination]),
+        ),
       }
     })
 
@@ -351,6 +388,10 @@ export default defineQuery({
           countStatus(ga4StatusCounts, 'not_configured') +
           countStatus(ga4StatusCounts, 'sending'),
         posthog_forwarded: posthogForwarded,
+        consent_analytics_granted: analyticsConsentGranted,
+        consent_analytics_denied: analyticsConsentDenied,
+        consent_ads_granted: adsConsentGranted,
+        consent_ads_denied: adsConsentDenied,
       },
       event_types: Array.from(byType.values()).sort((a, b) => b.count - a.count),
       events,
@@ -398,4 +439,16 @@ function normalizeEmail(value: unknown): string | null {
 function timeValue(value: string | Date | null): number {
   if (!value) return 0
   return new Date(value).getTime()
+}
+
+function destinationSummary(destination: string, value: unknown): DestinationSummary {
+  const row = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+  return {
+    destination,
+    supported: row.supported === true,
+    ready: row.ready === true,
+    blockers: Array.isArray(row.blockers)
+      ? row.blockers.filter((item): item is string => typeof item === 'string')
+      : [],
+  }
 }
