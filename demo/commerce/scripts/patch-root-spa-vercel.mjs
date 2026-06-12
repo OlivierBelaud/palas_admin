@@ -175,10 +175,47 @@ function resolvePackageRoot(packageName) {
 
 function installFastFunctions() {
   const abandonedCartCampaignSources = ['abandoned-cart-campaign-common.mjs']
+  const visitorStatsRoutes = [
+    'visitor-stats-unique-visitors-by-segment',
+    'visitor-stats-carts-created-funnel',
+    'visitor-stats-carts-updated-funnel',
+    'visitor-stats-identity-acquisitions',
+    'visitor-stats-paid-vs-organic',
+  ]
   installFastFunction({
     source: 'admin-me.mjs',
     route: 'api/admin/me',
   })
+  installFastFunction({
+    source: 'admin-graph.mjs',
+    route: 'api/admin/graph',
+  })
+  installFastFunction({
+    source: 'admin-cart-stats.mjs',
+    route: 'api/admin/cart-stats',
+  })
+  installFastFunction({
+    source: 'admin-charts-lab-data.mjs',
+    route: 'api/admin/charts-lab-data',
+  })
+  installFastFunction({
+    source: 'admin-users.mjs',
+    route: 'api/admin/users',
+  })
+  installFastFunction({
+    source: 'admin-invitations.mjs',
+    route: 'api/admin/invitations',
+  })
+  installFastFunction({
+    source: 'admin-visitor-lifecycle-dashboard.mjs',
+    route: 'api/admin/visitor-lifecycle-dashboard',
+  })
+  for (const route of visitorStatsRoutes) {
+    installFastFunction({
+      source: 'admin-visitor-stats.mjs',
+      route: `api/admin/${route}`,
+    })
+  }
   installFastFunction({
     source: 'admin-abandoned-cart-campaign-dashboard.mjs',
     route: 'api/admin/abandoned-cart-campaign-dashboard',
