@@ -8,6 +8,7 @@ import { upsertContactFromEvent } from '../contact/upsert-contact-from-event'
 import { type NormalizedCartEvent, normalizeCartEvent } from './posthog-adapter'
 
 export const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
+const CHECKOUT_CART_BRIDGE_WINDOW_HOURS = 24
 
 export const SPAM_EMAIL_RE = /storebotmail|joonix\.net|mailinator|guerrillamail/i
 
@@ -45,7 +46,7 @@ export async function applyEvent(
   // Only events that carry cart state should overwrite snapshot totals.
   // `checkout:*` + `cart:closed` can fire without re-embedding the cart —
   // we preserve the existing snapshot instead of zeroing it out.
-  const items = n.cart_has_payload ? JSON.stringify(n.items) : null
+  const items = n.cart_has_payload ? n.items : null
   const totalPrice = n.cart_has_payload ? n.total_price : null
   const currency = n.cart_has_payload ? n.currency : null
   const itemCount = n.cart_has_payload ? n.item_count : null
@@ -68,13 +69,25 @@ export async function applyEvent(
         [n.cart_token],
       )
     }
-    if (existing.length === 0 && n.distinct_id) {
+    if (existing.length === 0 && n.shopify_order_id) {
       existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
-        'SELECT * FROM carts WHERE distinct_id = $1 LIMIT 1',
-        [n.distinct_id],
+        'SELECT * FROM carts WHERE shopify_order_id = $1 LIMIT 1',
+        [n.shopify_order_id],
       )
     }
-
+    if (existing.length === 0 && n.distinct_id && !n.event.startsWith('cart:')) {
+      existing = await db.raw<{ id: string; highest_stage: string; status: string; [k: string]: unknown }>(
+        `SELECT *
+           FROM carts
+          WHERE distinct_id = $1
+            AND highest_stage <> 'completed'
+            AND last_action_at >= $2::timestamptz - INTERVAL '${CHECKOUT_CART_BRIDGE_WINDOW_HOURS} hours'
+            AND last_action_at <= $2::timestamptz + INTERVAL '10 minutes'
+          ORDER BY last_action_at DESC NULLS LAST
+          LIMIT 1`,
+        [n.distinct_id, n.occurred_at],
+      )
+    }
     const currentStage = (existing[0]?.highest_stage as string) ?? 'cart'
     const stageIdx = Math.max(STAGES.indexOf(currentStage as never), STAGES.indexOf(newStage))
     const highestStage = STAGES[stageIdx] ?? newStage
@@ -90,7 +103,7 @@ export async function applyEvent(
 
     if (existing.length > 0) {
       const ex = existing[0]
-      const nextItems = items ?? (ex.items ? JSON.stringify(ex.items) : JSON.stringify([]))
+      const nextItems = items ?? coerceStoredItems(ex.items)
       const nextTotalPrice = totalPrice ?? (ex.total_price as number | null) ?? 0
       const nextItemCount = itemCount ?? (ex.item_count as number | null) ?? 0
       const nextCurrency = currency ?? (ex.currency as string | null) ?? 'EUR'
@@ -151,7 +164,7 @@ export async function applyEvent(
           n.phone,
           n.city,
           n.country_code,
-          items ?? '[]',
+          items ?? [],
           totalPrice ?? 0,
           itemCount ?? 0,
           currency ?? 'EUR',
@@ -246,4 +259,17 @@ export async function applyEvent(
     if (priorErrors < 10) log.warn(`[applyEvent] ${evt.event}: ${(err as Error).message.substring(0, 100)}`)
     return 'error'
   }
+}
+
+function coerceStoredItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
 }

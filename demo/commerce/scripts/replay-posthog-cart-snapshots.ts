@@ -48,6 +48,7 @@ function readNumberFlag(name: string, fallback: number): number {
 }
 
 loadEnv('.env', false)
+loadEnv('.env.local', true)
 const localPosthogPersonalKey = process.env.POSTHOG_PERSONAL_API_KEY
 const localPosthogKey = process.env.POSTHOG_API_KEY
 if (useProd) {

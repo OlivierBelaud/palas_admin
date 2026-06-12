@@ -23,6 +23,10 @@ import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { applyEvent, type PosthogEvent, type RawDb } from '../src/modules/cart-tracking/apply-event'
 import { enrichEventWithEmail, resolveEmailsBatch } from '../src/modules/cart-tracking/identity-resolver'
+import { repairCartSnapshots } from '../src/modules/cart-tracking/refresh-cart'
+import { runPosthogHogQL } from '../src/utils/posthog-query'
+
+const fullSync = process.argv.includes('--full')
 
 // ── 1. Env ────────────────────────────────────────────────────────────
 // Load .env first (ambient tokens — POSTHOG_API_KEY, KLAVIYO_API_KEY, ...),
@@ -37,7 +41,11 @@ function loadEnv(relPath: string, { override }: { override: boolean }): boolean 
     for (const line of raw.split('\n')) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)
       if (!m) continue
-      if (override || !process.env[m[1]]) process.env[m[1]] = m[2]
+      let value = m[2].trim()
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      if (override || !process.env[m[1]]) process.env[m[1]] = value
     }
     console.log(`[rebuild-production] Loaded ${full}`)
     return true
@@ -47,11 +55,19 @@ function loadEnv(relPath: string, { override }: { override: boolean }): boolean 
   }
 }
 loadEnv('.env', { override: false })
+loadEnv('.env.local', { override: true })
+const posthogKey = process.env.POSTHOG_API_KEY
+const posthogPersonalKey = process.env.POSTHOG_PERSONAL_API_KEY
+const posthogToken = process.env.POSTHOG_TOKEN
+const posthogHost = process.env.POSTHOG_HOST
 loadEnv('.env.production', { override: true })
+if (posthogKey) process.env.POSTHOG_API_KEY = posthogKey
+if (posthogPersonalKey) process.env.POSTHOG_PERSONAL_API_KEY = posthogPersonalKey
+if (posthogToken) process.env.POSTHOG_TOKEN = posthogToken
+if (posthogHost) process.env.POSTHOG_HOST = posthogHost
 
 const DATABASE_URL = process.env.DATABASE_URL
-const POSTHOG_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
-const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY
+const POSTHOG_API_KEY = process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY
 if (!DATABASE_URL) {
   console.error('DATABASE_URL missing')
   process.exit(1)
@@ -86,6 +102,10 @@ await db.raw(`
   )
 `)
 await db.raw(`CREATE INDEX IF NOT EXISTS idx_posthog_event_log_ts ON posthog_event_log(event_timestamp)`)
+if (fullSync) {
+  await db.raw(`TRUNCATE TABLE posthog_event_log`)
+  console.log('[rebuild-production] Full sync requested — posthog_event_log truncated')
+}
 
 // ── 4. Step 1: incremental sync from PostHog ─────────────────────────
 const maxRows = await db.raw<{ max_ts: Date | null }>(`SELECT MAX(event_timestamp) AS max_ts FROM posthog_event_log`)
@@ -96,14 +116,7 @@ const sinceFilter = sinceIso ? ` AND timestamp > toDateTime('${sinceIso}')` : ''
 console.log(`[rebuild-production] Syncing PostHog events from ${sinceIso ?? 'genesis'}...`)
 
 async function hogql(query: string): Promise<unknown[][]> {
-  const res = await fetch(`${POSTHOG_HOST}/api/projects/@current/query/`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${POSTHOG_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: { kind: 'HogQLQuery', query } }),
-  })
-  if (!res.ok) throw new Error(`PostHog ${res.status}: ${await res.text().catch(() => '')}`)
-  const body = (await res.json()) as { results?: unknown[][] }
-  return body.results ?? []
+  return runPosthogHogQL(query, { privateKey: POSTHOG_API_KEY, refresh: 'force_blocking' })
 }
 
 const countRows = (await hogql(
@@ -140,7 +153,7 @@ while (newEventsInPosthog > 0) {
       const p = j * 5
       placeholders.push(`($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}::jsonb)`)
       const evt = chunk[j]
-      params.push(evt.uuid, evt.event, evt.distinct_id, evt.timestamp, JSON.stringify(evt.properties))
+      params.push(evt.uuid, evt.event, evt.distinct_id, evt.timestamp, evt.properties)
     }
     const inserted = await db.raw(
       `INSERT INTO posthog_event_log (posthog_uuid, event_name, distinct_id, event_timestamp, properties)
@@ -170,7 +183,7 @@ console.log('[rebuild-production] Resolving PostHog person identities...')
 const emailMap = await resolveEmailsBatch()
 console.log(`[rebuild-production] Identity map: ${emailMap.size} pairs`)
 
-await db.raw(`DELETE FROM cart_events`)
+await db.raw(`DELETE FROM cart_events`).catch(() => undefined)
 await db.raw(`DELETE FROM carts`)
 console.log('[rebuild-production] Snapshot tables wiped')
 
@@ -236,6 +249,11 @@ process.stdout.write('\n')
 
 console.log(
   `[rebuild-production] Done — rebuilt=${rebuilt} skipped=${skipped} errors=${errors} identities_recovered=${identitiesRecovered}`,
+)
+
+const repair = await repairCartSnapshots(db, { limit: 5000, dryRun: false })
+console.log(
+  `[rebuild-production] Repair — selected=${repair.selected} repaired=${repair.repaired} missing_cart_order_links ${repair.before.missing_cart_order_links}->${repair.after.missing_cart_order_links}`,
 )
 
 await sql.end()

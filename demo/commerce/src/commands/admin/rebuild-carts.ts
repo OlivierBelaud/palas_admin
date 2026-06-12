@@ -41,6 +41,7 @@ import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 const POSTHOG_PAGE_SIZE = 1000
 const LOG_INSERT_BATCH = 200 // rows per multi-values INSERT — keeps payload well under Neon's 64 MB cap
 const LOG_READ_BATCH = 500
+const CHECKOUT_CART_BRIDGE_WINDOW_HOURS = 24
 
 // Cleanup: early iterations used a table called `posthog_event_staging` with
 // a batch_id column. The durable, idempotent design replaces it with
@@ -141,7 +142,7 @@ export default defineCommand({
               const p = j * 5
               placeholders.push(`($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}::jsonb)`)
               const evt = chunk[j]
-              params.push(evt.uuid, evt.event, evt.distinct_id, evt.timestamp, JSON.stringify(evt.properties))
+              params.push(evt.uuid, evt.event, evt.distinct_id, evt.timestamp, evt.properties)
             }
             const rows = await db.raw<{ inserted: number }>(
               `INSERT INTO posthog_event_log (posthog_uuid, event_name, distinct_id, event_timestamp, properties)
@@ -214,7 +215,7 @@ export default defineCommand({
         // happens incrementally so memory stays bounded to O(unique carts).
         ctx.progress?.(0, input.total, `Loading events from log...`)
         const carts = new Map<string, CartAccumulator>()
-        const tokenByDistinctId = new Map<string, string>()
+        const latestActiveTokenByDistinctId = new Map<string, string>()
         let skipped = 0
         let errors = 0
         let identitiesRecovered = 0
@@ -261,7 +262,7 @@ export default defineCommand({
             }
             if (enrichEventWithEmail(evt, emailMap)) identitiesRecovered += 1
             try {
-              const outcome = foldCartEvent(evt, carts, tokenByDistinctId)
+              const outcome = foldCartEvent(evt, carts, latestActiveTokenByDistinctId)
               if (outcome === 'skipped') skipped += 1
             } catch (err) {
               if (errors < 10) log.warn(`[rebuildCarts] fold error on ${evt.event}: ${(err as Error).message}`)
@@ -401,9 +402,8 @@ function firstNonNull<T>(existing: T | null | undefined, incoming: T | null | un
  * errors and keep going.
  *
  * Correctness mirrors apply-event.ts:
- *  - cart_token match first; distinct_id fallback used only to REDIRECT a
- *    new cart_token to an existing accumulator (Shopify v1 quirk where
- *    checkout:* uses checkout_token as cart_token).
+ *  - cart_token / checkout_token define cart identity. `distinct_id` is only
+ *    copied as visitor identity; it must not merge separate carts.
  *  - highest_stage is monotonic.
  *  - status becomes 'completed' only on checkout:completed.
  *  - items/total_price/currency/item_count from events with cart_has_payload
@@ -413,18 +413,23 @@ function firstNonNull<T>(existing: T | null | undefined, incoming: T | null | un
 function foldCartEvent(
   evt: PosthogEvent,
   carts: Map<string, CartAccumulator>,
-  tokenByDistinctId: Map<string, string>,
+  latestActiveTokenByDistinctId: Map<string, string>,
 ): 'folded' | 'skipped' {
   const n = normalizeCartEvent(evt)
   if (!n) return 'skipped'
   if (n.email && SPAM_EMAIL_RE.test(n.email)) return 'skipped'
 
-  // Canonical token resolution — redirect to the existing accumulator via
-  // distinct_id if the incoming cart_token doesn't match any known cart yet.
+  // Canonical token resolution. Never fall back to distinct_id: one visitor
+  // can legitimately create multiple carts.
   let token = n.cart_token
-  if (!carts.has(token) && n.distinct_id) {
-    const canonical = tokenByDistinctId.get(n.distinct_id)
-    if (canonical && carts.has(canonical)) token = canonical
+  if (!carts.has(token) && n.checkout_token) {
+    const byCheckout = Array.from(carts.values()).find((cart) => cart.checkout_token === n.checkout_token)
+    if (byCheckout) token = byCheckout.cart_token
+  }
+  if (!carts.has(token) && n.distinct_id && !n.event.startsWith('cart:')) {
+    const latestToken = latestActiveTokenByDistinctId.get(n.distinct_id)
+    const latestCart = latestToken ? carts.get(latestToken) : null
+    if (latestCart && canBridgeCheckoutToCart(n.occurred_at, latestCart)) token = latestCart.cart_token
   }
 
   const existing = carts.get(token)
@@ -465,7 +470,7 @@ function foldCartEvent(
       completed_at: n.event === 'checkout:completed' ? n.occurred_at : null,
     }
     carts.set(token, acc)
-    if (n.distinct_id) tokenByDistinctId.set(n.distinct_id, token)
+    if (n.distinct_id && acc.highest_stage !== 'completed') latestActiveTokenByDistinctId.set(n.distinct_id, token)
     return 'folded'
   }
 
@@ -510,14 +515,22 @@ function foldCartEvent(
   // Last action always the most recent event seen (events arrive in ts order)
   existing.last_action = n.event
   existing.last_action_at = n.occurred_at
-
-  // Register distinct_id → token mapping so future events with a new token
-  // but same distinct_id (v1 legacy) route back here.
-  if (n.distinct_id && !tokenByDistinctId.has(n.distinct_id)) {
-    tokenByDistinctId.set(n.distinct_id, token)
+  if (n.distinct_id) {
+    if (existing.highest_stage === 'completed') latestActiveTokenByDistinctId.delete(n.distinct_id)
+    else latestActiveTokenByDistinctId.set(n.distinct_id, token)
   }
 
   return 'folded'
+}
+
+function canBridgeCheckoutToCart(checkoutOccurredAt: string, cart: CartAccumulator): boolean {
+  if (cart.highest_stage === 'completed') return false
+  const checkoutMs = new Date(checkoutOccurredAt).getTime()
+  const cartMs = new Date(cart.last_action_at).getTime()
+  if (!Number.isFinite(checkoutMs) || !Number.isFinite(cartMs)) return false
+  return (
+    cartMs >= checkoutMs - CHECKOUT_CART_BRIDGE_WINDOW_HOURS * 60 * 60 * 1000 && cartMs <= checkoutMs + 10 * 60 * 1000
+  )
 }
 
 const CART_COLUMNS = [
@@ -581,7 +594,7 @@ async function bulkInsertCarts(db: RawDb, carts: CartAccumulator[]): Promise<voi
       c.city,
       c.country_code,
       c.shopify_customer_id,
-      JSON.stringify(c.items ?? []),
+      c.items ?? [],
       c.total_price ?? 0,
       c.item_count ?? 0,
       c.currency ?? 'EUR',

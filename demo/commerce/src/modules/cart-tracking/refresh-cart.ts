@@ -196,11 +196,6 @@ async function repairOneCart(db: RawDb, cartId: string): Promise<void> {
      WHERE c.id = $1
         AND c.shopify_order_id IS NOT NULL
         AND c.shopify_order_id <> ''
-        AND NOT EXISTS (
-          SELECT 1 FROM cart_order existing_order
-           WHERE existing_order.order_id = o.id::text
-             AND existing_order.cart_id <> c.id
-        )
      ON CONFLICT (cart_id, order_id) DO NOTHING`,
     [cartId],
   )
@@ -486,7 +481,11 @@ WITH base AS (
   SELECT
     count(*)::int AS carts,
     count(*) FILTER (WHERE cart_birth_at IS NULL)::int AS missing_birth,
-    count(*) FILTER (WHERE items IS NULL OR items = '[]'::jsonb)::int AS empty_items,
+    count(*) FILTER (
+      WHERE items IS NULL
+         OR jsonb_typeof(items) <> 'array'
+         OR items = '[]'::jsonb
+    )::int AS empty_items,
     count(*) FILTER (WHERE email IS NULL OR email = '')::int AS missing_email,
     count(*) FILTER (WHERE distinct_id IS NULL OR distinct_id = '')::int AS missing_distinct_id,
     count(*) FILTER (WHERE highest_stage = 'completed')::int AS completed_stage,
@@ -504,10 +503,6 @@ cart_orders AS (
         AND c.shopify_order_id <> ''
         AND o.id IS NOT NULL
         AND co.cart_id IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM cart_order any_co
-           WHERE any_co.order_id = o.id::text
-        )
     )::int AS missing_cart_order_links
   FROM carts c
   LEFT JOIN orders o ON o.shopify_order_id = c.shopify_order_id
@@ -609,7 +604,6 @@ WITH linked AS (
     contact.id::text AS contact_id,
     order_contact_source.id::text AS order_contact_source_id,
     order_contact.id AS order_contact_id,
-    existing_order_link.order_id AS existing_order_link_id,
     co.cart_id AS cart_order_cart_id,
     cc.cart_id AS cart_contact_cart_id
   FROM carts c
@@ -628,7 +622,6 @@ WITH linked AS (
       AND order_contact_source.shopify_customer_id = c.shopify_customer_id
     )
   )
-  LEFT JOIN cart_order existing_order_link ON existing_order_link.order_id = o.id::text
   LEFT JOIN cart_order co ON co.cart_id = c.id AND co.order_id = o.id::text
   LEFT JOIN cart_contact cc ON cc.cart_id = c.id AND cc.contact_id = contact.id::text
   LEFT JOIN order_contact order_contact
@@ -645,7 +638,7 @@ WHERE id IN (
      OR (completed_at IS NOT NULL AND highest_stage <> 'completed')
      OR (shopify_order_id IS NOT NULL AND shopify_order_id <> '' AND highest_stage <> 'completed')
 )
-   OR (order_id IS NOT NULL AND existing_order_link_id IS NULL AND cart_order_cart_id IS NULL)
+   OR (order_id IS NOT NULL AND cart_order_cart_id IS NULL)
    OR (contact_id IS NOT NULL AND cart_contact_cart_id IS NULL)
    OR (order_id IS NOT NULL AND order_contact_source_id IS NOT NULL AND order_contact_id IS NULL)
 ORDER BY id
