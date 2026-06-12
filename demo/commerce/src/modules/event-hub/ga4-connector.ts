@@ -1,6 +1,7 @@
 import { GA4_CANONICAL_EVENT_NAMES } from './canonical-contract'
+import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
 
-export type Ga4DispatchStatus = 'sent' | 'invalid' | 'error' | 'retry' | 'not_configured'
+export type Ga4DispatchStatus = DispatchStatus
 
 export type Ga4Config = {
   measurementId: string | null
@@ -13,13 +14,7 @@ export type Ga4MapResult =
   | { ok: true; payload: Record<string, unknown>; metadata: Record<string, unknown> }
   | { ok: false; errors: string[]; payload: Record<string, unknown>; metadata: Record<string, unknown> }
 
-export type Ga4SendResult = {
-  status: Ga4DispatchStatus
-  http_status: number | null
-  error_code: string | null
-  error_message: string | null
-  response_payload: Record<string, unknown> | null
-}
+export type Ga4SendResult = DispatchSendResult
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -263,6 +258,15 @@ export async function sendGa4Payload(
       response_payload: null,
     }
   }
+}
+
+export const ga4DestinationConnector: DestinationConnector = {
+  destination: 'ga4',
+  pendingStatuses: ['pending', 'retry', 'not_configured'],
+  notConfiguredErrorCode: 'ga4_not_configured',
+  notConfiguredMessage: 'Set GA4_MEASUREMENT_ID and GA4_API_SECRET to enable dispatch',
+  isConfigured: () => isGa4Configured(getGa4Config()),
+  send: (payload, signal) => sendGa4Payload(payload, getGa4Config(), signal),
 }
 
 function safeJson(text: string): Record<string, unknown> | null {

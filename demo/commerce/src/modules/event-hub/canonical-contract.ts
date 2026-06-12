@@ -251,7 +251,9 @@ function destinationResult(
     }
     if (num(ecommerce.value) == null) blockers.push('conversion_value_missing')
     if (!str(ecommerce.currency, 8)) blockers.push('conversion_currency_missing')
-    if (!hasAny(user, ['gclid', 'email_sha256', 'phone_sha256'])) blockers.push('google_ads_identifier_missing')
+    if (!hasAny(user, ['gclid', 'gbraid', 'wbraid', 'email_sha256', 'phone_sha256'])) {
+      blockers.push('google_ads_identifier_missing')
+    }
     addAdsConsentBlockers(blockers, consent)
   }
 

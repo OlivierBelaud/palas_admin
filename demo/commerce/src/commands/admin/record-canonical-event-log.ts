@@ -1,5 +1,6 @@
 import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
 import { mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
+import { mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
 import {
   compareIdentityResolvers,
   type IdentityServiceLike,
@@ -101,6 +102,34 @@ export default defineCommand({
       })
     } catch (err) {
       if (!isDuplicateError(err)) throw err
+    }
+
+    const googleAds = mapCanonicalToGoogleAds(canonical.event_name, canonical.payload_normalized)
+    if (googleAds.supported) {
+      try {
+        await services.dispatchLog.create({
+          event_destination_key: `${canonical.event_id}:google_ads`,
+          event_id: canonical.event_id,
+          canonical_event_name: canonical.event_name,
+          source_event_name: canonical.raw_event_name,
+          destination: 'google_ads',
+          status: googleAds.ok ? 'pending' : 'invalid',
+          event_received_at: toDate(canonical.event_time),
+          first_attempt_at: null,
+          last_attempt_at: null,
+          next_attempt_at: googleAds.ok ? new Date() : null,
+          sent_at: null,
+          attempt_count: 0,
+          http_status: null,
+          error_code: googleAds.ok ? null : (googleAds.errors[0] ?? 'google_ads_invalid_payload'),
+          error_message: googleAds.ok ? null : googleAds.errors.join(', '),
+          request_payload: googleAds.payload,
+          response_payload: null,
+          metadata: { ...googleAds.metadata, ready: googleAds.ok, errors: googleAds.ok ? [] : googleAds.errors },
+        })
+      } catch (err) {
+        if (!isDuplicateError(err)) throw err
+      }
     }
 
     return {
