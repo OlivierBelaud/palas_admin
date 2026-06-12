@@ -135,7 +135,7 @@ function patchOutputConfig() {
   writeJson(path, config)
 }
 
-function installFastFunction({ source, route }) {
+function installFastFunction({ source, route, extraSources = [] }) {
   const sourceDir = 'vercel-fast-functions'
   const functionDir = `.vercel/output/functions/${route}.func`
   rmSync(functionDir, { recursive: true, force: true })
@@ -143,6 +143,9 @@ function installFastFunction({ source, route }) {
 
   cpSync(`${sourceDir}/${source}`, `${functionDir}/index.mjs`)
   cpSync(`${sourceDir}/runtime.mjs`, `${functionDir}/runtime.mjs`)
+  for (const extraSource of extraSources) {
+    cpSync(`${sourceDir}/${extraSource}`, `${functionDir}/${extraSource}`)
+  }
   writeJson(`${functionDir}/.vc-config.json`, {
     handler: 'index.mjs',
     launcherType: 'Nodejs',
@@ -171,9 +174,30 @@ function resolvePackageRoot(packageName) {
 }
 
 function installFastFunctions() {
+  const abandonedCartCampaignSources = ['abandoned-cart-campaign-common.mjs']
   installFastFunction({
     source: 'admin-me.mjs',
     route: 'api/admin/me',
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-dashboard.mjs',
+    route: 'api/admin/abandoned-cart-campaign-dashboard',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-case-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-case-list',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-message-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-message-list',
+    extraSources: abandonedCartCampaignSources,
+  })
+  installFastFunction({
+    source: 'admin-abandoned-cart-campaign-check-list.mjs',
+    route: 'api/admin/abandoned-cart-campaign-check-list',
+    extraSources: abandonedCartCampaignSources,
   })
   installFastFunction({
     source: 'admin-system-dashboard.mjs',

@@ -23,12 +23,16 @@ type QueryContext = {
 export function resolveRawDb(ctx: unknown): RawDb {
   const context = ctx as QueryContext | null
   if (hasRawDb(context?.db)) return context.db
+  const directPool = rawDbFromPool(context?.db)
+  if (directPool) return directPool
 
   const appDb = resolveDatabase(context?.app)
   if (appDb) return appDb
 
   const scoped = context?.scope?.resolve<unknown>('IDatabasePort')
   if (hasRawDb(scoped)) return scoped
+  const scopedPool = rawDbFromPool(scoped)
+  if (scopedPool) return scopedPool
 
   throw new MantaError('UNEXPECTED_STATE', 'Raw database port unavailable')
 }
