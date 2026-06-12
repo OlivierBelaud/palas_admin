@@ -28,6 +28,10 @@ interface TrackingHealthData {
     ga4_invalid: number
     ga4_error: number
     posthog_forwarded: number
+    consent_analytics_granted: number
+    consent_analytics_denied: number
+    consent_ads_granted: number
+    consent_ads_denied: number
   }
   event_types: Array<{
     event_name: string
@@ -46,11 +50,19 @@ interface TrackingHealthData {
     page_type: string | null
     market: string | null
     identity: 'contact' | 'email' | 'muid' | 'posthog' | 'anon'
+    profile_tracking_id: string | null
     identity_source: string | null
     contact_id: string | null
     email: string | null
     email_status: 'resolved' | 'hashed' | 'unknown'
     matched_v1: boolean
+    consent: {
+      analytics_storage: boolean
+      ad_storage: boolean
+      ad_user_data: boolean
+      ad_personalization: boolean
+      source: string
+    }
     valid: boolean
     validation_errors: string[]
     value: number | null
@@ -68,6 +80,12 @@ interface TrackingHealthData {
     ga4_error_message: string | null
     ga4_attempt_count: number
     ga4_sent_at: string | null
+    ad_destinations: Array<{
+      destination: string
+      supported: boolean
+      ready: boolean
+      blockers: string[]
+    }>
   }>
 }
 
@@ -177,7 +195,12 @@ function Kpis({ data }: { data: TrackingHealthData }) {
       detail: `${data.kpis.ga4_pending} attente · ${data.kpis.ga4_invalid + data.kpis.ga4_error} à corriger`,
       mark: 'G4',
     },
-    { label: 'PostHog', value: data.kpis.posthog_forwarded, detail: 'forward observé', mark: 'PH' },
+    {
+      label: 'Consentement',
+      value: data.kpis.consent_analytics_granted,
+      detail: `${data.kpis.consent_analytics_denied} refus analytics · ${data.kpis.consent_ads_denied} refus ads`,
+      mark: 'CN',
+    },
   ]
   return (
     <div className="grid gap-4" style={kpiGridStyle}>
@@ -275,7 +298,7 @@ function LiveEventTable({
         <span className="text-sm text-muted-foreground">50 lignes par page</span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <Table className="min-w-[1380px]">
+        <Table className="min-w-[1780px]">
           <Table.Header>
             <Table.Row>
               <Table.Head>Reçu</Table.Head>
@@ -283,11 +306,14 @@ function LiveEventTable({
               <Table.Head>Raw</Table.Head>
               <Table.Head>Page</Table.Head>
               <Table.Head>Identité</Table.Head>
+              <Table.Head>Profil ID</Table.Head>
               <Table.Head>Email</Table.Head>
+              <Table.Head>Consentement</Table.Head>
               <Table.Head>Valeur</Table.Head>
               <Table.Head>Articles</Table.Head>
-              <Table.Head>PostHog</Table.Head>
+              <Table.Head>Source</Table.Head>
               <Table.Head>GA4</Table.Head>
+              <Table.Head>Ads</Table.Head>
               <Table.Head>Validité</Table.Head>
               <Table.Head>Event ID</Table.Head>
             </Table.Row>
@@ -312,6 +338,9 @@ function LiveEventTable({
                     </span>
                   </div>
                 </Table.Cell>
+                <Table.Cell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
+                  {event.profile_tracking_id ?? '-'}
+                </Table.Cell>
                 <Table.Cell className="max-w-[220px]">
                   {event.email ? (
                     <span className="block truncate" title={event.email}>
@@ -324,15 +353,41 @@ function LiveEventTable({
                   )}
                 </Table.Cell>
                 <Table.Cell>
+                  <div className="flex max-w-[190px] flex-wrap gap-1">
+                    <Badge variant={event.consent.analytics_storage ? 'secondary' : 'outline'}>
+                      A{event.consent.analytics_storage ? '+' : '-'}
+                    </Badge>
+                    <Badge
+                      variant={
+                        event.consent.ad_storage && event.consent.ad_user_data && event.consent.ad_personalization
+                          ? 'secondary'
+                          : 'outline'
+                      }
+                      title={event.consent.source}
+                    >
+                      Ads
+                      {event.consent.ad_storage && event.consent.ad_user_data && event.consent.ad_personalization
+                        ? '+'
+                        : '-'}
+                    </Badge>
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
                   {event.value == null ? '-' : `${fmtNumber(event.value)} ${event.currency ?? ''}`}
                 </Table.Cell>
                 <Table.Cell>{event.item_count ?? '-'}</Table.Cell>
                 <Table.Cell>
-                  <Badge variant={event.posthog_status === 'forwarded' ? 'secondary' : 'outline'}>
-                    {event.posthog_http_status
-                      ? `${event.posthog_status} ${event.posthog_http_status}`
-                      : event.posthog_status}
-                  </Badge>
+                  <div className="flex flex-col gap-1">
+                    <Badge variant="outline">{event.source}</Badge>
+                    {event.posthog_status !== 'unknown' ? (
+                      <span className="text-xs text-muted-foreground">
+                        PH{' '}
+                        {event.posthog_http_status
+                          ? `${event.posthog_status} ${event.posthog_http_status}`
+                          : event.posthog_status}
+                      </span>
+                    ) : null}
+                  </div>
                 </Table.Cell>
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
@@ -345,6 +400,20 @@ function LiveEventTable({
                         {event.ga4_error_code}
                       </span>
                     ) : null}
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex max-w-[240px] flex-wrap gap-1">
+                    {event.ad_destinations.map((destination) => (
+                      <Badge
+                        key={destination.destination}
+                        variant={!destination.supported ? 'outline' : destination.ready ? 'secondary' : 'destructive'}
+                        title={destination.blockers.join(', ') || undefined}
+                      >
+                        {shortDestination(destination.destination)}{' '}
+                        {!destination.supported ? '-' : destination.ready ? 'ok' : 'bloqué'}
+                      </Badge>
+                    ))}
                   </div>
                 </Table.Cell>
                 <Table.Cell>
@@ -361,7 +430,7 @@ function LiveEventTable({
             ))}
             {events.length === 0 ? (
               <Table.Row>
-                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={12}>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={15}>
                   Aucun event reçu.
                 </Table.Cell>
               </Table.Row>
@@ -442,4 +511,11 @@ function formatGa4Status(event: TrackingHealthData['events'][number]) {
   if (event.ga4_http_status) return `${event.ga4_status} ${event.ga4_http_status}`
   if (event.ga4_attempt_count > 0) return `${event.ga4_status} x${event.ga4_attempt_count}`
   return event.ga4_status
+}
+
+function shortDestination(destination: string) {
+  if (destination === 'meta_capi') return 'Meta'
+  if (destination === 'google_ads') return 'GAds'
+  if (destination === 'tiktok') return 'TT'
+  return destination
 }
