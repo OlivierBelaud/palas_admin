@@ -230,7 +230,9 @@ async function maybeRestartSequence(
   persist: boolean,
 ): Promise<ActiveSequence> {
   const currentVersion = Number(cartCase.current_sequence_version ?? 1)
-  const currentStartedAt = cartCase.sequence_started_at ? toDate(cartCase.sequence_started_at) : toDate(c.last_action_at)
+  const currentStartedAt = cartCase.sequence_started_at
+    ? toDate(cartCase.sequence_started_at)
+    : toDate(c.last_action_at)
   const rows = await sql<Array<{ last_sent_at: Date | string | null }>>`
     SELECT MAX(sent_at) AS last_sent_at
     FROM abandoned_cart_messages
@@ -426,11 +428,7 @@ async function closeCaseSupersededByNewerCart(
       AND status = 'open'`
 }
 
-async function closeOlderOpenCasesForEmail(
-  sql: RuntimeSql,
-  c: CandidateRow,
-  persist: boolean,
-): Promise<void> {
+async function closeOlderOpenCasesForEmail(sql: RuntimeSql, c: CandidateRow, persist: boolean): Promise<void> {
   if (!persist) return
   const cartActionAt = toDate(c.last_action_at)
   await sql`
