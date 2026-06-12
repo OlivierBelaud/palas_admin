@@ -5,11 +5,6 @@
   "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && node scripts/prepare-root-spa-public.mjs && ./node_modules/.bin/manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
   "redirects": [
     {
-      "source": "/",
-      "destination": "/paniers",
-      "permanent": false
-    },
-    {
       "source": "/admin/login",
       "destination": "/login",
       "permanent": false
@@ -73,6 +68,10 @@
     {
       "path": "/api/crons/refresh-visitor-lifecycle-facts",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/crons/run-system-audits-nightly",
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/crons/sync-from-shopify",

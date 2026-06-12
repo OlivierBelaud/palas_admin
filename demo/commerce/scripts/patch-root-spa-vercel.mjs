@@ -22,7 +22,6 @@ const legacyAdminPaths = [
 ]
 
 const legacyAdminOutputRedirects = [
-  { src: '^/$', status: 307, headers: { Location: '/paniers' } },
   { src: '^/admin/login/?$', status: 307, headers: { Location: '/login' } },
   { src: '^/admin/reset-password/?$', status: 307, headers: { Location: '/reset-password' } },
   { src: '^/admin/accept-invite/?$', status: 307, headers: { Location: '/accept-invite' } },
@@ -35,7 +34,6 @@ const legacyAdminOutputRedirects = [
 ]
 
 const legacyAdminVercelRedirects = [
-  { source: '/', destination: '/paniers', permanent: false },
   { source: '/admin/login', destination: '/login', permanent: false },
   { source: '/admin/reset-password', destination: '/reset-password', permanent: false },
   { source: '/admin/accept-invite', destination: '/accept-invite', permanent: false },
@@ -63,6 +61,7 @@ function patchVercelJson() {
     ...legacyAdminVercelRedirects,
     ...redirects.filter((redirect) => {
       if (!redirect?.source || !redirect?.destination) return false
+      if (redirect.source === '/' && redirect.destination === '/paniers') return false
       if (redirect.source === redirect.destination) return false
       if (redirect.source === '/admin' || redirect.source === '/admin/:path*') return false
       if (String(redirect.destination).startsWith('/admin')) return false
@@ -94,6 +93,7 @@ function patchOutputConfig() {
   const routes = Array.isArray(config.routes) ? config.routes : []
   const filteredRoutes = routes.filter((route) => {
     if (!route?.src) return true
+    if (route.src === '^/$' && route.headers?.Location === '/paniers') return false
     if (selfRedirects.get(route.src) === route.headers?.Location) return false
     if (String(route.headers?.Location ?? '').startsWith('/admin')) return false
     return !String(route.src).startsWith('^/admin')

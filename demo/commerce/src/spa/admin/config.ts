@@ -7,6 +7,11 @@ export default defineSpa({
 
   navigation: [
     {
+      icon: 'LayoutDashboard',
+      label: 'Dashboard',
+      to: '/',
+    },
+    {
       icon: 'ShoppingCart',
       label: 'Paniers',
       to: '/paniers',
