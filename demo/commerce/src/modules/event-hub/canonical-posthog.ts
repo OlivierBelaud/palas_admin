@@ -370,7 +370,7 @@ export function normalizePosthogEventToCanonical(
       },
       ga4: {
         ready: true,
-        status: 'not_configured',
+        status: 'pending',
       },
     },
   }

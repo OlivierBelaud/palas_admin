@@ -165,7 +165,6 @@ export function validateCanonicalEvent(input: ValidateInput): CanonicalValidatio
 
   if (!contract) errors.push('canonical_event_not_supported')
   if (!str(input.eventId, 180)) errors.push('event_id_missing')
-  if (input.eventIdWasGenerated) errors.push('event_id_server_generated')
   if (!validEventTime(input.eventTime)) errors.push('event_time_missing_or_invalid')
   if (contract?.crmOnly) errors.push('non_dispatchable_internal_event')
 

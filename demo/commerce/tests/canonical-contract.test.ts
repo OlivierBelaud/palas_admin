@@ -83,7 +83,7 @@ describe('canonical event contract', () => {
     expect(isGa4CanonicalEventName('add_contact_info')).toBe(false)
   })
 
-  it('requires client-generated event IDs for deduplication', () => {
+  it('accepts stable server-generated event IDs for dispatchability', () => {
     const result = validateCanonicalEvent({
       eventName: 'purchase',
       eventId: 'palas_purchase_generated',
@@ -92,8 +92,8 @@ describe('canonical event contract', () => {
       payload: basePayload,
     })
 
-    expect(result.valid).toBe(false)
-    expect(result.errors).toContain('event_id_server_generated')
+    expect(result.valid).toBe(true)
+    expect(result.errors).not.toContain('event_id_server_generated')
   })
 
   it('keeps denied analytics consent out of the GA4 readiness decision', () => {
