@@ -1,3 +1,5 @@
+import { resolveRawDb } from '../../utils/raw-db'
+
 export default defineQuery({
   name: 'group-customers',
   description: 'List customers in a customer group',
@@ -6,23 +8,24 @@ export default defineQuery({
     limit: z.number().int().min(1).max(100).default(20),
     offset: z.number().int().min(0).default(0),
   }),
-  handler: async (input, { query }) => {
-    // Single query: load customer group with its customers via M:N relation
-    const groups = await query.graph({
-      entity: 'customerGroup',
-      fields: ['*', 'customers.*'],
-      filters: { id: input.group_id },
-      pagination: { limit: 1 },
-    })
+  handler: async (input, ctx) => {
+    const db = resolveRawDb(ctx)
+    const limit = input.limit ?? 20
+    const offset = input.offset ?? 0
+    const rows = await db.raw<Record<string, unknown> & { total_count: string }>(
+      `SELECT c.id, c.first_name, c.last_name, c.email, c.avatar_url, c.metadata,
+              c.company_name, c.phone, c.has_account, c.created_by, c.created_at, c.updated_at,
+              COUNT(*) OVER()::text AS total_count
+         FROM customer_customer_group ccg
+         JOIN customers c ON c.id = ccg.customer_id
+        WHERE ccg.customer_group_id = $1
+          AND ccg.deleted_at IS NULL
+          AND c.deleted_at IS NULL
+        ORDER BY c.email ASC, c.created_at DESC
+        LIMIT $2 OFFSET $3`,
+      [input.group_id, limit, offset],
+    )
 
-    const group = groups[0] as unknown as Record<string, unknown> | undefined
-    if (!group) return { data: [], count: 0 }
-
-    const allCustomers = (group.customers ?? []) as Record<string, unknown>[]
-    const off = input.offset ?? 0
-    const lim = input.limit ?? 20
-    const paged = allCustomers.slice(off, off + lim)
-
-    return { data: paged, count: allCustomers.length }
+    return { data: rows.map(({ total_count: _totalCount, ...row }) => row), count: Number(rows[0]?.total_count ?? 0) }
   },
 })
