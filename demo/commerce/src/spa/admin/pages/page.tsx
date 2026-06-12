@@ -99,7 +99,7 @@ export default function SystemDashboardPage() {
 
   const loadDashboard = useCallback(async () => {
     setError(null)
-    const res = await window.fetch('/api/admin/system-dashboard', {
+    const res = await window.fetch('/api/reporting/system-dashboard', {
       headers: authHeaders(authAdapter),
     })
     if (!res.ok) {
