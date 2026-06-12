@@ -130,8 +130,30 @@ export const GA4_CANONICAL_EVENT_NAMES = new Set(
     .map(([eventName]) => eventName),
 )
 
+export const DISPATCHABLE_CANONICAL_EVENT_NAMES = new Set(
+  Object.entries(CANONICAL_EVENT_CONTRACTS)
+    .filter(([, contract]) => !contract.crmOnly)
+    .filter(([, contract]) =>
+      Boolean(
+        contract.destinations.ga4 ||
+          contract.destinations.meta_capi ||
+          contract.destinations.google_ads ||
+          contract.destinations.tiktok,
+      ),
+    )
+    .map(([eventName]) => eventName),
+)
+
 export function isCanonicalEventName(value: string): value is CanonicalEventName {
   return Object.hasOwn(CANONICAL_EVENT_CONTRACTS, value)
+}
+
+export function isGa4CanonicalEventName(value: string): boolean {
+  return GA4_CANONICAL_EVENT_NAMES.has(value as CanonicalEventName)
+}
+
+export function isDispatchableCanonicalEventName(value: string): boolean {
+  return DISPATCHABLE_CANONICAL_EVENT_NAMES.has(value as CanonicalEventName)
 }
 
 export function validateCanonicalEvent(input: ValidateInput): CanonicalValidationResult {
@@ -231,7 +253,6 @@ function destinationResult(
 
   if (destination === 'ga4') {
     if (!str(user.ga_client_id, 128)) blockers.push('ga4_client_id_missing')
-    if (consent.analytics_storage !== true) blockers.push('analytics_consent_not_granted')
   }
 
   if (destination === 'meta_capi') {

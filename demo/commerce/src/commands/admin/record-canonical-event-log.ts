@@ -1,3 +1,4 @@
+import { isGa4CanonicalEventName } from '../../modules/event-hub/canonical-contract'
 import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
 import { mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
@@ -78,30 +79,32 @@ export default defineCommand({
       throw err
     }
 
-    const ga4 = mapCanonicalToGa4(canonical.event_name, canonical.payload_normalized)
-    try {
-      await services.dispatchLog.create({
-        event_destination_key: `${canonical.event_id}:ga4`,
-        event_id: canonical.event_id,
-        canonical_event_name: canonical.event_name,
-        source_event_name: canonical.raw_event_name,
-        destination: 'ga4',
-        status: ga4.ok ? 'pending' : 'invalid',
-        event_received_at: toDate(canonical.event_time),
-        first_attempt_at: null,
-        last_attempt_at: null,
-        next_attempt_at: ga4.ok ? new Date() : null,
-        sent_at: null,
-        attempt_count: 0,
-        http_status: null,
-        error_code: ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
-        error_message: ga4.ok ? null : ga4.errors.join(', '),
-        request_payload: ga4.payload,
-        response_payload: null,
-        metadata: { ...ga4.metadata, ready: ga4.ok, errors: ga4.ok ? [] : ga4.errors },
-      })
-    } catch (err) {
-      if (!isDuplicateError(err)) throw err
+    if (isGa4CanonicalEventName(canonical.event_name)) {
+      const ga4 = mapCanonicalToGa4(canonical.event_name, canonical.payload_normalized)
+      try {
+        await services.dispatchLog.create({
+          event_destination_key: `${canonical.event_id}:ga4`,
+          event_id: canonical.event_id,
+          canonical_event_name: canonical.event_name,
+          source_event_name: canonical.raw_event_name,
+          destination: 'ga4',
+          status: ga4.ok ? 'pending' : 'invalid',
+          event_received_at: toDate(canonical.event_time),
+          first_attempt_at: null,
+          last_attempt_at: null,
+          next_attempt_at: ga4.ok ? new Date() : null,
+          sent_at: null,
+          attempt_count: 0,
+          http_status: null,
+          error_code: ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
+          error_message: ga4.ok ? null : ga4.errors.join(', '),
+          request_payload: ga4.payload,
+          response_payload: null,
+          metadata: { ...ga4.metadata, ready: ga4.ok, errors: ga4.ok ? [] : ga4.errors },
+        })
+      } catch (err) {
+        if (!isDuplicateError(err)) throw err
+      }
     }
 
     const googleAds = mapCanonicalToGoogleAds(canonical.event_name, canonical.payload_normalized)

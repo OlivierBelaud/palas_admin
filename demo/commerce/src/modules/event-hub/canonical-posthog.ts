@@ -78,6 +78,16 @@ function num(value: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+function bool(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return null
+}
+
 function stableHash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -138,6 +148,54 @@ function normalizeItems(items: unknown[]): Array<Record<string, unknown>> {
   })
 }
 
+function consentFromPosthogProperties(
+  props: Record<string, unknown>,
+  sourceContext: Record<string, unknown>,
+): Record<string, unknown> {
+  const consent = obj(props.consent)
+  const sourceConsent = obj(sourceContext.consent)
+  const analyticsStorage =
+    bool(sourceContext.analytics_storage) ??
+    bool(sourceConsent.analytics_storage) ??
+    bool(consent.analytics_storage) ??
+    bool(props.analytics_storage) ??
+    bool(props.palas_consent_analytics)
+  const adsConsent =
+    bool(sourceContext.palas_consent_ads) ??
+    bool(sourceContext.ad_storage) ??
+    bool(sourceConsent.ad_storage) ??
+    bool(consent.ad_storage) ??
+    bool(props.ad_storage) ??
+    bool(props.palas_consent_ads)
+  const adUserData =
+    bool(sourceContext.ad_user_data) ??
+    bool(sourceConsent.ad_user_data) ??
+    bool(consent.ad_user_data) ??
+    bool(props.ad_user_data) ??
+    adsConsent
+  const adPersonalization =
+    bool(sourceContext.ad_personalization) ??
+    bool(sourceConsent.ad_personalization) ??
+    bool(consent.ad_personalization) ??
+    bool(props.ad_personalization) ??
+    adsConsent
+
+  return {
+    analytics_storage: analyticsStorage,
+    ad_storage: adsConsent,
+    ad_user_data: adUserData,
+    ad_personalization: adPersonalization,
+    source:
+      str(sourceContext.consent_source, 120) ||
+      str(sourceContext.palas_consent_source, 120) ||
+      str(sourceConsent.source, 120) ||
+      str(consent.source, 120) ||
+      str(props.consent_source, 120) ||
+      str(props.palas_consent_source, 120) ||
+      'posthog_properties',
+  }
+}
+
 export function normalizePosthogEventToCanonical(
   event: RawPosthogEvent,
   comparison: IdentityShadowComparison,
@@ -161,26 +219,33 @@ export function normalizePosthogEventToCanonical(
   if (!canonicalName) return null
 
   const cartItems = cartEvent ? normalizeItems(cartEvent.items) : []
+  const ecommerceProps = obj(props.ecommerce)
+  const ecommerceItems = Array.isArray(ecommerceProps.items) ? normalizeItems(ecommerceProps.items) : []
+  const eventItems = cartItems.length > 0 ? cartItems : ecommerceItems
   const eventIdFromSignal = signals.event_id
   const eventId =
     eventIdFromSignal ||
     `ph_${stableHash(`${rawEventName}|${signals.posthog_distinct_id ?? ''}|${signals.observed_at}|${currentUrl ?? ''}`).slice(0, 32)}`
 
   const ecommerce: Record<string, unknown> = {
-    currency: cartEvent?.currency ?? str(props.currency, 8),
-    value: cartEvent?.total_price ?? num(props.value) ?? num(props.total_price),
-    transaction_id: cartEvent?.shopify_order_id ?? str(props.transaction_id, 180) ?? null,
-    coupon: cartEvent?.discount_code ?? str(props.coupon, 160) ?? null,
-    shipping: cartEvent?.shipping_price ?? null,
-    tax: cartEvent?.total_tax ?? null,
-    item_count: cartEvent?.item_count ?? cartItems.length,
-    items: cartItems,
+    currency: cartEvent?.currency ?? str(ecommerceProps.currency, 8) ?? str(props.currency, 8),
+    value: cartEvent?.total_price ?? num(ecommerceProps.value) ?? num(props.value) ?? num(props.total_price),
+    transaction_id:
+      cartEvent?.shopify_order_id ?? str(ecommerceProps.transaction_id, 180) ?? str(props.transaction_id, 180) ?? null,
+    coupon: cartEvent?.discount_code ?? str(ecommerceProps.coupon, 160) ?? str(props.coupon, 160) ?? null,
+    shipping: cartEvent?.shipping_price ?? num(ecommerceProps.shipping),
+    tax: cartEvent?.total_tax ?? num(ecommerceProps.tax),
+    item_list_id: str(ecommerceProps.item_list_id, 160),
+    item_list_name: str(ecommerceProps.item_list_name, 240),
+    item_count: cartEvent?.item_count ?? num(ecommerceProps.item_count) ?? eventItems.length,
+    items: eventItems,
   }
 
   const payload: Record<string, unknown> = {
     raw_event_name: rawEventName,
     canonical_source: rawEventName === '$pageview' ? 'posthog_pageview_derivation' : 'posthog_event_mapping',
     event_time: signals.observed_at,
+    search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
@@ -189,7 +254,12 @@ export function normalizePosthogEventToCanonical(
       distinct_id: signals.posthog_distinct_id,
       session_id: signals.session_id,
       ga_client_id:
-        str(sourceContext.ga_client_id, 128) || str(props.ga_client_id, 128) || str(props.$ga_client_id, 128),
+        str(sourceContext.ga_client_id, 128) ||
+        str(props.ga_client_id, 128) ||
+        str(props.$ga_client_id, 128) ||
+        str(sourceContext.muid, 128) ||
+        str(props.muid, 128) ||
+        str(signals.posthog_distinct_id, 128),
       ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
       fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
       fbc: str(sourceContext.fbc, 256) || str(props.fbc, 256) || str(props._fbc, 256),
@@ -219,13 +289,7 @@ export function normalizePosthogEventToCanonical(
       shopify_order_id: cartEvent?.shopify_order_id ?? null,
       is_first_order: cartEvent?.is_first_order ?? null,
     },
-    consent: {
-      analytics_storage: null,
-      ad_storage: null,
-      ad_user_data: null,
-      ad_personalization: null,
-      source: 'posthog_proxy_unavailable',
-    },
+    consent: consentFromPosthogProperties(props, sourceContext),
     dispatch: {
       posthog: {
         status:

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isDispatchableCanonicalEventName,
+  isGa4CanonicalEventName,
   validateCanonicalEvent,
   validationErrorsForSupportedDestinations,
 } from '../src/modules/event-hub/canonical-contract'
@@ -70,6 +72,15 @@ describe('canonical event contract', () => {
     expect(result.destinations.posthog.ready).toBe(true)
     expect(result.destinations.ga4.supported).toBe(false)
     expect(result.destinations.meta_capi.supported).toBe(false)
+    expect(isDispatchableCanonicalEventName('cart:closed')).toBe(false)
+    expect(isGa4CanonicalEventName('cart:closed')).toBe(false)
+  })
+
+  it('keeps externally routable canonical events in the dispatchable set', () => {
+    expect(isDispatchableCanonicalEventName('page_view')).toBe(true)
+    expect(isDispatchableCanonicalEventName('purchase')).toBe(true)
+    expect(isGa4CanonicalEventName('purchase')).toBe(true)
+    expect(isGa4CanonicalEventName('add_contact_info')).toBe(false)
   })
 
   it('requires client-generated event IDs for deduplication', () => {
@@ -85,7 +96,7 @@ describe('canonical event contract', () => {
     expect(result.errors).toContain('event_id_server_generated')
   })
 
-  it('keeps denied consent as destination metadata without making the event invalid', () => {
+  it('keeps denied analytics consent out of the GA4 readiness decision', () => {
     const result = validateCanonicalEvent({
       eventName: 'view_item',
       eventId: 'evt_denied_consent',
@@ -103,7 +114,7 @@ describe('canonical event contract', () => {
     })
 
     expect(result.valid).toBe(true)
-    expect(result.destinations.ga4.blockers).toContain('analytics_consent_not_granted')
+    expect(result.destinations.ga4).toMatchObject({ supported: true, ready: true, blockers: [] })
     expect(result.destinations.meta_capi.blockers).toContain('ad_storage_consent_not_granted')
     expect(validationErrorsForSupportedDestinations(result)).toEqual([])
   })

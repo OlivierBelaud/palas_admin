@@ -159,9 +159,16 @@ export default function TrackingHealthPage() {
 
   const eventOptions = React.useMemo(() => {
     const names = new Set(data?.event_types.map((row) => row.event_name) ?? [])
-    if (eventName !== 'all') names.add(eventName)
     return Array.from(names).sort()
-  }, [data?.event_types, eventName])
+  }, [data?.event_types])
+
+  React.useEffect(() => {
+    if (!data || eventName === 'all') return
+    if (!data.event_types.some((row) => row.event_name === eventName)) {
+      setEventName('all')
+      setPageIndex(0)
+    }
+  }, [data, eventName])
 
   const selectHours = (value: number) => {
     setHours(value)
@@ -210,7 +217,7 @@ export default function TrackingHealthPage() {
             value={eventName}
             onChange={(event: { target: { value: string } }) => selectEventName(event.target.value)}
           >
-            <option value="all">Tous les events</option>
+            <option value="all">Events envoyables</option>
             {eventOptions.map((name: string) => (
               <option key={name} value={name}>
                 {name}
@@ -235,7 +242,7 @@ export default function TrackingHealthPage() {
 
 function Kpis({ data }: { data: TrackingHealthData }) {
   const cards = [
-    { label: 'Events reçus', value: data.kpis.total, detail: 'hot log', mark: 'EV' },
+    { label: 'Events envoyables', value: data.kpis.total, detail: 'hot log', mark: 'EV' },
     { label: 'Valides', value: data.kpis.valid, detail: `${data.kpis.invalid} invalides`, mark: 'OK' },
     { label: 'Identifiés', value: data.kpis.identified, detail: `${data.kpis.anonymous} anonymes`, mark: 'ID' },
     {
@@ -281,7 +288,7 @@ function EventTypeTable({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Types d'events</CardTitle>
+        <CardTitle>Types d'events envoyables</CardTitle>
       </CardHeader>
       <CardContent className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
@@ -453,16 +460,19 @@ function LiveEventTable({
                 </Table.Cell>
                 <Table.Cell>
                   <div className="flex max-w-[240px] flex-wrap gap-1">
-                    {event.ad_destinations.map((destination) => (
-                      <Badge
-                        key={destination.destination}
-                        variant={!destination.supported ? 'outline' : destination.ready ? 'secondary' : 'destructive'}
-                        title={destination.blockers.join(', ') || undefined}
-                      >
-                        {shortDestination(destination.destination)}{' '}
-                        {!destination.supported ? '-' : destination.ready ? 'ok' : 'bloqué'}
-                      </Badge>
-                    ))}
+                    {event.ad_destinations.length > 0 ? (
+                      event.ad_destinations.map((destination) => (
+                        <Badge
+                          key={destination.destination}
+                          variant={destination.ready ? 'secondary' : 'destructive'}
+                          title={destination.blockers.join(', ') || undefined}
+                        >
+                          {shortDestination(destination.destination)} {destination.ready ? 'ok' : 'bloqué'}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </div>
                 </Table.Cell>
                 <Table.Cell>

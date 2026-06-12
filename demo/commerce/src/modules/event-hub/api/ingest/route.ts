@@ -1,13 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { type RuntimeApp, resolveSql } from '../../../../utils/manta-runtime'
 import { verifyContactToken } from '../../../../utils/manta-uid'
-import { validateCanonicalEvent, validationErrorsForSupportedDestinations } from '../../canonical-contract'
+import {
+  isGa4CanonicalEventName,
+  validateCanonicalEvent,
+  validationErrorsForSupportedDestinations,
+} from '../../canonical-contract'
 import { ga4ContextFromHeaders, mapCanonicalToGa4 } from '../../ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../google-ads-connector'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
 const MAX_BODY_BYTES = 64 * 1024
+const ALLOWED_DIRECT_INGEST_SOURCES = new Set(['posthog_proxy', 'posthog_sync', 'posthog_replay', 'event_hub_replay'])
 
 const EVENT_NAME_MAP: Record<string, string> = {
   $pageview: 'page_view',
@@ -167,6 +172,14 @@ function pickEventName(body: JsonRecord): string {
   return EVENT_NAME_MAP[raw] || raw
 }
 
+function pickSource(body: JsonRecord): string {
+  return str(body.source, 80) || str(obj(body.event_data).source, 80) || 'unknown'
+}
+
+function isAllowedDirectIngestSource(source: string): boolean {
+  return ALLOWED_DIRECT_INGEST_SOURCES.has(source)
+}
+
 function pickEventId(body: JsonRecord, eventName: string): { value: string; generated: boolean } {
   const eventData = obj(body.event_data)
   const explicit = str(body.event_id, 160) || str(eventData.id, 160)
@@ -264,6 +277,32 @@ function queryParamFromUrl(url: string | null, key: string): string | null {
   }
 }
 
+function pickGaClientId(
+  eventHubClientId: string | null,
+  body: JsonRecord,
+  props: JsonRecord,
+  context: JsonRecord,
+  pageData: JsonRecord,
+  user: JsonRecord,
+  userData: JsonRecord,
+  sourceContext: JsonRecord,
+): string | null {
+  return (
+    eventHubClientId ||
+    str(sourceContext.ga_client_id, 128) ||
+    str(user.ga_client_id, 128) ||
+    str(user.gaClientId, 128) ||
+    str(userData.ga_client_id, 128) ||
+    str(userData.gaClientId, 128) ||
+    str(props.ga_client_id, 128) ||
+    str(props.$ga_client_id, 128) ||
+    str(context.ga_client_id, 128) ||
+    str(pageData.ga_client_id, 128) ||
+    str(body.ga_client_id, 128) ||
+    null
+  )
+}
+
 function summarizePayload(
   body: JsonRecord,
   eventName: string,
@@ -315,7 +354,7 @@ function summarizePayload(
       muid: identity.muid,
       distinct_id: identity.distinctId,
       email_sha256: identity.emailSha256,
-      ga_client_id: str(sourceContext.ga_client_id, 128),
+      ga_client_id: pickGaClientId(identity.muid, body, props, context, pageData, user, userData, sourceContext),
       fbp: str(sourceContext.fbp, 256),
       fbc: str(sourceContext.fbc, 256),
       gclid:
@@ -396,6 +435,19 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: 'INVALID_JSON' }, { status: 400, headers })
   }
 
+  const source = pickSource(body)
+  if (!isAllowedDirectIngestSource(source)) {
+    return Response.json(
+      {
+        ok: false,
+        error: 'DIRECT_EVENT_HUB_INGEST_DISABLED',
+        source,
+        message: 'Browser events must be sent through the Palas PostHog proxy before Event Hub normalization.',
+      },
+      { status: 410, headers },
+    )
+  }
+
   const app = (req as Request & { app?: RuntimeApp }).app
   const sql = resolveSql(app)
   if (!sql) {
@@ -451,7 +503,7 @@ export async function POST(req: Request) {
     [
       eventId,
       eventName,
-      str(body.source, 80) || str(obj(body.event_data).source, 80) || 'unknown',
+      source,
       str(context.page_type, 64),
       str(context.market, 16),
       identity.muid,
@@ -463,43 +515,45 @@ export async function POST(req: Request) {
     ],
   )
 
-  await sql.unsafe(
-    `INSERT INTO dispatch_logs (
-       id, event_destination_key, event_id, canonical_event_name, source_event_name,
-       destination, status, event_received_at, first_attempt_at, last_attempt_at,
-       next_attempt_at, sent_at, attempt_count, http_status, error_code,
-       error_message, request_payload, response_payload, metadata, created_at, updated_at
-     ) VALUES (
-       gen_random_uuid(), $1, $2, $3, $4,
-       'ga4', $5, $6, NULL, NULL,
-       $7, NULL, 0, NULL, $8,
-       $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
-     )
-     ON CONFLICT (event_destination_key) DO UPDATE SET
-       canonical_event_name = EXCLUDED.canonical_event_name,
-       source_event_name = EXCLUDED.source_event_name,
-       status = EXCLUDED.status,
-       event_received_at = EXCLUDED.event_received_at,
-       next_attempt_at = EXCLUDED.next_attempt_at,
-       error_code = EXCLUDED.error_code,
-       error_message = EXCLUDED.error_message,
-       request_payload = EXCLUDED.request_payload,
-       metadata = EXCLUDED.metadata,
-       updated_at = NOW()`,
-    [
-      `${eventId}:ga4`,
-      eventId,
-      eventName,
-      str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
-      ga4.ok ? 'pending' : 'invalid',
-      eventTime,
-      ga4.ok ? new Date() : null,
-      ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
-      ga4.ok ? null : ga4.errors.join(', '),
-      JSON.stringify(ga4.payload),
-      JSON.stringify({ ...ga4.metadata, ready: ga4.ok, errors: ga4.ok ? [] : ga4.errors }),
-    ],
-  )
+  if (isGa4CanonicalEventName(eventName)) {
+    await sql.unsafe(
+      `INSERT INTO dispatch_logs (
+         id, event_destination_key, event_id, canonical_event_name, source_event_name,
+         destination, status, event_received_at, first_attempt_at, last_attempt_at,
+         next_attempt_at, sent_at, attempt_count, http_status, error_code,
+         error_message, request_payload, response_payload, metadata, created_at, updated_at
+       ) VALUES (
+         gen_random_uuid(), $1, $2, $3, $4,
+         'ga4', $5, $6, NULL, NULL,
+         $7, NULL, 0, NULL, $8,
+         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+       )
+       ON CONFLICT (event_destination_key) DO UPDATE SET
+         canonical_event_name = EXCLUDED.canonical_event_name,
+         source_event_name = EXCLUDED.source_event_name,
+         status = EXCLUDED.status,
+         event_received_at = EXCLUDED.event_received_at,
+         next_attempt_at = EXCLUDED.next_attempt_at,
+         error_code = EXCLUDED.error_code,
+         error_message = EXCLUDED.error_message,
+         request_payload = EXCLUDED.request_payload,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      [
+        `${eventId}:ga4`,
+        eventId,
+        eventName,
+        str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
+        ga4.ok ? 'pending' : 'invalid',
+        eventTime,
+        ga4.ok ? new Date() : null,
+        ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
+        ga4.ok ? null : ga4.errors.join(', '),
+        JSON.stringify(ga4.payload),
+        JSON.stringify({ ...ga4.metadata, ready: ga4.ok, errors: ga4.ok ? [] : ga4.errors }),
+      ],
+    )
+  }
 
   if (googleAds.supported) {
     await sql.unsafe(

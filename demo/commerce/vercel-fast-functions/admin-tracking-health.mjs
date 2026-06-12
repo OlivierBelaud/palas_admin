@@ -1,5 +1,34 @@
 import { clampInt, db, iso, json, nowMs, requireAdmin, timingHeader, toNumber, unauthorized } from './runtime.mjs'
 
+const DISPATCHABLE_EVENT_NAMES = [
+  'page_view',
+  'view_item_list',
+  'view_item',
+  'search',
+  'add_to_cart',
+  'remove_from_cart',
+  'view_cart',
+  'begin_checkout',
+  'add_contact_info',
+  'add_shipping_info',
+  'add_payment_info',
+  'purchase',
+]
+
+const GA4_EVENT_NAMES = [
+  'page_view',
+  'view_item_list',
+  'view_item',
+  'search',
+  'add_to_cart',
+  'remove_from_cart',
+  'view_cart',
+  'begin_checkout',
+  'add_shipping_info',
+  'add_payment_info',
+  'purchase',
+]
+
 export default {
   async fetch(req) {
     const started = nowMs()
@@ -105,10 +134,11 @@ function loadPageRows(from, to, eventName, limit, offset) {
       WHERE deleted_at IS NULL
         AND received_at >= $1
         AND received_at <= $2
-        AND ($3::text IS NULL OR event_name = $3)
+        AND event_name = ANY($3::text[])
+        AND ($4::text IS NULL OR event_name = $4)
       ORDER BY received_at DESC
-      LIMIT $4 OFFSET $5`,
-    [from.toISOString(), to.toISOString(), eventName, limit, offset],
+      LIMIT $5 OFFSET $6`,
+    [from.toISOString(), to.toISOString(), DISPATCHABLE_EVENT_NAMES, eventName, limit, offset],
   )
 }
 
@@ -123,9 +153,10 @@ function loadEventTypes(from, to) {
       WHERE deleted_at IS NULL
         AND received_at >= $1
         AND received_at <= $2
+        AND event_name = ANY($3::text[])
       GROUP BY event_name
       ORDER BY COUNT(*) DESC, event_name ASC`,
-    [from.toISOString(), to.toISOString()],
+    [from.toISOString(), to.toISOString(), DISPATCHABLE_EVENT_NAMES],
   )
 }
 
@@ -152,21 +183,23 @@ function loadStats(from, to, eventName) {
       WHERE deleted_at IS NULL
         AND received_at >= $1
         AND received_at <= $2
-        AND ($3::text IS NULL OR event_name = $3)`,
-    [from.toISOString(), to.toISOString(), eventName],
+        AND event_name = ANY($3::text[])
+        AND ($4::text IS NULL OR event_name = $4)`,
+    [from.toISOString(), to.toISOString(), DISPATCHABLE_EVENT_NAMES, eventName],
   )
 }
 
 function loadGa4StatusCounts(from, to) {
   return db().unsafe(
     `SELECT status, COUNT(*)::text AS count
-       FROM dispatch_logs
+      FROM dispatch_logs
       WHERE deleted_at IS NULL
         AND destination = 'ga4'
+        AND canonical_event_name = ANY($3::text[])
         AND event_received_at >= $1
         AND event_received_at <= $2
       GROUP BY status`,
-    [from.toISOString(), to.toISOString()],
+    [from.toISOString(), to.toISOString(), GA4_EVENT_NAMES],
   )
 }
 
@@ -193,6 +226,7 @@ function eventDto(row, ga4Log) {
   const dispatch = payload.dispatch ?? {}
   const validation = payload.validation ?? {}
   const validationDestinations = validation.destinations ?? {}
+  const ga4Destination = destinationSummary('ga4', validationDestinations.ga4)
   const ga4 = dispatch.ga4 ?? {}
   const posthog = dispatch.posthog ?? {}
   const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
@@ -243,16 +277,22 @@ function eventDto(row, ga4Log) {
     shopify_order_id: checkout.shopify_order_id ?? null,
     posthog_status: typeof posthog.status === 'string' ? posthog.status : 'unknown',
     posthog_http_status: typeof posthog.http_status === 'number' ? posthog.http_status : null,
-    ga4_ready: ga4Log ? ['pending', 'sending', 'sent', 'retry'].includes(ga4Log.status) : ga4.ready === true,
-    ga4_status: ga4Log?.status ?? (typeof ga4.status === 'string' ? ga4.status : 'not_configured'),
+    ga4_ready: ga4Destination.supported
+      ? ga4Log
+        ? ['pending', 'sending', 'sent', 'retry'].includes(ga4Log.status)
+        : ga4.ready === true
+      : false,
+    ga4_status: ga4Destination.supported
+      ? (ga4Log?.status ?? (typeof ga4.status === 'string' ? ga4.status : 'not_configured'))
+      : 'unsupported',
     ga4_http_status: ga4Log?.http_status ?? null,
     ga4_error_code: ga4Log?.error_code ?? null,
     ga4_error_message: ga4Log?.error_message ?? null,
     ga4_attempt_count: ga4Log?.attempt_count ?? 0,
     ga4_sent_at: ga4Log?.sent_at ? iso(ga4Log.sent_at) : null,
-    ad_destinations: ['meta_capi', 'google_ads', 'tiktok'].map((destination) =>
-      destinationSummary(destination, validationDestinations[destination]),
-    ),
+    ad_destinations: ['meta_capi', 'google_ads', 'tiktok']
+      .map((destination) => destinationSummary(destination, validationDestinations[destination]))
+      .filter((destination) => destination.supported),
   }
 }
 

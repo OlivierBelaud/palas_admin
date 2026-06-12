@@ -43,7 +43,7 @@ function compact<T extends Record<string, unknown>>(input: T): Record<string, un
 }
 
 export function getGa4Config(env: NodeJS.ProcessEnv = process.env): Ga4Config {
-  const debug = env.GA4_DEBUG === 'true' || env.GOOGLE_ANALYTICS_DEBUG === 'true'
+  const debug = !(env.GA4_DEBUG === 'false' || env.GOOGLE_ANALYTICS_DEBUG === 'false')
   return {
     measurementId: env.GA4_MEASUREMENT_ID ?? env.GOOGLE_ANALYTICS_MEASUREMENT_ID ?? null,
     apiSecret: env.GA4_API_SECRET ?? env.GOOGLE_ANALYTICS_API_SECRET ?? null,

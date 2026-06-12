@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gaClientIdFromCookie, mapCanonicalToGa4 } from '../src/modules/event-hub/ga4-connector'
+import { gaClientIdFromCookie, getGa4Config, mapCanonicalToGa4 } from '../src/modules/event-hub/ga4-connector'
 
 describe('GA4 connector mapping', () => {
   it('extracts GA4 client_id from the _ga cookie value', () => {
@@ -63,6 +63,17 @@ describe('GA4 connector mapping', () => {
           },
         },
       ],
+    })
+  })
+
+  it('uses GA4 debug endpoint by default during connector testing', () => {
+    expect(getGa4Config({} as NodeJS.ProcessEnv)).toMatchObject({
+      debug: true,
+      endpoint: 'https://www.google-analytics.com/debug/mp/collect',
+    })
+    expect(getGa4Config({ GA4_DEBUG: 'false' } as NodeJS.ProcessEnv)).toMatchObject({
+      debug: false,
+      endpoint: 'https://www.google-analytics.com/mp/collect',
     })
   })
 })

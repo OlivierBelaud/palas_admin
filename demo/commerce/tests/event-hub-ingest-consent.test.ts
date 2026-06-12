@@ -37,6 +37,30 @@ function makeReq(body: Record<string, unknown>, unsafeCalls: Array<{ query: stri
 }
 
 describe('Event Hub ingest consent logging', () => {
+  it('rejects legacy browser direct ingest before persistence', async () => {
+    const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
+    const res = await POST(
+      makeReq(
+        {
+          event_id: 'evt_legacy_direct_shopify_theme',
+          event_name: 'page_view',
+          event_time: '2026-06-11T23:00:00.000Z',
+          source: 'shopify_theme',
+          context: { url: 'https://fancypalas.com/', page_type: 'home' },
+        },
+        unsafeCalls,
+      ),
+    )
+
+    expect(res.status).toBe(410)
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      error: 'DIRECT_EVENT_HUB_INGEST_DISABLED',
+      source: 'shopify_theme',
+    })
+    expect(unsafeCalls).toHaveLength(0)
+  })
+
   it('logs denied consent without blocking identity capture during observation phase', async () => {
     const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
     const res = await POST(
@@ -45,7 +69,7 @@ describe('Event Hub ingest consent logging', () => {
           event_id: 'evt_contact_email_without_analytics_consent',
           event_name: 'add_contact_info',
           event_time: '2026-06-11T23:00:00.000Z',
-          source: 'shopify_theme',
+          source: 'posthog_proxy',
           consent: {
             analytics_storage: false,
             ad_storage: false,
@@ -73,5 +97,48 @@ describe('Event Hub ingest consent logging', () => {
       ad_personalization: false,
       source: 'shopify_customer_privacy',
     })
+  })
+
+  it('uses the Event Hub muid as GA4 client id without relying on a GA browser tag', async () => {
+    const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
+    const res = await POST(
+      makeReq(
+        {
+          event_id: 'evt_purchase_with_event_hub_client_id',
+          event_name: 'purchase',
+          event_time: '2026-06-12T12:00:00.000Z',
+          source: 'posthog_proxy',
+          consent: {
+            analytics_storage: true,
+            ad_storage: true,
+            ad_user_data: true,
+            ad_personalization: true,
+            source: 'shopify_customer_privacy',
+          },
+          context: { url: 'https://fancypalas.com/checkouts/cn/thank-you', page_type: 'purchase' },
+          user: { gclid: 'gclid_1' },
+          ecommerce: {
+            currency: 'EUR',
+            value: 150,
+            transaction_id: 'order_1',
+            items: [{ item_id: 'v1', item_name: 'Bague', price: 150, quantity: 1 }],
+          },
+          properties: {
+            checkout: { shopify_order_id: 'order_1', email: 'client@example.com' },
+          },
+        },
+        unsafeCalls,
+      ),
+    )
+
+    expect(res.status).toBe(200)
+    const eventHubClientId = unsafeCalls[0].params?.[5]
+    expect(eventHubClientId).toEqual(expect.stringMatching(/^muid_/))
+    const normalized = JSON.parse(unsafeCalls[0].params?.[10] as string)
+    expect(normalized.user.ga_client_id).toBe(eventHubClientId)
+
+    const ga4Call = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:ga4')
+    expect(ga4Call?.params?.[4]).toBe('pending')
+    expect(ga4Call?.params?.[8]).toBeNull()
   })
 })
