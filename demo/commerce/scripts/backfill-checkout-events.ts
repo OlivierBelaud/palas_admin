@@ -10,8 +10,8 @@
 // header for the long version of the rationale.
 //
 // Idempotence:
-//   - `carts` upsert: `applyEvent` finds the existing row by cart_token (or
-//     distinct_id fallback) and merges progressively. Safe to re-run.
+//   - `carts` upsert: `applyEvent` finds the existing row by cart_token or
+//     checkout_token and merges progressively. Safe to re-run.
 //   - `cart_events`: no natural unique key in the schema, so we dedupe at
 //     insert time using (cart_id, action, occurred_at) — a tuple that is
 //     unique in practice for the Shopify pixel cadence.
@@ -159,11 +159,8 @@ async function insertCartEventIfMissing(cartId: string, n: ReturnType<typeof nor
   return true
 }
 
-async function findCartId(cartToken: string, distinctId: string | null): Promise<string | null> {
-  let rows = await db.raw<{ id: string }>('SELECT id FROM carts WHERE cart_token = $1 LIMIT 1', [cartToken])
-  if (rows.length === 0 && distinctId) {
-    rows = await db.raw<{ id: string }>('SELECT id FROM carts WHERE distinct_id = $1 LIMIT 1', [distinctId])
-  }
+async function findCartId(cartToken: string): Promise<string | null> {
+  const rows = await db.raw<{ id: string }>('SELECT id FROM carts WHERE cart_token = $1 LIMIT 1', [cartToken])
   return rows[0]?.id ?? null
 }
 
@@ -229,7 +226,7 @@ try {
           continue
         }
 
-        const cartId = await findCartId(n.cart_token, n.distinct_id)
+        const cartId = await findCartId(n.cart_token)
         if (!cartId) {
           totalSkippedCarts += 1
           continue

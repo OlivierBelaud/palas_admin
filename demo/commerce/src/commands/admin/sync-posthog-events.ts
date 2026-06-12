@@ -19,15 +19,17 @@
 //   3. Normalise via `posthog-sync` helper and dispatch through
 //      `step.command.ingestCartEvent`. Errors are counted, not thrown.
 //
-// Idempotence: ingestCartEvent upserts the cart row by token (+
-// distinct_id fallback) and merges monotonically — replaying overlap is
-// safe.
+// Idempotence: ingestCartEvent upserts the cart row by cart/checkout token
+// and merges monotonically. `distinct_id` identifies the visitor, not the
+// cart; using it as a cart key merges separate carts from the same browser.
+// Replaying overlap is safe because the same cart tokens converge.
 
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
 import { type HogQLEventRow, ingestHogQLRows } from '../../modules/cart-tracking/posthog-sync'
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 const MAX_EVENTS_PER_RUN = 5000
+const OVERLAP_HOURS = 24
 
 export default defineCommand({
   name: 'syncPosthogEvents',
@@ -65,14 +67,14 @@ export default defineCommand({
         const checkoutSinceIso = toIso(maxRows.find((r) => r.kind === 'checkout')?.max_ts)
 
         const cartClause = cartSinceIso
-          ? `(event LIKE 'cart:%' AND timestamp > toDateTime('${cartSinceIso}'))`
+          ? `(event LIKE 'cart:%' AND timestamp > toDateTime('${cartSinceIso}') - INTERVAL ${OVERLAP_HOURS} HOUR)`
           : `event LIKE 'cart:%'`
         const checkoutClause = checkoutSinceIso
-          ? `(event LIKE 'checkout:%' AND timestamp > toDateTime('${checkoutSinceIso}'))`
+          ? `(event LIKE 'checkout:%' AND timestamp > toDateTime('${checkoutSinceIso}') - INTERVAL ${OVERLAP_HOURS} HOUR)`
           : `event LIKE 'checkout:%'`
 
         log.info(
-          `[syncPosthogEvents] starting — cartSince=${cartSinceIso ?? 'genesis'} checkoutSince=${checkoutSinceIso ?? 'genesis'}`,
+          `[syncPosthogEvents] starting — cartSince=${cartSinceIso ?? 'genesis'} checkoutSince=${checkoutSinceIso ?? 'genesis'} overlapHours=${OVERLAP_HOURS}`,
         )
 
         // ── 2. HogQL query ────────────────────────────────────────────

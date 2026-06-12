@@ -49,6 +49,7 @@ const CheckoutDiscountSchema = z.object({
 // completed           → payment succeeded
 
 const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
+const CHECKOUT_CART_BRIDGE_WINDOW_HOURS = 24
 
 function actionToStage(action: string): (typeof STAGES)[number] {
   if (action.startsWith('cart:')) return 'cart'
@@ -125,6 +126,7 @@ export default defineCommand({
       total_tax?: number | null
       completed_at?: Date | string | null
       cart_birth_at?: Date | string | null
+      last_action_at?: Date | string | null
     }
     type EntityCrud<Row> = {
       list: (filters: Record<string, unknown>) => Promise<Row[]>
@@ -148,8 +150,26 @@ export default defineCommand({
     if (existingCarts.length === 0) {
       existingCarts = await svc.cart.list({ checkout_token: input.cart_token })
     }
-    if (existingCarts.length === 0 && input.distinct_id) {
-      existingCarts = await svc.cart.list({ distinct_id: input.distinct_id })
+    if (existingCarts.length === 0 && input.shopify_order_id) {
+      existingCarts = await svc.cart.list({ shopify_order_id: input.shopify_order_id })
+    }
+    if (existingCarts.length === 0 && input.distinct_id && !input.action.startsWith('cart:')) {
+      const candidates = await svc.cart.list({ distinct_id: input.distinct_id })
+      const occurredMs = new Date(input.occurred_at).getTime()
+      const lower = occurredMs - CHECKOUT_CART_BRIDGE_WINDOW_HOURS * 60 * 60 * 1000
+      const upper = occurredMs + 10 * 60 * 1000
+      existingCarts = candidates
+        .filter((cart) => {
+          if (cart.highest_stage === 'completed') return false
+          const lastActionMs = cart.last_action_at ? new Date(cart.last_action_at).getTime() : Number.NaN
+          return Number.isFinite(lastActionMs) && lastActionMs >= lower && lastActionMs <= upper
+        })
+        .sort((a, b) => {
+          const aMs = a.last_action_at ? new Date(a.last_action_at).getTime() : 0
+          const bMs = b.last_action_at ? new Date(b.last_action_at).getTime() : 0
+          return bMs - aMs
+        })
+        .slice(0, 1)
     }
     const existing: CartRow | undefined = existingCarts[0]
 
