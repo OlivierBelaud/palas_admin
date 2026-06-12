@@ -46,6 +46,7 @@ function makeCart(over: Partial<EligibleCart> = {}): EligibleCart {
     phone: null,
     city: null,
     country_code: 'FR',
+    browser_locale: null,
     items: [{ id: 'v1', title: 'Bracelet Solana', quantity: 1 }],
     total_price: 39.9,
     item_count: 1,
@@ -569,6 +570,41 @@ describe('runNotifyAbandonedCarts', () => {
     })
     expect(out.notified).toBe(1)
     expect(notification.sent[0].tags).toEqual(expect.arrayContaining([{ name: 'locale', value: 'en' }]))
+  })
+
+  it('uses browser_locale before stale contact locale when country is missing', async () => {
+    const cart = makeCart({ email: 'fr-nav@test.com', country_code: null, browser_locale: 'fr-FR' })
+    const cartRepo = makeCartRepo([cart])
+    const contactRepo = makeContactRepo([
+      {
+        id: 'co_1',
+        email: 'fr-nav@test.com',
+        locale: 'en-US',
+        email_marketing_opt_out_at: null,
+        klaviyo_suppressed: false,
+      },
+    ])
+    const linkRepo = makeLinkRepo([{ cart_id: 'cart_1', contact_id: 'co_1' }])
+    const notification = new FakeNotification()
+    const captures: Array<{ event: string; distinctId: string; properties: Record<string, unknown> }> = []
+
+    const out = await runNotifyAbandonedCarts(baseInput, {
+      cart: cartRepo,
+      contact: contactRepo,
+      klaviyoEvent: makeKlaviyoEventRepo(),
+      order: makeOrderRepo(),
+      cartContactLink: linkRepo,
+      notification,
+      log,
+      posthogCapture: async (input) => {
+        captures.push(input)
+      },
+    })
+
+    expect(out.notified).toBe(1)
+    expect(notification.sent[0].subject).toBe('Vos bijoux favoris vous attendent')
+    expect(notification.sent[0].tags).toEqual(expect.arrayContaining([{ name: 'locale', value: 'fr' }]))
+    expect(captures[0].properties.locale).toBe('fr')
   })
 
   it('handles 0 carts cleanly (no DB calls past the initial list)', async () => {

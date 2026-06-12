@@ -81,6 +81,7 @@ interface CandidateRow {
   email: string
   first_name: string | null
   country_code: string | null
+  browser_locale: string | null
   items: unknown
   total_price: number | null
   currency: string | null
@@ -104,7 +105,7 @@ async function pickCandidates(): Promise<CandidateRow[]> {
   return await sql<CandidateRow[]>`
     SELECT
       c.id, c.cart_token, c.checkout_token, c.distinct_id, c.email,
-      c.first_name, c.country_code, c.items, c.total_price, c.currency,
+      c.first_name, c.country_code, c.browser_locale, c.items, c.total_price, c.currency,
       ct.locale AS contact_locale
     FROM carts c
     LEFT JOIN contacts ct ON LOWER(ct.email) = LOWER(c.email)
@@ -167,7 +168,11 @@ async function sendOne(c: CandidateRow): Promise<{ sent: boolean; reason?: strin
   const items = coerceItems(c.items)
   if (items.length === 0) return { sent: false, reason: 'only-gwp' }
 
-  const locale = pickLocale({ contactLocale: c.contact_locale, countryCode: c.country_code })
+  const locale = pickLocale({
+    browserLocale: c.browser_locale,
+    contactLocale: c.contact_locale,
+    countryCode: c.country_code,
+  })
   const recoveryUrl = buildRecoveryUrl({
     checkout_token: c.checkout_token,
     cart_token: c.cart_token,
@@ -280,7 +285,11 @@ try {
       const out = await sendOne(c)
       if (out.sent) {
         await markCart(c.id)
-        const locale = pickLocale({ contactLocale: c.contact_locale, countryCode: c.country_code })
+        const locale = pickLocale({
+          browserLocale: c.browser_locale,
+          contactLocale: c.contact_locale,
+          countryCode: c.country_code,
+        })
         await fireAndForgetPosthog(c, locale)
         sentCount++
         console.log(`SENT msg=${out.messageId ?? '-'}`)

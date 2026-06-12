@@ -44,6 +44,7 @@ export interface EligibleCart {
   phone: string | null
   city: string | null
   country_code: string | null
+  browser_locale?: string | null
   items: unknown
   total_price: number | null
   item_count: number | null
@@ -474,6 +475,7 @@ export async function runNotifyAbandonedCarts(input: RunInputs, deps: RunDeps): 
           email: cart.email,
           first_name: cart.first_name,
           country_code: cart.country_code,
+          browser_locale: cart.browser_locale ?? null,
           items: cart.items,
           total_price: cart.total_price,
           currency: cart.currency,
@@ -515,7 +517,11 @@ export async function runNotifyAbandonedCarts(input: RunInputs, deps: RunDeps): 
       const distinctId =
         cart.distinct_id && cart.distinct_id.length > 0 ? cart.distinct_id : (cart.email ?? '').toLowerCase()
       if (distinctId) {
-        const captureLocale = pickLocale({ contactLocale: contact?.locale ?? null, countryCode: cart.country_code })
+        const captureLocale = pickLocale({
+          browserLocale: cart.browser_locale ?? null,
+          contactLocale: contact?.locale ?? null,
+          countryCode: cart.country_code,
+        })
         const capture = deps.posthogCapture ?? defaultPosthogCapture
         // Defense-in-depth: even if the injected capture throws against its
         // contract, we MUST NOT let it break the send/mark pipeline.

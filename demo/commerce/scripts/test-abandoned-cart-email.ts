@@ -74,6 +74,7 @@ interface DbCartRow {
   email: string | null
   first_name: string | null
   country_code: string | null
+  browser_locale: string | null
   items: unknown
   total_price: string | null
   currency: string | null
@@ -87,7 +88,7 @@ const consoleLog = {
 
 try {
   const cartRows = (await sql`
-    SELECT id, cart_token, checkout_token, email, first_name, country_code, items, total_price, currency, abandon_notified_count
+    SELECT id, cart_token, checkout_token, email, first_name, country_code, browser_locale, items, total_price, currency, abandon_notified_count
     FROM carts
     WHERE id = ${cartId}
     LIMIT 1
