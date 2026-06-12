@@ -41,7 +41,7 @@ export default defineCommand({
 
     return await step.action('sync-posthog-events', {
       invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.infra.db as RawDb | undefined
+        const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
         const startedAt = Date.now()
