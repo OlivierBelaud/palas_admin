@@ -77,8 +77,18 @@ export function nowMs() {
 
 function extractBearerToken(req) {
   const authHeader = req.headers.get('authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  return authHeader.slice('Bearer '.length)
+  if (authHeader?.startsWith('Bearer ')) return authHeader.slice('Bearer '.length)
+  return extractCookie(req, 'manta.admin.access')
+}
+
+function extractCookie(req, name) {
+  const cookieHeader = req.headers.get('cookie')
+  if (!cookieHeader) return null
+  for (const part of cookieHeader.split(';')) {
+    const [rawKey, ...rawValue] = part.trim().split('=')
+    if (rawKey === name) return decodeURIComponent(rawValue.join('='))
+  }
+  return null
 }
 
 function verifyHs256Jwt(token, secret) {
