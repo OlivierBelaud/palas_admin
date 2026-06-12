@@ -17,6 +17,7 @@ type SkipReason =
   | 'no_products'
   | 'shopify_check_unavailable'
   | 'send_error'
+  | 'superseded_by_new_cart'
 
 export interface AbandonedCartCampaignOptions {
   sql: RuntimeSql
@@ -106,6 +107,11 @@ interface RenderedMessage {
   recoveryUrl: string
   unsubscribeUrl: string
   discountGrant: DiscountGrant | null
+}
+
+interface NewerActiveCartRow {
+  id: string
+  last_action_at: Date | string
 }
 
 const HOUR_MS = 3600 * 1000
@@ -355,6 +361,100 @@ async function markSkipped(
       SET status = 'closed_unsubscribed', updated_at = NOW()
       WHERE id = ${caseId} AND status = 'open'`
   }
+}
+
+async function findNewerActiveCartForEmail(
+  sql: RuntimeSql,
+  c: CandidateRow,
+  cutoff: Date,
+): Promise<NewerActiveCartRow | null> {
+  const rows = await sql<NewerActiveCartRow[]>`
+    SELECT id, last_action_at
+    FROM carts
+    WHERE LOWER(email) = LOWER(${c.email})
+      AND id <> ${c.id}
+      AND email IS NOT NULL
+      AND items IS NOT NULL
+      AND jsonb_array_length(items) > 0
+      AND last_action_at >= ${cutoff}
+      AND last_action_at > ${toDate(c.last_action_at)}
+      AND highest_stage <> 'completed'
+      AND COALESCE(status, 'active') <> 'completed'
+      AND COALESCE(shopify_order_id, '') = ''
+    ORDER BY last_action_at DESC
+    LIMIT 1`
+  return rows[0] ?? null
+}
+
+async function findNewerOpenCaseForEmail(sql: RuntimeSql, c: CandidateRow): Promise<NewerActiveCartRow | null> {
+  const rows = await sql<NewerActiveCartRow[]>`
+    SELECT cart_id AS id, last_cart_action_at AS last_action_at
+    FROM abandoned_cart_cases
+    WHERE LOWER(email) = LOWER(${c.email})
+      AND cart_id <> ${c.id}
+      AND status = 'open'
+      AND last_cart_action_at > ${toDate(c.last_action_at)}
+    ORDER BY last_cart_action_at DESC
+    LIMIT 1`
+  return rows[0] ?? null
+}
+
+async function closeCaseSupersededByNewerCart(
+  sql: RuntimeSql,
+  cartId: string,
+  newerCartId: string,
+  persist: boolean,
+): Promise<void> {
+  if (!persist) return
+  await sql`
+    UPDATE abandoned_cart_messages m
+    SET status = 'skipped',
+        skip_reason = 'superseded_by_new_cart',
+        error_message = ${`Superseded by newer cart ${newerCartId}`},
+        updated_at = NOW()
+    FROM abandoned_cart_cases acc
+    WHERE m.case_id = acc.id
+      AND acc.cart_id = ${cartId}
+      AND acc.status = 'open'
+      AND m.status = 'pending'`
+
+  await sql`
+    UPDATE abandoned_cart_cases
+    SET status = 'closed_superseded',
+        updated_at = NOW()
+    WHERE cart_id = ${cartId}
+      AND status = 'open'`
+}
+
+async function closeOlderOpenCasesForEmail(
+  sql: RuntimeSql,
+  c: CandidateRow,
+  persist: boolean,
+): Promise<void> {
+  if (!persist) return
+  const cartActionAt = toDate(c.last_action_at)
+  await sql`
+    UPDATE abandoned_cart_messages m
+    SET status = 'skipped',
+        skip_reason = 'superseded_by_new_cart',
+        error_message = ${`Superseded by newer cart ${c.id}`},
+        updated_at = NOW()
+    FROM abandoned_cart_cases acc
+    WHERE m.case_id = acc.id
+      AND LOWER(acc.email) = LOWER(${c.email})
+      AND acc.cart_id <> ${c.id}
+      AND acc.status = 'open'
+      AND acc.last_cart_action_at < ${cartActionAt}
+      AND m.status = 'pending'`
+
+  await sql`
+    UPDATE abandoned_cart_cases
+    SET status = 'closed_superseded',
+        updated_at = NOW()
+    WHERE LOWER(email) = LOWER(${c.email})
+      AND cart_id <> ${c.id}
+      AND status = 'open'
+      AND last_cart_action_at < ${cartActionAt}`
 }
 
 async function markSent(
@@ -680,6 +780,15 @@ export async function runAbandonedCartCampaign(
 
   for (const c of candidates) {
     if (signal?.aborted || result.due >= batchLimit) break
+
+    const newerCart = (await findNewerOpenCaseForEmail(sql, c)) ?? (await findNewerActiveCartForEmail(sql, c, cutoff))
+    if (newerCart) {
+      await closeCaseSupersededByNewerCart(sql, c.id, newerCart.id, !dryRun)
+      result.skipped++
+      log.info(`[abandoned-cart-campaign] skip cart=${c.id} email=${c.email} superseded_by=${newerCart.id}`)
+      continue
+    }
+    await closeOlderOpenCasesForEmail(sql, c, !dryRun)
 
     const cartCase = await ensureCase(sql, c)
     if (cartCase.status !== 'open') continue
