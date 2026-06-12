@@ -144,6 +144,8 @@ export const DISPATCHABLE_CANONICAL_EVENT_NAMES = new Set(
     .map(([eventName]) => eventName),
 )
 
+const ACTIONABLE_DESTINATIONS = new Set<CanonicalDestination>(['ga4', 'google_ads'])
+
 export function isCanonicalEventName(value: string): value is CanonicalEventName {
   return Object.hasOwn(CANONICAL_EVENT_CONTRACTS, value)
 }
@@ -199,6 +201,7 @@ export function validateCanonicalEvent(input: ValidateInput): CanonicalValidatio
 export function validationErrorsForSupportedDestinations(validation: CanonicalValidationResult): string[] {
   const errors: string[] = [...validation.errors]
   for (const [destination, result] of Object.entries(validation.destinations)) {
+    if (!ACTIONABLE_DESTINATIONS.has(destination as CanonicalDestination)) continue
     if (!result.supported || result.ready) continue
     for (const blocker of result.blockers) {
       if (isConsentBlocker(blocker)) continue

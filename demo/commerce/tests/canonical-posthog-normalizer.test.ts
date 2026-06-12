@@ -54,7 +54,8 @@ describe('canonical PostHog normalizer', () => {
     expect(event?.event_name).toBe('page_view')
     expect(event?.raw_event_name).toBe('$pageview')
     expect(event?.page_type).toBe('product')
-    expect(event?.valid).toBe(false)
+    expect(event?.valid).toBe(true)
+    expect(event?.validation_errors).toEqual([])
     expect(event?.validation_errors).not.toContain('ga4:ga4_client_id_missing')
     expect(event?.payload_normalized.user).toMatchObject({ ga_client_id: 'ph_1' })
     expect(event?.payload_normalized.dispatch).toMatchObject({ posthog: { status: 'forwarded', http_status: 200 } })
@@ -81,7 +82,8 @@ describe('canonical PostHog normalizer', () => {
     )
 
     expect(event?.event_name).toBe('add_to_cart')
-    expect(event?.valid).toBe(false)
+    expect(event?.valid).toBe(true)
+    expect(event?.validation_errors).toEqual([])
     expect(event?.validation_errors).not.toContain('ga4:ga4_client_id_missing')
     expect(event?.payload_normalized.ecommerce).toMatchObject({ value: 120, currency: 'EUR', item_count: 1 })
     expect(event?.payload_normalized.cart).toMatchObject({ token: 'cart_1' })
@@ -147,7 +149,8 @@ describe('canonical PostHog normalizer', () => {
     )
 
     expect(event?.event_name).toBe('purchase')
-    expect(event?.valid).toBe(false)
+    expect(event?.valid).toBe(true)
+    expect(event?.validation_errors).toEqual([])
     expect(event?.validation_errors).not.toContain('ga4:ga4_client_id_missing')
     expect(event?.identity_email_sha256).toHaveLength(64)
     expect(event?.payload_normalized.user).toMatchObject({
