@@ -22,14 +22,14 @@ type AdminAuthContext = {
 
 export function dbFrom(req: AdminApiRequest): RawDb {
   const direct = req.app?.infra?.db
+  if (hasRawDb(direct)) return direct
   const directPool = rawDbFromPool(direct)
   if (directPool) return directPool
-  if (hasRawDb(direct)) return direct
 
   const scoped = req.scope?.resolve<unknown>('IDatabasePort')
+  if (hasRawDb(scoped)) return scoped
   const scopedPool = rawDbFromPool(scoped)
   if (scopedPool) return scopedPool
-  if (hasRawDb(scoped)) return scoped
 
   throw new MantaError('UNEXPECTED_STATE', 'Database unavailable')
 }
