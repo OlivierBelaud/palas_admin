@@ -172,6 +172,10 @@ function resolvePackageRoot(packageName) {
 
 function installFastFunctions() {
   installFastFunction({
+    source: 'admin-me.mjs',
+    route: 'api/admin/me',
+  })
+  installFastFunction({
     source: 'admin-system-dashboard.mjs',
     route: 'api/cart-tracking/admin-system-dashboard',
   })
