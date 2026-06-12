@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+
+const functionRegions = ['fra1']
 
 const selfRedirects = new Map([
   ['^/login/?$', '/login'],
@@ -55,6 +57,7 @@ function patchVercelJson() {
   if (!existsSync(path)) return
 
   const config = readJson(path)
+  config.regions = functionRegions
   const redirects = Array.isArray(config.redirects) ? config.redirects : []
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
@@ -84,6 +87,20 @@ function patchVercelJson() {
   }
 
   writeJson(path, config)
+}
+
+function patchFunctionConfigs(dir = '.vercel/output/functions') {
+  if (!existsSync(dir)) return
+
+  for (const entry of readdirSync(dir)) {
+    const path = `${dir}/${entry}`
+    if (statSync(path).isDirectory()) patchFunctionConfigs(path)
+    if (entry !== '.vc-config.json') continue
+
+    const config = readJson(path)
+    config.regions = functionRegions
+    writeJson(path, config)
+  }
 }
 
 function patchOutputConfig() {
@@ -117,3 +134,4 @@ function patchOutputConfig() {
 
 patchVercelJson()
 patchOutputConfig()
+patchFunctionConfigs()
