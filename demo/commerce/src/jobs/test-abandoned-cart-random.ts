@@ -35,6 +35,10 @@ interface JobResult {
 const EMPTY: JobResult = { picked: null, sent: false, candidates: 0 }
 
 export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ command, db, notification, log }) => {
+  if (process.env.ENABLE_ABANDONED_CART_TEST_CRON !== 'true') {
+    log.warn('[test-random] disabled: ENABLE_ABANDONED_CART_TEST_CRON is not true')
+    return EMPTY
+  }
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[test-random] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY

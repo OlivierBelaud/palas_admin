@@ -92,10 +92,6 @@
     {
       "path": "/api/crons/sync-visitor-sessions",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/crons/test-abandoned-cart-random",
-      "schedule": "* * * * *"
     }
   ]
 }
