@@ -19,3 +19,5 @@ allowBuilds:
   simple-git-hooks: true
 minimumReleaseAgeExclude:
   - '@mantajs/*'
+patchedDependencies:
+  '@mantajs/plugin-posthog-proxy@0.2.0-beta.7': patches/@mantajs__plugin-posthog-proxy@0.2.0-beta.7.patch

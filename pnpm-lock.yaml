@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@mantajs/plugin-posthog-proxy@0.2.0-beta.7': a5b367c062dc9f5a079d2cb77d28d2c8870f874cc4ed56774fe8478b300710aa
+
 importers:
 
   .:
@@ -85,7 +88,7 @@ importers:
         version: 0.2.0-beta.7(@types/node@25.9.2)(@upstash/redis@1.38.0)(@vercel/blob@2.4.0)(chokidar@4.0.3)(dotenv@16.6.1)(drizzle-orm@0.35.3(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7))(lightningcss@1.32.0)(rollup@4.61.1)
       '@mantajs/plugin-posthog-proxy':
         specifier: 0.2.0-beta.7
-        version: 0.2.0-beta.7(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)
+        version: 0.2.0-beta.7(patch_hash=a5b367c062dc9f5a079d2cb77d28d2c8870f874cc4ed56774fe8478b300710aa)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)
       '@mantajs/sdk':
         specifier: 0.2.0-beta.7
         version: 0.2.0-beta.7
@@ -4471,7 +4474,7 @@ snapshots:
       - yaml
       - zephyr-agent
 
-  '@mantajs/plugin-posthog-proxy@0.2.0-beta.7(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)':
+  '@mantajs/plugin-posthog-proxy@0.2.0-beta.7(patch_hash=a5b367c062dc9f5a079d2cb77d28d2c8870f874cc4ed56774fe8478b300710aa)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)':
     dependencies:
       '@mantajs/core': 0.2.0-beta.7(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)
       posthog-node: 5.35.0

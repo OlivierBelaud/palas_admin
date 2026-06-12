@@ -1,0 +1,13 @@
+diff --git a/src/modules/posthog/api/[...path]/route.ts b/src/modules/posthog/api/[...path]/route.ts
+index 96e7f483ca16f4e760c5e9e5ac81f8ceb41d1a54..244995c2d0532531fa22d71e4c32f89f2c02d987 100644
+--- a/src/modules/posthog/api/[...path]/route.ts
++++ b/src/modules/posthog/api/[...path]/route.ts
+@@ -193,7 +193,7 @@ export async function POST(req: Request & { app?: any }) {
+     // must work in environments that don't register a Manta app.
+     const app = req.app as { emit?: (event: string, data: unknown) => Promise<void> } | undefined
+     if (app?.emit) {
+-      app.emit('posthog.events.received', { body: parsed }).catch((err) => {
++      await app.emit('posthog.events.received', { body: parsed }).catch((err) => {
+         console.error('[posthog-proxy] emit posthog.events.received error:', err)
+       })
+     }
