@@ -121,7 +121,7 @@ export default function TrackingHealthPage() {
     search.set('offset', String(params.offset))
     search.set('event_name', params.event_name)
 
-    const res = await window.fetch(`/api/reporting/tracking-health?${search.toString()}`, {
+    const res = await window.fetch(`/api/cart-tracking/admin-tracking-health?${search.toString()}`, {
       headers: authHeaders(authAdapter),
     })
     if (!res.ok) {
