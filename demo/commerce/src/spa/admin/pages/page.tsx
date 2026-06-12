@@ -1,4 +1,5 @@
 import { useDashboardContext } from '@mantajs/dashboard'
+import { useCommand } from '@mantajs/sdk'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@mantajs/ui'
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, ExternalLink, RefreshCw, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -61,6 +62,18 @@ interface SystemDashboardData {
   }>
 }
 
+export const SYSTEM_DASHBOARD_ENDPOINT = '/api/cart-tracking/admin-system-dashboard'
+export const RUN_SYSTEM_AUDITS_COMMAND = 'runSystemAudits'
+export const MANUAL_SYSTEM_AUDIT_INPUT = { trigger: 'manual' } as const
+
+type ManualSystemAuditInput = typeof MANUAL_SYSTEM_AUDIT_INPUT
+
+type SystemAuditCommandResult = {
+  run_id: string
+  summary: { overall_status: SystemStatus }
+  findings: unknown[]
+}
+
 const statusCopy: Record<SystemStatus, { label: string; className: string; dot: string }> = {
   ok: {
     label: 'Vert',
@@ -93,13 +106,22 @@ function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAd
 
 export default function SystemDashboardPage() {
   const { authAdapter } = useDashboardContext()
+  const {
+    run: runSystemAudits,
+    status: auditCommandStatus,
+    result: auditCommandResult,
+    error: auditCommandError,
+  } = useCommand<ManualSystemAuditInput, SystemAuditCommandResult>(RUN_SYSTEM_AUDITS_COMMAND)
   const [data, setData] = useState<SystemDashboardData | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [auditRefreshPending, setAuditRefreshPending] = useState(false)
+  const [auditMessage, setAuditMessage] = useState<string | null>(null)
 
   const loadDashboard = useCallback(async () => {
     setError(null)
-    const res = await window.fetch('/api/cart-tracking/admin-system-dashboard', {
+    const res = await window.fetch(SYSTEM_DASHBOARD_ENDPOINT, {
       headers: authHeaders(authAdapter),
     })
     if (!res.ok) {
@@ -110,6 +132,41 @@ export default function SystemDashboardPage() {
     if (!body.data) throw new MantaError('UNEXPECTED_STATE', 'Réponse dashboard invalide')
     setData(body.data)
   }, [authAdapter])
+
+  const refreshDashboard = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!options.silent) setIsRefreshing(true)
+      try {
+        await loadDashboard()
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error(String(err)))
+      } finally {
+        if (!options.silent) setIsRefreshing(false)
+      }
+    },
+    [loadDashboard],
+  )
+
+  const runManualAudit = useCallback(async () => {
+    setAuditMessage(null)
+    setAuditRefreshPending(true)
+    try {
+      const result = await runSystemAudits(MANUAL_SYSTEM_AUDIT_INPUT)
+      if (result.status === 'succeeded') {
+        setAuditRefreshPending(false)
+        setAuditMessage(auditSuccessMessage(result.result))
+        await refreshDashboard()
+      } else if (result.status === 'running') {
+        setAuditMessage(`Audit manuel lancé · run ${result.runId}`)
+      } else {
+        setAuditRefreshPending(false)
+        setError(result.error)
+      }
+    } catch (err) {
+      setAuditRefreshPending(false)
+      setError(err instanceof Error ? err : new Error(String(err)))
+    }
+  }, [refreshDashboard, runSystemAudits])
 
   useEffect(() => {
     let cancelled = false
@@ -123,12 +180,33 @@ export default function SystemDashboardPage() {
       }
     }
     void run()
-    const interval = window.setInterval(() => void run(), 60_000)
+    const interval = window.setInterval(() => void refreshDashboard({ silent: true }), 60_000)
     return () => {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [loadDashboard])
+  }, [loadDashboard, refreshDashboard])
+
+  useEffect(() => {
+    if (!auditRefreshPending) return
+
+    if (auditCommandStatus === 'succeeded') {
+      setAuditRefreshPending(false)
+      setAuditMessage(auditSuccessMessage(auditCommandResult))
+      void refreshDashboard()
+      return
+    }
+
+    if (auditCommandStatus === 'failed' || auditCommandStatus === 'cancelled') {
+      setAuditRefreshPending(false)
+      setAuditMessage(null)
+      const message =
+        auditCommandStatus === 'cancelled'
+          ? 'Audit manuel annulé.'
+          : auditCommandError?.message || 'Audit manuel échoué.'
+      setError(new Error(message))
+    }
+  }, [auditCommandError, auditCommandResult, auditCommandStatus, auditRefreshPending, refreshDashboard])
 
   if (isLoading) return <LoadingState />
   if (error) {
@@ -164,22 +242,39 @@ export default function SystemDashboardPage() {
             live {formatDateTime(data.meta.generated_at)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void loadDashboard().catch((err) => setError(err instanceof Error ? err : new Error(String(err))))
-          }}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <RefreshCw className="size-4" />
-          Rafraîchir
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              void refreshDashboard()
+            }}
+            disabled={isRefreshing || auditCommandStatus === 'running'}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void runManualAudit()
+            }}
+            disabled={auditCommandStatus === 'running' || isRefreshing}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Activity className="size-4" />
+            {auditCommandStatus === 'running' ? 'Audit en cours...' : 'Relancer les audits'}
+          </button>
+        </div>
       </div>
 
       {auditRun?.status === 'failed' ? (
         <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           Audit échoué: {auditRun.error_message ?? 'erreur inconnue'}
         </div>
+      ) : null}
+      {auditMessage ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">{auditMessage}</div>
       ) : null}
 
       <section className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
@@ -427,4 +522,9 @@ function sourceLabel(value: string): string {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
+}
+
+export function auditSuccessMessage(result: SystemAuditCommandResult | undefined): string {
+  if (!result?.run_id) return 'Audit manuel terminé.'
+  return `Audit manuel terminé · ${fmtNumber(result.findings.length)} findings · run ${result.run_id}`
 }
