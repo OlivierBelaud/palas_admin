@@ -44,6 +44,12 @@ type AuditTrigger = 'nightly' | 'manual'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const HOUR_MS = 60 * 60 * 1000
+const NON_DISPATCHABLE_INTERNAL_EVENT = 'non_dispatchable_internal_event'
+const GOOGLE_ADS_CONSENT_BLOCKERS = [
+  'google_ads_ad_storage_consent_not_granted',
+  'google_ads_ad_user_data_consent_not_granted',
+  'google_ads_ad_personalization_consent_not_granted',
+]
 
 export async function runSystemAudit(db: RawDb, trigger: AuditTrigger): Promise<SystemAuditResult> {
   const startedAt = new Date()
@@ -222,12 +228,26 @@ async function auditPosthog(
   const [row] = await db.raw<{
     total: string
     invalid: string
+    non_dispatchable_internal: string
     identified: string
     latest_at: Date | string | null
   }>(
     `SELECT
        COUNT(*)::text AS total,
-       COUNT(*) FILTER (WHERE valid = false)::text AS invalid,
+       COUNT(*) FILTER (
+         WHERE valid = false
+           AND NOT (
+             jsonb_typeof(validation_errors) = 'array'
+             AND validation_errors @> '["${NON_DISPATCHABLE_INTERNAL_EVENT}"]'::jsonb
+             AND jsonb_array_length(validation_errors) = 1
+           )
+       )::text AS invalid,
+       COUNT(*) FILTER (
+         WHERE valid = false
+           AND jsonb_typeof(validation_errors) = 'array'
+           AND validation_errors @> '["${NON_DISPATCHABLE_INTERNAL_EVENT}"]'::jsonb
+           AND jsonb_array_length(validation_errors) = 1
+       )::text AS non_dispatchable_internal,
        COUNT(*) FILTER (
          WHERE identity_muid IS NOT NULL OR identity_email_sha256 IS NOT NULL OR distinct_id IS NOT NULL
        )::text AS identified,
@@ -238,12 +258,14 @@ async function auditPosthog(
   )
   const total = num(row?.total)
   const invalid = num(row?.invalid)
+  const nonDispatchableInternal = num(row?.non_dispatchable_internal)
   const identified = num(row?.identified)
   const invalidRate = rate(invalid, total)
   const identifiedRate = rate(identified, total)
   const latestAge = ageMs(now, row?.latest_at)
   metrics.posthog_events_24h = total
   metrics.posthog_invalid_24h = invalid
+  metrics.posthog_non_dispatchable_internal_24h = nonDispatchableInternal
   metrics.posthog_invalid_rate_24h = invalidRate
   metrics.posthog_identified_rate_24h = identifiedRate
   metrics.posthog_latest_event_at = isoOrNull(row?.latest_at)
@@ -251,6 +273,7 @@ async function auditPosthog(
   const details = [
     `${total} events en 24h`,
     `${invalid} events invalides (${Math.round(invalidRate * 100)}%)`,
+    `${nonDispatchableInternal} events internes non dispatchables`,
     `${identified} events identifiés (${Math.round(identifiedRate * 100)}%)`,
     `Dernier event: ${formatAge(latestAge)}`,
   ]
@@ -381,30 +404,50 @@ async function auditEventHub(
   metrics: Record<string, number | string | null>,
 ): Promise<SystemHealthCard> {
   const since = new Date(now.getTime() - DAY_MS).toISOString()
-  const [row] = await db.raw<{ total: string; sent: string; failed: string; pending_stale: string }>(
+  const [row] = await db.raw<{
+    total: string
+    sent: string
+    failed: string
+    consent_blocked: string
+    pending_stale: string
+  }>(
     `SELECT
        COUNT(*)::text AS total,
        COUNT(*) FILTER (WHERE status = 'sent')::text AS sent,
-       COUNT(*) FILTER (WHERE status IN ('error', 'invalid', 'not_configured'))::text AS failed,
+       COUNT(*) FILTER (
+         WHERE status IN ('error', 'not_configured')
+            OR (
+              status = 'invalid'
+              AND NOT (destination = 'google_ads' AND error_code = ANY($2::text[]))
+            )
+       )::text AS failed,
+       COUNT(*) FILTER (
+         WHERE status = 'invalid'
+           AND destination = 'google_ads'
+           AND error_code = ANY($2::text[])
+       )::text AS consent_blocked,
        COUNT(*) FILTER (
          WHERE status IN ('pending', 'retry', 'sending') AND event_received_at < NOW() - INTERVAL '15 minutes'
        )::text AS pending_stale
      FROM dispatch_logs
      WHERE event_received_at >= $1`,
-    [since],
+    [since, GOOGLE_ADS_CONSENT_BLOCKERS],
   )
   const total = num(row?.total)
   const sent = num(row?.sent)
   const failed = num(row?.failed)
+  const consentBlocked = num(row?.consent_blocked)
   const pendingStale = num(row?.pending_stale)
   metrics.event_hub_dispatches_24h = total
   metrics.event_hub_sent_24h = sent
   metrics.event_hub_failed_24h = failed
+  metrics.event_hub_consent_blocked_24h = consentBlocked
   metrics.event_hub_pending_stale = pendingStale
   const details = [
-    `${total} dispatches GA4 sur 24h`,
+    `${total} dispatches destination sur 24h`,
     `${sent} envoyés`,
-    `${failed} en erreur/invalide/non configuré`,
+    `${failed} en erreur/invalide/non configuré actionnables`,
+    `${consentBlocked} bloqués par consentement publicitaire`,
     `${pendingStale} pending/retry > 15min`,
   ]
   let status: SystemStatus = 'ok'
@@ -415,7 +458,7 @@ async function auditEventHub(
       key: 'event_hub_dispatch_failed',
       severity: 'critical',
       title: 'Dispatch Event Hub en erreur',
-      summary: `${failed} dispatches GA4 sont en erreur, invalides ou non configurés.`,
+      summary: `${failed} dispatches destination sont en erreur, invalides ou non configurés.`,
       count: failed,
       href: '/tracking-health',
       details,

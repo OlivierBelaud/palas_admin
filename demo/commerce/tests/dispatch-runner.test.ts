@@ -7,8 +7,8 @@ import {
 } from '../src/modules/event-hub/dispatch-runner'
 
 function makeDb(rows: Array<Record<string, unknown>>) {
-  const updates: Array<{ query: string; params?: unknown[] }> = []
   const selects: Array<{ query: string; params?: unknown[] }> = []
+  const updates: Array<{ query: string; params?: unknown[] }> = []
   const db: RawDispatchDb = {
     raw: async <T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> => {
       if (query.trim().startsWith('SELECT')) {
