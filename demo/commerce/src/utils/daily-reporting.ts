@@ -198,6 +198,7 @@ export async function buildDailyReportPayload(
     FROM orders
     WHERE deleted_at IS NULL
       AND include_in_ecommerce_analytics = true
+      AND status IN ('paid', 'fulfilled')
       AND placed_at >= $1::timestamptz
       AND placed_at < $2::timestamptz
     `,
@@ -217,6 +218,7 @@ export async function buildDailyReportPayload(
     FROM orders
     WHERE deleted_at IS NULL
       AND include_in_ecommerce_analytics = true
+      AND status IN ('paid', 'fulfilled')
       AND placed_at >= $1::timestamptz
       AND placed_at < $2::timestamptz
     GROUP BY 1, 2
@@ -472,6 +474,7 @@ function segmentAggSql(): string {
     JOIN visitor_segments vs ON vs.distinct_id = ds.distinct_id
     WHERE o.deleted_at IS NULL
       AND o.include_in_ecommerce_analytics = true
+      AND o.status IN ('paid', 'fulfilled')
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     ORDER BY o.id, ds.last_event_at DESC
@@ -495,6 +498,7 @@ function segmentAggSql(): string {
     LEFT JOIN attributed_orders ao ON ao.order_row_id = o.id
     WHERE o.deleted_at IS NULL
       AND o.include_in_ecommerce_analytics = true
+      AND o.status IN ('paid', 'fulfilled')
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND ao.order_row_id IS NULL
@@ -542,6 +546,7 @@ function sourceAggSql(): string {
         OR cs.order_id = o.id::text
       WHERE o.deleted_at IS NULL
         AND o.include_in_ecommerce_analytics = true
+        AND o.status IN ('paid', 'fulfilled')
         AND o.placed_at >= $1::timestamptz
         AND o.placed_at < $2::timestamptz
       ORDER BY o.id, cs.last_event_at DESC
@@ -599,6 +604,7 @@ function channelAggSql(): string {
         OR cs.order_id = o.id::text
       WHERE o.deleted_at IS NULL
         AND o.include_in_ecommerce_analytics = true
+        AND o.status IN ('paid', 'fulfilled')
         AND o.placed_at >= $1::timestamptz
         AND o.placed_at < $2::timestamptz
       ORDER BY o.id, cs.last_event_at DESC
