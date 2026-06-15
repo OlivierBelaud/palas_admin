@@ -1,3 +1,5 @@
+import { readRows, readRowsAndCount } from '../../utils/drizzle-read'
+import { resolveRawDb } from '../../utils/raw-db'
 // Named query: abandonment monitoring with per-cart email attribution.
 //
 // Rules live in docs/cart-abandonment-rules.md and the shared helper
@@ -13,8 +15,7 @@
 //     normal_conversion (not part of the abandonment funnel).
 //
 // Enrichments:
-//   1. Local `contacts` table — lifetime order count per customer
-//      (orders_count + last_order_at), synced from Shopify by the V1 CRM.
+//   1. Local `orders` table — lifetime order count per customer.
 //   2. klaviyo_events HogQL — last abandonment email per customer (+ its
 //      checkout_token when extractable from checkout_url). The eventual
 //      timestamp comes from Klaviyo, which is not mirrored locally.
@@ -63,7 +64,9 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
     days: z.number().int().positive().max(90).default(30),
   }),
-  handler: async (input, { query, log: _log }) => {
+  handler: async (input, ctx) => {
+    const { db, schema, log: _log } = ctx
+    const rawDb = resolveRawDb(ctx)
     const days = input.days ?? 30
     const nowMs = Date.now()
     const cutoffMs = nowMs - days * 86400 * 1000
@@ -75,33 +78,36 @@ export default defineQuery({
     // and routinely drop ~half the batch, leaving the page under-filled.
     const limit = input.limit ?? 100
     const fetchLimit = Math.min(Math.ceil(limit * 5), 500)
-    const [carts, totalCount] = (await query.graphAndCount({
-      entity: 'cart',
-      filters: {
-        email: { $notnull: true },
-        last_action_at: { $gte: new Date(cutoffMs) },
+    const [carts, totalCount] = (await readRowsAndCount(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: {
+          email: { $notnull: true },
+          last_action_at: { $gte: new Date(cutoffMs) },
+        },
+        fields: [
+          'id',
+          'cart_token',
+          'checkout_token',
+          'email',
+          'first_name',
+          'last_name',
+          'total_price',
+          'item_count',
+          'highest_stage',
+          'last_action',
+          'last_action_at',
+          'created_at',
+          'shopify_order_id',
+          'abandon_notified_count',
+          'abandon_notified_at',
+          'abandon_notified_source',
+        ],
+        sort: { last_action_at: 'desc' },
+        pagination: { limit: fetchLimit, offset: input.offset },
       },
-      fields: [
-        'id',
-        'cart_token',
-        'checkout_token',
-        'email',
-        'first_name',
-        'last_name',
-        'total_price',
-        'item_count',
-        'highest_stage',
-        'last_action',
-        'last_action_at',
-        'created_at',
-        'shopify_order_id',
-        'abandon_notified_count',
-        'abandon_notified_at',
-        'abandon_notified_source',
-      ],
-      sort: { last_action_at: 'desc' },
-      pagination: { limit: fetchLimit, offset: input.offset },
-    })) as unknown as [CartRow[], number]
+    )) as unknown as [CartRow[], number]
 
     if (carts.length === 0) return { items: [], count: 0 }
 
@@ -115,20 +121,18 @@ export default defineQuery({
     // match when the checkout_token is null (email from Received Email flow).
     const emailEventsByEmail = new Map<string, EnrichedRow[]>()
 
-    // ── 2a. Local `contacts` lookup — lifetime order count.
-    //        Replaces the previous `shopify_customers` HogQL: contacts are
-    //        kept in sync with Shopify by the V1 CRM (cart-tracking subscriber
-    //        + the 5-min PostHog cron) so this is strictly fresher data with
-    //        no synchronous DW round-trip. last_order_at is fetched alongside
-    //        for future read paths but currently unused in the response.
-    const contactRows = (await query.graph({
-      entity: 'contact',
-      filters: { email: { $in: emails } },
-      fields: ['email', 'orders_count', 'last_order_at'],
-      pagination: { limit: 10000 },
-    })) as unknown as Array<{ email: string; orders_count: number | null; last_order_at: Date | string | null }>
+    // ── 2a. Local `orders` lookup — lifetime order count from source table.
+    const orderRows = await rawDb.raw<{ email: string; orders_count: string | number }>(
+      `SELECT LOWER(email) AS email, COUNT(*)::int AS orders_count
+         FROM orders
+        WHERE deleted_at IS NULL
+          AND status IN ('paid', 'fulfilled')
+          AND LOWER(email) = ANY($1::text[])
+        GROUP BY LOWER(email)`,
+      [emails],
+    )
 
-    for (const row of contactRows) {
+    for (const row of orderRows) {
       const email = row.email?.toLowerCase()
       if (!email) continue
       orderCountByEmail.set(email, Number(row.orders_count ?? 0))
@@ -137,13 +141,16 @@ export default defineQuery({
     // ── 2b. Local `klaviyo_events` lookup — last abandonment email per customer.
     //        Mirrored from PostHog DW by the sync-klaviyo-events cron (hourly).
     //        No more synchronous HogQL roundtrip on the hot path.
-    const klaviyoEventRows = (await query.graph({
-      entity: 'klaviyoEvent',
-      filters: { email: { $in: emails } },
-      fields: ['email', 'occurred_at', 'checkout_token'],
-      sort: { occurred_at: 'desc' },
-      pagination: { limit: 20000 },
-    })) as unknown as Array<{ email: string; occurred_at: Date | string; checkout_token: string | null }>
+    const klaviyoEventRows = (await readRows(
+      { db, schema },
+      {
+        entity: 'klaviyoEvent',
+        filters: { email: { $in: emails } },
+        fields: ['email', 'occurred_at', 'checkout_token'],
+        sort: { occurred_at: 'desc' },
+        pagination: { limit: 20000 },
+      },
+    )) as unknown as Array<{ email: string; occurred_at: Date | string; checkout_token: string | null }>
 
     for (const row of klaviyoEventRows) {
       const email = row.email?.toLowerCase()

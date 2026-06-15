@@ -25,10 +25,21 @@ export default defineQuery({
               c.checkout_token, c.abandon_notified_at, c.abandon_notified_count,
               c.abandon_notified_source, c.completed_at, c.cart_birth_at, c.browser_locale,
               COUNT(*) OVER()::text AS total_count
-         FROM cart_contact cc
-         JOIN carts c ON c.id = cc.cart_id
-        WHERE cc.contact_id = $1
-          AND cc.deleted_at IS NULL
+         FROM contacts contact
+         JOIN carts c
+           ON c.deleted_at IS NULL
+          AND (
+            LOWER(c.email) = LOWER(contact.email)
+            OR EXISTS (
+              SELECT 1
+                FROM cart_contact cc
+               WHERE cc.contact_id = contact.id::text
+                 AND cc.cart_id = c.id::text
+                 AND cc.deleted_at IS NULL
+            )
+          )
+        WHERE contact.id = $1
+          AND contact.deleted_at IS NULL
           AND c.deleted_at IS NULL
         ORDER BY c.last_action_at DESC NULLS LAST, c.updated_at DESC
         LIMIT $2 OFFSET $3`,

@@ -1,3 +1,4 @@
+import { readRows, readRowsAndCount } from '../../utils/drizzle-read'
 export default defineQuery({
   name: 'identity-resolution-logs',
   description: 'Shadow V1/V2 identity resolution logs for recent PostHog events',
@@ -8,7 +9,7 @@ export default defineQuery({
     status: z.enum(['all', 'anonymous', 'identified', 'diverged', 'error']).default('all'),
     event_name: z.string().optional(),
   }),
-  handler: async (input, { query }) => {
+  handler: async (input, { db, schema }) => {
     const hours = input.hours ?? 4
     const limit = input.limit ?? 50
     const offset = input.offset ?? 0
@@ -45,21 +46,27 @@ export default defineQuery({
       'evidence',
     ]
 
-    const [rows, total] = (await query.graphAndCount({
-      entity: 'identityResolutionLog',
-      filters,
-      fields,
-      sort: { observed_at: 'desc' },
-      pagination: { limit, offset },
-    })) as unknown as [Array<Record<string, unknown>>, number]
+    const [rows, total] = (await readRowsAndCount(
+      { db, schema },
+      {
+        entity: 'identityResolutionLog',
+        filters,
+        fields,
+        sort: { observed_at: 'desc' },
+        pagination: { limit, offset },
+      },
+    )) as unknown as [Array<Record<string, unknown>>, number]
 
-    const statRows = (await query.graph({
-      entity: 'identityResolutionLog',
-      filters: baseFilters,
-      fields: ['event_name', 'resolution_status', 'matched_v1', 'v1_source', 'v2_source', 'duration_ms'],
-      sort: { observed_at: 'desc' },
-      pagination: { limit: 10000, offset: 0 },
-    })) as unknown as Array<{
+    const statRows = (await readRows(
+      { db, schema },
+      {
+        entity: 'identityResolutionLog',
+        filters: baseFilters,
+        fields: ['event_name', 'resolution_status', 'matched_v1', 'v1_source', 'v2_source', 'duration_ms'],
+        sort: { observed_at: 'desc' },
+        pagination: { limit: 10000, offset: 0 },
+      },
+    )) as unknown as Array<{
       event_name: string
       resolution_status: string
       matched_v1: boolean

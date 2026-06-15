@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Cross-system tracking coverage — does each of our identified carts appear
 // where it should in Shopify + Klaviyo?
 //
@@ -52,15 +53,18 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
     days: z.number().int().positive().max(90).default(30),
   }),
-  handler: async (input, { query, log }) => {
+  handler: async (input, { db, schema, log }) => {
     // ── 1. Pull identified carts ───────────────────────────────────────
-    const carts = (await query.graph({
-      entity: 'cart',
-      filters: { email: { $notnull: true } },
-      fields: ['id', 'email', 'highest_stage', 'last_action_at', 'total_price'],
-      sort: { last_action_at: 'desc' },
-      pagination: { limit: input.limit, offset: input.offset },
-    })) as unknown as CartRow[]
+    const carts = (await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { email: { $notnull: true } },
+        fields: ['id', 'email', 'highest_stage', 'last_action_at', 'total_price'],
+        sort: { last_action_at: 'desc' },
+        pagination: { limit: input.limit, offset: input.offset },
+      },
+    )) as unknown as CartRow[]
 
     if (carts.length === 0) return []
 

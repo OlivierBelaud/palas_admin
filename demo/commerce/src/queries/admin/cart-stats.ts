@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Cart stats for the admin dashboard — all categories are DERIVED from
 // highest_stage + last_action_at (see modules/cart-tracking/abandonment.ts
 // and docs/cart-abandonment-rules.md). The DB `status` column is not used
@@ -10,12 +11,15 @@ export default defineQuery({
   name: 'cart-stats',
   description: 'Aggregated cart statistics (last 30 days) — activity states derived on the fly',
   input: z.object({}),
-  handler: async (_input, { query }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      fields: ['highest_stage', 'last_action_at', 'total_price'],
-      pagination: { limit: 5000 },
-    })
+  handler: async (_input, { db, schema }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        fields: ['highest_stage', 'last_action_at', 'total_price'],
+        pagination: { limit: 5000 },
+      },
+    )
 
     if (carts.length === 0) {
       return {

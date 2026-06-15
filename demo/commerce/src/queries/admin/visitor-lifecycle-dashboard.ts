@@ -1,3 +1,5 @@
+import { type DrizzleReadContext, readRows } from '../../utils/drizzle-read'
+
 type Segment = 'unknown' | 'known_no_purchase' | 'returning_customer'
 
 interface SessionRow {
@@ -120,7 +122,7 @@ export default defineQuery({
     from: z.string(),
     to: z.string(),
   }),
-  handler: async (input, { query, log }) => {
+  handler: async (input, { db, schema, log }) => {
     const from = new Date(input.from)
     const to = new Date(input.to)
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
@@ -130,11 +132,12 @@ export default defineQuery({
       )
     }
 
+    const readCtx = { db, schema }
     const [factBundle, orders] = await Promise.all([
-      loadFactBundle(query, from, to, log),
+      loadFactBundle(readCtx, from, to, log),
       pullAll<OrderRow>(
         (pagination) =>
-          query.graph({
+          readRows(readCtx, {
             entity: 'order',
             fields: ['id', 'shopify_order_id', 'total_price', 'placed_at', 'include_in_ecommerce_analytics'],
             filters: {
@@ -162,7 +165,7 @@ export default defineQuery({
         factBundle.facts.length >= factBundle.expectedFacts
       : false
     const facts = canUseFacts && factBundle ? factBundle.facts : []
-    const sessions = canUseFacts ? [] : await loadSessions(query, from, to, log)
+    const sessions = canUseFacts ? [] : await loadSessions(readCtx, from, to, log)
     const actors = canUseFacts ? buildActorAggregatesFromFacts(facts) : buildActorAggregates(sessions)
     const totalSessions = canUseFacts ? facts.reduce((sum, fact) => sum + count(fact.sessions), 0) : sessions.length
     const totalVisitors = actors.length
@@ -222,7 +225,7 @@ export default defineQuery({
 })
 
 async function loadFactBundle(
-  query: unknown,
+  ctx: DrizzleReadContext,
   from: Date,
   to: Date,
   log: { warn: (message: string) => void },
@@ -232,13 +235,12 @@ async function loadFactBundle(
   expectedFacts: number
   expectedSessions: number
 } | null> {
-  const queryService = query as { graph: (input: unknown) => Promise<unknown> }
   const fromDay = dayKey(from)
   const toDay = dayKey(to)
   const [facts, snapshots] = await Promise.all([
     pullAll<LifecycleFactRow>(
       (pagination) =>
-        queryService.graph({
+        readRows(ctx, {
           entity: 'visitorLifecycleActorDailyFact',
           fields: [
             'day',
@@ -264,7 +266,7 @@ async function loadFactBundle(
     ),
     pullAll<LifecycleDaySnapshotRow>(
       (pagination) =>
-        queryService.graph({
+        readRows(ctx, {
           entity: 'visitorLifecycleDaySnapshot',
           fields: ['day', 'status', 'sessions_count', 'facts_count'],
           filters: { day: { $gte: fromDay, $lte: toDay }, status: 'ready' },
@@ -286,15 +288,14 @@ async function loadFactBundle(
 }
 
 async function loadSessions(
-  query: unknown,
+  ctx: DrizzleReadContext,
   from: Date,
   to: Date,
   log: { warn: (message: string) => void },
 ): Promise<SessionRow[]> {
-  const queryService = query as { graph: (input: unknown) => Promise<unknown> }
   return pullAll<SessionRow>(
     (pagination) =>
-      queryService.graph({
+      readRows(ctx, {
         entity: 'visitorSession',
         fields: [
           'id',

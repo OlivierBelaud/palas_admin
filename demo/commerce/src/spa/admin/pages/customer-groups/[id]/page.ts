@@ -9,12 +9,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Details',
-      query: {
-        graph: {
-          entity: 'customerGroup',
-          fields: ['name', 'created_by'],
-        },
-      },
+      query: { name: 'group-detail', input: { id: ':id' } },
     },
     {
       type: 'RelationTable',
@@ -47,12 +42,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Dates',
-      query: {
-        graph: {
-          entity: 'customerGroup',
-          fields: ['created_at', 'updated_at'],
-        },
-      },
+      query: { name: 'group-detail', input: { id: ':id' } },
       fields: [
         { key: 'created_at', label: 'Created', display: 'date' },
         { key: 'updated_at', label: 'Updated', display: 'date' },

@@ -18,12 +18,12 @@
 // — and the synthetic backfill from orders.placed_at also fills
 // `cart_birth_at` retroactively.
 
+import { type DrizzleReadContext, readRows } from '../../utils/drizzle-read'
 import {
   buildAllDaysFromTo,
   dayKey,
   emptyResponse,
   normalizeVisitorStatsRange,
-  type QueryGraphPort,
   toDate,
   type VisitorStatsRangeInput,
 } from '../../utils/visitor-stats-helpers'
@@ -37,16 +37,7 @@ interface CartLite {
 // Standalone cart pull (separate from pullSessions which is session-bound)
 async function pullCarts(
   input: VisitorStatsRangeInput,
-  query: {
-    graph:
-      | QueryGraphPort['graph']
-      | ((c: {
-          entity: 'cart'
-          fields?: string[]
-          filters?: Record<string, unknown>
-          pagination?: { limit?: number; offset?: number }
-        }) => Promise<unknown[]>)
-  },
+  ctx: DrizzleReadContext,
   log: { warn: (m: string) => void },
 ): Promise<{ carts: CartLite[]; from: Date; to: Date } | null> {
   const range = normalizeVisitorStatsRange(input)
@@ -55,13 +46,13 @@ async function pullCarts(
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid range from=${input.from} to=${input.to}`)
   }
-  // Paginate to drain the window (graph caps each call near 10k).
+  // Paginate to drain the window.
   const PAGE = 5000
   const HARD_CAP = 100_000
   const all: CartLite[] = []
   try {
     for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
-      const page = (await (query as { graph: (c: unknown) => Promise<unknown[]> }).graph({
+      const page = (await readRows(ctx, {
         entity: 'cart',
         fields: ['cart_birth_at', 'created_at', 'highest_stage'],
         filters: {
@@ -79,7 +70,7 @@ async function pullCarts(
     }
     return { carts: all, from, to }
   } catch (err) {
-    log.warn(`[visitor-stats-carts-created] graph query failed: ${(err as Error).message}. Returning empty.`)
+    log.warn(`[visitor-stats-carts-created] database query failed: ${(err as Error).message}. Returning empty.`)
     return null
   }
 }
@@ -93,8 +84,8 @@ export default defineQuery({
     to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
-  handler: async (input, { query, log }) => {
-    const pulled = await pullCarts(input, query, log)
+  handler: async (input, { db, schema, log }) => {
+    const pulled = await pullCarts(input, { db, schema }, log)
     if (!pulled) return emptyResponse(input)
     const { carts, from, to } = pulled
 

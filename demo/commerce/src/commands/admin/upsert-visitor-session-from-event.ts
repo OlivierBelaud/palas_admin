@@ -26,8 +26,18 @@ type SessionRow = ExistingSession & {
 
 type ContactRow = {
   id: string
+  email?: string | null
   distinct_id?: string | null
-  first_order_at?: Date | string | null
+}
+
+type OrderRow = {
+  email?: string | null
+  status?: string | null
+  placed_at?: Date | string | null
+}
+
+type OrderCrud = {
+  listOrders: (filters: Record<string, unknown>, opts?: Record<string, unknown>) => Promise<OrderRow[]>
 }
 
 type EntityCrud<Row> = {
@@ -64,6 +74,7 @@ export default defineCommand({
     const svc = step.service as unknown as {
       visitorSession: EntityCrud<SessionRow>
       contact: EntityCrud<ContactRow>
+      order: OrderCrud
     }
 
     // ── 1. Lookup existing session by (distinct_id, session_id) ─────
@@ -99,8 +110,14 @@ export default defineCommand({
       const occurredAt = new Date(input.occurred_at).getTime()
       let segment: SessionSegment = 'unknown'
       if (contact) {
-        const firstOrderAt = contact.first_order_at ? new Date(contact.first_order_at).getTime() : null
-        if (firstOrderAt != null && firstOrderAt < occurredAt) {
+        const email = contact.email?.trim().toLowerCase()
+        const orders = email ? await svc.order.listOrders({ email }) : []
+        const hasPriorOrder = orders.some((order) => {
+          if (order.status !== 'paid' && order.status !== 'fulfilled') return false
+          const placedAt = order.placed_at ? new Date(order.placed_at).getTime() : null
+          return placedAt != null && Number.isFinite(placedAt) && placedAt < occurredAt
+        })
+        if (hasPriorOrder) {
           segment = 'returning_customer'
         } else {
           segment = 'known_no_purchase'

@@ -39,22 +39,32 @@ type RuntimeDatabase = {
 
 type ContactRow = {
   id: string
-  first_order_at?: Date | string | null
+  email?: string | null
+}
+
+type OrderRow = {
+  status?: string | null
+  placed_at?: Date | string | null
 }
 
 const MAX_EVENTS_PER_RUN = 250
 const DEFAULT_LOOKBACK_MINUTES = 15
 
-function segmentForContact(contact: ContactRow | undefined, occurredAt: string): SessionSegment {
+function segmentForContact(contact: ContactRow | undefined, orders: OrderRow[], occurredAt: string): SessionSegment {
   if (!contact) return 'unknown'
-  const firstOrderAt = contact.first_order_at ? new Date(contact.first_order_at).getTime() : null
-  if (firstOrderAt != null && firstOrderAt < new Date(occurredAt).getTime()) return 'returning_customer'
+  const occurredAtMs = new Date(occurredAt).getTime()
+  const hasPriorOrder = orders.some((order) => {
+    if (order.status !== 'paid' && order.status !== 'fulfilled') return false
+    const placedAt = order.placed_at ? new Date(order.placed_at).getTime() : null
+    return placedAt != null && Number.isFinite(placedAt) && placedAt < occurredAtMs
+  })
+  if (hasPriorOrder) return 'returning_customer'
   return 'known_no_purchase'
 }
 
 type ContactInfo = {
   contact_id: string
-  first_order_at: Date | string | null
+  email: string | null
 }
 
 async function getExistingSession(
@@ -82,7 +92,7 @@ async function getExistingSession(
 
 async function getContactByDistinctId(db: RuntimeDatabase, distinctId: string): Promise<ContactInfo | undefined> {
   const rows = await db.raw<ContactInfo>(
-    `SELECT id AS contact_id, first_order_at
+    `SELECT id AS contact_id, email
        FROM contacts
       WHERE distinct_id = $1
       LIMIT 1`,
@@ -93,13 +103,23 @@ async function getContactByDistinctId(db: RuntimeDatabase, distinctId: string): 
 
 async function getContactByEmail(db: RuntimeDatabase, email: string): Promise<ContactInfo | undefined> {
   const rows = await db.raw<ContactInfo>(
-    `SELECT id AS contact_id, first_order_at
+    `SELECT id AS contact_id, email
        FROM contacts
       WHERE lower(email) = $1
       LIMIT 1`,
     [email.trim().toLowerCase()],
   )
   return rows[0]
+}
+
+async function getOrdersByEmail(db: RuntimeDatabase, email: string): Promise<OrderRow[]> {
+  return db.raw<OrderRow>(
+    `SELECT status, placed_at
+       FROM orders
+      WHERE deleted_at IS NULL
+        AND lower(email) = $1`,
+    [email.trim().toLowerCase()],
+  )
 }
 
 async function upsertSession(db: RuntimeDatabase, row: ReturnType<typeof planSessionUpsert>['row']): Promise<void> {
@@ -203,6 +223,7 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
   const sessionCache = new Map<string, ExistingSession | undefined>()
   const contactByDistinct = new Map<string, ContactRow | undefined>()
   const contactByEmail = new Map<string, ContactRow | undefined>()
+  const ordersByEmail = new Map<string, OrderRow[]>()
 
   let attempted = 0
   let skipped = 0
@@ -231,10 +252,7 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
 
     if (!contactByDistinct.has(evt.distinct_id)) {
       const contact = await getContactByDistinctId(runtimeDb, evt.distinct_id)
-      contactByDistinct.set(
-        evt.distinct_id,
-        contact ? { id: contact.contact_id, first_order_at: contact.first_order_at } : undefined,
-      )
+      contactByDistinct.set(evt.distinct_id, contact ? { id: contact.contact_id, email: contact.email } : undefined)
     }
     let contact = contactByDistinct.get(evt.distinct_id)
     if (!contact && emailOnEvent) {
@@ -243,11 +261,16 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
         const contactByMail = await getContactByEmail(runtimeDb, email)
         contactByEmail.set(
           email,
-          contactByMail ? { id: contactByMail.contact_id, first_order_at: contactByMail.first_order_at } : undefined,
+          contactByMail ? { id: contactByMail.contact_id, email: contactByMail.email } : undefined,
         )
       }
       contact = contactByEmail.get(email)
     }
+    const orderEmail = (contact?.email ?? emailOnEvent ?? '').trim().toLowerCase()
+    if (orderEmail && !ordersByEmail.has(orderEmail)) {
+      ordersByEmail.set(orderEmail, await getOrdersByEmail(runtimeDb, orderEmail))
+    }
+    const orders = orderEmail ? (ordersByEmail.get(orderEmail) ?? []) : []
 
     const identityAtStart: IdentityAtStart = existing
       ? {
@@ -258,7 +281,7 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
       : {
           contact_id: contact?.id ?? null,
           email: null,
-          segment: segmentForContact(contact, evt.timestamp),
+          segment: segmentForContact(contact, orders, evt.timestamp),
         }
 
     try {

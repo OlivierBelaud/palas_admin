@@ -15,9 +15,13 @@ import {
 
 interface ContactRow {
   email: string
-  orders_count: number | null
-  last_order_at: Date | string | null
   distinct_id?: string | null
+}
+
+interface OrderRow {
+  email: string
+  status: string | null
+  placed_at: Date | string | null
 }
 
 interface ExchangeRow {
@@ -27,14 +31,21 @@ interface ExchangeRow {
 
 function makeModule(opts?: {
   contacts?: ContactRow[]
+  orders?: OrderRow[]
   exchanges?: ExchangeRow[]
 }): ContactModuleLike & { _exchanges: ExchangeRow[] } {
   const contacts = opts?.contacts ?? []
+  const orders = opts?.orders ?? []
   const exchanges = opts?.exchanges ?? []
   return {
     listContacts: vi.fn(async (filters: Record<string, unknown>) =>
       contacts.filter((c) =>
         Object.entries(filters).every(([k, v]) => (c as unknown as Record<string, unknown>)[k] === v),
+      ),
+    ),
+    listOrders: vi.fn(async (filters: Record<string, unknown>) =>
+      orders.filter((o) =>
+        Object.entries(filters).every(([k, v]) => (o as unknown as Record<string, unknown>)[k] === v),
       ),
     ),
     listKlaviyoExchangeResolveds: vi.fn(async (filters: Record<string, unknown>) =>
@@ -59,29 +70,27 @@ describe('buildPayloadFromContact', () => {
   })
 
   it('returns tier "l" (lead) when contact has zero orders', () => {
-    const p = buildPayloadFromContact({ email: 'x@y.z', orders_count: 0, last_order_at: null })
+    const p = buildPayloadFromContact({ email: 'x@y.z' }, [])
     expect(p.t).toBe('l')
     expect(p.n).toBeUndefined()
     expect(p.o).toBeUndefined()
   })
 
-  it('returns tier "c" (customer) with order count + last order date when contact has orders', () => {
-    const p = buildPayloadFromContact({
-      email: 'x@y.z',
-      orders_count: 3,
-      last_order_at: new Date('2025-12-01T10:00:00Z'),
-    })
+  it('returns tier "c" (customer) with order count + last order date from live orders', () => {
+    const p = buildPayloadFromContact({ email: 'x@y.z' }, [
+      { email: 'x@y.z', status: 'paid', placed_at: new Date('2025-11-01T10:00:00Z') },
+      { email: 'x@y.z', status: 'fulfilled', placed_at: new Date('2025-12-01T10:00:00Z') },
+      { email: 'x@y.z', status: 'cancelled', placed_at: new Date('2026-01-01T10:00:00Z') },
+    ])
     expect(p.t).toBe('c')
-    expect(p.n).toBe(3)
+    expect(p.n).toBe(2)
     expect(p.o).toBe(20251201)
   })
 
-  it('codifies last_order_at when stored as ISO string (DB row shape)', () => {
-    const p = buildPayloadFromContact({
-      email: 'x@y.z',
-      orders_count: 1,
-      last_order_at: '2026-01-15T00:00:00Z',
-    })
+  it('codifies placed_at when stored as ISO string (DB row shape)', () => {
+    const p = buildPayloadFromContact({ email: 'x@y.z' }, [
+      { email: 'x@y.z', status: 'paid', placed_at: '2026-01-15T00:00:00Z' },
+    ])
     expect(p.t).toBe('c')
     expect(p.o).toBe(20260115)
   })
@@ -106,7 +115,11 @@ describe('resolveByKlaviyoExchangeId', () => {
 
     const mod = makeModule({
       exchanges: [{ exchange_id: 'KX-1', email: 'jane@example.com' }],
-      contacts: [{ email: 'jane@example.com', orders_count: 2, last_order_at: new Date('2025-11-10T00:00:00Z') }],
+      contacts: [{ email: 'jane@example.com' }],
+      orders: [
+        { email: 'jane@example.com', status: 'paid', placed_at: new Date('2025-10-10T00:00:00Z') },
+        { email: 'jane@example.com', status: 'fulfilled', placed_at: new Date('2025-11-10T00:00:00Z') },
+      ],
     })
 
     const { payload } = await resolveByKlaviyoExchangeId(mod, 'KX-1')
@@ -125,7 +138,7 @@ describe('resolveByKlaviyoExchangeId', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const mod = makeModule({
-      contacts: [{ email: 'newuser@example.com', orders_count: 0, last_order_at: null }],
+      contacts: [{ email: 'newuser@example.com' }],
     })
 
     const { payload, transient } = await resolveByKlaviyoExchangeId(mod, 'KX-2')
@@ -169,7 +182,14 @@ describe('resolveByMantaUidToken', () => {
   it('returns codified payload for a valid token + known contact', async () => {
     const token = signContactToken('jane@example.com')
     const mod = makeModule({
-      contacts: [{ email: 'jane@example.com', orders_count: 5, last_order_at: new Date('2025-09-20T00:00:00Z') }],
+      contacts: [{ email: 'jane@example.com' }],
+      orders: [
+        { email: 'jane@example.com', status: 'paid', placed_at: new Date('2025-05-20T00:00:00Z') },
+        { email: 'jane@example.com', status: 'paid', placed_at: new Date('2025-06-20T00:00:00Z') },
+        { email: 'jane@example.com', status: 'paid', placed_at: new Date('2025-07-20T00:00:00Z') },
+        { email: 'jane@example.com', status: 'paid', placed_at: new Date('2025-08-20T00:00:00Z') },
+        { email: 'jane@example.com', status: 'fulfilled', placed_at: new Date('2025-09-20T00:00:00Z') },
+      ],
     })
 
     const payload = await resolveByMantaUidToken(mod, token)
@@ -182,7 +202,8 @@ describe('resolveByMantaUidToken', () => {
     const old = Date.now() - (90 * 24 * 60 * 60 * 1000 + 1000)
     const token = signContactToken('jane@example.com', { now: old })
     const mod = makeModule({
-      contacts: [{ email: 'jane@example.com', orders_count: 5, last_order_at: new Date() }],
+      contacts: [{ email: 'jane@example.com' }],
+      orders: [{ email: 'jane@example.com', status: 'paid', placed_at: new Date() }],
     })
 
     const payload = await resolveByMantaUidToken(mod, token)
@@ -199,7 +220,7 @@ describe('resolveByMantaUidToken', () => {
   it('returns tier "l" when the token is valid but contact has no orders', async () => {
     const token = signContactToken('newish@example.com')
     const mod = makeModule({
-      contacts: [{ email: 'newish@example.com', orders_count: 0, last_order_at: null }],
+      contacts: [{ email: 'newish@example.com' }],
     })
     const payload = await resolveByMantaUidToken(mod, token)
     expect(payload.t).toBe('l')
@@ -212,11 +233,10 @@ describe('resolveByDistinctId', () => {
       contacts: [
         {
           email: 'jane@example.com',
-          orders_count: 1,
-          last_order_at: '2025-08-01T12:00:00Z',
           distinct_id: 'd-jane',
         },
       ],
+      orders: [{ email: 'jane@example.com', status: 'paid', placed_at: '2025-08-01T12:00:00Z' }],
     })
 
     const payload = await resolveByDistinctId(mod, 'd-jane')

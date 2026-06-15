@@ -19,7 +19,7 @@ export default definePage({
       children: [
         {
           type: 'DataList',
-          query: { graph: { entity: 'cart', fields: ['items', 'currency'] } },
+          query: { name: 'cart-detail', input: { id: ':id' } },
           itemsKey: 'items',
           emptyLabel: 'Panier vide',
           columns: [
@@ -170,12 +170,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Client',
-      query: {
-        graph: {
-          entity: 'cart',
-          fields: ['email', 'first_name', 'last_name', 'phone', 'city', 'country_code', 'distinct_id'],
-        },
-      },
+      query: { name: 'cart-detail', input: { id: ':id' } },
       fields: [
         { key: 'email', label: 'Email' },
         { key: 'first_name', label: 'Prénom' },
@@ -200,9 +195,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Parcours',
-      query: {
-        graph: { entity: 'cart', fields: ['status', 'highest_stage', 'last_action', 'last_action_at'] },
-      },
+      query: { name: 'cart-detail', input: { id: ':id' } },
       fields: [
         {
           key: 'status',
@@ -240,22 +233,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Checkout',
-      query: {
-        graph: {
-          entity: 'cart',
-          fields: [
-            'total_price',
-            'currency',
-            'subtotal_price',
-            'discounts_amount',
-            'shipping_method',
-            'shipping_price',
-            'total_tax',
-            'shopify_order_id',
-            'is_first_order',
-          ],
-        },
-      },
+      query: { name: 'cart-detail', input: { id: ':id' } },
       fields: [
         { key: 'total_price', label: 'Total' },
         { key: 'currency', label: 'Devise' },
@@ -275,7 +253,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Dates',
-      query: { graph: { entity: 'cart', fields: ['created_at', 'updated_at'] } },
+      query: { name: 'cart-detail', input: { id: ':id' } },
       fields: [
         { key: 'created_at', label: 'Créé le', display: { type: 'date', format: 'long' } },
         { key: 'updated_at', label: 'Mis à jour', display: { type: 'date', format: 'long' } },

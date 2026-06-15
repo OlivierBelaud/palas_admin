@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Timeline events d'un cart — source PostHog (HogQL).
 // PostHog garde tous les events ; on supprime la table locale cart_events
 // pour ne pas stocker deux fois la même chose.
@@ -11,13 +12,16 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
-    const [cart] = (await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['id', 'cart_token', 'distinct_id', 'currency'],
-      pagination: { limit: 1 },
-    })) as unknown as Array<{
+  handler: async (input, { db, schema }) => {
+    const [cart] = (await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['id', 'cart_token', 'distinct_id', 'currency'],
+        pagination: { limit: 1 },
+      },
+    )) as unknown as Array<{
       id: string
       cart_token: string | null
       distinct_id: string | null

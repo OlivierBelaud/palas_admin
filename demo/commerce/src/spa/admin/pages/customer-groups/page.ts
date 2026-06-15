@@ -5,13 +5,7 @@ export default definePage({
   main: [
     {
       type: 'DataTable',
-      query: {
-        graph: {
-          entity: 'customerGroup',
-          fields: ['name', 'created_at', 'customers'],
-          pagination: { limit: 20 },
-        },
-      },
+      query: { name: 'customer-group-list' },
       columns: [
         { key: 'name', label: 'Name', format: 'highlight' },
         { key: 'customers', label: 'Customers', type: 'count' },

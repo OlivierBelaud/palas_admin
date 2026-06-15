@@ -195,7 +195,7 @@ const MESSAGE_STATUS_OPTIONS = [
   'opt_out',
   'klaviyo_email_found',
 ]
-const CHECK_STATUS_OPTIONS = ['passed', 'blocked', 'error', 'shopify_order', 'opt_out', 'klaviyo_recent_email']
+const CHECK_STATUS_OPTIONS = ['passed', 'blocked', 'error', 'shopify_order', 'opt_out', 'klaviyo_email']
 
 export function AbandonedCartCampaignView({ mode }: { mode: ViewMode }) {
   const [searchParams, setSearchParams] = useSearchParams()

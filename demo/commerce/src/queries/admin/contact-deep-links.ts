@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Named query: build the external deep-link URLs for a contact (Shopify,
 // Klaviyo, PostHog). Each URL is null when the corresponding external ID
 // is missing, so the UI can hide the corresponding action button.
@@ -8,13 +9,16 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
-    const contacts = await query.graph({
-      entity: 'contact',
-      fields: ['shopify_customer_id', 'klaviyo_profile_id', 'distinct_id'],
-      filters: { id: input.id },
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema }) => {
+    const contacts = await readRows(
+      { db, schema },
+      {
+        entity: 'contact',
+        fields: ['shopify_customer_id', 'klaviyo_profile_id', 'distinct_id'],
+        filters: { id: input.id },
+        pagination: { limit: 1 },
+      },
+    )
 
     const contact = contacts[0] as unknown as Record<string, unknown> | undefined
     if (!contact) return { shopify_url: null, klaviyo_url: null, posthog_url: null }

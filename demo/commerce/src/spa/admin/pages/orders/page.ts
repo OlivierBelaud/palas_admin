@@ -14,13 +14,7 @@ export default definePage({
       type: 'DataTable',
       title: 'Toutes les commandes',
       pageSize: 10,
-      query: {
-        graph: {
-          entity: 'order',
-          sort: { field: 'placed_at', order: 'desc' },
-          pagination: { limit: 10 },
-        },
-      },
+      query: { name: 'order-list' },
       columns: [
         { key: 'order_number', label: 'Commande', format: 'highlight' },
         { key: 'email', label: 'Email' },

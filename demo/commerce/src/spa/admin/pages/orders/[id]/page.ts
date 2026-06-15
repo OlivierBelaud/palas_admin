@@ -19,20 +19,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Récapitulatif',
-      query: {
-        graph: {
-          entity: 'order',
-          fields: [
-            'status',
-            'financial_status',
-            'fulfillment_status',
-            'currency',
-            'total_price',
-            'placed_at',
-            'cancelled_at',
-          ],
-        },
-      },
+      query: { name: 'order-detail', input: { id: ':id' } },
       fields: [
         {
           key: 'status',
@@ -64,7 +51,7 @@ export default definePage({
       children: [
         {
           type: 'DataList',
-          query: { graph: { entity: 'order', fields: ['items', 'currency'] } },
+          query: { name: 'order-detail', input: { id: ':id' } },
           itemsKey: 'items',
           emptyLabel: 'Aucun article',
           columns: [

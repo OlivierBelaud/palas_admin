@@ -4,19 +4,7 @@
 // per chart. We co-locate the pull + day-bucket scaffolding here to
 // avoid duplicating the boilerplate across five query files.
 
-// Local minimal type for the query.graph dependency — we don't import
-// QueryService from @mantajs/core (the app-code lint rule forbids it,
-// and QueryService.graph<E> is over-narrowed for our generic helper).
-// The real `query.graph` is structurally compatible; we just call it
-// through this type to keep the helper signature framework-free.
-export interface QueryGraphPort {
-  graph: (config: {
-    entity: 'visitorSession'
-    fields?: string[]
-    filters?: Record<string, unknown>
-    pagination?: { limit?: number; offset?: number; take?: number; skip?: number }
-  }) => Promise<unknown[]>
-}
+import { type DrizzleReadContext, readRows } from './drizzle-read'
 
 export const LOOKBACK_DAYS_FOR_HAD_PAID_7D = 7
 export const MS_PER_DAY = 86_400_000
@@ -69,12 +57,12 @@ export function normalizeVisitorStatsRange(input: VisitorStatsRangeInput): { fro
  * don't need had_paid_7d are still safe — they just ignore the extra
  * rows when filtering by [from, to) downstream.
  *
- * On query failure (missing table — bootstrap not yet run), returns
+ * On database read failure (missing table — bootstrap not yet run), returns
  * `null` so the caller can degrade gracefully to an empty response.
  */
 export async function pullSessions(
   input: VisitorStatsRangeInput,
-  query: QueryGraphPort,
+  ctx: DrizzleReadContext,
   log: { warn: (m: string) => void },
 ): Promise<{ sessions: SessionLite[]; from: Date; to: Date } | null> {
   const range = normalizeVisitorStatsRange(input)
@@ -84,14 +72,14 @@ export async function pullSessions(
     throw new MantaError('INVALID_DATA', `visitor-stats: invalid date range from=${input.from} to=${input.to}`)
   }
   const lookbackStart = new Date(from.getTime() - LOOKBACK_DAYS_FOR_HAD_PAID_7D * MS_PER_DAY)
-  // 30d × ~700 sessions/day = ~21k rows. A single graph call caps near 10k.
+  // 30d × ~700 sessions/day = ~21k rows. We paginate to drain the window.
   // We paginate to drain the window — safety cap at 100k to avoid pathological loops.
   const PAGE = 5000
   const HARD_CAP = 100_000
   const all: SessionLite[] = []
   try {
     for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
-      const page = (await query.graph({
+      const page = (await readRows(ctx, {
         entity: 'visitorSession',
         fields: [
           'distinct_id',
@@ -117,7 +105,7 @@ export async function pullSessions(
     }
     return { sessions: all, from, to }
   } catch (err) {
-    log.warn(`[visitor-stats] graph query failed (table missing?): ${(err as Error).message}. Returning empty.`)
+    log.warn(`[visitor-stats] database query failed (table missing?): ${(err as Error).message}. Returning empty.`)
     return null
   }
 }

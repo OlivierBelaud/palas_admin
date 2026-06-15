@@ -18,12 +18,7 @@ export default definePage({
     {
       type: 'InfoCard',
       title: 'Identité',
-      query: {
-        graph: {
-          entity: 'contact',
-          fields: ['email', 'phone', 'locale', 'first_name', 'last_name', 'country_code', 'city'],
-        },
-      },
+      query: { name: 'contact-detail', input: { id: ':id' } },
       fields: [
         { key: 'email', label: 'Email' },
         { key: 'phone', label: 'Téléphone' },
@@ -39,12 +34,7 @@ export default definePage({
     {
       type: 'StatsCard',
       title: 'Stats',
-      query: {
-        graph: {
-          entity: 'contact',
-          fields: ['orders_count', 'total_spent', 'first_order_at', 'last_order_at'],
-        },
-      },
+      query: { name: 'contact-detail', input: { id: ':id' } },
       metrics: [
         { label: 'Commandes', key: 'orders_count', format: 'number' },
         { label: 'Total dépensé', key: 'total_spent', format: 'currency' },
@@ -148,12 +138,7 @@ export default definePage({
         {
           type: 'InfoCard',
           title: 'IDs externes',
-          query: {
-            graph: {
-              entity: 'contact',
-              fields: ['shopify_customer_id', 'klaviyo_profile_id', 'distinct_id'],
-            },
-          },
+          query: { name: 'contact-detail', input: { id: ':id' } },
           fields: [
             { key: 'shopify_customer_id', label: 'Shopify customer ID' },
             { key: 'klaviyo_profile_id', label: 'Klaviyo profile ID' },

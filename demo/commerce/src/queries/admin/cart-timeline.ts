@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Named query: unified timeline — PostHog cart events + Klaviyo events
 
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
@@ -6,13 +7,16 @@ export default defineQuery({
   name: 'cart-timeline',
   description: 'Unified timeline of PostHog navigation + Klaviyo events for a cart',
   input: z.object({ id: z.string().uuid() }),
-  handler: async (input, { query, log }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['email', 'distinct_id'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema, log }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['email', 'distinct_id'],
+        pagination: { limit: 1 },
+      },
+    )
     const cart = carts[0] as unknown as Record<string, unknown>
     const email = cart?.email as string | undefined
     const distinctId = cart?.distinct_id as string | undefined

@@ -1,14 +1,18 @@
+import { readRows } from '../../utils/drizzle-read'
 export default defineQuery({
   name: 'cart-totals',
   description: 'Cart totals breakdown — feeds a 2-column DataList (label | currency).',
   input: z.object({ id: z.string() }),
-  handler: async (input, { query }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['subtotal_price', 'shipping_price', 'discounts_amount', 'total_tax', 'total_price'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['subtotal_price', 'shipping_price', 'discounts_amount', 'total_tax', 'total_price'],
+        pagination: { limit: 1 },
+      },
+    )
     const cart = carts[0]
     if (!cart) return { items: [] }
 

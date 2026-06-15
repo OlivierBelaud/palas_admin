@@ -1,3 +1,4 @@
+import { readRows, readRowsAndCount } from '../../utils/drizzle-read'
 export default defineQuery({
   name: 'abandoned-cart-campaign-cases',
   description: 'Abandoned-cart campaign cases with message ladder status.',
@@ -6,30 +7,33 @@ export default defineQuery({
     offset: z.number().int().min(0).default(0),
     days: z.number().int().positive().max(180).default(30),
   }),
-  handler: async (input, { query }) => {
+  handler: async (input, { db, schema }) => {
     const since = new Date(Date.now() - (input.days ?? 30) * 86400 * 1000)
-    const [cases, count] = (await query.graphAndCount({
-      entity: 'abandonedCartCase',
-      filters: { opened_at: { $gte: since } },
-      fields: [
-        'id',
-        'cart_id',
-        'email',
-        'case_type',
-        'status',
-        'current_sequence_version',
-        'sequence_started_at',
-        'stage_at_open',
-        'last_cart_action_at',
-        'opened_at',
-        'recovered_at',
-        'recovered_order_id',
-        'recovered_amount',
-        'recovered_source_message_id',
-      ],
-      sort: { opened_at: 'desc' },
-      pagination: { limit: input.limit ?? 100, offset: input.offset ?? 0 },
-    })) as unknown as [
+    const [cases, count] = (await readRowsAndCount(
+      { db, schema },
+      {
+        entity: 'abandonedCartCase',
+        filters: { opened_at: { $gte: since } },
+        fields: [
+          'id',
+          'cart_id',
+          'email',
+          'case_type',
+          'status',
+          'current_sequence_version',
+          'sequence_started_at',
+          'stage_at_open',
+          'last_cart_action_at',
+          'opened_at',
+          'recovered_at',
+          'recovered_order_id',
+          'recovered_amount',
+          'recovered_source_message_id',
+        ],
+        sort: { opened_at: 'desc' },
+        pagination: { limit: input.limit ?? 100, offset: input.offset ?? 0 },
+      },
+    )) as unknown as [
       Array<{
         id: string
         cart_id: string
@@ -53,23 +57,26 @@ export default defineQuery({
     const messages =
       caseIds.length === 0
         ? []
-        : ((await query.graph({
-            entity: 'abandonedCartMessage',
-            filters: { case_id: { $in: caseIds } },
-            fields: [
-              'id',
-              'case_id',
-              'message_type',
-              'sequence_version',
-              'sequence_started_at',
-              'status',
-              'scheduled_for',
-              'sent_at',
-              'skip_reason',
-            ],
-            sort: { scheduled_for: 'asc' },
-            pagination: { limit: 5000 },
-          })) as Array<{
+        : ((await readRows(
+            { db, schema },
+            {
+              entity: 'abandonedCartMessage',
+              filters: { case_id: { $in: caseIds } },
+              fields: [
+                'id',
+                'case_id',
+                'message_type',
+                'sequence_version',
+                'sequence_started_at',
+                'status',
+                'scheduled_for',
+                'sent_at',
+                'skip_reason',
+              ],
+              sort: { scheduled_for: 'asc' },
+              pagination: { limit: 5000 },
+            },
+          )) as Array<{
             id: string
             case_id: string
             message_type: string

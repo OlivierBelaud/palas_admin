@@ -23,10 +23,21 @@ export default defineQuery({
               o.shopify_channel_name, o.shopify_tags, o.sales_channel,
               o.include_in_ecommerce_analytics, o.analytics_exclusion_reason,
               COUNT(*) OVER()::text AS total_count
-         FROM order_contact oc
-         JOIN orders o ON o.id::text = oc.order_id
-        WHERE oc.contact_id = $1
-          AND oc.deleted_at IS NULL
+         FROM contacts contact
+         JOIN orders o
+           ON o.deleted_at IS NULL
+          AND (
+            LOWER(o.email) = LOWER(contact.email)
+            OR EXISTS (
+              SELECT 1
+                FROM order_contact oc
+               WHERE oc.contact_id = contact.id::text
+                 AND oc.order_id = o.id::text
+                 AND oc.deleted_at IS NULL
+            )
+          )
+        WHERE contact.id = $1
+          AND contact.deleted_at IS NULL
           AND o.deleted_at IS NULL
         ORDER BY o.placed_at DESC NULLS LAST, o.created_at DESC
         LIMIT $2 OFFSET $3`,

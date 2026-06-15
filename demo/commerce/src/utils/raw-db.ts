@@ -16,12 +16,17 @@ const poolWrappers = new WeakMap<object, RawDb>()
 
 type QueryContext = {
   db?: unknown
+  database?: unknown
   app?: RuntimeApp
   scope?: { resolve<T = unknown>(key: string): T | undefined }
 }
 
 export function resolveRawDb(ctx: unknown): RawDb {
   const context = ctx as QueryContext | null
+  if (hasRawDb(context?.database)) return context.database
+  const directDatabasePool = rawDbFromPool(context?.database)
+  if (directDatabasePool) return directDatabasePool
+
   if (hasRawDb(context?.db)) return context.db
   const directPool = rawDbFromPool(context?.db)
   if (directPool) return directPool

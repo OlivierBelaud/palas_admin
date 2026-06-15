@@ -12,8 +12,8 @@ export default defineQuery({
     to: z.string().optional(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
-  handler: async (input, { query, log }) => {
-    const pulled = await pullSessions(input, query, log)
+  handler: async (input, { db, schema, log }) => {
+    const pulled = await pullSessions(input, { db, schema }, log)
     if (!pulled) return emptyResponse(input)
     const { sessions, from, to } = pulled
     const fromMs = from.getTime()

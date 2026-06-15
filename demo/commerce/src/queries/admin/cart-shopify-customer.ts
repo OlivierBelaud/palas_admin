@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Named query: fetch Shopify customer stats from PostHog Data Warehouse
 // Resolves cart email first, then queries shopify_customers via HogQL.
 
@@ -7,13 +8,16 @@ export default defineQuery({
   name: 'cart-shopify-customer',
   description: 'Shopify customer lifetime stats for a cart',
   input: z.object({ id: z.string() }),
-  handler: async (input, { query, log }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['email'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema, log }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['email'],
+        pagination: { limit: 1 },
+      },
+    )
     const email = carts[0]?.email
     if (!email) return {}
 

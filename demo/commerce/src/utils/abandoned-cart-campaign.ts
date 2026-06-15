@@ -28,7 +28,6 @@ export interface AbandonedCartCampaignOptions {
   replyTo?: string
   batchLimit?: number
   dryRun?: boolean
-  checkKlaviyo?: boolean
   maxCaseAgeDays?: number
   recoveryWindowDays?: number
   log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void }
@@ -230,7 +229,9 @@ async function maybeRestartSequence(
   persist: boolean,
 ): Promise<ActiveSequence> {
   const currentVersion = Number(cartCase.current_sequence_version ?? 1)
-  const currentStartedAt = cartCase.sequence_started_at ? toDate(cartCase.sequence_started_at) : toDate(c.last_action_at)
+  const currentStartedAt = cartCase.sequence_started_at
+    ? toDate(cartCase.sequence_started_at)
+    : toDate(c.last_action_at)
   const rows = await sql<Array<{ last_sent_at: Date | string | null }>>`
     SELECT MAX(sent_at) AS last_sent_at
     FROM abandoned_cart_messages
@@ -260,6 +261,33 @@ async function maybeRestartSequence(
 }
 
 async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
+  const existing = await sql<CaseRow[]>`
+    UPDATE abandoned_cart_cases acc
+    SET cart_id = ${c.id},
+        contact_id = COALESCE(${c.contact_id}, acc.contact_id),
+        email = ${c.email.toLowerCase()},
+        cart_token = ${c.cart_token},
+        checkout_token = COALESCE(${c.checkout_token}, acc.checkout_token),
+        last_cart_action_at = ${toDate(c.last_action_at)},
+        stage_at_open = ${c.highest_stage},
+        updated_at = NOW()
+    WHERE acc.id = (
+      SELECT id
+      FROM abandoned_cart_cases
+      WHERE cart_token = ${c.cart_token}
+        AND deleted_at IS NULL
+      ORDER BY
+        CASE
+          WHEN cart_id = ${c.id} THEN 0
+          WHEN status = 'open' THEN 1
+          ELSE 2
+        END,
+        opened_at DESC
+      LIMIT 1
+    )
+    RETURNING id, status, current_sequence_version, sequence_started_at`
+  if (existing[0]) return existing[0]
+
   const rows = await sql<CaseRow[]>`
     INSERT INTO abandoned_cart_cases (
       id, cart_id, contact_id, email, cart_token, checkout_token, case_type, status,
@@ -426,11 +454,7 @@ async function closeCaseSupersededByNewerCart(
       AND status = 'open'`
 }
 
-async function closeOlderOpenCasesForEmail(
-  sql: RuntimeSql,
-  c: CandidateRow,
-  persist: boolean,
-): Promise<void> {
+async function closeOlderOpenCasesForEmail(sql: RuntimeSql, c: CandidateRow, persist: boolean): Promise<void> {
   if (!persist) return
   const cartActionAt = toDate(c.last_action_at)
   await sql`
@@ -733,7 +757,6 @@ export async function runAbandonedCartCampaign(
     replyTo,
     batchLimit = 100,
     dryRun = false,
-    checkKlaviyo = false,
     maxCaseAgeDays = DEFAULT_MAX_CASE_AGE_DAYS,
     recoveryWindowDays = DEFAULT_RECOVERY_WINDOW_DAYS,
     log,
@@ -748,11 +771,17 @@ export async function runAbandonedCartCampaign(
       c.last_action_at, c.highest_stage,
       ct.id AS contact_id,
       ct.locale AS contact_locale,
-      COALESCE(ct.orders_count, 0)::int AS contact_orders_count,
+      COALESCE(order_agg.orders_count, 0)::int AS contact_orders_count,
       ct.email_marketing_opt_out_at,
       ct.klaviyo_suppressed
     FROM carts c
     LEFT JOIN contacts ct ON LOWER(ct.email) = LOWER(c.email)
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS orders_count
+      FROM orders o
+      WHERE LOWER(o.email) = LOWER(c.email)
+        AND o.status IN ('paid', 'fulfilled')
+    ) order_agg ON TRUE
     WHERE c.email IS NOT NULL
       AND c.items IS NOT NULL
       AND jsonb_array_length(c.items) > 0
@@ -859,19 +888,17 @@ export async function runAbandonedCartCampaign(
     }
     if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'passed')
 
-    if (checkKlaviyo) {
-      const klaviyoAt = await hasRecentKlaviyoAbandon(sql, c.email, since)
-      if (klaviyoAt) {
-        if (!dryRun && messageId) {
-          await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'blocked', klaviyoAt.toISOString())
-          await markSkipped(sql, cartCase.id, messageId, 'klaviyo_email_found')
-        }
-        result.skipped++
-        result.skipped_klaviyo++
-        continue
+    const klaviyoAt = await hasRecentKlaviyoAbandon(sql, c.email, since)
+    if (klaviyoAt) {
+      if (!dryRun && messageId) {
+        await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'blocked', klaviyoAt.toISOString())
+        await markSkipped(sql, cartCase.id, messageId, 'klaviyo_email_found')
       }
-      if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
+      result.skipped++
+      result.skipped_klaviyo++
+      continue
     }
+    if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
 
     const discountGrant =
       dryRun || next.type === 'payment_help_1'

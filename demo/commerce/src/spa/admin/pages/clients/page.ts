@@ -13,13 +13,7 @@ export default definePage({
       type: 'DataTable',
       title: 'Tous les clients',
       pageSize: 10,
-      query: {
-        graph: {
-          entity: 'contact',
-          sort: { field: 'last_activity_at', order: 'desc' },
-          pagination: { limit: 10 },
-        },
-      },
+      query: { name: 'contact-list' },
       columns: [
         { key: 'email', label: 'Email', format: 'highlight', sortable: true },
         { key: 'first_name', label: 'Prénom' },

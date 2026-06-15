@@ -33,13 +33,7 @@ export default definePage({
       type: 'DataTable',
       title: 'Tous les paniers',
       pageSize: 10,
-      query: {
-        graph: {
-          entity: 'cart',
-          sort: { field: 'last_action_at', order: 'desc' },
-          pagination: { limit: 10 },
-        },
-      },
+      query: { name: 'cart-list' },
       columns: [
         { key: 'email', label: 'Client', format: 'highlight' },
         { key: 'total_price', label: 'Montant', format: 'currency', sortable: true },

@@ -11,9 +11,9 @@
 // drawer, and Manta's build manifest only collects api routes from modules
 // that have at least one entity (see BACKLOG VIS-04).
 //
-// The hot path reads `Contact.orders_count` / `last_order_at` directly from
-// the local DB — no synchronous HogQL call. Klaviyo API is only consulted
-// when ?k= misses the local klaviyo_exchange_resolved cache.
+// Identity comes from `contacts`; purchase state comes from live `orders`.
+// Klaviyo API is only consulted when ?k= misses the local
+// klaviyo_exchange_resolved cache.
 //
 // Never throws — every failure path falls back to { t: 'a', v } so the theme
 // UX degrades gracefully.
@@ -121,11 +121,15 @@ function hashShort(value: string): string {
 
 function getContactModule(req: Request): ContactModuleLike | null {
   const mantaReq = req as Request & {
-    app?: { modules?: { contact?: unknown } }
+    app?: { modules?: { contact?: unknown; order?: unknown } }
   }
-  const mod = mantaReq.app?.modules?.contact
-  if (!mod) return null
-  return mod as ContactModuleLike
+  const contact = mantaReq.app?.modules?.contact as Omit<ContactModuleLike, 'listOrders'> | undefined
+  const order = mantaReq.app?.modules?.order as { listOrders?: ContactModuleLike['listOrders'] } | undefined
+  if (!contact || typeof order?.listOrders !== 'function') return null
+  return {
+    ...contact,
+    listOrders: order.listOrders.bind(order),
+  } as ContactModuleLike
 }
 
 export async function OPTIONS(req: Request) {

@@ -5,8 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.3.0",
   "workspaces": [
-    "demo/commerce",
-    "../../mantajs/packages/*"
+    "demo/commerce"
   ],
   "scripts": {
     "test": "vitest run demo/commerce/tests",

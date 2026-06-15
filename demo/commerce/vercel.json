@@ -1,9 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "regions": [
-    "fra1"
-  ],
+  "regions": ["fra1"],
   "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && cd demo/commerce && ./node_modules/.bin/manta generate && node scripts/prepare-root-spa-public.mjs && ./node_modules/.bin/manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
   "redirects": [
@@ -95,6 +93,10 @@
     {
       "path": "/api/crons/sync-visitor-sessions",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/crons/test-abandoned-cart-random",
+      "schedule": "* * * * *"
     }
   ]
 }

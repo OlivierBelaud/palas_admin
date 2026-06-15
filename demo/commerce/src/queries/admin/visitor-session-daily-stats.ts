@@ -2,11 +2,10 @@
 //
 // One row per (day, segment, is_paid_session, had_paid_7d). The SQL plan
 // (.claude/plans/visitor-session-snapshot.md §Phase H) calls for a window
-// subquery to compute `had_paid_7d`; query handlers in this app don't get
-// raw SQL access (the framework convention is `query.graph` + in-memory
-// aggregation, see cart-stats.ts). We mirror that pattern here:
+// subquery to compute `had_paid_7d`; the query handler keeps the same
+// in-memory aggregation shape but now reads through Drizzle.
 //
-//   1. Pull all visitor_sessions in [from - 7d, to) via query.graph
+//   1. Pull all visitor_sessions in [from - 7d, to) via Drizzle
 //      (the 7d lookback is needed to compute had_paid_7d for sessions
 //      near the start of the requested window).
 //   2. Delegate the aggregation to the pure `aggregateVisitorSessions`
@@ -33,8 +32,8 @@ export default defineQuery({
     to: z.string(),
     granularity: z.enum(['day', 'week', 'month']).optional(),
   }),
-  handler: async (input, { query, log }) => {
-    const pulled = await pullSessions(input, query, log)
+  handler: async (input, { db, schema, log }) => {
+    const pulled = await pullSessions(input, { db, schema }, log)
     if (!pulled) return emptyResponse(input)
     const { sessions, from, to } = pulled
     if (sessions.length === 0) return emptyResponse(input)

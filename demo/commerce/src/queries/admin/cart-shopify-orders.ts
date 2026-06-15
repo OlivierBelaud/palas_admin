@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Named query: fetch Shopify orders from PostHog Data Warehouse
 
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
@@ -6,13 +7,16 @@ export default defineQuery({
   name: 'cart-shopify-orders',
   description: 'Shopify order history for a cart customer',
   input: z.object({ id: z.string().uuid() }),
-  handler: async (input, { query, log }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['email'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema, log }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['email'],
+        pagination: { limit: 1 },
+      },
+    )
     const email = (carts[0] as unknown as Record<string, unknown>)?.email as string | undefined
     log.info(`[cart-shopify-orders] cart=${input.id} email=${email ?? '(none)'}`)
     if (!email) return []

@@ -1,6 +1,8 @@
 import { renderAbandonedCart } from '../../emails/abandoned-cart/render'
 import type { Locale } from '../../emails/abandoned-cart/strings'
+import { readRows } from '../../utils/drizzle-read'
 import { type RuntimeApp, type RuntimeFilePort, resolveFile } from '../../utils/manta-runtime'
+import { resolveRawDb } from '../../utils/raw-db'
 import { buildRecoveryUrl } from '../../utils/recovery-url'
 import { signUnsubscribeToken } from '../../utils/unsubscribe-token'
 
@@ -60,8 +62,8 @@ type ContactRow = {
   email: string
   first_name: string | null
   last_name: string | null
-  orders_count: number
-  total_spent: number
+  orders_count?: number
+  total_spent?: number
 }
 
 type OrderRow = {
@@ -83,89 +85,120 @@ export default defineQuery({
     id: z.string(),
   }),
   handler: async (input, ctx) => {
-    const { query } = ctx
+    const { db, schema } = ctx as { db: unknown; schema: Record<string, unknown> }
+    const rawDb = resolveRawDb(ctx)
     const file = resolveFile((ctx as { app?: RuntimeApp }).app)
-    const messages = (await query.graph({
-      entity: 'abandonedCartMessage',
-      filters: { id: input.id },
-      fields: [
-        'id',
-        'case_id',
-        'cart_id',
-        'email',
-        'message_type',
-        'sequence_version',
-        'sequence_started_at',
-        'status',
-        'scheduled_for',
-        'sent_at',
-        'provider',
-        'provider_message_id',
-        'template_key',
-        'locale',
-        'subject',
-        'skip_reason',
-        'error_message',
-        'discount_code',
-        'discount_source',
-        'snapshot_html_key',
-        'snapshot_html_url',
-        'snapshot_text_key',
-        'snapshot_text_url',
-        'snapshot_subject',
-        'snapshot_sha256',
-        'snapshot_saved_at',
-        'snapshot_error',
-        'created_at',
-        'updated_at',
-      ],
-      pagination: { limit: 1 },
-    })) as MessageRow[]
+    const messages = (await readRows(
+      { db, schema },
+      {
+        entity: 'abandonedCartMessage',
+        filters: { id: input.id },
+        fields: [
+          'id',
+          'case_id',
+          'cart_id',
+          'email',
+          'message_type',
+          'sequence_version',
+          'sequence_started_at',
+          'status',
+          'scheduled_for',
+          'sent_at',
+          'provider',
+          'provider_message_id',
+          'template_key',
+          'locale',
+          'subject',
+          'skip_reason',
+          'error_message',
+          'discount_code',
+          'discount_source',
+          'snapshot_html_key',
+          'snapshot_html_url',
+          'snapshot_text_key',
+          'snapshot_text_url',
+          'snapshot_subject',
+          'snapshot_sha256',
+          'snapshot_saved_at',
+          'snapshot_error',
+          'created_at',
+          'updated_at',
+        ],
+        pagination: { limit: 1 },
+      },
+    )) as MessageRow[]
 
     const message = messages[0]
     if (!message) throw new MantaError('NOT_FOUND', `Email ${input.id} not found`)
 
-    const [carts, contacts, orders] = await Promise.all([
-      query.graph({
-        entity: 'cart',
-        filters: { id: message.cart_id },
-        fields: [
-          'id',
-          'cart_token',
-          'checkout_token',
-          'email',
-          'first_name',
-          'last_name',
-          'items',
-          'total_price',
-          'item_count',
-          'currency',
-          'status',
-          'highest_stage',
-          'last_action',
-          'last_action_at',
-          'completed_at',
-          'country_code',
-        ],
-        pagination: { limit: 1 },
-      }) as Promise<CartRow[]>,
-      query.graph({
-        entity: 'contact',
-        filters: { email: message.email },
-        fields: ['id', 'email', 'first_name', 'last_name', 'orders_count', 'total_spent'],
-        pagination: { limit: 1 },
-      }) as Promise<ContactRow[]>,
-      query.graph({
-        entity: 'order',
-        filters: { email: message.email },
-        fields: ['id', 'order_number', 'total_price', 'currency', 'status', 'placed_at'],
-        sort: { placed_at: 'desc' },
-        pagination: { limit: 5 },
-      }) as Promise<OrderRow[]>,
+    const [carts, contacts, orders, orderAggRows] = await Promise.all([
+      readRows(
+        { db, schema },
+        {
+          entity: 'cart',
+          filters: { id: message.cart_id },
+          fields: [
+            'id',
+            'cart_token',
+            'checkout_token',
+            'email',
+            'first_name',
+            'last_name',
+            'items',
+            'total_price',
+            'item_count',
+            'currency',
+            'status',
+            'highest_stage',
+            'last_action',
+            'last_action_at',
+            'completed_at',
+            'country_code',
+          ],
+          pagination: { limit: 1 },
+        },
+      ) as Promise<CartRow[]>,
+      readRows(
+        { db, schema },
+        {
+          entity: 'contact',
+          filters: { email: message.email },
+          fields: ['id', 'email', 'first_name', 'last_name'],
+          pagination: { limit: 1 },
+        },
+      ) as Promise<ContactRow[]>,
+      readRows(
+        { db, schema },
+        {
+          entity: 'order',
+          filters: { email: message.email },
+          fields: ['id', 'order_number', 'total_price', 'currency', 'status', 'placed_at'],
+          sort: { placed_at: 'desc' },
+          pagination: { limit: 5 },
+        },
+      ) as Promise<OrderRow[]>,
+      rawDb.raw<{ orders_count: number | string; total_spent: number | string | null }>(
+        `SELECT COUNT(*)::int AS orders_count,
+                COALESCE(SUM(total_price), 0)::float AS total_spent
+           FROM orders
+          WHERE LOWER(email) = LOWER($1)
+            AND status IN ('paid', 'fulfilled')
+            AND deleted_at IS NULL`,
+        [message.email],
+      ),
     ])
 
     const cart = carts[0] ?? null
-    const contact = contacts[0] ?? null
+    const orderAgg = orderAggRows[0] as
+      | { orders_count?: number | string; total_spent?: number | string | null }
+      | undefined
+    const contact = contacts[0]
+      ? {
+          ...contacts[0],
+          orders_count: Number(orderAgg?.orders_count ?? 0),
+          total_spent: Number(orderAgg?.total_spent ?? 0),
+        }
+      : null
     const preview = await resolvePreview(message, cart, file)
 
     return {

@@ -14,7 +14,6 @@ export default defineCommand({
   input: z.object({
     batchLimit: z.number().int().positive().max(500).default(100),
     dryRun: z.boolean().default(false),
-    checkKlaviyo: z.boolean().default(false),
   }),
   workflow: async (input, { step, log }) => {
     const result = await step.action('notify-abandoned-carts-campaign', {
@@ -36,7 +35,6 @@ export default defineCommand({
             replyTo: process.env.RESEND_REPLY_TO ?? 'hello@fancypalas.com',
             batchLimit: input.batchLimit,
             dryRun: input.dryRun,
-            checkKlaviyo: input.checkKlaviyo,
             log,
           },
           ctx.signal,

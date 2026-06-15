@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Contact detail header — exposes the title (full name → email fallback),
 // phone (subtitle), and a Shopify deep link when the customer ID is known.
 // Mirrors the cart-header query shape so the same HeaderDef contract works.
@@ -8,13 +9,16 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
-    const contacts = await query.graph({
-      entity: 'contact',
-      filters: { id: input.id },
-      fields: ['email', 'first_name', 'last_name', 'phone', 'shopify_customer_id'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema }) => {
+    const contacts = await readRows(
+      { db, schema },
+      {
+        entity: 'contact',
+        filters: { id: input.id },
+        fields: ['email', 'first_name', 'last_name', 'phone', 'shopify_customer_id'],
+        pagination: { limit: 1 },
+      },
+    )
 
     const contact = contacts[0] as unknown as Record<string, unknown> | undefined
     if (!contact) return { email: 'Contact inconnu', phone: '', shopify_url: '', shopify_label: '' }

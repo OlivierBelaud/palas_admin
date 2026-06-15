@@ -7,8 +7,7 @@
 //   - abandoned_cart_3 two days after email 2
 //   - payment_help_1 after 1h when the highest stage is payment_attempted
 //
-// Every due message is guarded by Shopify before send. Klaviyo guarding is
-// optional and disabled by default because that feature is being retired.
+// Every due message is guarded by Shopify and Klaviyo before send.
 //
 // Runs the full pipeline awaited inside the cron HTTP handler. All I/O goes
 // through Manta ports so the same job can run on Cloudflare Workers, Vercel
@@ -57,7 +56,6 @@ export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db
     fromEmail,
     replyTo,
     batchLimit: 50,
-    checkKlaviyo: process.env.ABANDONED_CART_CHECK_KLAVIYO === 'true',
     log,
   })
   log.info(

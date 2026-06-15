@@ -1,29 +1,33 @@
 import { formatMoney } from '../../utils/currency'
+import { readRows } from '../../utils/drizzle-read'
 
 export default defineQuery({
   name: 'cart-list',
   description: 'List carts with computed client display and formatted amounts',
   input: z.object({}),
-  handler: async (_input, { query }) => {
-    const carts = await query.graph({
-      entity: 'cart',
-      fields: [
-        'email',
-        'first_name',
-        'last_name',
-        'distinct_id',
-        'total_price',
-        'item_count',
-        'currency',
-        'last_action',
-        'highest_stage',
-        'status',
-        'last_action_at',
-        'created_at',
-      ],
-      pagination: { limit: 1000 },
-      sort: { last_action_at: 'desc' },
-    })
+  handler: async (_input, { db, schema }) => {
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        fields: [
+          'email',
+          'first_name',
+          'last_name',
+          'distinct_id',
+          'total_price',
+          'item_count',
+          'currency',
+          'last_action',
+          'highest_stage',
+          'status',
+          'last_action_at',
+          'created_at',
+        ],
+        pagination: { limit: 1000 },
+        sort: { last_action_at: 'desc' },
+      },
+    )
 
     return carts.map((c) => {
       const currency = c.currency ?? 'EUR'

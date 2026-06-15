@@ -7,8 +7,8 @@
 //   2. ?u=<manta_uid_token>      — symmetric HMAC token issued by signContactToken.
 //   3. ?d=<distinct_id>          — direct PostHog distinct_id lookup.
 //
-// All three end on a `Contact` lookup against the local DB, so the hot path
-// reads orders_count / last_order_at without any synchronous HogQL call.
+// All three end on local DB lookups. Contact identity comes from `contacts`,
+// while purchase state is derived from live `orders` rows.
 // Returns the payload to encode under { t, n?, o?, v }.
 
 import { resolveKlaviyoProfile } from './klaviyo-resolve'
@@ -24,8 +24,13 @@ export interface VisitorPayload {
 
 interface ContactLookupRow {
   email: string
-  orders_count: number | null
-  last_order_at: Date | string | null
+  distinct_id?: string | null
+}
+
+interface OrderLookupRow {
+  email?: string | null
+  status?: string | null
+  placed_at?: Date | string | null
 }
 
 interface KlaviyoExchangeRow {
@@ -40,26 +45,44 @@ interface KlaviyoExchangeRow {
  */
 export interface ContactModuleLike {
   listContacts: (filters: Record<string, unknown>) => Promise<ContactLookupRow[]>
+  listOrders: (filters: Record<string, unknown>) => Promise<OrderLookupRow[]>
   listKlaviyoExchangeResolveds: (filters: Record<string, unknown>) => Promise<KlaviyoExchangeRow[]>
   createKlaviyoExchangeResolveds: (data: Record<string, unknown>) => Promise<unknown>
 }
 
 /** Build a VisitorPayload from a contact row (or anonymous when no row). */
-export function buildPayloadFromContact(contact: ContactLookupRow | null): VisitorPayload {
+export function buildPayloadFromContact(
+  contact: ContactLookupRow | null,
+  orders: OrderLookupRow[] = [],
+): VisitorPayload {
   if (!contact) return { t: 'a', v: nowEpochSec() }
 
-  const ordersCount = contact.orders_count ?? 0
+  const completedOrders = orders.filter(isCompletedOrder)
+  const ordersCount = completedOrders.length
   const payload: VisitorPayload = {
     t: codifyTier(ordersCount > 0, true),
     v: nowEpochSec(),
   }
   if (ordersCount > 0) {
     payload.n = ordersCount
-    const iso = contact.last_order_at instanceof Date ? contact.last_order_at.toISOString() : contact.last_order_at
-    const o = codifyDate(iso ?? null)
+    const lastPlacedAt = completedOrders
+      .map((order) => normalizeOrderDate(order.placed_at))
+      .filter((value): value is Date => value != null)
+      .sort((a, b) => b.getTime() - a.getTime())[0]
+    const o = codifyDate(lastPlacedAt?.toISOString() ?? null)
     if (o !== null) payload.o = o
   }
   return payload
+}
+
+function isCompletedOrder(order: OrderLookupRow): boolean {
+  return order.status === 'paid' || order.status === 'fulfilled'
+}
+
+function normalizeOrderDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isFinite(date.getTime()) ? date : null
 }
 
 async function findContactByEmail(module: ContactModuleLike, email: string): Promise<ContactLookupRow | null> {
@@ -67,6 +90,15 @@ async function findContactByEmail(module: ContactModuleLike, email: string): Pro
   if (!normalized) return null
   const rows = await module.listContacts({ email: normalized })
   return rows[0] ?? null
+}
+
+async function loadOrdersForContact(
+  module: ContactModuleLike,
+  contact: ContactLookupRow | null,
+): Promise<OrderLookupRow[]> {
+  const email = contact?.email?.trim().toLowerCase()
+  if (!email) return []
+  return module.listOrders({ email })
 }
 
 /**
@@ -126,19 +158,23 @@ export async function resolveByKlaviyoExchangeId(
     return { payload: { t: 'a', v: nowEpochSec() }, transient: false }
   }
   const contact = await findContactByEmail(module, email)
-  return { payload: buildPayloadFromContact(contact), transient: false }
+  const orders = await loadOrdersForContact(module, contact)
+  return { payload: buildPayloadFromContact(contact, orders), transient: false }
 }
 
 export async function resolveByMantaUidToken(module: ContactModuleLike, token: string): Promise<VisitorPayload> {
   const verified = verifyContactToken(token)
   if (!verified) return { t: 'a', v: nowEpochSec() }
   const contact = await findContactByEmail(module, verified.email)
-  return buildPayloadFromContact(contact)
+  const orders = await loadOrdersForContact(module, contact)
+  return buildPayloadFromContact(contact, orders)
 }
 
 export async function resolveByDistinctId(module: ContactModuleLike, distinctId: string): Promise<VisitorPayload> {
   const trimmed = distinctId.trim()
   if (!trimmed) return { t: 'a', v: nowEpochSec() }
   const rows = await module.listContacts({ distinct_id: trimmed })
-  return buildPayloadFromContact(rows[0] ?? null)
+  const contact = rows[0] ?? null
+  const orders = await loadOrdersForContact(module, contact)
+  return buildPayloadFromContact(contact, orders)
 }

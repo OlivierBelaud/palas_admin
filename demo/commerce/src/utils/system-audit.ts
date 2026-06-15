@@ -530,10 +530,15 @@ async function auditAbandonedCartEmails(
         WHERE m.status = 'sent'
           AND m.sent_at >= NOW() - INTERVAL '30 days'
           AND m.discount_code IS NOT NULL
-          AND COALESCE(ct.orders_count, 0) > 0
+          AND EXISTS (
+            SELECT 1
+              FROM orders o
+             WHERE o.deleted_at IS NULL
+               AND o.status IN ('paid', 'fulfilled')
+               AND LOWER(o.email) = LOWER(m.email)
+          )
       )::text AS discount_existing_customer_30d
     FROM abandoned_cart_messages m
-    LEFT JOIN contacts ct ON LOWER(ct.email) = LOWER(m.email)
   `)
   const sent7d = num(row?.sent_7d)
   const failed7d = num(row?.failed_7d)

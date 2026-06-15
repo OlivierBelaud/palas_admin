@@ -1,3 +1,4 @@
+import { readRows } from '../../utils/drizzle-read'
 // Order detail header — shows the order number as title and a deep link to
 // the order on the Shopify admin. Mirrors cart-header / contact-header so
 // the same HeaderDef contract works on the page.
@@ -8,13 +9,16 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
-    const orders = await query.graph({
-      entity: 'order',
-      filters: { id: input.id },
-      fields: ['order_number', 'shopify_order_id', 'email'],
-      pagination: { limit: 1 },
-    })
+  handler: async (input, { db, schema }) => {
+    const orders = await readRows(
+      { db, schema },
+      {
+        entity: 'order',
+        filters: { id: input.id },
+        fields: ['order_number', 'shopify_order_id', 'email'],
+        pagination: { limit: 1 },
+      },
+    )
 
     const order = orders[0] as unknown as Record<string, unknown> | undefined
     if (!order) return { title: 'Commande inconnue', email: '', shopify_url: '', shopify_label: '' }

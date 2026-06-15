@@ -1,4 +1,5 @@
 import { currencySymbol } from '../../utils/currency'
+import { readRows } from '../../utils/drizzle-read'
 
 export default defineQuery({
   name: 'cart-items',
@@ -6,14 +7,17 @@ export default defineQuery({
   input: z.object({
     id: z.string(),
   }),
-  handler: async (input, { query }) => {
+  handler: async (input, { db, schema }) => {
     type CartItem = { title?: string; quantity?: number; price?: number }
-    const carts = await query.graph({
-      entity: 'cart',
-      filters: { id: input.id },
-      fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount', 'cart_token'],
-      pagination: { limit: 1 },
-    })
+    const carts = await readRows(
+      { db, schema },
+      {
+        entity: 'cart',
+        filters: { id: input.id },
+        fields: ['items', 'total_price', 'item_count', 'currency', 'discounts_amount', 'cart_token'],
+        pagination: { limit: 1 },
+      },
+    )
 
     const cart = carts[0]
     if (!cart) return { cart_token: '-', articles: '-', total: '-', remises: '-' }
