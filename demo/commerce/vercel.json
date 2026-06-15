@@ -79,6 +79,10 @@
       "schedule": "0 0 * * *"
     },
     {
+      "path": "/api/crons/send-daily-reporting-email",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/crons/sync-from-shopify",
       "schedule": "45 * * * *"
     },
