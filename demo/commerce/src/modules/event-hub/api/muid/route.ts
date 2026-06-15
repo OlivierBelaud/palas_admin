@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { verifyContactToken } from '../../../../utils/manta-uid'
+import { randomUUID } from 'node:crypto'
+import { stableMuidForEmail, verifyContactToken } from '../../../../utils/manta-uid'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
@@ -55,7 +55,7 @@ function deriveMuidFromToken(token: string): string | null {
   try {
     const verified = verifyContactToken(token)
     if (!verified) return null
-    return `muid_${createHash('sha256').update(token).digest('hex').slice(0, 32)}`
+    return stableMuidForEmail(verified.email)
   } catch {
     return null
   }

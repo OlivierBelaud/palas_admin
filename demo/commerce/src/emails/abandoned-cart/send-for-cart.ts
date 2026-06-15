@@ -8,6 +8,7 @@
 // derive one from `cart.id` + `abandon_notified_count` so a re-run for a
 // cart that hasn't been re-incremented is treated as a duplicate by Resend.
 
+import { buildEmailLinkTrackingParams } from '../../utils/email-link-tracking'
 import { buildRecoveryUrl } from '../../utils/recovery-url'
 import { signUnsubscribeToken } from '../../utils/unsubscribe-token'
 import type { AbandonedCartItem } from './AbandonedCartEmail'
@@ -185,11 +186,27 @@ export async function sendAbandonedCartEmailForCart(
     }
   }
 
-  const recoveryUrl = buildRecoveryUrl({
-    checkout_token: cart.checkout_token,
-    cart_token: cart.cart_token,
-    items: itemsArr.map((it) => ({ id: it.id, quantity: it.quantity })),
-  })
+  const idempotencyKey = input.idempotencyKey ?? `abandoned-cart:${cart.id}:${cart.abandon_notified_count ?? 0}`
+  const sequenceStep = Math.max(1, Math.floor(Number(cart.abandon_notified_count ?? 0)) + 1)
+  const recoveryUrl = buildRecoveryUrl(
+    {
+      checkout_token: cart.checkout_token,
+      cart_token: cart.cart_token,
+      items: itemsArr.map((it) => ({ id: it.id, quantity: it.quantity })),
+    },
+    {
+      trackingParams: buildEmailLinkTrackingParams({
+        email: cart.email,
+        campaign: 'abandoned_cart',
+        messageType: `abandoned_cart_${sequenceStep}`,
+        messageId: idempotencyKey,
+        sequenceVersion: 1,
+        sequenceStep,
+        cartId: cart.id,
+        cartToken: cart.cart_token,
+      }),
+    },
+  )
 
   // 3. Unsubscribe URL — RFC-8058 one-click endpoint backed by a signed token
   //    over the recipient email. The token is HMAC-SHA256 with no TTL — emails
@@ -225,8 +242,6 @@ export async function sendAbandonedCartEmailForCart(
   }
 
   // 6. Live send.
-  const idempotencyKey = input.idempotencyKey ?? `abandoned-cart:${cart.id}:${cart.abandon_notified_count ?? 0}`
-
   const result = await notification.send({
     to: cart.email,
     channel: 'email',

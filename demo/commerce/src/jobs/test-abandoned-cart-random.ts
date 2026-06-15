@@ -6,6 +6,7 @@
 // returning without importing concrete DB or email transports.
 
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
+import { buildEmailLinkTrackingParams } from '../utils/email-link-tracking'
 import { buildRecoveryUrl } from '../utils/recovery-url'
 import { signUnsubscribeToken } from '../utils/unsubscribe-token'
 
@@ -90,11 +91,27 @@ export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ com
     }))
 
     const adminBase = (process.env.ADMIN_BASE_URL ?? 'https://admin.fancypalas.com').replace(/\/+$/, '')
-    const recoveryUrl = buildRecoveryUrl({
-      checkout_token: pick.checkout_token,
-      cart_token: pick.cart_token,
-      items: renderItems.map((i) => ({ id: i.id, quantity: i.quantity })),
-    })
+    const minuteBucket = new Date().toISOString().slice(0, 16)
+    const idempotencyKey = `test-random:${pick.id}:${minuteBucket}`
+    const recoveryUrl = buildRecoveryUrl(
+      {
+        checkout_token: pick.checkout_token,
+        cart_token: pick.cart_token,
+        items: renderItems.map((i) => ({ id: i.id, quantity: i.quantity })),
+      },
+      {
+        trackingParams: buildEmailLinkTrackingParams({
+          email: TEST_TO,
+          campaign: 'abandoned_cart_test',
+          messageType: 'abandoned_cart_1',
+          messageId: idempotencyKey,
+          sequenceVersion: 1,
+          sequenceStep: 1,
+          cartId: pick.id,
+          cartToken: pick.cart_token,
+        }),
+      },
+    )
     const unsubscribeToken = signUnsubscribeToken(TEST_TO)
     const unsubscribeUrl = `${adminBase}/api/contact/unsubscribe?t=${unsubscribeToken}`
 
@@ -105,9 +122,6 @@ export default defineJob('test-abandoned-cart-random', '* * * * *', async ({ com
       recoveryUrl,
       unsubscribeUrl,
     })
-
-    const minuteBucket = new Date().toISOString().slice(0, 16)
-    const idempotencyKey = `test-random:${pick.id}:${minuteBucket}`
 
     const result = await notification.send({
       channel: 'email',

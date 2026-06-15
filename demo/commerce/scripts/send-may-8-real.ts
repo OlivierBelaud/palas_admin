@@ -37,6 +37,7 @@ import postgres from 'postgres'
 import { Resend } from 'resend'
 import { pickLocale } from '../src/emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../src/emails/abandoned-cart/render'
+import { buildEmailLinkTrackingParams } from '../src/utils/email-link-tracking'
 import { sendPosthogEvent } from '../src/utils/posthog-ingest'
 import { buildRecoveryUrl } from '../src/utils/recovery-url'
 import { signUnsubscribeToken } from '../src/utils/unsubscribe-token'
@@ -173,11 +174,26 @@ async function sendOne(c: CandidateRow): Promise<{ sent: boolean; reason?: strin
     contactLocale: c.contact_locale,
     countryCode: c.country_code,
   })
-  const recoveryUrl = buildRecoveryUrl({
-    checkout_token: c.checkout_token,
-    cart_token: c.cart_token,
-    items: items.map((i) => ({ id: i.id, quantity: i.quantity })),
-  })
+  const idempotencyKey = `may-8-backfill:${c.id}:1`
+  const recoveryUrl = buildRecoveryUrl(
+    {
+      checkout_token: c.checkout_token,
+      cart_token: c.cart_token,
+      items: items.map((i) => ({ id: i.id, quantity: i.quantity })),
+    },
+    {
+      trackingParams: buildEmailLinkTrackingParams({
+        email: c.email,
+        campaign: 'abandoned_cart',
+        messageType: 'abandoned_cart_1',
+        messageId: idempotencyKey,
+        sequenceVersion: 1,
+        sequenceStep: 1,
+        cartId: c.id,
+        cartToken: c.cart_token,
+      }),
+    },
+  )
   const unsubscribeToken = signUnsubscribeToken(c.email)
   const unsubscribeUrl = `${adminBase}/api/contact/unsubscribe?t=${unsubscribeToken}`
 
@@ -195,7 +211,6 @@ async function sendOne(c: CandidateRow): Promise<{ sent: boolean; reason?: strin
   }
   if (!resend) return { sent: false, reason: 'no-resend-client' }
 
-  const idempotencyKey = `may-8-backfill:${c.id}:1`
   const result = await resend.emails.send(
     {
       from: process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>',

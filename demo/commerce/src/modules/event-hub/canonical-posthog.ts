@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { stableMuidForEmail, verifyContactToken } from '../../utils/manta-uid'
 import { normalizeCartEvent, type PosthogEvent } from '../cart-tracking/posthog-adapter'
 import {
   emailSha256,
@@ -104,6 +105,16 @@ function parseUrl(url: string | null): URL | null {
 function queryParamFromUrl(url: string | null, key: string, max = 512): string | null {
   const parsed = parseUrl(url)
   return parsed ? str(parsed.searchParams.get(key), max) : null
+}
+
+function muidFromMantaToken(token: string | null): string | null {
+  if (!token) return null
+  try {
+    const verified = verifyContactToken(token)
+    return verified ? stableMuidForEmail(verified.email) : null
+  } catch {
+    return null
+  }
 }
 
 export function inferPageType(currentUrl: string | null): string | null {
@@ -245,6 +256,11 @@ export function normalizePosthogEventToCanonical(
     item_count: cartEvent?.item_count ?? num(ecommerceProps.item_count) ?? eventItems.length,
     items: eventItems,
   }
+  const tokenMuid = muidFromMantaToken(
+    queryParamFromUrl(currentUrl, 'u', 4096) ||
+      str(obj(props.user).manta_uid_token, 4096) ||
+      str(props.manta_uid_token, 4096),
+  )
 
   const payload: Record<string, unknown> = {
     raw_event_name: rawEventName,
@@ -252,7 +268,7 @@ export function normalizePosthogEventToCanonical(
     event_time: signals.observed_at,
     search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
-      muid: str(sourceContext.muid, 128) || str(props.muid, 128) || null,
+      muid: tokenMuid || str(sourceContext.muid, 128) || str(props.muid, 128) || null,
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
       contact_id: comparison.v2.contact_id,
@@ -263,6 +279,7 @@ export function normalizePosthogEventToCanonical(
         str(sourceContext.ga_client_id, 128) ||
         str(props.ga_client_id, 128) ||
         str(props.$ga_client_id, 128) ||
+        tokenMuid ||
         str(sourceContext.muid, 128) ||
         str(props.muid, 128) ||
         str(signals.posthog_distinct_id, 128),

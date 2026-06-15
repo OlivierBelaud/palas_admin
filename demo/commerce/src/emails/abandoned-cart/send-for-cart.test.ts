@@ -123,6 +123,12 @@ describe('sendAbandonedCartEmailForCart', () => {
     })
     // The List-Unsubscribe URL must point to the signed-token endpoint.
     expect(sent[0].notification.headers?.['List-Unsubscribe']).toMatch(/\/api\/contact\/unsubscribe\?t=/)
+    expect(sent[0].notification.html).toContain('utm_source=palas_crm')
+    expect(sent[0].notification.html).toContain('utm_campaign=abandoned_cart')
+    expect(sent[0].notification.html).toContain('utm_content=abandoned_cart_1')
+    expect(sent[0].notification.html).toContain('palas_email_sequence_step=1')
+    expect(sent[0].notification.html).toContain('palas_cart_token=tok_abc')
+    expect(sent[0].notification.html).toContain('u=')
   })
 
   it('uses contact locale (en-US) only as last resort, when no nav/country signal', async () => {

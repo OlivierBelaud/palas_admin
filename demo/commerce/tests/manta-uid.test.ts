@@ -4,7 +4,7 @@
 // tampering detection, expiry, malformed input, and email normalization.
 
 import { describe, expect, it } from 'vitest'
-import { signContactToken, verifyContactToken } from '../src/utils/manta-uid'
+import { signContactToken, stableMuidForEmail, verifyContactToken } from '../src/utils/manta-uid'
 
 const TTL_MS = 90 * 24 * 60 * 60 * 1000
 
@@ -15,18 +15,39 @@ describe('manta-uid token', () => {
     expect(result).toEqual({ email: 'jane@example.com' })
   })
 
+  it('does not expose the email in the token body', () => {
+    const token = signContactToken('jane@example.com')
+    expect(token).toMatch(/^v2\./)
+    expect(token).not.toContain('jane')
+    expect(token).not.toContain(Buffer.from('jane@example.com').toString('base64url'))
+  })
+
   it('lowercases the email at signature time', () => {
     const token = signContactToken('Foo@Bar.COM')
     const result = verifyContactToken(token)
     expect(result?.email).toBe('foo@bar.com')
   })
 
+  it('derives a stable muid from the normalized email, independent of token issue time', () => {
+    const earlyAt = Date.UTC(2026, 0, 1)
+    const lateAt = Date.UTC(2026, 0, 2)
+    const early = signContactToken('Foo@Bar.COM', { now: earlyAt })
+    const late = signContactToken('foo@bar.com', { now: lateAt })
+    const earlyEmail = verifyContactToken(early, { now: earlyAt + 60_000 })?.email
+    const lateEmail = verifyContactToken(late, { now: lateAt + 60_000 })?.email
+
+    expect(earlyEmail).toBe('foo@bar.com')
+    expect(lateEmail).toBe('foo@bar.com')
+    expect(stableMuidForEmail(earlyEmail!)).toBe(stableMuidForEmail(lateEmail!))
+  })
+
   it('returns null when a single character is tampered with', () => {
     const token = signContactToken('jane@example.com')
-    // Flip a character in the signature half — guaranteed to invalidate.
-    const [body, sig] = token.split('.')
-    const flippedSig = sig.startsWith('A') ? `B${sig.slice(1)}` : `A${sig.slice(1)}`
-    expect(verifyContactToken(`${body}.${flippedSig}`)).toBeNull()
+    // Flip a character in the auth tag — guaranteed to invalidate.
+    const parts = token.split('.')
+    const tag = parts[3]
+    parts[3] = tag.startsWith('A') ? `B${tag.slice(1)}` : `A${tag.slice(1)}`
+    expect(verifyContactToken(parts.join('.'))).toBeNull()
   })
 
   it('returns null for tokens older than 90 days', () => {

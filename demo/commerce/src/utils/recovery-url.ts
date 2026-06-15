@@ -23,13 +23,21 @@ export interface RecoveryCart {
 
 export interface RecoveryUrlOptions {
   discountCode?: string | null
+  trackingParams?: Record<string, string | number | null | undefined> | null
 }
 
-function appendDiscount(url: string, code?: string | null): string {
-  const cleaned = code?.trim()
-  if (!cleaned) return url
+function appendQuery(url: string, params: Record<string, string | number | null | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue
+    const normalized = String(value).trim()
+    if (!normalized) continue
+    search.set(key, normalized)
+  }
+  const query = search.toString()
+  if (!query) return url
   const joiner = url.includes('?') ? '&' : '?'
-  return `${url}${joiner}discount=${encodeURIComponent(cleaned)}`
+  return `${url}${joiner}${query}`
 }
 
 export function buildRecoveryUrl(cart: RecoveryCart, opts?: RecoveryUrlOptions): string {
@@ -44,12 +52,15 @@ export function buildRecoveryUrl(cart: RecoveryCart, opts?: RecoveryUrlOptions):
     pairs.push(`${id}:${qty}`)
   }
   if (pairs.length > 0) {
-    const params = new URLSearchParams()
-    if (cart.cart_token) params.set('ref', cart.cart_token)
-    if (opts?.discountCode) params.set('discount', opts.discountCode)
-    const query = params.toString()
-    return `${base}/cart/${pairs.join(',')}${query ? `?${query}` : ''}`
+    return appendQuery(`${base}/cart/${pairs.join(',')}`, {
+      ref: cart.cart_token,
+      discount: opts?.discountCode,
+      ...(opts?.trackingParams ?? {}),
+    })
   }
 
-  return appendDiscount(`${base}/`, opts?.discountCode)
+  return appendQuery(`${base}/`, {
+    discount: opts?.discountCode,
+    ...(opts?.trackingParams ?? {}),
+  })
 }

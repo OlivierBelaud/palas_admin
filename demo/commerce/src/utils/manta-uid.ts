@@ -1,16 +1,16 @@
-// Manta-issued contact identification token. HMAC-SHA256, no Klaviyo dependency.
+// Manta-issued contact identification token. Opaque, no Klaviyo dependency.
 //
-// Wire format:  base64url(JSON(payload)) + '.' + base64url(hmac)
+// Wire format:  v2.<iv>.<ciphertext>.<auth_tag>
 // Payload:      { e: <lowercased email>, i: <issued_at_unix_seconds>, v: 1 }
-// Secret:       process.env.MANTA_UID_SECRET (≥ 32 hex chars in production)
+// Secret:       process.env.MANTA_UID_SECRET
 // TTL:          90 days, enforced at verify.
 //
-// The token is intentionally opaque to clients but symmetric on the server —
+// The token is opaque to clients but symmetric on the server —
 // any Manta runtime knowing MANTA_UID_SECRET can both sign and verify it.
 // Used to identify a returning visitor across devices/sessions without
 // piggy-backing on Klaviyo's $exchange_id.
 
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 const TOKEN_VERSION = 1
 const TTL_SECONDS = 90 * 24 * 60 * 60
@@ -31,6 +31,10 @@ function getSecret(): string {
     )
   }
   return secret
+}
+
+function encryptionKey(secret: string): Buffer {
+  return createHash('sha256').update(secret).digest()
 }
 
 function base64UrlEncode(buf: Buffer): string {
@@ -62,14 +66,44 @@ export function signContactToken(email: string, opts?: { now?: number }): string
     i: issuedAt,
     v: TOKEN_VERSION,
   }
-  const body = base64UrlEncode(Buffer.from(JSON.stringify(payload), 'utf8'))
-  const sig = sign(body, secret)
-  return `${body}.${sig}`
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey(secret), iv)
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `v2.${base64UrlEncode(iv)}.${base64UrlEncode(ciphertext)}.${base64UrlEncode(tag)}`
+}
+
+export function stableMuidForEmail(email: string): string {
+  const normalized = email.trim().toLowerCase()
+  const digest = createHmac('sha256', getSecret()).update(`muid:${normalized}`).digest('hex')
+  return `muid_${digest.slice(0, 32)}`
 }
 
 export function verifyContactToken(token: string, opts?: { now?: number }): { email: string } | null {
   if (typeof token !== 'string' || token.length === 0) return null
   const parts = token.split('.')
+  if (parts.length === 4 && parts[0] === 'v2') return verifyV2Token(parts, opts)
+  return verifyLegacyToken(parts, opts)
+}
+
+function verifyV2Token(parts: string[], opts?: { now?: number }): { email: string } | null {
+  const [, ivRaw, ciphertextRaw, tagRaw] = parts
+  if (!ivRaw || !ciphertextRaw || !tagRaw) return null
+  const iv = base64UrlDecode(ivRaw)
+  const ciphertext = base64UrlDecode(ciphertextRaw)
+  const tag = base64UrlDecode(tagRaw)
+  if (!iv || !ciphertext || !tag) return null
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(getSecret()), iv)
+    decipher.setAuthTag(tag)
+    const decoded = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
+    return validatePayload(JSON.parse(decoded) as TokenPayload, opts)
+  } catch {
+    return null
+  }
+}
+
+function verifyLegacyToken(parts: string[], opts?: { now?: number }): { email: string } | null {
   if (parts.length !== 2) return null
   const [body, sig] = parts
   if (!body || !sig) return null
@@ -89,6 +123,10 @@ export function verifyContactToken(token: string, opts?: { now?: number }): { em
   } catch {
     return null
   }
+  return validatePayload(payload, opts)
+}
+
+function validatePayload(payload: TokenPayload, opts?: { now?: number }): { email: string } | null {
   if (!payload || typeof payload !== 'object') return null
   if (payload.v !== TOKEN_VERSION) return null
   if (typeof payload.e !== 'string' || payload.e.length === 0) return null

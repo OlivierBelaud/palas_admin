@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { type RuntimeApp, resolveSql } from '../../../../utils/manta-runtime'
-import { verifyContactToken } from '../../../../utils/manta-uid'
+import { stableMuidForEmail, verifyContactToken } from '../../../../utils/manta-uid'
 import {
   isGa4CanonicalEventName,
   validateCanonicalEvent,
@@ -209,9 +209,10 @@ function deriveMuidFromToken(token: string): { muid: string; emailSha256: string
   try {
     const verified = verifyContactToken(token)
     if (!verified) return null
+    const email = verified.email.trim().toLowerCase()
     return {
-      muid: `muid_${sha256(token).slice(0, 32)}`,
-      emailSha256: sha256(verified.email.trim().toLowerCase()),
+      muid: stableMuidForEmail(email),
+      emailSha256: sha256(email),
     }
   } catch {
     return null

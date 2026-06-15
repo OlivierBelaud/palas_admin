@@ -13,6 +13,7 @@
 
 import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
+import { buildEmailLinkTrackingParams } from './email-link-tracking'
 import type { RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
 import { sendPosthogEvent } from './posthog-ingest'
 import { buildRecoveryUrl } from './recovery-url'
@@ -244,11 +245,26 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
       contactLocale: c.contact_locale,
       countryCode: c.country_code,
     })
-    const recoveryUrl = buildRecoveryUrl({
-      checkout_token: c.checkout_token,
-      cart_token: c.cart_token,
-      items: items.map((it) => ({ id: it.id, quantity: it.quantity })),
-    })
+    const idempotencyKey = `${campaign}:${c.id}:1`
+    const recoveryUrl = buildRecoveryUrl(
+      {
+        checkout_token: c.checkout_token,
+        cart_token: c.cart_token,
+        items: items.map((it) => ({ id: it.id, quantity: it.quantity })),
+      },
+      {
+        trackingParams: buildEmailLinkTrackingParams({
+          email: c.email,
+          campaign: 'abandoned_cart',
+          messageType: 'abandoned_cart_1',
+          messageId: idempotencyKey,
+          sequenceVersion: 1,
+          sequenceStep: 1,
+          cartId: c.id,
+          cartToken: c.cart_token,
+        }),
+      },
+    )
     const unsubscribeToken = signUnsubscribeToken(c.email)
     const unsubscribeUrl = `${adminBase}/api/contact/unsubscribe?t=${unsubscribeToken}`
 
@@ -273,7 +289,6 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
     }
 
     try {
-      const idempotencyKey = `${campaign}:${c.id}:1`
       const payload = {
         from: fromEmail,
         to: c.email,

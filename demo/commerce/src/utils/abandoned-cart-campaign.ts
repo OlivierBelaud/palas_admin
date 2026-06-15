@@ -2,6 +2,7 @@ import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
 import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
+import { buildEmailLinkTrackingParams } from './email-link-tracking'
 import { archiveEmailSnapshot, type EmailSnapshotResult } from './email-snapshot'
 import type { RuntimeFilePort, RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
 import { sendPosthogEvent } from './posthog-ingest'
@@ -644,6 +645,9 @@ async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Da
 async function renderMessage(opts: {
   cart: CandidateRow
   messageType: MessageType
+  messageId: string | null
+  caseId: string
+  sequence: ActiveSequence
   adminBase: string
   discountGrant: DiscountGrant | null
 }): Promise<RenderedMessage> {
@@ -661,6 +665,16 @@ async function renderMessage(opts: {
     },
     {
       discountCode: opts.discountGrant?.code ?? null,
+      trackingParams: buildEmailLinkTrackingParams({
+        email: opts.cart.email,
+        campaign: opts.messageType === 'payment_help_1' ? 'payment_help' : 'abandoned_cart',
+        messageType: opts.messageType,
+        messageId: opts.messageId,
+        sequenceVersion: opts.sequence.version,
+        cartId: opts.cart.id,
+        cartToken: opts.cart.cart_token,
+        caseId: opts.caseId,
+      }),
     },
   )
   const unsubscribeToken = signUnsubscribeToken(opts.cart.email)
@@ -775,11 +789,49 @@ export async function runAbandonedCartCampaign(
       ct.email_marketing_opt_out_at,
       ct.klaviyo_suppressed
     FROM carts c
-    LEFT JOIN contacts ct ON LOWER(ct.email) = LOWER(c.email)
+    LEFT JOIN LATERAL (
+      SELECT contact.id, contact.locale, contact.email_marketing_opt_out_at, contact.klaviyo_suppressed
+      FROM contacts contact
+      WHERE contact.deleted_at IS NULL
+        AND (
+          LOWER(contact.email) = LOWER(c.email)
+          OR EXISTS (
+            SELECT 1
+            FROM cart_contact cc
+            WHERE cc.deleted_at IS NULL
+              AND cc.cart_id = c.id::text
+              AND cc.contact_id = contact.id::text
+          )
+        )
+      ORDER BY
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM cart_contact cc
+            WHERE cc.deleted_at IS NULL
+              AND cc.cart_id = c.id::text
+              AND cc.contact_id = contact.id::text
+          ) THEN 0
+          ELSE 1
+        END
+      LIMIT 1
+    ) ct ON TRUE
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int AS live_orders_count
       FROM orders o
-      WHERE LOWER(o.email) = LOWER(c.email)
+      WHERE (
+        LOWER(o.email) = LOWER(c.email)
+        OR (
+          ct.id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM order_contact oc
+            WHERE oc.deleted_at IS NULL
+              AND oc.order_id = o.id::text
+              AND oc.contact_id = ct.id::text
+          )
+        )
+      )
         AND o.status IN ('paid', 'fulfilled')
     ) order_agg ON TRUE
     WHERE c.email IS NOT NULL
@@ -900,16 +952,25 @@ export async function runAbandonedCartCampaign(
     }
     if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
 
+    const knownOrderCount = Number(c.live_orders_count ?? 0)
     const discountGrant =
-      dryRun || next.type === 'payment_help_1'
+      dryRun || next.type === 'payment_help_1' || knownOrderCount > 0
         ? null
         : await resolveWelcomeDiscountForEmail({
             email: c.email,
-            numberOfOrders: c.live_orders_count ?? 0,
+            numberOfOrders: knownOrderCount,
             log,
             signal,
           })
-    const rendered = await renderMessage({ cart: c, messageType: next.type, adminBase, discountGrant })
+    const rendered = await renderMessage({
+      cart: c,
+      messageType: next.type,
+      messageId,
+      caseId: cartCase.id,
+      sequence,
+      adminBase,
+      discountGrant,
+    })
     if (dryRun) {
       log.info(
         `[abandoned-cart-campaign] dry cart=${c.id} email=${c.email} type=${next.type} sequence=${sequence.version}`,
