@@ -308,7 +308,9 @@ export default defineCommand({
           await step.command.attributeSessionConversion({
             cart_id: cartId,
             cart_birth_at: cartBirth instanceof Date ? cartBirth.toISOString() : cartBirth,
+            conversion_at: input.occurred_at,
             distinct_id: input.distinct_id ?? existing?.distinct_id ?? null,
+            email: input.email ?? existing?.email ?? null,
             order_id: input.shopify_order_id ?? null,
           })
         } catch (err) {

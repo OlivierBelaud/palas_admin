@@ -24,6 +24,12 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
         app: { name: 'Online Store' },
         channelInformation: { channelDefinition: { channelName: 'Online Store' } },
         currentTotalPriceSet: { shopMoney: { amount: '42.50', currencyCode: 'EUR' } },
+        shippingAddress: {
+          countryCodeV2: 'FR',
+          country: 'France',
+          city: 'Paris',
+          provinceCode: null,
+        },
         customer: { id: 'gid://shopify/Customer/987', email: null },
         lineItems: {
           edges: [
@@ -56,6 +62,9 @@ describe('mapShopifyOrderNodeToSnapshot', () => {
     expect(snapshot.email).toBe('jane@example.com')
     expect(snapshot.status).toBe('fulfilled')
     expect(snapshot.total_price).toBe(42.5)
+    expect(snapshot.shipping_country_code).toBe('FR')
+    expect(snapshot.shipping_country_name).toBe('France')
+    expect(snapshot.shipping_city).toBe('Paris')
     expect(snapshot.items).toEqual([
       expect.objectContaining({
         id: '789',

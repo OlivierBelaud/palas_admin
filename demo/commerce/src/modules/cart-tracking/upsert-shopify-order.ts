@@ -55,6 +55,12 @@ export interface ShopifyOrderPayload {
   name?: string | null
   order_number?: number | string | null
   cancelled_at?: string | null
+  shipping_address?: {
+    country_code?: string | null
+    country?: string | null
+    city?: string | null
+    province_code?: string | null
+  } | null
 }
 
 export interface UpsertOutcome {
@@ -103,6 +109,12 @@ function toNumber(v: unknown, fallback = 0): number {
     if (Number.isFinite(n)) return n
   }
   return fallback
+}
+
+function cleanText(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const trimmed = v.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 export function mapLineItems(items: ShopifyLineItem[] | null | undefined): Array<Record<string, unknown>> {
@@ -208,16 +220,22 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
   const currency = payload.currency ?? 'EUR'
   const cancelledAt = payload.cancelled_at ? new Date(payload.cancelled_at) : null
   const items = mapLineItems(payload.line_items)
+  const shippingCountryCode = cleanText(payload.shipping_address?.country_code)
+  const shippingCountryName = cleanText(payload.shipping_address?.country)
+  const shippingCity = cleanText(payload.shipping_address?.city)
+  const shippingProvinceCode = cleanText(payload.shipping_address?.province_code)
   const now = new Date()
 
   const rows = (await sql`
     INSERT INTO orders
       (id, shopify_order_id, email, order_number, status, financial_status, fulfillment_status,
-       total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
+       total_price, currency, shipping_country_code, shipping_country_name, shipping_city,
+       shipping_province_code, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
     VALUES
       (gen_random_uuid(), ${shopifyOrderId}, ${email}, ${orderNumber}, ${status},
        ${payload.financial_status ?? null}, ${payload.fulfillment_status ?? null},
-       ${totalPrice}, ${currency}, ${jsonParam(sql, items)}::jsonb, ${createdAt}, ${cancelledAt},
+       ${totalPrice}, ${currency}, ${shippingCountryCode}, ${shippingCountryName}, ${shippingCity},
+       ${shippingProvinceCode}, ${jsonParam(sql, items)}::jsonb, ${createdAt}, ${cancelledAt},
        ${now}, ${now}, ${now})
     ON CONFLICT (shopify_order_id) DO UPDATE SET
       email = COALESCE(orders.email, EXCLUDED.email),
@@ -227,6 +245,10 @@ async function upsertOrderRow(sql: SqlClient, payload: ShopifyOrderPayload, crea
       fulfillment_status = EXCLUDED.fulfillment_status,
       total_price = EXCLUDED.total_price,
       currency = COALESCE(orders.currency, EXCLUDED.currency),
+      shipping_country_code = COALESCE(EXCLUDED.shipping_country_code, orders.shipping_country_code),
+      shipping_country_name = COALESCE(EXCLUDED.shipping_country_name, orders.shipping_country_name),
+      shipping_city = COALESCE(EXCLUDED.shipping_city, orders.shipping_city),
+      shipping_province_code = COALESCE(EXCLUDED.shipping_province_code, orders.shipping_province_code),
       items = COALESCE(EXCLUDED.items, orders.items),
       placed_at = COALESCE(orders.placed_at, EXCLUDED.placed_at),
       cancelled_at = EXCLUDED.cancelled_at,

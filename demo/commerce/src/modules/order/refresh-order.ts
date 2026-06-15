@@ -19,6 +19,10 @@ export interface OrderSnapshot {
   fulfillment_status: string | null
   total_price: number
   currency: string
+  shipping_country_code: string | null
+  shipping_country_name: string | null
+  shipping_city: string | null
+  shipping_province_code: string | null
   items: Array<Record<string, unknown>>
   placed_at: Date | null
   cancelled_at: Date | null
@@ -39,6 +43,12 @@ type ShopifyOrderNode = {
   app: { name: string | null } | null
   channelInformation: { channelDefinition: { channelName: string | null } | null } | null
   currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null
+  shippingAddress: {
+    countryCodeV2: string | null
+    country: string | null
+    city: string | null
+    provinceCode: string | null
+  } | null
   customer: { id: string | null; email: string | null } | null
   lineItems: {
     edges: Array<{
@@ -94,6 +104,10 @@ export function mapShopifyOrderNodeToSnapshot(node: ShopifyOrderNode, syncedAt =
     fulfillment_status: fulfillment,
     total_price: toNumber(total?.amount, 0),
     currency: total?.currencyCode ?? 'EUR',
+    shipping_country_code: cleanText(node.shippingAddress?.countryCodeV2),
+    shipping_country_name: cleanText(node.shippingAddress?.country),
+    shipping_city: cleanText(node.shippingAddress?.city),
+    shipping_province_code: cleanText(node.shippingAddress?.provinceCode),
     items: node.lineItems.edges.map((edge) => mapLineItem(edge.node)),
     placed_at: toDate(node.createdAt),
     cancelled_at: cancelledAt,
@@ -123,6 +137,7 @@ export async function fetchShopifyOrderSnapshot(shopifyOrderId: string | number)
           app { name }
           channelInformation { channelDefinition { channelName } }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
+          shippingAddress { countryCodeV2 country city provinceCode }
           customer { id email }
           lineItems(first: 100) {
             edges {
@@ -192,4 +207,10 @@ function toNumber(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed
   }
   return fallback
+}
+
+function cleanText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
 }

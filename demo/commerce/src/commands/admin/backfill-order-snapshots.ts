@@ -200,6 +200,7 @@ async function fetchOrderSnapshotsBatch(client: ShopifyAdminClient, ids: string[
           app { name }
           channelInformation { channelDefinition { channelName } }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
+          shippingAddress { countryCodeV2 country city provinceCode }
           customer { id email }
           lineItems(first: 100) {
             edges {
@@ -244,11 +245,15 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
            order_number text,
            status text,
            financial_status text,
-           fulfillment_status text,
-           total_price numeric,
-           currency text,
-           items jsonb,
-           placed_at timestamptz,
+          fulfillment_status text,
+          total_price numeric,
+          currency text,
+          shipping_country_code text,
+          shipping_country_name text,
+          shipping_city text,
+          shipping_province_code text,
+          items jsonb,
+          placed_at timestamptz,
            cancelled_at timestamptz,
            shopify_synced_at timestamptz
          )
@@ -257,12 +262,14 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
       (id, shopify_order_id, shopify_customer_id, shopify_source_name, shopify_source_identifier,
        shopify_app_name, shopify_channel_name, shopify_tags, sales_channel, include_in_ecommerce_analytics,
        analytics_exclusion_reason, email, order_number, status, financial_status, fulfillment_status,
-       total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
+       total_price, currency, shipping_country_code, shipping_country_name, shipping_city,
+       shipping_province_code, items, placed_at, cancelled_at, shopify_synced_at, created_at, updated_at)
      SELECT
        gen_random_uuid(), shopify_order_id, shopify_customer_id, shopify_source_name, shopify_source_identifier,
        shopify_app_name, shopify_channel_name, shopify_tags, sales_channel, include_in_ecommerce_analytics,
        analytics_exclusion_reason, email, order_number, status, financial_status, fulfillment_status,
-       total_price, currency, items, placed_at, cancelled_at, shopify_synced_at, NOW(), NOW()
+       total_price, currency, shipping_country_code, shipping_country_name, shipping_city,
+       shipping_province_code, items, placed_at, cancelled_at, shopify_synced_at, NOW(), NOW()
      FROM payload
      ON CONFLICT (shopify_order_id) DO UPDATE SET
        email = EXCLUDED.email,
@@ -281,6 +288,10 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
        fulfillment_status = EXCLUDED.fulfillment_status,
        total_price = EXCLUDED.total_price,
        currency = EXCLUDED.currency,
+       shipping_country_code = EXCLUDED.shipping_country_code,
+       shipping_country_name = EXCLUDED.shipping_country_name,
+       shipping_city = EXCLUDED.shipping_city,
+       shipping_province_code = EXCLUDED.shipping_province_code,
        items = EXCLUDED.items,
        placed_at = EXCLUDED.placed_at,
        cancelled_at = EXCLUDED.cancelled_at,
@@ -306,6 +317,10 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
           fulfillment_status: snapshot.fulfillment_status,
           total_price: snapshot.total_price,
           currency: snapshot.currency,
+          shipping_country_code: snapshot.shipping_country_code,
+          shipping_country_name: snapshot.shipping_country_name,
+          shipping_city: snapshot.shipping_city,
+          shipping_province_code: snapshot.shipping_province_code,
           items: snapshot.items,
           placed_at: snapshot.placed_at,
           cancelled_at: snapshot.cancelled_at,

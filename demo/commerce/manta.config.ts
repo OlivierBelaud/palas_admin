@@ -1,20 +1,33 @@
 // biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@mantajs/core'
 
-const upstashKvRestUrl = process.env.UPSTASH_REDIS_KV_REST_API_URL
-const upstashKvRestToken = process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
-
-if (!process.env.UPSTASH_REDIS_REST_URL && upstashKvRestUrl) {
-  process.env.UPSTASH_REDIS_REST_URL = upstashKvRestUrl
-}
-
-if (!process.env.UPSTASH_REDIS_REST_TOKEN && upstashKvRestToken) {
-  process.env.UPSTASH_REDIS_REST_TOKEN = upstashKvRestToken
-}
-
-const upstashRedisUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
-const upstashRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
 const blobReadWriteToken = process.env.BLOB_READ_WRITE_TOKEN
+const upstashRedisUrl =
+  process.env.UPSTASH_REDIS_REST_URL ??
+  process.env.KV_REST_API_URL ??
+  process.env.UPSTASH_REDIS_KV_REST_API_KV_REST_API_URL ??
+  process.env.UPSTASH_REDIS_KV_REST_API_UPSTASH_REDIS_REST_URL ??
+  process.env.UPSTASH_REDIS_KV_REST_API_URL
+const upstashRedisToken =
+  process.env.UPSTASH_REDIS_REST_TOKEN ??
+  process.env.KV_REST_API_TOKEN ??
+  process.env.UPSTASH_REDIS_KV_REST_API_KV_REST_API_TOKEN ??
+  process.env.UPSTASH_REDIS_KV_REST_API_UPSTASH_REDIS_REST_TOKEN ??
+  process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+const publicBaseUrl =
+  process.env.MANTA_BASE_URL ??
+  process.env.ADMIN_BASE_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://admin.fancypalas.com')
+
+if (!process.env.UPSTASH_REDIS_REST_URL && upstashRedisUrl) {
+  process.env.UPSTASH_REDIS_REST_URL = upstashRedisUrl
+}
+
+if (!process.env.UPSTASH_REDIS_REST_TOKEN && upstashRedisToken) {
+  process.env.UPSTASH_REDIS_REST_TOKEN = upstashRedisToken
+}
+
+process.env.MANTA_BASE_URL = publicBaseUrl
 
 export default defineConfig({
   database: {
@@ -24,24 +37,18 @@ export default defineConfig({
     port: 3000,
   },
   plugins: ['@mantajs/plugin-posthog-proxy'],
+  vercel: {
+    envPrefixes: {
+      upstashRedis: 'UPSTASH_REDIS_KV_REST_API',
+    },
+  },
   spa: {
     admin: { mountPath: '/' },
   },
 
   // Production auth needs a durable cache for logout/reset revocation state.
   adapters: {
-    ICachePort:
-      upstashRedisUrl && upstashRedisToken
-        ? {
-            adapter: '@mantajs/adapter-cache-upstash',
-            options: {
-              url: upstashRedisUrl,
-              token: upstashRedisToken,
-            },
-          }
-        : { adapter: '@mantajs/core/InMemoryCacheAdapter' },
-    IEventBusPort: { adapter: '@mantajs/core/InMemoryEventBusAdapter' },
-    ILockingPort: { adapter: '@mantajs/core/InMemoryLockingAdapter' },
+    ICachePort: { adapter: '@mantajs/adapter-cache-upstash' },
     IFilePort: blobReadWriteToken
       ? {
           adapter: '@mantajs/adapter-file-vercel-blob',

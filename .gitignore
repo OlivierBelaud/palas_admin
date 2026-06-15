@@ -90,3 +90,4 @@ coverage/
 
 # ── Provider local state ──
 **/.wrangler/
+.env*.local

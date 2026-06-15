@@ -500,22 +500,69 @@ try {
   let cohortUpdated = 0
   if (!dryRun) {
     const rows = (await sql.unsafe(
-      `UPDATE visitor_sessions vs
+      `WITH candidates AS (
+         SELECT
+           vs.id AS session_id,
+           c.shopify_order_id,
+           matched.attributed_at,
+           ROW_NUMBER() OVER (
+             PARTITION BY c.shopify_order_id
+             ORDER BY matched.priority ASC, vs.started_at DESC
+           ) AS rn
+         FROM carts c
+         JOIN orders o ON o.shopify_order_id = c.shopify_order_id
+         JOIN visitor_sessions vs ON vs.cart_converted = false
+         CROSS JOIN LATERAL (
+           SELECT
+             COALESCE(c.completed_at, o.placed_at, c.last_action_at) AS conversion_at,
+             NULLIF(LOWER(TRIM(COALESCE(c.email, o.email, ''))), '') AS conversion_email
+         ) ref
+         JOIN LATERAL (
+           SELECT 1 AS priority, c.cart_birth_at AS attributed_at
+            WHERE c.distinct_id IS NOT NULL
+              AND c.cart_birth_at IS NOT NULL
+              AND c.distinct_id = vs.distinct_id
+              AND c.cart_birth_at >= vs.started_at
+              AND c.cart_birth_at <= vs.last_event_at + INTERVAL '30 minutes'
+           UNION ALL
+           SELECT 2 AS priority, ref.conversion_at AS attributed_at
+            WHERE c.distinct_id IS NOT NULL
+              AND ref.conversion_at IS NOT NULL
+              AND c.distinct_id = vs.distinct_id
+              AND ref.conversion_at >= vs.started_at
+              AND ref.conversion_at <= vs.last_event_at + INTERVAL '30 minutes'
+           UNION ALL
+           SELECT 3 AS priority, ref.conversion_at AS attributed_at
+            WHERE ref.conversion_email IS NOT NULL
+              AND ref.conversion_at IS NOT NULL
+              AND ref.conversion_email IN (
+                LOWER(COALESCE(vs.email_at_session_start, '')),
+                LOWER(COALESCE(vs.email_at_session_end, ''))
+              )
+              AND ref.conversion_at >= vs.started_at
+              AND ref.conversion_at <= vs.last_event_at + INTERVAL '30 minutes'
+         ) matched ON true
+        WHERE c.highest_stage = 'completed'
+          AND c.shopify_order_id IS NOT NULL
+          AND o.include_in_ecommerce_analytics = true
+          AND NOT EXISTS (
+            SELECT 1
+              FROM visitor_sessions existing
+             WHERE existing.order_id = c.shopify_order_id
+          )
+       )
+       UPDATE visitor_sessions vs
           SET cart_converted = true,
-              order_id = c.shopify_order_id,
+              order_id = candidates.shopify_order_id,
               became_customer_in_session = (vs.segment_at_session_start <> 'returning_customer'),
               became_customer_at = CASE
-                WHEN vs.segment_at_session_start <> 'returning_customer' THEN c.completed_at
+                WHEN vs.segment_at_session_start <> 'returning_customer' THEN candidates.attributed_at
                 ELSE NULL
               END,
               updated_at = NOW()
-         FROM carts c
-         JOIN orders o ON o.shopify_order_id = c.shopify_order_id
-        WHERE c.highest_stage = 'completed'
-          AND o.include_in_ecommerce_analytics = true
-          AND c.distinct_id = vs.distinct_id
-          AND c.cart_birth_at >= vs.started_at
-          AND c.cart_birth_at <= vs.last_event_at + INTERVAL '30 minutes'
+         FROM candidates
+        WHERE candidates.rn = 1
+          AND vs.id = candidates.session_id
           AND vs.cart_converted = false
         RETURNING vs.id`,
     )) as Array<{ id: string }>

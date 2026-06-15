@@ -6,7 +6,10 @@ type PosthogProject = {
 let resolvedProjectId: Promise<string> | null = null
 
 function cleanBaseUrl(host: string): string {
-  return host.replace(/\/+$/, '')
+  return host
+    .replace('://eu.i.posthog.com', '://eu.posthog.com')
+    .replace('://us.i.posthog.com', '://us.posthog.com')
+    .replace(/\/+$/, '')
 }
 
 export function posthogHost(): string {

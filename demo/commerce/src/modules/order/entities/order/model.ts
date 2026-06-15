@@ -45,6 +45,13 @@ export default defineModel('Order', {
   total_price: field.float(),
   currency: field.text().default('EUR'),
 
+  // Shipping address snapshot from Shopify. Reporting uses this, not
+  // carts.country_code, because a sold country is the final delivery country.
+  shipping_country_code: field.text().nullable().index(),
+  shipping_country_name: field.text().nullable(),
+  shipping_city: field.text().nullable(),
+  shipping_province_code: field.text().nullable(),
+
   // Snapshot of the line items at sync time. Schema mirrors Shopify
   // line_items; we keep it as JSON so we don't have to migrate when
   // Shopify adds fields.

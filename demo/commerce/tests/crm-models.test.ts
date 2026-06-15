@@ -63,6 +63,8 @@ describe('CRM-V1-01 — Phase 1 model files', () => {
       'fulfillment_status:',
       'total_price:',
       'currency:',
+      'shipping_country_code:',
+      'shipping_country_name:',
       'items:',
       'placed_at:',
       'cancelled_at:',

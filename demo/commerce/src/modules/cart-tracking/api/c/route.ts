@@ -77,8 +77,17 @@ function getCache(): UpstashCacheAdapter | null {
   // Accept both naming conventions:
   //   - adapter-native: UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
   //   - Vercel KV integration: UPSTASH_REDIS_KV_REST_API_URL / UPSTASH_REDIS_KV_REST_API_TOKEN
-  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_KV_REST_API_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
+  //   - Vercel custom prefix: UPSTASH_REDIS_KV_REST_API_KV_REST_API_URL / TOKEN
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL ??
+    process.env.KV_REST_API_URL ??
+    process.env.UPSTASH_REDIS_KV_REST_API_KV_REST_API_URL ??
+    process.env.UPSTASH_REDIS_KV_REST_API_URL
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN ??
+    process.env.KV_REST_API_TOKEN ??
+    process.env.UPSTASH_REDIS_KV_REST_API_KV_REST_API_TOKEN ??
+    process.env.UPSTASH_REDIS_KV_REST_API_TOKEN
   if (!url || !token) {
     cacheSingleton = null
     return null

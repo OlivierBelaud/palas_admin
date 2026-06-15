@@ -47,7 +47,9 @@ type OrderRow = {
   placed_at?: Date | string | null
 }
 
-const MAX_EVENTS_PER_RUN = 250
+const EVENTS_PER_PAGE = 500
+const MAX_PAGES_PER_RUN = 8
+const MAX_RUN_MS = 45_000
 const DEFAULT_LOOKBACK_MINUTES = 15
 
 function segmentForContact(contact: ContactRow | undefined, orders: OrderRow[], occurredAt: string): SessionSegment {
@@ -209,115 +211,127 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
     : new Date(Date.now() - 24 * 60 * 60 * 1000)
   const sinceIso = since.toISOString()
 
-  const rows = (await runPosthogHogQL(
-    `SELECT uuid, event, distinct_id, timestamp, properties
-       FROM events
-      WHERE timestamp > toDateTime('${sinceIso}')
-        AND distinct_id IS NOT NULL
-        AND properties.$session_id IS NOT NULL
-      ORDER BY timestamp ASC, uuid ASC
-      LIMIT ${MAX_EVENTS_PER_RUN}`,
-    { privateKey: key },
-  )) as unknown as HogQLEventRow[]
-
   const sessionCache = new Map<string, ExistingSession | undefined>()
   const contactByDistinct = new Map<string, ContactRow | undefined>()
   const contactByEmail = new Map<string, ContactRow | undefined>()
   const ordersByEmail = new Map<string, OrderRow[]>()
 
+  let fetched = 0
   let attempted = 0
   let skipped = 0
   let errors = 0
 
-  for (const row of rows) {
-    const evt = rowToPosthogEvent(row)
-    const sessionId = extractSessionId(evt)
-    if (!sessionId || !evt.distinct_id) {
-      skipped += 1
-      continue
-    }
+  for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
+    if (Date.now() - startedAt > MAX_RUN_MS) break
+    const offset = page * EVENTS_PER_PAGE
+    const rows = (await runPosthogHogQL(
+      `SELECT uuid, event, distinct_id, timestamp, properties
+         FROM events
+        WHERE timestamp > toDateTime('${sinceIso}')
+          AND distinct_id IS NOT NULL
+          AND properties.$session_id IS NOT NULL
+        ORDER BY timestamp ASC, uuid ASC
+        LIMIT ${EVENTS_PER_PAGE}
+        OFFSET ${offset}`,
+      { privateKey: key },
+    )) as unknown as HogQLEventRow[]
 
-    const props = evt.properties ?? {}
-    const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
-    const checkout = props.checkout as { email?: unknown } | undefined
-    const emailOnEvent =
-      (typeof $set.email === 'string' && $set.email.length > 0 ? $set.email : null) ??
-      (checkout && typeof checkout.email === 'string' && checkout.email.length > 0 ? checkout.email : null)
+    fetched += rows.length
+    if (rows.length === 0) break
 
-    const cacheKey = `${evt.distinct_id}|${sessionId}`
-    if (!sessionCache.has(cacheKey)) {
-      sessionCache.set(cacheKey, await getExistingSession(runtimeDb, evt.distinct_id, sessionId))
-    }
-    const existing = sessionCache.get(cacheKey)
-
-    if (!contactByDistinct.has(evt.distinct_id)) {
-      const contact = await getContactByDistinctId(runtimeDb, evt.distinct_id)
-      contactByDistinct.set(evt.distinct_id, contact ? { id: contact.contact_id, email: contact.email } : undefined)
-    }
-    let contact = contactByDistinct.get(evt.distinct_id)
-    if (!contact && emailOnEvent) {
-      const email = emailOnEvent.trim().toLowerCase()
-      if (!contactByEmail.has(email)) {
-        const contactByMail = await getContactByEmail(runtimeDb, email)
-        contactByEmail.set(
-          email,
-          contactByMail ? { id: contactByMail.contact_id, email: contactByMail.email } : undefined,
-        )
+    for (const row of rows) {
+      if (Date.now() - startedAt > MAX_RUN_MS) break
+      const evt = rowToPosthogEvent(row)
+      const sessionId = extractSessionId(evt)
+      if (!sessionId || !evt.distinct_id) {
+        skipped += 1
+        continue
       }
-      contact = contactByEmail.get(email)
-    }
-    const orderEmail = (contact?.email ?? emailOnEvent ?? '').trim().toLowerCase()
-    if (orderEmail && !ordersByEmail.has(orderEmail)) {
-      ordersByEmail.set(orderEmail, await getOrdersByEmail(runtimeDb, orderEmail))
-    }
-    const orders = orderEmail ? (ordersByEmail.get(orderEmail) ?? []) : []
 
-    const identityAtStart: IdentityAtStart = existing
-      ? {
-          contact_id: existing.contact_id ?? contact?.id ?? null,
-          email: existing.email_at_session_start,
-          segment: existing.segment_at_session_start,
+      const props = evt.properties ?? {}
+      const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
+      const checkout = props.checkout as { email?: unknown } | undefined
+      const emailOnEvent =
+        (typeof $set.email === 'string' && $set.email.length > 0 ? $set.email : null) ??
+        (checkout && typeof checkout.email === 'string' && checkout.email.length > 0 ? checkout.email : null)
+
+      const cacheKey = `${evt.distinct_id}|${sessionId}`
+      if (!sessionCache.has(cacheKey)) {
+        sessionCache.set(cacheKey, await getExistingSession(runtimeDb, evt.distinct_id, sessionId))
+      }
+      const existing = sessionCache.get(cacheKey)
+
+      if (!contactByDistinct.has(evt.distinct_id)) {
+        const contact = await getContactByDistinctId(runtimeDb, evt.distinct_id)
+        contactByDistinct.set(evt.distinct_id, contact ? { id: contact.contact_id, email: contact.email } : undefined)
+      }
+      let contact = contactByDistinct.get(evt.distinct_id)
+      if (!contact && emailOnEvent) {
+        const email = emailOnEvent.trim().toLowerCase()
+        if (!contactByEmail.has(email)) {
+          const contactByMail = await getContactByEmail(runtimeDb, email)
+          contactByEmail.set(
+            email,
+            contactByMail ? { id: contactByMail.contact_id, email: contactByMail.email } : undefined,
+          )
         }
-      : {
-          contact_id: contact?.id ?? null,
-          email: null,
-          segment: segmentForContact(contact, orders, evt.timestamp),
+        contact = contactByEmail.get(email)
+      }
+      const orderEmail = (contact?.email ?? emailOnEvent ?? '').trim().toLowerCase()
+      if (orderEmail && !ordersByEmail.has(orderEmail)) {
+        ordersByEmail.set(orderEmail, await getOrdersByEmail(runtimeDb, orderEmail))
+      }
+      const orders = orderEmail ? (ordersByEmail.get(orderEmail) ?? []) : []
+
+      const identityAtStart: IdentityAtStart = existing
+        ? {
+            contact_id: existing.contact_id ?? contact?.id ?? null,
+            email: existing.email_at_session_start,
+            segment: existing.segment_at_session_start,
+          }
+        : {
+            contact_id: contact?.id ?? null,
+            email: null,
+            segment: segmentForContact(contact, orders, evt.timestamp),
+          }
+
+      try {
+        attempted += 1
+        const intent = planSessionUpsert({
+          event: {
+            distinct_id: evt.distinct_id,
+            session_id: sessionId,
+            event_uuid: evt.uuid ?? null,
+            event_name: evt.event,
+            occurred_at: evt.timestamp,
+            email_on_event: emailOnEvent,
+            current_url: (props.$current_url as string | undefined) ?? null,
+            utm_source: (props.utm_source as string | undefined) ?? null,
+            utm_medium: (props.utm_medium as string | undefined) ?? null,
+            utm_campaign: (props.utm_campaign as string | undefined) ?? null,
+            referring_domain: (props.$referring_domain as string | undefined) ?? null,
+          },
+          existingSession: existing,
+          identityAtStart,
+        })
+
+        await upsertSession(runtimeDb, intent.row)
+
+        sessionCache.set(cacheKey, {
+          id: existing?.id ?? '__memory__',
+          ...intent.row,
+        })
+      } catch (err) {
+        errors += 1
+        if (errors < 10) {
+          log.warn(
+            `[sync-visitor-sessions] upsert failed for ${evt.event} (${evt.uuid ?? 'no-uuid'}): ${(err as Error).message}`,
+          )
         }
-
-    try {
-      attempted += 1
-      const intent = planSessionUpsert({
-        event: {
-          distinct_id: evt.distinct_id,
-          session_id: sessionId,
-          event_uuid: evt.uuid ?? null,
-          event_name: evt.event,
-          occurred_at: evt.timestamp,
-          email_on_event: emailOnEvent,
-          current_url: (props.$current_url as string | undefined) ?? null,
-          utm_source: (props.utm_source as string | undefined) ?? null,
-          utm_medium: (props.utm_medium as string | undefined) ?? null,
-          utm_campaign: (props.utm_campaign as string | undefined) ?? null,
-          referring_domain: (props.$referring_domain as string | undefined) ?? null,
-        },
-        existingSession: existing,
-        identityAtStart,
-      })
-
-      await upsertSession(runtimeDb, intent.row)
-
-      sessionCache.set(cacheKey, {
-        id: existing?.id ?? '__memory__',
-        ...intent.row,
-      })
-    } catch (err) {
-      errors += 1
-      if (errors < 10) {
-        log.warn(
-          `[sync-visitor-sessions] upsert failed for ${evt.event} (${evt.uuid ?? 'no-uuid'}): ${(err as Error).message}`,
-        )
       }
     }
+
+    if (rows.length < EVENTS_PER_PAGE) break
   }
 
   const finalRows = await runtimeDb.raw<{ max_ts: Date | string | null }>(
@@ -325,7 +339,7 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
   )
   const maxAt = finalRows[0]?.max_ts ? new Date(finalRows[0].max_ts).toISOString() : null
   const result: SyncVisitorSessionsResult = {
-    fetched: rows.length,
+    fetched,
     attempted,
     skipped,
     errors,

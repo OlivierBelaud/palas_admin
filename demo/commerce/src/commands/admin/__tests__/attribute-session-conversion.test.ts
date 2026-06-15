@@ -4,6 +4,8 @@
 // Covers:
 //   - happy path: session active at cart_birth_at → marked converted
 //   - anonymous purchase (no distinct_id) → matched=0
+//   - old cart converted in a later session → matched by conversion_at
+//   - missing distinct_id → matched by email + conversion_at
 //   - cart birthed before any session → matched=0
 //   - cart birthed after last_event_at + 30min → matched=0
 //   - multiple candidates → most recent started_at wins
@@ -31,6 +33,19 @@ function makeRepo(rows: SessionRow[]): SessionAttributionRepo & {
       return rows.find((r) => r.id === id) as SessionRow
     }),
     updates,
+  }
+}
+
+function makeRepoWithEmail(
+  rows: SessionRow[],
+  emailRows: SessionRow[],
+): SessionAttributionRepo & {
+  updates: Array<{ id: string; patch: Record<string, unknown> }>
+} {
+  const repo = makeRepo(rows)
+  return {
+    ...repo,
+    listByEmail: vi.fn(async () => emailRows),
   }
 }
 
@@ -70,6 +85,71 @@ describe('attributeSessionConversionCore', () => {
     )
     expect(out).toEqual({ matched: 0 })
     expect(repo.list).not.toHaveBeenCalled()
+  })
+
+  it('falls back to conversion_at for an old cart converted during a later session', async () => {
+    const conversionAt = '2026-05-22T10:05:00.000Z'
+    const conversionMs = new Date(conversionAt).getTime()
+    const repo = makeRepo([
+      {
+        id: 'sess_checkout',
+        started_at: new Date(conversionMs - 10 * 60_000),
+        last_event_at: new Date(conversionMs - 1 * 60_000),
+        cart_converted: false,
+        order_id: null,
+        segment_at_session_start: 'known_no_purchase',
+      },
+    ])
+    const out = await attributeSessionConversionCore(
+      { cart_birth_at: CART_BIRTH, conversion_at: conversionAt, distinct_id: 'd_1', order_id: 'order_42' },
+      repo,
+    )
+    expect(out).toEqual({ matched: 1 })
+    expect(repo.updates[0]).toEqual({
+      id: 'sess_checkout',
+      patch: {
+        cart_converted: true,
+        order_id: 'order_42',
+        became_customer_in_session: true,
+        became_customer_at: new Date(conversionAt),
+      },
+    })
+  })
+
+  it('falls back to email plus conversion_at when the cart has no distinct_id', async () => {
+    const conversionAt = '2026-05-22T10:05:00.000Z'
+    const conversionMs = new Date(conversionAt).getTime()
+    const repo = makeRepoWithEmail(
+      [],
+      [
+        {
+          id: 'sess_email',
+          started_at: new Date(conversionMs - 20 * 60_000),
+          last_event_at: new Date(conversionMs - 2 * 60_000),
+          cart_converted: false,
+          order_id: null,
+          segment_at_session_start: 'known_no_purchase',
+        },
+      ],
+    )
+    const out = await attributeSessionConversionCore(
+      {
+        cart_birth_at: CART_BIRTH,
+        conversion_at: conversionAt,
+        distinct_id: null,
+        email: 'CLIENT@EXAMPLE.COM ',
+        order_id: 'order_43',
+      },
+      repo,
+    )
+    expect(out).toEqual({ matched: 1 })
+    expect(repo.listByEmail).toHaveBeenCalledWith('client@example.com')
+    expect(repo.updates[0].id).toBe('sess_email')
+    expect(repo.updates[0].patch).toMatchObject({
+      cart_converted: true,
+      order_id: 'order_43',
+      became_customer_at: new Date(conversionAt),
+    })
   })
 
   it('returns matched=0 when distinct_id is empty string', async () => {
@@ -181,6 +261,31 @@ describe('attributeSessionConversionCore', () => {
     ])
     const out = await attributeSessionConversionCore(
       { cart_birth_at: CART_BIRTH, distinct_id: 'd_1', order_id: 'order_new' },
+      repo,
+    )
+    expect(out).toEqual({ matched: 1 })
+    expect(repo.updates).toHaveLength(0)
+  })
+
+  it('does not duplicate an order already stamped on another converted session', async () => {
+    const repo = makeRepo([
+      {
+        id: 'sess_existing_order',
+        started_at: new Date(CART_BIRTH_MS - 2 * 3600_000),
+        last_event_at: new Date(CART_BIRTH_MS - 90 * 60_000),
+        cart_converted: true,
+        order_id: 'order_42',
+      },
+      {
+        id: 'sess_candidate',
+        started_at: new Date(CART_BIRTH_MS - 5 * 60_000),
+        last_event_at: new Date(CART_BIRTH_MS - 1 * 60_000),
+        cart_converted: false,
+        order_id: null,
+      },
+    ])
+    const out = await attributeSessionConversionCore(
+      { cart_birth_at: CART_BIRTH, distinct_id: 'd_1', order_id: 'order_42' },
       repo,
     )
     expect(out).toEqual({ matched: 1 })
