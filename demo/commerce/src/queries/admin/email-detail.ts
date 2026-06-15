@@ -74,6 +74,7 @@ type OrderRow = {
 }
 
 const GWP_TITLE_RX = /\b(?:gift|offert|free|charm offert)\b/i
+const SNAPSHOT_PREVIEW_TIMEOUT_MS = 700
 
 export default defineQuery({
   name: 'email-detail',
@@ -195,14 +196,11 @@ async function loadSnapshotPreview(message: MessageRow, file: RuntimeFilePort | 
 
   if (!message.snapshot_html_url) return null
   try {
-    const htmlRes = await fetchWithTimeout(message.snapshot_html_url)
-    if (!htmlRes.ok) return null
     const [html, text] = await Promise.all([
-      htmlRes.text(),
-      message.snapshot_text_url
-        ? fetchWithTimeout(message.snapshot_text_url).then((res) => (res.ok ? res.text() : null))
-        : Promise.resolve(null),
+      fetchTextSnapshot(message.snapshot_html_url),
+      message.snapshot_text_url ? fetchTextSnapshot(message.snapshot_text_url) : Promise.resolve(null),
     ])
+    if (!html) return null
     return {
       html,
       text,
@@ -221,8 +219,10 @@ async function loadSnapshotFromFilePort(message: MessageRow, file: RuntimeFilePo
   if (!file || !message.snapshot_html_key) return null
   try {
     const [htmlBuffer, textBuffer] = await Promise.all([
-      file.getAsBuffer(message.snapshot_html_key),
-      message.snapshot_text_key ? file.getAsBuffer(message.snapshot_text_key).catch(() => null) : Promise.resolve(null),
+      withTimeout(file.getAsBuffer(message.snapshot_html_key), SNAPSHOT_PREVIEW_TIMEOUT_MS),
+      message.snapshot_text_key
+        ? withTimeout(file.getAsBuffer(message.snapshot_text_key), SNAPSHOT_PREVIEW_TIMEOUT_MS).catch(() => null)
+        : Promise.resolve(null),
     ])
     return {
       html: htmlBuffer.toString('utf8'),
@@ -238,13 +238,30 @@ async function loadSnapshotFromFilePort(message: MessageRow, file: RuntimeFilePo
   }
 }
 
-async function fetchWithTimeout(url: string) {
+async function fetchTextSnapshot(url: string): Promise<string | null> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 2500)
+  const timeout = setTimeout(() => controller.abort(), SNAPSHOT_PREVIEW_TIMEOUT_MS)
   try {
-    return await fetch(url, { signal: controller.signal })
+    const res = await fetch(url, { signal: controller.signal })
+    return res.ok ? await res.text() : null
+  } catch {
+    return null
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Snapshot preview timeout')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
   }
 }
 

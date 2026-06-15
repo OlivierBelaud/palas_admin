@@ -36,6 +36,7 @@ describe('renderAbandonedCart', () => {
 
     expect(out.subject).toBe(STRINGS.fr.subject)
     expect(out.html).toContain('Bracelet Solana')
+    expect(out.html).toContain('solana.jpg?width=840&amp;format=pjpg')
     // No Quantity label in Hero layout (single product, qty info redundant)
     expect(out.html).not.toContain('Quantité')
     // Suggested products grid present (1 product → ≤2 → show grid)
@@ -62,6 +63,8 @@ describe('renderAbandonedCart', () => {
     // Both items rendered
     expect(out.html).toContain('Bracelet Solana')
     expect(out.html).toContain('Collier Aurora')
+    expect(out.html).toContain('solana.jpg?width=520&amp;format=pjpg')
+    expect(out.html).toContain('width=340')
     // Duo layout = no Quantity label (qty info inutile when each item is qty=1)
     expect(out.html).not.toContain('Quantité')
     // Suggested grid still present (2 items → ≤2 → show)

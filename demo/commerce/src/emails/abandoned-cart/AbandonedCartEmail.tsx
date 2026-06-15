@@ -46,6 +46,7 @@ const CTA_COLOR = '#C89934'
 const CONTAINER_WIDTH = 600
 const BODY_FONT = 'Inter, Arial, sans-serif'
 const HEAD_FONT = '"Playfair Display", Palatino, serif'
+const RETINA_IMAGE_SCALE = 2
 
 // Mobile responsive overlay.
 const MOBILE_CSS = `
@@ -299,17 +300,19 @@ function CTAButton({ href, label }: { href: string; label: string }): React.Reac
 
 // Layout 1 — Hero Product (single product, big image + serif title).
 function HeroProduct({ item, recoveryUrl }: { item: AbandonedCartItem; recoveryUrl: string }): React.ReactElement {
+  const imageWidth = 420
+
   return (
     <Section style={{ padding: '0 24px 8px', textAlign: 'center' }}>
       <Link href={recoveryUrl} style={{ textDecoration: 'none' }}>
         <Img
-          src={item.image_url ?? ITEM_PLACEHOLDER}
+          src={emailImageSrc(item.image_url ?? ITEM_PLACEHOLDER, imageWidth)}
           alt={item.title}
-          width="420"
+          width={String(imageWidth)}
           style={{
             display: 'block',
             margin: '0 auto',
-            width: '420px',
+            width: `${imageWidth}px`,
             maxWidth: '100%',
             height: 'auto',
             border: 0,
@@ -424,7 +427,7 @@ function ProductCard({
     >
       <Link href={href} style={{ textDecoration: 'none' }}>
         <Img
-          src={image}
+          src={emailImageSrc(image, maxImg)}
           alt={title}
           width={String(maxImg)}
           style={{
@@ -453,6 +456,26 @@ function ProductCard({
       </Link>
     </Column>
   )
+}
+
+function emailImageSrc(src: string, displayWidth: number): string {
+  if (src.startsWith('data:')) return src
+  const requestedWidth = displayWidth * RETINA_IMAGE_SCALE
+  return shopifyImageUrl(src, requestedWidth)
+}
+
+function shopifyImageUrl(src: string, width: number): string {
+  try {
+    const url = new URL(src)
+    if (url.hostname !== 'cdn.shopify.com') return src
+    url.searchParams.set('width', String(width))
+    if (/\.(jpe?g)$/i.test(url.pathname)) {
+      url.searchParams.set('format', 'pjpg')
+    }
+    return url.toString()
+  } catch {
+    return src
+  }
 }
 
 // "Ça devrait aussi vous plaire" — 3 products, picked from pool excluding cart.
