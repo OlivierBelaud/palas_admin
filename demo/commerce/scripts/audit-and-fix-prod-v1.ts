@@ -178,9 +178,6 @@ async function pullAllCustomers(): Promise<
     phone: string | null
     city: string | null
     country_code: string | null
-    orders_count: number
-    total_spent: number
-    last_order_at: Date | null
     shopify_synced_at: Date
   }>
 > {
@@ -202,10 +199,7 @@ async function pullAllCustomers(): Promise<
               lastName
               locale
               phone
-              numberOfOrders
-              amountSpent { amount }
               defaultAddress { city countryCodeV2 }
-              lastOrder { createdAt }
             }
           }
           pageInfo { hasNextPage endCursor }
@@ -223,10 +217,7 @@ async function pullAllCustomers(): Promise<
             lastName: string | null
             locale: string | null
             phone: string | null
-            numberOfOrders: string | number
-            amountSpent: { amount: string }
             defaultAddress: { city: string | null; countryCodeV2: string | null } | null
-            lastOrder: { createdAt: string } | null
           }
         }>
         pageInfo: { hasNextPage: boolean; endCursor: string | null }
@@ -245,9 +236,6 @@ async function pullAllCustomers(): Promise<
         phone: n.phone,
         city: n.defaultAddress?.city ?? null,
         country_code: n.defaultAddress?.countryCodeV2 ?? null,
-        orders_count: Number(n.numberOfOrders) || 0,
-        total_spent: Number(n.amountSpent?.amount) || 0,
-        last_order_at: toDate(n.lastOrder?.createdAt),
         shopify_synced_at: new Date(),
       })
     }
@@ -279,9 +267,6 @@ async function upsertContacts(rows: Awaited<ReturnType<typeof pullAllCustomers>>
           country_code: r.country_code,
           city: r.city,
           shopify_customer_id: r.shopify_customer_id,
-          orders_count: r.orders_count,
-          total_spent: r.total_spent,
-          last_order_at: r.last_order_at,
           shopify_synced_at: r.shopify_synced_at,
         })),
       )}
@@ -293,9 +278,6 @@ async function upsertContacts(rows: Awaited<ReturnType<typeof pullAllCustomers>>
         country_code = COALESCE(EXCLUDED.country_code, contacts.country_code),
         city = COALESCE(EXCLUDED.city, contacts.city),
         shopify_customer_id = EXCLUDED.shopify_customer_id,
-        orders_count = GREATEST(EXCLUDED.orders_count, contacts.orders_count),
-        total_spent = GREATEST(EXCLUDED.total_spent, contacts.total_spent),
-        last_order_at = GREATEST(EXCLUDED.last_order_at, contacts.last_order_at),
         shopify_synced_at = EXCLUDED.shopify_synced_at,
         updated_at = NOW()
     `

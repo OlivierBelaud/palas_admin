@@ -2,7 +2,7 @@ import { auditCartSnapshots, type RawDb } from '../../modules/cart-tracking/refr
 
 export default defineCommand({
   name: 'auditCartSnapshots',
-  description: 'Audit Cart snapshots and Cart links against Contact and Order snapshots.',
+  description: 'Audit Cart rows and Cart links against Contact and Order rows.',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
     const summary = await step.action('audit-cart-snapshots', {

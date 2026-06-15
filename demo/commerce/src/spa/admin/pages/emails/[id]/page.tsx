@@ -48,8 +48,8 @@ interface EmailDetailData {
     email: string
     first_name: string | null
     last_name: string | null
-    orders_count: number
-    total_spent: number
+    live_orders_count: number
+    live_total_spent: number
   } | null
   orders: Array<{
     id: string
@@ -187,8 +187,8 @@ export default function EmailDetailPage() {
                   label="Nom"
                   value={[data.contact.first_name, data.contact.last_name].filter(Boolean).join(' ') || '-'}
                 />
-                <Field label="Commandes" value={String(data.contact.orders_count ?? 0)} />
-                <Field label="CA" value={formatMoney(data.contact.total_spent, 'EUR')} />
+                <Field label="Commandes" value={String(data.contact.live_orders_count ?? 0)} />
+                <Field label="CA" value={formatMoney(data.contact.live_total_spent, 'EUR')} />
                 <Link className="text-sm text-primary hover:underline" to={`/clients/${data.contact.id}`}>
                   Ouvrir la fiche client
                 </Link>

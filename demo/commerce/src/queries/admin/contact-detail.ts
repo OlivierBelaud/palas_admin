@@ -35,13 +35,13 @@ export default defineQuery({
             )
        ),
        order_agg AS (
-         SELECT COUNT(*)::int AS orders_count,
-                COALESCE(SUM(total_price), 0)::float AS total_spent,
-                MIN(placed_at) AS first_order_at,
-                MAX(placed_at) AS last_order_at
+         SELECT COUNT(*)::int AS live_orders_count,
+                COALESCE(SUM(total_price), 0)::float AS live_total_spent,
+                MIN(placed_at) AS live_first_order_at,
+                MAX(placed_at) AS live_last_order_at
            FROM linked_orders
        )
-       SELECT c.*, a.orders_count, a.total_spent, a.first_order_at, a.last_order_at
+       SELECT c.*, a.live_orders_count, a.live_total_spent, a.live_first_order_at, a.live_last_order_at
          FROM contact_row c
          CROSS JOIN order_agg a`,
       [input.id],

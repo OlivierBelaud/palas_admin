@@ -47,9 +47,6 @@ type MessageRow = {
   discount_code: string | null
   discount_source: string | null
   discount_shopify_id: string | null
-  contact_orders_count_now: number | null
-  contact_first_order_at: Date | null
-  contact_was_customer_at_send: boolean
   local_prior_orders: number
   local_first_prior_order_at: Date | null
   local_prior_order_ids: string[] | null
@@ -184,14 +181,10 @@ try {
       m.discount_code,
       m.discount_source,
       m.discount_shopify_id,
-      ct.orders_count AS contact_orders_count_now,
-      ct.first_order_at AS contact_first_order_at,
-      (ct.first_order_at IS NOT NULL AND ct.first_order_at < m.sent_at) AS contact_was_customer_at_send,
       COUNT(o.shopify_order_id)::int AS local_prior_orders,
       MIN(o.placed_at) AS local_first_prior_order_at,
       ARRAY_REMOVE(ARRAY_AGG(o.shopify_order_id ORDER BY o.placed_at ASC), NULL) AS local_prior_order_ids
     FROM abandoned_cart_messages m
-    LEFT JOIN contacts ct ON lower(ct.email) = lower(m.email)
     LEFT JOIN orders o
       ON lower(o.email) = lower(m.email)
      AND o.placed_at IS NOT NULL
@@ -200,7 +193,7 @@ try {
     WHERE m.status = 'sent'
       AND m.sent_at IS NOT NULL
       AND m.message_type IN ('abandoned_cart_1', 'abandoned_cart_2', 'abandoned_cart_3')
-    GROUP BY m.id, ct.orders_count, ct.first_order_at
+    GROUP BY m.id
     ORDER BY m.sent_at DESC
     LIMIT ${limit}`
 
@@ -218,14 +211,12 @@ try {
 
   const withDiscount = rows.filter((r) => r.discount_code)
   const withoutDiscount = rows.filter((r) => !r.discount_code)
-  const localViolations = withDiscount.filter((r) => r.local_prior_orders > 0 || r.contact_was_customer_at_send)
+  const localViolations = withDiscount.filter((r) => r.local_prior_orders > 0)
   const shopifyViolations = withDiscount.filter((r) => {
     const checked = shopifyPriorByMessage.get(r.message_id)
     return checked?.status === 'checked' && checked.priorOrders > 0
   })
-  const noDiscountButLocallyNew = withoutDiscount.filter(
-    (r) => r.local_prior_orders === 0 && !r.contact_was_customer_at_send,
-  )
+  const noDiscountButLocallyNew = withoutDiscount.filter((r) => r.local_prior_orders === 0)
   const nonTenPercentCodes = uniqueCodes.filter((code) => {
     const checked = discountByCode.get(code)
     return checked?.status === 'checked' && checked.percentage !== 0.1
@@ -273,7 +264,7 @@ try {
     console.log(`## Violations`)
     for (const row of withDiscount) {
       const shopify = shopifyPriorByMessage.get(row.message_id)
-      const localBad = row.local_prior_orders > 0 || row.contact_was_customer_at_send
+      const localBad = row.local_prior_orders > 0
       const shopifyBad = shopify?.status === 'checked' && shopify.priorOrders > 0
       const codeBad = row.discount_code ? nonTenPercentCodes.includes(row.discount_code) : false
       if (!localBad && !shopifyBad && !codeBad) continue
@@ -285,9 +276,7 @@ try {
           `type=${row.message_type}`,
           `code=${row.discount_code}`,
           `local_prior_orders=${row.local_prior_orders}`,
-          `contact_was_customer_at_send=${row.contact_was_customer_at_send}`,
           `local_first_prior_order_at=${row.local_first_prior_order_at?.toISOString() ?? 'null'}`,
-          `contact_first_order_at=${row.contact_first_order_at?.toISOString() ?? 'null'}`,
           `shopify_prior_orders=${shopify?.status === 'checked' ? shopify.priorOrders : 'unavailable'}`,
           `shopify_first_prior_order_at=${shopify?.status === 'checked' ? (shopify.firstPriorOrderAt ?? 'null') : 'unavailable'}`,
         ].join(' '),
@@ -310,7 +299,6 @@ try {
         `code=${row.discount_code}`,
         `source=${row.discount_source}`,
         `local_prior_orders=${row.local_prior_orders}`,
-        `contact_was_customer_at_send=${row.contact_was_customer_at_send}`,
         `shopify_prior_orders=${shopify?.status === 'checked' ? shopify.priorOrders : 'unavailable'}`,
       ].join(' '),
     )

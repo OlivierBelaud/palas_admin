@@ -63,10 +63,6 @@ interface ContactDraft {
   city: string | null
   shopify_customer_id: string | null
   klaviyo_profile_id: string | null
-  orders_count: number
-  total_spent: number
-  first_order_at: Date | null
-  last_order_at: Date | null
   klaviyo_subscribed: boolean
   klaviyo_suppressed: boolean
   shopify_synced_at: Date | null
@@ -84,10 +80,6 @@ function emptyContact(email: string): ContactDraft {
     city: null,
     shopify_customer_id: null,
     klaviyo_profile_id: null,
-    orders_count: 0,
-    total_spent: 0,
-    first_order_at: null,
-    last_order_at: null,
     klaviyo_subscribed: false,
     klaviyo_suppressed: false,
     shopify_synced_at: null,
@@ -125,9 +117,6 @@ async function pullShopifyCustomers(map: Map<string, ContactDraft>): Promise<num
         JSONExtractString(default_phone_number, 'phoneNumber') AS phone,
         JSONExtractString(default_address, 'city') AS city,
         JSONExtractString(default_address, 'countryCodeV2') AS country,
-        toFloat(JSONExtractString(amount_spent, 'amount')) AS total_spent,
-        number_of_orders,
-        JSONExtractString(last_order, 'createdAt') AS last_order_at,
         toString(created_at) AS shopify_created_at,
         toString(updated_at) AS shopify_updated_at
       FROM shopify_customers
@@ -150,9 +139,6 @@ async function pullShopifyCustomers(map: Map<string, ContactDraft>): Promise<num
       draft.phone = (row[5] as string) || draft.phone
       draft.city = (row[6] as string) || draft.city
       draft.country_code = (row[7] as string) || draft.country_code
-      draft.total_spent = Number(row[8]) || 0
-      draft.orders_count = Number(row[9]) || 0
-      draft.last_order_at = toDate(row[10])
       draft.shopify_synced_at = new Date()
       map.set(email, draft)
       total++
@@ -232,10 +218,6 @@ async function insertContacts(map: Map<string, ContactDraft>): Promise<number> {
           city: c.city,
           shopify_customer_id: c.shopify_customer_id,
           klaviyo_profile_id: c.klaviyo_profile_id,
-          orders_count: c.orders_count,
-          total_spent: c.total_spent,
-          first_order_at: c.first_order_at,
-          last_order_at: c.last_order_at,
           klaviyo_subscribed: c.klaviyo_subscribed,
           klaviyo_suppressed: c.klaviyo_suppressed,
           shopify_synced_at: c.shopify_synced_at,
@@ -251,10 +233,6 @@ async function insertContacts(map: Map<string, ContactDraft>): Promise<number> {
         city = COALESCE(EXCLUDED.city, contacts.city),
         shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, contacts.shopify_customer_id),
         klaviyo_profile_id = COALESCE(EXCLUDED.klaviyo_profile_id, contacts.klaviyo_profile_id),
-        orders_count = GREATEST(EXCLUDED.orders_count, contacts.orders_count),
-        total_spent = GREATEST(EXCLUDED.total_spent, contacts.total_spent),
-        first_order_at = LEAST(EXCLUDED.first_order_at, contacts.first_order_at),
-        last_order_at = GREATEST(EXCLUDED.last_order_at, contacts.last_order_at),
         klaviyo_subscribed = EXCLUDED.klaviyo_subscribed,
         klaviyo_suppressed = EXCLUDED.klaviyo_suppressed,
         shopify_synced_at = COALESCE(EXCLUDED.shopify_synced_at, contacts.shopify_synced_at),

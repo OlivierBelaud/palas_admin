@@ -1,6 +1,6 @@
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 import { ShopifyAdminClient } from '../shopify-admin/client'
-import { type ContactSignal, type ContactSnapshot, normalizeContactEmail, planContactMerge } from './merge-contact'
+import { type ContactRecord, type ContactSignal, normalizeContactEmail, planContactMerge } from './merge-contact'
 
 export interface RefreshContactInput {
   email: string
@@ -23,10 +23,7 @@ export interface RefreshContactOutcome {
 }
 
 export interface ContactEntityRepo {
-  list(
-    filters: Record<string, unknown>,
-    opts?: Record<string, unknown>,
-  ): Promise<Array<ContactSnapshot & { id: string }>>
+  list(filters: Record<string, unknown>, opts?: Record<string, unknown>): Promise<Array<ContactRecord & { id: string }>>
   create(data: Record<string, unknown>): Promise<{ id: string }>
   update(id: string, data: Record<string, unknown>): Promise<unknown>
 }
@@ -71,7 +68,7 @@ export async function refreshContactFromSources(
     })
   }
 
-  let current: ContactSnapshot | null = existing
+  let current: ContactRecord | null = existing
   const aggregatePatch: Record<string, unknown> = {}
   const changedFields = new Set<string>()
   const ignoredFields: Array<{ field: string; reason: string }> = []
@@ -84,7 +81,7 @@ export async function refreshContactFromSources(
     for (const ignored of plan.ignored_fields) {
       ignoredFields.push({ field: ignored.field, reason: ignored.reason })
     }
-    current = materializeSnapshot(current, email, plan.patch)
+    current = materializeContactRecord(current, email, plan.patch)
     createsContact = createsContact || plan.creates_contact
   }
 
@@ -125,8 +122,6 @@ export async function refreshContactFromSources(
       shopify_customer_id: null,
       klaviyo_profile_id: null,
       distinct_id: null,
-      orders_count: 0,
-      total_spent: 0,
       klaviyo_subscribed: false,
       klaviyo_suppressed: false,
       ...aggregatePatch,
@@ -144,11 +139,11 @@ export async function refreshContactFromSources(
   }
 }
 
-function materializeSnapshot(
-  current: ContactSnapshot | null,
+function materializeContactRecord(
+  current: ContactRecord | null,
   email: string,
-  patch: Partial<ContactSnapshot>,
-): ContactSnapshot {
+  patch: Partial<ContactRecord>,
+): ContactRecord {
   return {
     email,
     phone: null,
@@ -160,10 +155,6 @@ function materializeSnapshot(
     shopify_customer_id: null,
     klaviyo_profile_id: null,
     distinct_id: null,
-    orders_count: 0,
-    total_spent: 0,
-    first_order_at: null,
-    last_order_at: null,
     klaviyo_subscribed: false,
     klaviyo_suppressed: false,
     email_marketing_opt_out_at: null,

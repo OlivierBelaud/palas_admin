@@ -63,7 +63,7 @@ interface CandidateRow {
   highest_stage: string
   contact_id: string | null
   contact_locale: string | null
-  contact_orders_count: number | null
+  live_orders_count: number | null
   email_marketing_opt_out_at: Date | string | null
   klaviyo_suppressed: boolean | null
 }
@@ -771,13 +771,13 @@ export async function runAbandonedCartCampaign(
       c.last_action_at, c.highest_stage,
       ct.id AS contact_id,
       ct.locale AS contact_locale,
-      COALESCE(order_agg.orders_count, 0)::int AS contact_orders_count,
+      COALESCE(order_agg.live_orders_count, 0)::int AS live_orders_count,
       ct.email_marketing_opt_out_at,
       ct.klaviyo_suppressed
     FROM carts c
     LEFT JOIN contacts ct ON LOWER(ct.email) = LOWER(c.email)
     LEFT JOIN LATERAL (
-      SELECT COUNT(*)::int AS orders_count
+      SELECT COUNT(*)::int AS live_orders_count
       FROM orders o
       WHERE LOWER(o.email) = LOWER(c.email)
         AND o.status IN ('paid', 'fulfilled')
@@ -905,7 +905,7 @@ export async function runAbandonedCartCampaign(
         ? null
         : await resolveWelcomeDiscountForEmail({
             email: c.email,
-            numberOfOrders: c.contact_orders_count ?? 0,
+            numberOfOrders: c.live_orders_count ?? 0,
             log,
             signal,
           })

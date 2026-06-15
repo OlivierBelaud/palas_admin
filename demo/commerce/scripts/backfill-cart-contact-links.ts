@@ -79,14 +79,12 @@ function makeRepo(dryRun: boolean): BackfillRepo {
         INSERT INTO contacts (
           id, email, phone, locale, first_name, last_name, country_code, city,
           shopify_customer_id, distinct_id,
-          orders_count, total_spent,
           klaviyo_subscribed, klaviyo_suppressed,
           last_activity_at, created_at, updated_at
         ) VALUES (
           gen_random_uuid(), ${lowerEmail}, ${cart.phone}, 'fr-FR',
           ${cart.first_name}, ${cart.last_name}, ${cart.country_code}, ${cart.city},
           ${cart.shopify_customer_id}, ${cart.distinct_id},
-          0, 0,
           false, false,
           NOW(), NOW(), NOW()
         )

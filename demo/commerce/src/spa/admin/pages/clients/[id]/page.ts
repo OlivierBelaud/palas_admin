@@ -36,10 +36,10 @@ export default definePage({
       title: 'Stats',
       query: { name: 'contact-detail', input: { id: ':id' } },
       metrics: [
-        { label: 'Commandes', key: 'orders_count', format: 'number' },
-        { label: 'Total dépensé', key: 'total_spent', format: 'currency' },
-        { label: 'Première commande', key: 'first_order_at' },
-        { label: 'Dernière commande', key: 'last_order_at' },
+        { label: 'Commandes', key: 'live_orders_count', format: 'number' },
+        { label: 'Total dépensé', key: 'live_total_spent', format: 'currency' },
+        { label: 'Première commande', key: 'live_first_order_at' },
+        { label: 'Dernière commande', key: 'live_last_order_at' },
       ],
     },
 

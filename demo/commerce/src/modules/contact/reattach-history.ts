@@ -2,8 +2,7 @@
 // Contact's shopify_customer_id is known. Called at the tail of the
 // Shopify customer sync so anonymous carts written before we knew the
 // customer (e.g. cart:viewed firing on a page with no $identify yet)
-// can be joined back to the contact without rebuilding the entire
-// snapshot.
+// can be joined back to the contact without rebuilding all source rows.
 //
 // Idempotent. First-write-wins on the receiving columns — we never
 // overwrite a shopify_customer_id that another path has already set.

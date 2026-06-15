@@ -62,8 +62,8 @@ type ContactRow = {
   email: string
   first_name: string | null
   last_name: string | null
-  orders_count?: number
-  total_spent?: number
+  live_orders_count?: number
+  live_total_spent?: number
 }
 
 type OrderRow = {
@@ -177,9 +177,9 @@ export default defineQuery({
           pagination: { limit: 5 },
         },
       ) as Promise<OrderRow[]>,
-      rawDb.raw<{ orders_count: number | string; total_spent: number | string | null }>(
-        `SELECT COUNT(*)::int AS orders_count,
-                COALESCE(SUM(total_price), 0)::float AS total_spent
+      rawDb.raw<{ live_orders_count: number | string; live_total_spent: number | string | null }>(
+        `SELECT COUNT(*)::int AS live_orders_count,
+                COALESCE(SUM(total_price), 0)::float AS live_total_spent
            FROM orders
           WHERE LOWER(email) = LOWER($1)
             AND status IN ('paid', 'fulfilled')
@@ -190,13 +190,13 @@ export default defineQuery({
 
     const cart = carts[0] ?? null
     const orderAgg = orderAggRows[0] as
-      | { orders_count?: number | string; total_spent?: number | string | null }
+      | { live_orders_count?: number | string; live_total_spent?: number | string | null }
       | undefined
     const contact = contacts[0]
       ? {
           ...contacts[0],
-          orders_count: Number(orderAgg?.orders_count ?? 0),
-          total_spent: Number(orderAgg?.total_spent ?? 0),
+          live_orders_count: Number(orderAgg?.live_orders_count ?? 0),
+          live_total_spent: Number(orderAgg?.live_total_spent ?? 0),
         }
       : null
     const preview = await resolvePreview(message, cart, file)

@@ -9,7 +9,7 @@ interface RawDb {
   raw<T = unknown>(query: string, params?: unknown[]): Promise<T[]>
 }
 
-export interface BackfillOrderSnapshotsInput {
+export interface BackfillOrdersFromShopifyInput {
   limit: number
   dryRun: boolean
   onlyMissingItems: boolean
@@ -57,8 +57,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 export default defineCommand({
-  name: 'backfillOrderSnapshots',
-  description: 'Refresh incomplete Order snapshots from Shopify in controlled batches.',
+  name: 'backfillOrdersFromShopify',
+  description: 'Refresh incomplete Order rows from Shopify in controlled batches.',
   input: z.object({
     limit: z.number().int().min(1).max(500).default(25),
     dryRun: z.boolean().default(true),
@@ -67,16 +67,16 @@ export default defineCommand({
     delayMs: z.number().int().min(0).max(5000).default(150),
   }),
   workflow: async (input, { step, log }) => {
-    return runBackfillOrderSnapshots(input, step as StepWithAction, log)
+    return runBackfillOrdersFromShopify(input, step as StepWithAction, log)
   },
 })
 
-export async function runBackfillOrderSnapshots(
-  input: BackfillOrderSnapshotsInput,
+export async function runBackfillOrdersFromShopify(
+  input: BackfillOrdersFromShopifyInput,
   step: StepWithAction,
   log: CommandLog,
 ): Promise<BackfillProgress> {
-  const result = await step.action<unknown, BackfillProgress>('backfill-order-snapshots-batch', {
+  const result = await step.action<unknown, BackfillProgress>('backfill-orders-from-shopify-batch', {
     invoke: async (_i: unknown, ctx) => {
       const startedAt = Date.now()
       const previous = normalizeProgress(ctx.resumeState, input.dryRun)
@@ -117,12 +117,12 @@ export async function runBackfillOrderSnapshots(
         if (!input.dryRun && snapshots.length > 0) {
           try {
             await upsertOrderSnapshots(db, snapshots)
-            await reconcileOrderLinksAndContactAggregates(db)
+            await reconcileOrderLinks(db)
             progress.refreshed += snapshots.length
           } catch (err) {
             progress.errors += snapshots.length
             if (progress.errors <= 5) {
-              log.warn(`[backfillOrderSnapshots] batch offset ${offset}: ${(err as Error).message}`)
+              log.warn(`[backfillOrdersFromShopify] batch offset ${offset}: ${(err as Error).message}`)
             }
           }
         }
@@ -142,12 +142,12 @@ export async function runBackfillOrderSnapshots(
   })({})
 
   log.info(
-    `[backfillOrderSnapshots] scanned=${result.scanned} found=${result.found} refreshed=${result.refreshed} dry_run=${input.dryRun} errors=${result.errors}`,
+    `[backfillOrdersFromShopify] scanned=${result.scanned} found=${result.found} refreshed=${result.refreshed} dry_run=${input.dryRun} errors=${result.errors}`,
   )
   return result
 }
 
-function buildWhere(input: BackfillOrderSnapshotsInput): string {
+function buildWhere(input: BackfillOrdersFromShopifyInput): string {
   const clauses: string[] = []
   if (input.onlyMissingItems) clauses.push("(items IS NULL OR items = '[]'::jsonb)")
   if (input.onlyMissingClassification) {
@@ -316,7 +316,7 @@ async function upsertOrderSnapshots(db: RawDb, snapshots: OrderSnapshot[]): Prom
   )
 }
 
-async function reconcileOrderLinksAndContactAggregates(db: RawDb): Promise<void> {
+async function reconcileOrderLinks(db: RawDb): Promise<void> {
   await db.raw(`
     INSERT INTO order_contact (id, order_id, contact_id, created_at, updated_at)
     SELECT gen_random_uuid(), o.id::text, c.id::text, NOW(), NOW()
@@ -335,48 +335,5 @@ async function reconcileOrderLinksAndContactAggregates(db: RawDb): Promise<void>
           AND oc.contact_id = c.id::text
      )
     ON CONFLICT DO NOTHING
-  `)
-
-  await db.raw(`
-    WITH linked_orders AS (
-      SELECT DISTINCT oc.contact_id, o.id, o.total_price, o.placed_at
-        FROM order_contact oc
-        JOIN orders o ON o.id::text = oc.order_id
-       WHERE o.include_in_ecommerce_analytics IS TRUE
-    ),
-    order_agg AS (
-      SELECT
-        contact_id,
-        count(*)::int AS orders_count,
-        coalesce(sum(total_price), 0)::float AS total_spent,
-        min(placed_at) AS first_order_at,
-        max(placed_at) AS last_order_at
-      FROM linked_orders
-      GROUP BY contact_id
-    ),
-    desired AS (
-      SELECT
-        c.id,
-        coalesce(a.orders_count, 0) AS orders_count,
-        coalesce(a.total_spent, 0)::float AS total_spent,
-        a.first_order_at,
-        a.last_order_at
-      FROM contacts c
-      LEFT JOIN order_agg a ON a.contact_id = c.id::text
-    )
-    UPDATE contacts c
-       SET orders_count = d.orders_count,
-           total_spent = d.total_spent,
-           first_order_at = d.first_order_at,
-           last_order_at = d.last_order_at,
-           updated_at = NOW()
-      FROM desired d
-     WHERE c.id = d.id
-       AND (
-         c.orders_count IS DISTINCT FROM d.orders_count
-         OR c.total_spent IS DISTINCT FROM d.total_spent
-         OR c.first_order_at IS DISTINCT FROM d.first_order_at
-         OR c.last_order_at IS DISTINCT FROM d.last_order_at
-       )
   `)
 }

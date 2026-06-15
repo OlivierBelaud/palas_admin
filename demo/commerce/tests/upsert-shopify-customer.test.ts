@@ -68,8 +68,6 @@ const BASE: ShopifyCustomerPayload = {
   first_name: 'Jane',
   last_name: 'Doe',
   phone: '+33611111111',
-  orders_count: 3,
-  total_spent: '149.90',
   locale: 'fr',
   default_address: { city: 'Paris', country_code: 'FR' },
 }

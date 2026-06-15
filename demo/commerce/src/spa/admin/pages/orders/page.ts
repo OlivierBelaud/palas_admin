@@ -4,8 +4,8 @@ export default definePage({
   header: {
     title: 'Commandes',
     actions: [
-      { label: 'Tester refresh orders', command: 'backfillOrderSnapshots' },
-      { label: 'Réparer orders (lot)', command: 'backfillOrderSnapshotsApply', destructive: true },
+      { label: 'Tester refresh orders', command: 'backfillOrdersFromShopify' },
+      { label: 'Réparer orders (lot)', command: 'backfillOrdersFromShopifyApply', destructive: true },
       { label: 'Resync analytics orders', command: 'resyncOrderAnalyticsApply', destructive: true },
     ],
   },

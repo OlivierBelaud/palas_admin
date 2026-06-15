@@ -27,16 +27,16 @@ export default defineQuery({
        ),
        order_agg AS (
          SELECT contact_id,
-                COUNT(*)::int AS orders_count,
-                COALESCE(SUM(total_price), 0)::float AS total_spent,
-                MAX(placed_at) AS last_order_at
+                COUNT(*)::int AS live_orders_count,
+                COALESCE(SUM(total_price), 0)::float AS live_total_spent,
+                MAX(placed_at) AS live_last_order_at
            FROM linked_orders
           GROUP BY contact_id
        )
        SELECT c.id, c.email, c.first_name, c.last_name,
-              COALESCE(a.orders_count, 0)::int AS orders_count,
-              COALESCE(a.total_spent, 0)::float AS total_spent,
-              a.last_order_at,
+              COALESCE(a.live_orders_count, 0)::int AS live_orders_count,
+              COALESCE(a.live_total_spent, 0)::float AS live_total_spent,
+              a.live_last_order_at,
               c.last_activity_at,
               c.country_code
          FROM contacts c

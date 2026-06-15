@@ -28,17 +28,12 @@ export interface ContactSignal {
   klaviyo_profile_id?: string | null
   posthog_distinct_id?: string | null
 
-  orders_count?: number | null
-  total_spent?: number | null
-  first_order_at?: Date | string | null
-  last_order_at?: Date | string | null
-
   klaviyo_subscribed?: boolean | null
   klaviyo_suppressed?: boolean | null
   email_marketing_opt_out_at?: Date | string | null
 }
 
-export interface ContactSnapshot {
+export interface ContactRecord {
   id?: string
   email: string
   phone: string | null
@@ -50,10 +45,6 @@ export interface ContactSnapshot {
   shopify_customer_id: string | null
   klaviyo_profile_id: string | null
   distinct_id: string | null
-  orders_count: number
-  total_spent: number
-  first_order_at: Date | string | null
-  last_order_at: Date | string | null
   klaviyo_subscribed: boolean
   klaviyo_suppressed: boolean
   email_marketing_opt_out_at: Date | string | null
@@ -63,7 +54,7 @@ export interface ContactSnapshot {
 }
 
 export interface IgnoredContactField {
-  field: keyof ContactSnapshot
+  field: keyof ContactRecord
   reason: string
   current_value: unknown
   incoming_value: unknown
@@ -71,8 +62,8 @@ export interface IgnoredContactField {
 
 export interface ContactMergePlan {
   email_key: string
-  patch: Partial<ContactSnapshot>
-  changed_fields: Array<keyof ContactSnapshot>
+  patch: Partial<ContactRecord>
+  changed_fields: Array<keyof ContactRecord>
   ignored_fields: IgnoredContactField[]
   creates_contact: boolean
 }
@@ -89,14 +80,14 @@ export function normalizeContactEmail(email: string | null | undefined): string 
   return trimmed.length > 0 ? trimmed : null
 }
 
-export function planContactMerge(existing: ContactSnapshot | null, signal: ContactSignal): ContactMergePlan {
+export function planContactMerge(existing: ContactRecord | null, signal: ContactSignal): ContactMergePlan {
   const email = normalizeContactEmail(signal.email ?? existing?.email)
   if (!email) {
     throw new MantaError('INVALID_DATA', 'Contact merge requires an email')
   }
 
-  const patch: Partial<ContactSnapshot> = {}
-  const changedFields: Array<keyof ContactSnapshot> = []
+  const patch: Partial<ContactRecord> = {}
+  const changedFields: Array<keyof ContactRecord> = []
   const ignoredFields: IgnoredContactField[] = []
   const createsContact = existing == null
   const now = normalizeDate(signal.occurred_at)
@@ -115,10 +106,6 @@ export function planContactMerge(existing: ContactSnapshot | null, signal: Conta
   setLocale(clean(signal.locale))
 
   if (signal.source === 'shopify') {
-    setNumber('orders_count', signal.orders_count)
-    setNumber('total_spent', signal.total_spent)
-    setField('first_order_at', normalizeNullableDate(signal.first_order_at), { mode: 'replace_if_present' })
-    setField('last_order_at', normalizeNullableDate(signal.last_order_at), { mode: 'replace_if_present' })
     setField('shopify_synced_at', now, { mode: 'replace_if_present' })
   }
 
@@ -145,18 +132,18 @@ export function planContactMerge(existing: ContactSnapshot | null, signal: Conta
     creates_contact: createsContact,
   }
 
-  function current<K extends keyof ContactSnapshot>(field: K): ContactSnapshot[K] | undefined {
+  function current<K extends keyof ContactRecord>(field: K): ContactRecord[K] | undefined {
     return existing?.[field]
   }
 
-  function record<K extends keyof ContactSnapshot>(field: K, value: ContactSnapshot[K]): void {
+  function record<K extends keyof ContactRecord>(field: K, value: ContactRecord[K]): void {
     if (value === undefined) return
     if (!createsContact && sameValue(current(field), value)) return
     patch[field] = value
     if (!changedFields.includes(field)) changedFields.push(field)
   }
 
-  function ignore<K extends keyof ContactSnapshot>(field: K, reason: string, incoming: unknown): void {
+  function ignore<K extends keyof ContactRecord>(field: K, reason: string, incoming: unknown): void {
     ignoredFields.push({
       field,
       reason,
@@ -165,9 +152,9 @@ export function planContactMerge(existing: ContactSnapshot | null, signal: Conta
     })
   }
 
-  function setField<K extends keyof ContactSnapshot>(
+  function setField<K extends keyof ContactRecord>(
     field: K,
-    value: ContactSnapshot[K] | undefined | null,
+    value: ContactRecord[K] | undefined | null,
     opts: { mode: 'fill' | 'immutable' | 'replace_if_present'; conflict?: 'ignore' | 'log' },
   ): void {
     if (value == null) return
@@ -190,7 +177,7 @@ export function planContactMerge(existing: ContactSnapshot | null, signal: Conta
 
   function setProfileField<K extends 'phone' | 'first_name' | 'last_name' | 'country_code' | 'city'>(
     field: K,
-    value: ContactSnapshot[K] | null,
+    value: ContactRecord[K] | null,
   ): void {
     if (value == null) return
     const cur = current(field)
@@ -221,18 +208,12 @@ export function planContactMerge(existing: ContactSnapshot | null, signal: Conta
     }
     ignore('locale', 'existing_locale_wins_without_navigation_signal', normalized)
   }
-
-  function setNumber<K extends 'orders_count' | 'total_spent'>(field: K, value: number | null | undefined): void {
-    if (value == null || !Number.isFinite(value)) return
-    record(field, value as ContactSnapshot[K])
-  }
-
   function setBoolean<K extends 'klaviyo_subscribed' | 'klaviyo_suppressed'>(
     field: K,
     value: boolean | null | undefined,
   ): void {
     if (value == null) return
-    record(field, value as ContactSnapshot[K])
+    record(field, value as ContactRecord[K])
   }
 }
 
@@ -243,11 +224,6 @@ function clean(value: string | null | undefined): string | null {
 
 function normalizeDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value)
-}
-
-function normalizeNullableDate(value: Date | string | null | undefined): Date | null {
-  if (value == null) return null
-  return normalizeDate(value)
 }
 
 function normalizeLocale(value: string): string {

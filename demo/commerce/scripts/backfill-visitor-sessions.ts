@@ -10,8 +10,8 @@
 //      planner's "existingSession" branch directly. Avoids one
 //      `SELECT visitor_sessions` per event.
 //   3. Batched contact lookup — every distinct_id in the page is resolved
-//      to `(contact_id, first_order_at)` in ONE query before iterating.
-//      Subsequent pages reuse the cache.
+//      to `(contact_id, email)` in ONE query before iterating. Purchase state
+//      is derived from live `orders` rows by email.
 //
 // Apply path: raw SQL UPSERT against `visitor_sessions` with conflict
 // target `(distinct_id, session_id)`. Frozen fields are NOT in DO UPDATE
@@ -155,7 +155,12 @@ function decodeRow(row: unknown[]): HogQLRow | null {
 
 interface ContactInfo {
   contact_id: string
-  first_order_at: Date | null
+  email: string | null
+}
+
+interface OrderInfo {
+  status: string | null
+  placed_at: Date | null
 }
 
 /** Fetch contact info for a batch of distinct_ids. Cached across pages. */
@@ -163,16 +168,16 @@ async function batchLookupContacts(distinctIds: string[], cache: Map<string, Con
   const toFetch = distinctIds.filter((d) => !cache.has(d))
   if (toFetch.length === 0) return
   const rows = (await sql.unsafe(
-    `SELECT id, distinct_id, first_order_at
+    `SELECT id, distinct_id, email
        FROM contacts
       WHERE distinct_id = ANY($1::text[])`,
     [toFetch],
-  )) as Array<{ id: string; distinct_id: string; first_order_at: Date | null }>
+  )) as Array<{ id: string; distinct_id: string; email: string | null }>
   const found = new Set<string>()
   for (const r of rows) {
     cache.set(r.distinct_id, {
       contact_id: r.id,
-      first_order_at: r.first_order_at,
+      email: r.email,
     })
     found.add(r.distinct_id)
   }
@@ -190,34 +195,55 @@ async function lookupContactByEmail(
   const key = `email:${normalized}`
   if (cache.has(key)) return cache.get(key) ?? null
   const rows = (await sql.unsafe(
-    `SELECT id, distinct_id, first_order_at
+    `SELECT id, email
        FROM contacts
       WHERE lower(email) = $1
       LIMIT 1`,
     [normalized],
-  )) as Array<{ id: string; distinct_id: string | null; first_order_at: Date | null }>
+  )) as Array<{ id: string; email: string | null }>
   const row = rows[0]
   const info = row
     ? {
         contact_id: row.id,
-        first_order_at: row.first_order_at,
+        email: row.email,
       }
     : null
   cache.set(key, info)
   return info
 }
 
-function deriveIdentity(
+async function lookupOrdersByEmail(email: string, cache: Map<string, OrderInfo[]>): Promise<OrderInfo[]> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return []
+  if (cache.has(normalized)) return cache.get(normalized) ?? []
+  const rows = (await sql.unsafe(
+    `SELECT status, placed_at
+       FROM orders
+      WHERE deleted_at IS NULL
+        AND lower(email) = $1`,
+    [normalized],
+  )) as OrderInfo[]
+  cache.set(normalized, rows)
+  return rows
+}
+
+async function deriveIdentity(
   distinctId: string,
   occurredAtIso: string,
   contacts: Map<string, ContactInfo | null>,
-): IdentityAtStart {
+  ordersByEmail: Map<string, OrderInfo[]>,
+): Promise<IdentityAtStart> {
   const info = contacts.get(distinctId) ?? null
   if (!info) return { contact_id: null, email: null, segment: 'unknown' }
   const occurredAt = new Date(occurredAtIso).getTime()
-  const firstOrderAt = info.first_order_at ? new Date(info.first_order_at).getTime() : null
+  const orders = info.email ? await lookupOrdersByEmail(info.email, ordersByEmail) : []
+  const hasPriorOrder = orders.some((order) => {
+    if (order.status !== 'paid' && order.status !== 'fulfilled') return false
+    const placedAt = order.placed_at ? new Date(order.placed_at).getTime() : null
+    return placedAt != null && Number.isFinite(placedAt) && placedAt < occurredAt
+  })
   let segment: SessionSegment = 'known_no_purchase'
-  if (firstOrderAt != null && firstOrderAt < occurredAt) segment = 'returning_customer'
+  if (hasPriorOrder) segment = 'returning_customer'
   return { contact_id: info.contact_id, email: null, segment }
 }
 
@@ -317,6 +343,7 @@ try {
   // contactCache maps distinct_id → ContactInfo|null (null = miss).
   const sessionState = new Map<string, SessionState>()
   const contactCache = new Map<string, ContactInfo | null>()
+  const ordersByEmail = new Map<string, OrderInfo[]>()
 
   let offset = 0
   let totalRead = 0
@@ -392,7 +419,7 @@ try {
             email: existing.email_at_session_start,
             segment: existing.segment_at_session_start,
           }
-        : deriveIdentity(decoded.distinct_id, decoded.timestamp, contactCache)
+        : await deriveIdentity(decoded.distinct_id, decoded.timestamp, contactCache, ordersByEmail)
       if (existing && !existing.contact_id && emailOnEvent) {
         const contact = await lookupContactByEmail(emailOnEvent, contactCache)
         if (contact) {

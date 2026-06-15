@@ -78,8 +78,6 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
               first_name: 'Jane',
               last_name: 'Doe',
               phone: null,
-              orders_count: 1,
-              total_spent: '49.90',
             },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },

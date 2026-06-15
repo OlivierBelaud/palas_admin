@@ -48,7 +48,7 @@ export default defineQuery({
           LIMIT 1
        ),
        order_agg AS (
-         SELECT COUNT(DISTINCT o.id)::int AS orders_count
+         SELECT COUNT(DISTINCT o.id)::int AS live_orders_count
            FROM contact_row c
            JOIN orders o
              ON o.deleted_at IS NULL
@@ -68,7 +68,7 @@ export default defineQuery({
               c.email,
               c.first_name,
               c.last_name,
-              COALESCE(a.orders_count, 0)::int AS orders_count
+              COALESCE(a.live_orders_count, 0)::int AS live_orders_count
          FROM contact_row c
          CROSS JOIN order_agg a`,
       [input.id],
@@ -82,7 +82,7 @@ export default defineQuery({
       email: contact.email ?? null,
       first_name: contact.first_name ?? null,
       last_name: contact.last_name ?? null,
-      orders_count: contact.orders_count ?? 0,
+      live_orders_count: contact.live_orders_count ?? 0,
       contact_url: `/clients/${contact.contact_id}`,
     }
   },

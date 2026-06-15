@@ -18,7 +18,8 @@
 // Idempotence: ON CONFLICT clauses are deterministic; a second run on
 // the same data is a no-op (the COALESCE branches keep existing
 // non-null fields, and EXCLUDED-only fields just rewrite identical
-// values). No full-refresh — that's the job of `audit-and-fix-prod-v1.ts`.
+// values). Purchase state is synchronized through `orders`, not duplicated on
+// contacts. No full-refresh — that's the job of dedicated Shopify backfills.
 
 import { type RawDb, reattachHistoryForContact } from '../../modules/contact/reattach-history'
 import { classifyOrderChannel, type OrderSalesChannel } from '../../modules/order/classify-order-channel'
@@ -46,9 +47,6 @@ interface CustomerRow {
   phone: string | null
   city: string | null
   country_code: string | null
-  orders_count: number
-  total_spent: number
-  last_order_at: Date | null
   shopify_synced_at: Date
 }
 
@@ -122,10 +120,7 @@ async function pullCustomers(
     lastName: string | null
     locale: string | null
     phone: string | null
-    numberOfOrders: string | number
-    amountSpent: { amount: string }
     defaultAddress: { city: string | null; countryCodeV2: string | null } | null
-    lastOrder: { createdAt: string } | null
   }
   const nodes = await paginateConnection<Node>(
     client,
@@ -134,10 +129,8 @@ async function pullCustomers(
         customers(first: 250, after: $cursor${searchQuery ? ', query: $q' : ''}) {
           edges {
             node {
-              id email firstName lastName locale phone numberOfOrders
-              amountSpent { amount }
+              id email firstName lastName locale phone
               defaultAddress { city countryCodeV2 }
-              lastOrder { createdAt }
             }
           }
           pageInfo { hasNextPage endCursor }
@@ -173,9 +166,6 @@ async function pullCustomers(
         phone: n.phone,
         city: n.defaultAddress?.city ?? null,
         country_code: n.defaultAddress?.countryCodeV2 ?? null,
-        orders_count: 0,
-        total_spent: 0,
-        last_order_at: null,
         shopify_synced_at: now,
       }
       return row
@@ -415,9 +405,9 @@ export default defineCommand({
       },
     })({})
 
-    // Every Shopify customer/order update means the contact snapshot may
-    // need consolidation across Shopify + Klaviyo + PostHog. Emit a refresh
-    // ping for every touched email instead of letting this bulk sync be a
+    // Every Shopify customer/order update may expose identity data that needs
+    // consolidation across Shopify + Klaviyo + PostHog. Emit a refresh ping
+    // for every touched email instead of letting this bulk sync become a
     // special mutation path with its own contact semantics.
     const refreshEmails = Array.from(
       new Set(

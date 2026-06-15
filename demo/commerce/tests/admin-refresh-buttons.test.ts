@@ -7,9 +7,9 @@ describe('admin exceptional refresh buttons', () => {
   it('exposes dry-run and apply buttons on the orders page', () => {
     expect(ordersPage.header?.actions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ command: 'backfillOrderSnapshots', label: 'Tester refresh orders' }),
+        expect.objectContaining({ command: 'backfillOrdersFromShopify', label: 'Tester refresh orders' }),
         expect.objectContaining({
-          command: 'backfillOrderSnapshotsApply',
+          command: 'backfillOrdersFromShopifyApply',
           label: 'Réparer orders (lot)',
           destructive: true,
         }),
@@ -22,17 +22,8 @@ describe('admin exceptional refresh buttons', () => {
     )
   })
 
-  it('exposes dry-run and apply buttons on the clients page', () => {
-    expect(clientsPage.header?.actions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ command: 'reconcileContactSnapshots', label: 'Tester consolidation' }),
-        expect.objectContaining({
-          command: 'reconcileContactSnapshotsApply',
-          label: 'Réparer contacts',
-          destructive: true,
-        }),
-      ]),
-    )
+  it('does not expose contact aggregate repair buttons on the clients page', () => {
+    expect(clientsPage.header?.actions ?? []).toEqual([])
   })
 
   it('exposes audit, dry-run, and apply buttons on the carts page', () => {

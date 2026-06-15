@@ -29,12 +29,8 @@ export interface ShopifyCustomerPayload {
   first_name: string | null
   last_name: string | null
   phone: string | null
-  orders_count?: number | null
-  total_spent?: string | number | null
   last_order_id?: number | string | null
   last_order_name?: string | null
-  /** ISO timestamp of the last order; Shopify sends `last_order_at` on the
-   * customer payload only via Admin REST when the customer has orders. */
   updated_at?: string | null
   locale?: string | null
   /** Default address — used to fill country_code / city when present. */
@@ -133,8 +129,8 @@ export async function upsertShopifyCustomer(
       return { matched_via: matchedVia, contact_id: existing.id, created: false, carts_reattached: 0 }
     }
     // First-write-wins on identity (email never overwritten; names/phone/locale
-    // preserved if already set). Refresh shopify_customer_id (may have been
-    // null on a pixel-seeded contact) and aggregates.
+    // preserved if already set). Refresh shopify_customer_id, which may have
+    // been null on a pixel-seeded contact.
     await sql`
       UPDATE contacts
          SET shopify_customer_id = COALESCE(shopify_customer_id, ${shopifyCustomerId}),
@@ -159,13 +155,13 @@ export async function upsertShopifyCustomer(
     const inserted = (await sql`
       INSERT INTO contacts (
         id, email, phone, locale, first_name, last_name, country_code, city,
-        shopify_customer_id, orders_count, total_spent,
+        shopify_customer_id,
         klaviyo_subscribed, klaviyo_suppressed,
         shopify_synced_at, last_activity_at, created_at, updated_at
       ) VALUES (
         gen_random_uuid(), ${email}, ${phone}, ${locale ?? 'fr-FR'}, ${firstName}, ${lastName},
         ${countryCode}, ${city},
-        ${shopifyCustomerId}, 0, 0,
+        ${shopifyCustomerId},
         false, false,
         ${now}, ${now}, ${now}, ${now}
       )

@@ -122,8 +122,8 @@ export default defineQuery({
     const emailEventsByEmail = new Map<string, EnrichedRow[]>()
 
     // ── 2a. Local `orders` lookup — lifetime order count from source table.
-    const orderRows = await rawDb.raw<{ email: string; orders_count: string | number }>(
-      `SELECT LOWER(email) AS email, COUNT(*)::int AS orders_count
+    const orderRows = await rawDb.raw<{ email: string; live_orders_count: string | number }>(
+      `SELECT LOWER(email) AS email, COUNT(*)::int AS live_orders_count
          FROM orders
         WHERE deleted_at IS NULL
           AND status IN ('paid', 'fulfilled')
@@ -135,7 +135,7 @@ export default defineQuery({
     for (const row of orderRows) {
       const email = row.email?.toLowerCase()
       if (!email) continue
-      orderCountByEmail.set(email, Number(row.orders_count ?? 0))
+      orderCountByEmail.set(email, Number(row.live_orders_count ?? 0))
     }
 
     // ── 2b. Local `klaviyo_events` lookup — last abandonment email per customer.

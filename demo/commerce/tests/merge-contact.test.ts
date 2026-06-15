@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { type ContactSnapshot, normalizeContactEmail, planContactMerge } from '../src/modules/contact/merge-contact'
+import { type ContactRecord, normalizeContactEmail, planContactMerge } from '../src/modules/contact/merge-contact'
 
-function baseContact(overrides: Partial<ContactSnapshot> = {}): ContactSnapshot {
+function baseContact(overrides: Partial<ContactRecord> = {}): ContactRecord {
   return {
     email: 'jane@example.com',
     phone: null,
@@ -13,10 +13,6 @@ function baseContact(overrides: Partial<ContactSnapshot> = {}): ContactSnapshot 
     shopify_customer_id: null,
     klaviyo_profile_id: null,
     distinct_id: null,
-    orders_count: 0,
-    total_spent: 0,
-    first_order_at: null,
-    last_order_at: null,
     klaviyo_subscribed: false,
     klaviyo_suppressed: false,
     email_marketing_opt_out_at: null,
@@ -39,7 +35,7 @@ describe('normalizeContactEmail', () => {
 })
 
 describe('planContactMerge', () => {
-  it('creates a contact patch from a Shopify customer signal', () => {
+  it('creates an identity-only contact patch from a Shopify customer signal', () => {
     const plan = planContactMerge(null, {
       source: 'shopify',
       source_kind: 'shopify_customer',
@@ -49,10 +45,6 @@ describe('planContactMerge', () => {
       first_name: 'Jane',
       locale: 'fr',
       shopify_customer_id: '123',
-      orders_count: 2,
-      total_spent: 149.9,
-      first_order_at: '2026-01-01T00:00:00.000Z',
-      last_order_at: '2026-05-01T00:00:00.000Z',
     })
 
     expect(plan.creates_contact).toBe(true)
@@ -60,8 +52,7 @@ describe('planContactMerge', () => {
     expect(plan.patch.email).toBe('jane@example.com')
     expect(plan.patch.locale).toBe('fr')
     expect(plan.patch.shopify_customer_id).toBe('123')
-    expect(plan.patch.orders_count).toBe(2)
-    expect(plan.changed_fields).toContain('first_order_at')
+    expect(plan.changed_fields).toContain('shopify_synced_at')
   })
 
   it('does not overwrite Shopify identity with a conflicting Shopify id silently', () => {

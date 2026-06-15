@@ -29,8 +29,8 @@ Le cron rattrapage écrit dans la même session pendant ~30min, donc l'inégalit
 | Segment | Règle |
 |---|---|
 | `unknown` | Aucun `contact` dans notre DB pour ce `distinct_id` au moment du premier event |
-| `known_no_purchase` | Contact existe MAIS `first_order_at IS NULL` OU `first_order_at >= started_at` |
-| `returning_customer` | Contact existe ET `first_order_at < started_at` |
+| `known_no_purchase` | Contact existe MAIS aucune commande `paid`/`fulfilled` dans `orders` avant `started_at` |
+| `returning_customer` | Contact existe ET au moins une commande `paid`/`fulfilled` dans `orders` avant `started_at` |
 
 **Edge case — contact créé pendant la session** (newsletter signup, checkout). Le segment **ne change pas** — il reste celui de T=0. La transition d'identité est capturée séparément via `email_acquired_in_session = true` + `email_acquired_via`. Conséquence : un visiteur peut être `unknown` pendant toute la session et finir par convertir ; le segment stocké reflète "ce qu'on savait quand il est arrivé", pas "ce qu'on a appris après".
 

@@ -116,13 +116,11 @@ export async function upsertContactFromEvent(
       `INSERT INTO contacts (
          id, email, phone, locale, first_name, last_name, country_code, city,
          shopify_customer_id, distinct_id,
-         orders_count, total_spent,
          klaviyo_subscribed, klaviyo_suppressed,
          last_activity_at, created_at, updated_at
        ) VALUES (
          gen_random_uuid(), $1, $2, 'fr-FR', $3, $4, $5, $6,
          $7, $8,
-         0, 0,
          false, false,
          $9, $9, $9
        )

@@ -1,11 +1,11 @@
-import { runBackfillOrderSnapshots } from './backfill-order-snapshots'
+import { runBackfillOrdersFromShopify } from './backfill-order-snapshots'
 
 export default defineCommand({
-  name: 'backfillOrderSnapshotsApply',
-  description: 'Apply one controlled batch of incomplete Order snapshot refreshes from Shopify.',
+  name: 'backfillOrdersFromShopifyApply',
+  description: 'Apply one controlled batch of incomplete Order refreshes from Shopify.',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
-    return await runBackfillOrderSnapshots(
+    return await runBackfillOrdersFromShopify(
       {
         limit: 250,
         dryRun: false,

@@ -95,7 +95,7 @@ export default definePage({
             { key: 'email', label: 'Email' },
             { key: 'first_name', label: 'Prénom' },
             { key: 'last_name', label: 'Nom' },
-            { key: 'orders_count', label: 'Commandes (lifetime)', display: 'text' },
+            { key: 'live_orders_count', label: 'Commandes (lifetime)', display: 'text' },
           ],
         },
       ],
