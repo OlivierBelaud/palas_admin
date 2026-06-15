@@ -832,6 +832,7 @@ export async function runAbandonedCartCampaign(
           )
         )
       )
+        AND o.deleted_at IS NULL
         AND o.status IN ('paid', 'fulfilled')
     ) order_agg ON TRUE
     WHERE c.email IS NOT NULL

@@ -535,7 +535,18 @@ async function auditAbandonedCartEmails(
               FROM orders o
              WHERE o.deleted_at IS NULL
                AND o.status IN ('paid', 'fulfilled')
-               AND LOWER(o.email) = LOWER(m.email)
+               AND (
+                 LOWER(o.email) = LOWER(m.email)
+                 OR EXISTS (
+                   SELECT 1
+                     FROM abandoned_cart_cases acc
+                     JOIN order_contact oc
+                       ON oc.deleted_at IS NULL
+                      AND oc.contact_id = acc.contact_id
+                      AND oc.order_id = o.id::text
+                    WHERE acc.id = m.case_id
+                 )
+               )
           )
       )::text AS discount_existing_customer_30d
     FROM abandoned_cart_messages m
