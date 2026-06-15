@@ -20,6 +20,7 @@ export type CanonicalPosthogEvent = {
   valid: boolean
   validation_errors: string[]
   identity_email_sha256: string | null
+  identity_muid: string | null
   distinct_id: string | null
   payload_normalized: Record<string, unknown>
 }
@@ -261,6 +262,18 @@ export function normalizePosthogEventToCanonical(
       str(obj(props.user).manta_uid_token, 4096) ||
       str(props.manta_uid_token, 4096),
   )
+  const userProps = obj(props.user)
+  const userDataProps = obj(props.user_data)
+  const setProps = obj(props.$set)
+  const muid =
+    tokenMuid ||
+    str(sourceContext.muid, 128) ||
+    str(props.muid, 128) ||
+    str(props.palas_muid, 128) ||
+    str(userProps.muid, 128) ||
+    str(userDataProps.muid, 128) ||
+    str(setProps.palas_muid, 128) ||
+    null
 
   const payload: Record<string, unknown> = {
     raw_event_name: rawEventName,
@@ -268,7 +281,7 @@ export function normalizePosthogEventToCanonical(
     event_time: signals.observed_at,
     search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
-      muid: tokenMuid || str(sourceContext.muid, 128) || str(props.muid, 128) || null,
+      muid,
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
       contact_id: comparison.v2.contact_id,
@@ -279,9 +292,7 @@ export function normalizePosthogEventToCanonical(
         str(sourceContext.ga_client_id, 128) ||
         str(props.ga_client_id, 128) ||
         str(props.$ga_client_id, 128) ||
-        tokenMuid ||
-        str(sourceContext.muid, 128) ||
-        str(props.muid, 128) ||
+        muid ||
         str(signals.posthog_distinct_id, 128),
       ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
       fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
@@ -414,6 +425,7 @@ export function normalizePosthogEventToCanonical(
     valid: errors.length === 0,
     validation_errors: errors,
     identity_email_sha256: emailSha256(comparison.v2.email),
+    identity_muid: muid,
     distinct_id: signals.posthog_distinct_id,
     payload_normalized: payload,
   }

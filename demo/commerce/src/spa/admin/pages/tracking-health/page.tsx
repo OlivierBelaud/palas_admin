@@ -22,6 +22,8 @@ interface TrackingHealthData {
     invalid: number
     identified: number
     anonymous: number
+    unique_distinct_ids: number
+    unique_session_ids: number
     ga4_ready: number
     ga4_pending: number
     ga4_sent: number
@@ -51,6 +53,8 @@ interface TrackingHealthData {
     market: string | null
     identity: 'contact' | 'email' | 'muid' | 'posthog' | 'anon'
     profile_tracking_id: string | null
+    distinct_id: string | null
+    session_id: string | null
     identity_source: string | null
     contact_id: string | null
     email: string | null
@@ -243,6 +247,12 @@ export default function TrackingHealthPage() {
 function Kpis({ data }: { data: TrackingHealthData }) {
   const cards = [
     { label: 'Events envoyables', value: data.kpis.total, detail: 'hot log', mark: 'EV' },
+    {
+      label: 'Visiteurs PostHog',
+      value: data.kpis.unique_distinct_ids,
+      detail: `${data.kpis.unique_session_ids} sessions PostHog`,
+      mark: 'PH',
+    },
     { label: 'Valides', value: data.kpis.valid, detail: `${data.kpis.invalid} invalides`, mark: 'OK' },
     { label: 'Identifiés', value: data.kpis.identified, detail: `${data.kpis.anonymous} anonymes`, mark: 'ID' },
     {
@@ -354,7 +364,7 @@ function LiveEventTable({
         <span className="text-sm text-muted-foreground">50 lignes par page</span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <Table className="min-w-[1780px]">
+        <Table className="min-w-[1920px]">
           <Table.Header>
             <Table.Row>
               <Table.Head>Reçu</Table.Head>
@@ -362,7 +372,8 @@ function LiveEventTable({
               <Table.Head>Raw</Table.Head>
               <Table.Head>Page</Table.Head>
               <Table.Head>Identité</Table.Head>
-              <Table.Head>Profil ID</Table.Head>
+              <Table.Head>Tracking ID</Table.Head>
+              <Table.Head>Session</Table.Head>
               <Table.Head>Email</Table.Head>
               <Table.Head>Consentement</Table.Head>
               <Table.Head>Valeur</Table.Head>
@@ -394,8 +405,17 @@ function LiveEventTable({
                     </span>
                   </div>
                 </Table.Cell>
-                <Table.Cell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
+                <Table.Cell
+                  className="max-w-[220px] truncate font-mono text-xs text-muted-foreground"
+                  title={event.profile_tracking_id ?? undefined}
+                >
                   {event.profile_tracking_id ?? '-'}
+                </Table.Cell>
+                <Table.Cell
+                  className="max-w-[200px] truncate font-mono text-xs text-muted-foreground"
+                  title={event.session_id ?? undefined}
+                >
+                  {event.session_id ?? '-'}
                 </Table.Cell>
                 <Table.Cell className="max-w-[220px]">
                   {event.email ? (

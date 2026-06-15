@@ -66,7 +66,7 @@ export default defineCommand({
         received_at: new Date(),
         page_type: canonical.page_type,
         market: canonical.market,
-        identity_muid: null,
+        identity_muid: canonical.identity_muid,
         identity_email_sha256: canonical.identity_email_sha256,
         distinct_id: canonical.distinct_id,
         valid: canonical.valid,

@@ -60,6 +60,8 @@ type StatRow = {
   total: string | number
   valid: string | number
   identified: string | number
+  unique_distinct_ids: string | number
+  unique_session_ids: string | number
   ga4_ready: string | number
   posthog_forwarded: string | number
   consent_analytics_granted: string | number
@@ -241,6 +243,8 @@ export async function loadTrackingHealthData(
         row.identity_muid ??
         (row.distinct_id ? `posthog:${row.distinct_id}` : null) ??
         (row.identity_email_sha256 ? `sha256:${row.identity_email_sha256}` : null),
+      distinct_id: row.distinct_id,
+      session_id: typeof user.session_id === 'string' ? user.session_id : null,
       identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
       contact_id: contactId,
       email: email ?? null,
@@ -303,6 +307,8 @@ export async function loadTrackingHealthData(
       invalid: total - valid,
       identified,
       anonymous: total - identified,
+      unique_distinct_ids: toNumber(stats.unique_distinct_ids),
+      unique_session_ids: toNumber(stats.unique_session_ids),
       ga4_ready: toNumber(stats.ga4_ready),
       ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
       ga4_sent: countStatus(ga4StatusCounts, 'sent'),
@@ -373,6 +379,8 @@ function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
                  OR identity_muid IS NOT NULL
                  OR distinct_id IS NOT NULL
             )::text AS identified,
+            COUNT(DISTINCT distinct_id)::text AS unique_distinct_ids,
+            COUNT(DISTINCT payload_normalized #>> '{user,session_id}')::text AS unique_session_ids,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,ga4,ready}' = 'true')::text AS ga4_ready,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,posthog,status}' = 'forwarded')::text AS posthog_forwarded,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{consent,analytics_storage}' = 'true')::text
@@ -456,6 +464,8 @@ function emptyStats(): StatRow {
     total: 0,
     valid: 0,
     identified: 0,
+    unique_distinct_ids: 0,
+    unique_session_ids: 0,
     ga4_ready: 0,
     posthog_forwarded: 0,
     consent_analytics_granted: 0,
