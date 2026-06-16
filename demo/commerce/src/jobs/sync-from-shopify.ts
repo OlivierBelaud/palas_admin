@@ -11,8 +11,11 @@
 interface SyncResult {
   contacts: number
   orders: number
+  order_snapshots_refreshed?: number
   duration_ms: number
   since: string | null
+  contact_since?: string | null
+  order_since?: string | null
 }
 
 const EMPTY: SyncResult = { contacts: 0, orders: 0, duration_ms: 0, since: null }
@@ -24,7 +27,7 @@ export default defineJob('sync-from-shopify', '45 * * * *', async ({ command, lo
   }
   const result = (await command.syncContactsFromShopify({})) as SyncResult
   log.info(
-    `[sync-from-shopify] contacts=${result.contacts} orders=${result.orders} since=${result.since ?? 'genesis'} duration_ms=${result.duration_ms}`,
+    `[sync-from-shopify] contacts=${result.contacts} orders=${result.orders} order_snapshots_refreshed=${result.order_snapshots_refreshed ?? 0} contact_since=${result.contact_since ?? result.since ?? 'genesis'} order_since=${result.order_since ?? result.since ?? 'genesis'} duration_ms=${result.duration_ms}`,
   )
   return result
 })
