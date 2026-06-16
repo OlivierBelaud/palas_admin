@@ -111,6 +111,7 @@ function patchOutputConfig() {
   if (!existsSync(path)) return
 
   const config = readJson(path)
+  const vercelConfig = existsSync('vercel.json') ? readJson('vercel.json') : {}
   const routes = Array.isArray(config.routes) ? config.routes : []
   const filteredRoutes = routes.filter((route) => {
     if (!route?.src) return true
@@ -132,6 +133,9 @@ function patchOutputConfig() {
     { src: '^/(?!api(?:/|$)).*', dest: '/index.html', status: 200 },
     { src: '/(.*)', dest: '/__server' },
   ]
+  if (Array.isArray(vercelConfig.crons)) {
+    config.crons = vercelConfig.crons
+  }
   writeJson(path, config)
 }
 
