@@ -11,6 +11,8 @@ import {
   planSessionUpsert,
   type SessionSegment,
 } from '../modules/visitor-session/upsert-session'
+import type { RuntimeSql } from '../utils/manta-runtime'
+import { repairOrderSessionAttribution } from '../utils/order-session-attribution-repair'
 import { posthogPrivateKey, runPosthogHogQL } from '../utils/posthog-query'
 
 interface SyncVisitorSessionsResult {
@@ -20,6 +22,8 @@ interface SyncVisitorSessionsResult {
   errors: number
   since: string | null
   max_at: string | null
+  attribution_repaired: number
+  remaining_unattributed_recent: number
   duration_ms: number
 }
 
@@ -30,6 +34,8 @@ const EMPTY: SyncVisitorSessionsResult = {
   errors: 0,
   since: null,
   max_at: null,
+  attribution_repaired: 0,
+  remaining_unattributed_recent: 0,
   duration_ms: 0,
 }
 
@@ -50,7 +56,10 @@ type OrderRow = {
 const EVENTS_PER_PAGE = 500
 const MAX_PAGES_PER_RUN = 8
 const MAX_RUN_MS = 45_000
-const DEFAULT_LOOKBACK_MINUTES = 15
+// Re-read a full day of PostHog session events on every run. The upsert path
+// dedupes by event_uuid, and this protects reporting from short-lived cursor
+// skips caused by late checkout/session events or deploy gaps.
+const DEFAULT_LOOKBACK_MINUTES = 24 * 60
 
 function segmentForContact(contact: ContactRow | undefined, orders: OrderRow[], occurredAt: string): SessionSegment {
   if (!contact) return 'unknown'
@@ -338,6 +347,23 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
     `SELECT MAX(last_event_at) AS max_ts FROM visitor_sessions`,
   )
   const maxAt = finalRows[0]?.max_ts ? new Date(finalRows[0].max_ts).toISOString() : null
+  let attributionRepaired = 0
+  let remainingUnattributedRecent = 0
+  try {
+    const repairSql = { unsafe: runtimeDb.raw.bind(runtimeDb) } as unknown as RuntimeSql
+    const repairEnd = new Date(Date.now() + 60 * 60 * 1000)
+    const repairStart = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    const repair = await repairOrderSessionAttribution(repairSql, {
+      startIso: repairStart.toISOString(),
+      endIso: repairEnd.toISOString(),
+    })
+    attributionRepaired = repair.repaired_orders
+    remainingUnattributedRecent = repair.remaining_unattributed_orders
+  } catch (err) {
+    errors += 1
+    log.warn(`[sync-visitor-sessions] attribution invariant repair failed: ${(err as Error).message}`)
+  }
+
   const result: SyncVisitorSessionsResult = {
     fetched,
     attempted,
@@ -345,11 +371,13 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
     errors,
     since: sinceIso,
     max_at: maxAt,
+    attribution_repaired: attributionRepaired,
+    remaining_unattributed_recent: remainingUnattributedRecent,
     duration_ms: Date.now() - startedAt,
   }
 
   log.info(
-    `[sync-visitor-sessions] fetched=${result.fetched} attempted=${result.attempted} skipped=${result.skipped} errors=${result.errors} since=${result.since ?? 'none'} maxAt=${result.max_at ?? 'none'} duration_ms=${result.duration_ms}`,
+    `[sync-visitor-sessions] fetched=${result.fetched} attempted=${result.attempted} skipped=${result.skipped} errors=${result.errors} since=${result.since ?? 'none'} maxAt=${result.max_at ?? 'none'} attribution_repaired=${result.attribution_repaired} remaining_unattributed_recent=${result.remaining_unattributed_recent} duration_ms=${result.duration_ms}`,
   )
   return result
 })

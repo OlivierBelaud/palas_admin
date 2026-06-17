@@ -19,7 +19,8 @@ export default defineJob('sync-klaviyo-events', '20 * * * *', async ({ command, 
     log.info(`[sync-klaviyo-events] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
   }
-  const result = (await command.syncKlaviyoEvents({})) as SyncResult
+  const commands = command as unknown as { syncKlaviyoEvents(input: Record<string, never>): Promise<SyncResult> }
+  const result = await commands.syncKlaviyoEvents({})
   log.info(
     `[sync-klaviyo-events] scanned=${result.scanned} inserted=${result.inserted} skipped=${result.skipped} carts_marked_klaviyo=${result.carts_marked_klaviyo} profiles_scanned=${result.profiles_scanned ?? 0} profiles_updated=${result.profiles_updated ?? 0} profiles_has_more=${result.profiles_has_more ?? false}`,
   )

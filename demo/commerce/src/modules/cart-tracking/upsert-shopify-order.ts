@@ -24,6 +24,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { RuntimeSql } from '../../utils/manta-runtime'
 import { jsonParam } from '../../utils/manta-runtime'
+import { repairOrderSessionAttribution } from '../../utils/order-session-attribution-repair'
 
 const MATCH_WINDOW_DAYS = 30
 
@@ -303,6 +304,16 @@ async function linkCartContactByEmail(sql: SqlClient, cartId: string, email: str
     ON CONFLICT DO NOTHING`
 }
 
+async function repairAttributionAroundOrder(sql: SqlClient, createdAt: Date): Promise<void> {
+  const startIso = new Date(createdAt.getTime() - 48 * 60 * 60 * 1000).toISOString()
+  const endIso = new Date(createdAt.getTime() + 60 * 60 * 1000).toISOString()
+  try {
+    await repairOrderSessionAttribution(sql, { startIso, endIso })
+  } catch (err) {
+    console.warn(`[upsert-shopify-order] attribution repair failed: ${(err as Error).message}`)
+  }
+}
+
 /**
  * Upsert a single Shopify paid order into `carts`. See module header for the
  * matching strategy. Returns an outcome describing what happened so callers
@@ -354,6 +365,7 @@ export async function upsertShopifyOrder(
         await linkCartOrder(sql, cart.id, orderId)
         await linkOrderContactByEmail(sql, orderId, email)
         await linkCartContactByEmail(sql, cart.id, cart.email ?? email)
+        await repairAttributionAroundOrder(sql, createdAt)
       }
       return { matched_via: 'noop', cart_id: cart.id, already_completed: true }
     }
@@ -385,6 +397,7 @@ export async function upsertShopifyOrder(
     await linkCartOrder(sql, cart.id, orderIdMatched)
     await linkOrderContactByEmail(sql, orderIdMatched, email)
     await linkCartContactByEmail(sql, cart.id, cart.email ?? email)
+    await repairAttributionAroundOrder(sql, createdAt)
     return { matched_via: matchedVia ?? 'noop', cart_id: cart.id, already_completed: false }
   }
 
@@ -412,5 +425,6 @@ export async function upsertShopifyOrder(
     await linkCartContactByEmail(sql, inserted[0].id, email)
   }
   await linkOrderContactByEmail(sql, orderIdInserted, email)
+  await repairAttributionAroundOrder(sql, createdAt)
   return { matched_via: 'inserted', cart_id: inserted[0]?.id ?? null, already_completed: false }
 }

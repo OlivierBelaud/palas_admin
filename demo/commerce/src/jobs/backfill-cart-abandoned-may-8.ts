@@ -36,7 +36,16 @@ export default defineJob('backfill-cart-abandoned-may-8', '* 4-7 * * *', async (
     return EMPTY
   }
 
-  const result = (await command.notifyAbandonedCarts({
+  const commands = command as unknown as {
+    notifyAbandonedCarts(input: {
+      forDate: string
+      batchLimit: number
+      klaviyoRecentHours: number
+      minIdleHours: number
+      maxAgeHours: number
+    }): Promise<NotifyResult>
+  }
+  const result = await commands.notifyAbandonedCarts({
     forDate: '2026-05-08',
     batchLimit: 1,
     klaviyoRecentHours: 12,
@@ -44,7 +53,7 @@ export default defineJob('backfill-cart-abandoned-may-8', '* 4-7 * * *', async (
     // sensible numbers to satisfy the schema.
     minIdleHours: 1,
     maxAgeHours: 720,
-  })) as NotifyResult
+  })
 
   log.info(
     `[backfill-may-8] scanned=${result.scanned} notified=${result.notified} skipped=${result.skipped} errors=${result.errors} skipped_klaviyo_recent=${result.skipped_klaviyo_recent ?? 0}`,

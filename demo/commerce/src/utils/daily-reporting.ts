@@ -315,7 +315,7 @@ export async function storeDailyReportSnapshot(
 export async function sendDailyReportEmail(options: SendDailyReportOptions): Promise<SendDailyReportResult> {
   const log = options.log ?? console
   const payload = await buildDailyReportPayload(options.sql, { day: options.day, now: options.now })
-  const snapshotStatus = payload.summary.sessions > 0 ? 'ready' : 'partial'
+  const snapshotStatus = payload.summary.sessions > 0 && payload.summary.unattributed_orders === 0 ? 'ready' : 'partial'
   await storeDailyReportSnapshot(options.sql, payload, snapshotStatus)
 
   const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
@@ -403,13 +403,13 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
           ${kpi('Panier moyen', formatNullableMoney(payload.summary.average_order_value))}
           ${kpi('Conv. visiteurs', formatPercent(payload.summary.visitor_conversion_rate))}
           ${kpi('Pays vendus', formatInteger(payload.summary.sold_countries_count))}
-          ${kpi('Non attribue', `${payload.summary.unattributed_orders} cmd`)}
+          ${kpi('Cmd sans session', `${payload.summary.unattributed_orders} cmd`)}
         </div>
         ${renderSegmentTable(payload)}
         ${renderCountryTable(payload)}
         ${renderSourceTable(payload)}
         ${renderChannelTable(payload)}
-        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes non attribuees ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}).</p>
+        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}).</p>
       </div>
     </div>
   </div>
@@ -428,13 +428,15 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Panier moyen: ${formatNullableMoney(payload.summary.average_order_value)}`,
     `Conversion visiteurs: ${formatPercent(payload.summary.visitor_conversion_rate)}`,
     `Pays vendus: ${payload.summary.sold_countries_count}`,
-    `Non attribue: ${payload.summary.unattributed_orders} commande(s), ${formatMoney(payload.summary.unattributed_revenue)}`,
+    `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
     '',
     'Segments:',
-    ...payload.segments.map(
-      (row) =>
-        `- ${row.label}: ${row.sessions} sessions, ${row.unique_visitors} visiteurs, ${row.orders} commandes, ${formatMoney(row.revenue)}, conv visiteurs ${formatPercent(row.visitor_conversion_rate)}`,
-    ),
+    ...payload.segments
+      .filter((row) => row.segment !== 'unattributed')
+      .map(
+        (row) =>
+          `- ${row.label}: ${row.sessions} sessions, ${row.unique_visitors} visiteurs, ${row.orders} commandes, ${formatMoney(row.revenue)}, conv visiteurs ${formatPercent(row.visitor_conversion_rate)}`,
+      ),
     '',
     'Pays:',
     ...payload.countries.map((row) => `- ${row.country_name}: ${row.orders} commandes, ${formatMoney(row.revenue)}`),
@@ -755,14 +757,16 @@ function renderSegmentTable(payload: DailyReportPayload): string {
   return table(
     'Segments',
     ['Segment', 'Sessions', 'Visiteurs', 'Commandes', 'CA', 'Conv. visiteurs'],
-    payload.segments.map((row) => [
-      row.label,
-      formatInteger(row.sessions),
-      formatInteger(row.unique_visitors),
-      formatInteger(row.orders),
-      formatMoney(row.revenue),
-      formatPercent(row.visitor_conversion_rate),
-    ]),
+    payload.segments
+      .filter((row) => row.segment !== 'unattributed')
+      .map((row) => [
+        row.label,
+        formatInteger(row.sessions),
+        formatInteger(row.unique_visitors),
+        formatInteger(row.orders),
+        formatMoney(row.revenue),
+        formatPercent(row.visitor_conversion_rate),
+      ]),
   )
 }
 

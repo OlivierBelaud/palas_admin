@@ -21,7 +21,8 @@ export default defineJob('run-system-audits-nightly', '0 0 * * *', async ({ comm
     log.info(`[run-system-audits-nightly] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
   }
-  const result = (await command.runSystemAudits({ trigger: 'nightly' })) as AuditResult
+  const commands = command as unknown as { runSystemAudits(input: { trigger: 'nightly' }): Promise<AuditResult> }
+  const result = await commands.runSystemAudits({ trigger: 'nightly' })
   log.info(
     `[run-system-audits-nightly] run=${result.run_id} status=${result.summary.overall_status} findings=${result.findings.length}`,
   )
