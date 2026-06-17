@@ -37,7 +37,10 @@ export default defineJob('reconcile-shopify-orders', '*/15 * * * *', async ({ co
     return EMPTY
   }
 
-  const result = (await command.reconcileShopifyOrders({})) as ReconcileResult
+  const commands = command as unknown as {
+    reconcileShopifyOrders(input: Record<string, never>): Promise<ReconcileResult>
+  }
+  const result = await commands.reconcileShopifyOrders({})
   log.info(
     `[reconcile-shopify-orders] scanned=${result.scanned} dispatched=${result.dispatched} already_completed=${result.already_completed} no_local_cart=${result.no_local_cart} errors=${result.errors} duration_ms=${result.duration_ms}`,
   )

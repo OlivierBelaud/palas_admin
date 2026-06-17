@@ -7,6 +7,8 @@
 
 import { type HogQLEventRow, rowToPosthogEvent } from '../../modules/cart-tracking/posthog-sync'
 import { extractSessionId } from '../../modules/visitor-session/attribution'
+import type { RuntimeSql } from '../../utils/manta-runtime'
+import { repairOrderSessionAttribution } from '../../utils/order-session-attribution-repair'
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 type RawDb = {
@@ -17,7 +19,7 @@ type RawDb = {
 // dispatch an idempotent sub-command, so a 5k batch may leave the workflow run
 // stuck as `pending` if the function is killed before the runner finalizes.
 const MAX_EVENTS_PER_RUN = 250
-const DEFAULT_LOOKBACK_MINUTES = 15
+const DEFAULT_LOOKBACK_MINUTES = 24 * 60
 
 export default defineCommand({
   name: 'syncVisitorSessions',
@@ -114,9 +116,25 @@ export default defineCommand({
         )
         const durationMs = Date.now() - startedAt
         const maxAt = finalRows[0]?.max_ts ? new Date(finalRows[0].max_ts).toISOString() : null
+        let attributionRepaired = 0
+        let remainingUnattributedRecent = 0
+        try {
+          const repairSql = { unsafe: db.raw.bind(db) } as unknown as RuntimeSql
+          const repairEnd = new Date(Date.now() + 60 * 60 * 1000)
+          const repairStart = new Date(Date.now() - 48 * 60 * 60 * 1000)
+          const repair = await repairOrderSessionAttribution(repairSql, {
+            startIso: repairStart.toISOString(),
+            endIso: repairEnd.toISOString(),
+          })
+          attributionRepaired = repair.repaired_orders
+          remainingUnattributedRecent = repair.remaining_unattributed_orders
+        } catch (err) {
+          errors += 1
+          log.warn(`[syncVisitorSessions] attribution invariant repair failed: ${(err as Error).message}`)
+        }
 
         log.info(
-          `[syncVisitorSessions] done — fetched=${rows.length} attempted=${attempted} skipped=${skipped} errors=${errors} maxAt=${maxAt ?? 'none'} duration_ms=${durationMs}`,
+          `[syncVisitorSessions] done — fetched=${rows.length} attempted=${attempted} skipped=${skipped} errors=${errors} maxAt=${maxAt ?? 'none'} attribution_repaired=${attributionRepaired} remaining_unattributed_recent=${remainingUnattributedRecent} duration_ms=${durationMs}`,
         )
 
         return {
@@ -126,6 +144,8 @@ export default defineCommand({
           errors,
           since: sinceIso,
           max_at: maxAt,
+          attribution_repaired: attributionRepaired,
+          remaining_unattributed_recent: remainingUnattributedRecent,
           duration_ms: durationMs,
         }
       },

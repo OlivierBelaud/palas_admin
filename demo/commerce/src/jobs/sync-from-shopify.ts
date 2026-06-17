@@ -22,7 +22,8 @@ export default defineJob('sync-from-shopify', '45 * * * *', async ({ command, lo
     log.info(`[sync-from-shopify] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
   }
-  const result = (await command.syncContactsFromShopify({})) as SyncResult
+  const commands = command as unknown as { syncContactsFromShopify(input: Record<string, never>): Promise<SyncResult> }
+  const result = await commands.syncContactsFromShopify({})
   log.info(
     `[sync-from-shopify] contacts=${result.contacts} orders=${result.orders} since=${result.since ?? 'genesis'} duration_ms=${result.duration_ms}`,
   )

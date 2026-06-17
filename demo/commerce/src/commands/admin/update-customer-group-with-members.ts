@@ -1,3 +1,9 @@
+type CustomerGroupMemberCommands = {
+  updateCustomerGroup(input: { id: string; name?: string }): Promise<{ id: string; name: string }>
+  linkCustomerCustomerGroup(input: { customer_id: string; customer_group_id: string }): Promise<unknown>
+  unlinkCustomerCustomerGroup(input: { customer_id: string; customer_group_id: string }): Promise<unknown>
+}
+
 export default defineCommand({
   name: 'updateCustomerGroupWithMembers',
   description: 'Update a customer group — name and/or customer membership',
@@ -9,13 +15,14 @@ export default defineCommand({
   }),
   workflow: async (input, { step }) => {
     const { id, customer_ids_to_add, customer_ids_to_remove, ...data } = input
+    const commands = step.command as unknown as CustomerGroupMemberCommands
 
-    const group = (await step.command.updateCustomerGroup({ id, ...data })) as { id: string; name: string }
+    const group = await commands.updateCustomerGroup({ id, ...data })
 
     if (customer_ids_to_add) {
       for (const customerId of customer_ids_to_add) {
         try {
-          await step.command.linkCustomerCustomerGroup({
+          await commands.linkCustomerCustomerGroup({
             customer_id: customerId,
             customer_group_id: id,
           })
@@ -28,7 +35,7 @@ export default defineCommand({
     if (customer_ids_to_remove) {
       for (const customerId of customer_ids_to_remove) {
         try {
-          await step.command.unlinkCustomerCustomerGroup({
+          await commands.unlinkCustomerCustomerGroup({
             customer_id: customerId,
             customer_group_id: id,
           })

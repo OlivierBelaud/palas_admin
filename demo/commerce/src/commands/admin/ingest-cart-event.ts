@@ -51,6 +51,28 @@ const CheckoutDiscountSchema = z.object({
 const STAGES = ['cart', 'checkout_started', 'checkout_engaged', 'payment_attempted', 'completed'] as const
 const CHECKOUT_CART_BRIDGE_WINDOW_HOURS = 24
 
+type IngestCartEventCommands = {
+  upsertContactFromCartSignal(input: {
+    cart_id: string
+    email: string
+    first_name: string | null
+    last_name: string | null
+    phone: string | null
+    city: string | null
+    country_code: string | null
+    distinct_id: string | null
+    shopify_customer_id: string | null
+  }): Promise<unknown>
+  attributeSessionConversion(input: {
+    cart_id: string
+    cart_birth_at: string
+    conversion_at: string
+    distinct_id: string | null
+    email: string | null
+    order_id: string | null
+  }): Promise<unknown>
+}
+
 function actionToStage(action: string): (typeof STAGES)[number] {
   if (action.startsWith('cart:')) return 'cart'
   if (action === 'checkout:started') return 'checkout_started'
@@ -269,9 +291,11 @@ export default defineCommand({
     //    is a no-op apart from bumping `last_activity_at`. Errors here MUST
     //    NOT block the cart row write — the cart pipeline is the source of
     //    truth, the contact mirror is best-effort enrichment.
+    const commands = step.command as unknown as IngestCartEventCommands
+
     if (input.email) {
       try {
-        await step.command.upsertContactFromCartSignal({
+        await commands.upsertContactFromCartSignal({
           cart_id: cartId,
           email: input.email,
           first_name: input.first_name ?? null,
@@ -294,18 +318,16 @@ export default defineCommand({
       }
     }
 
-    // 3. Cohort late-update: when a cart transitions to completed for the
-    //    first time, attribute the conversion back to the visitor_session
-    //    that was active at cart_birth_at. Best-effort — failures emit a
-    //    signal but do NOT abort the ingest.
-    const wasCompleted = existing?.highest_stage === 'completed'
-    const becomesCompleted = input.action === 'checkout:completed' && !wasCompleted
-    if (becomesCompleted) {
+    // 3. Conversion attribution invariant: every checkout completion must
+    //    try to stamp the matching visitor_session, even if Shopify already
+    //    marked the cart completed earlier. The command is idempotent and
+    //    protects replays, so this keeps the database clean at ingest time.
+    if (input.action === 'checkout:completed') {
       const fresh = await svc.cart.list({ id: cartId })
       const cartBirth = fresh[0]?.cart_birth_at as string | Date | null | undefined
       if (cartBirth) {
         try {
-          await step.command.attributeSessionConversion({
+          await commands.attributeSessionConversion({
             cart_id: cartId,
             cart_birth_at: cartBirth instanceof Date ? cartBirth.toISOString() : cartBirth,
             conversion_at: input.occurred_at,

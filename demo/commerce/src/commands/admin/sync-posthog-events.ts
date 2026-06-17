@@ -30,6 +30,9 @@ import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 
 const MAX_EVENTS_PER_RUN = 5000
 const OVERLAP_HOURS = 24
+type SyncPosthogEventCommands = {
+  ingestCartEvent(input: Record<string, unknown>): Promise<unknown>
+}
 
 export default defineCommand({
   name: 'syncPosthogEvents',
@@ -95,8 +98,9 @@ export default defineCommand({
         log.info(`[syncPosthogEvents] HogQL returned ${rows.length} event(s)`)
 
         // ── 3. Dispatch each event through ingestCartEvent ────────────
+        const commands = step.command as unknown as SyncPosthogEventCommands
         const counters = await ingestHogQLRows(rows, {
-          ingest: (input) => step.command.ingestCartEvent(input),
+          ingest: (input) => commands.ingestCartEvent(input),
           warn: (msg) => log.warn(`[syncPosthogEvents] ${msg}`),
           shouldStop: () => ctx.signal?.aborted ?? false,
         })

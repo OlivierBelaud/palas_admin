@@ -28,6 +28,11 @@ import {
   upsertContactAndLink,
 } from '../../modules/contact/upsert-contact-helper'
 
+type CartContactCommands = {
+  linkCartContact(input: { cart_id: string; contact_id: string }): Promise<unknown>
+  unlinkCartContact(input: { cart_id: string; contact_id: string }): Promise<unknown>
+}
+
 export default defineCommand({
   name: 'upsertContactFromCartSignal',
   description: 'Upsert a Contact from a cart-tracking signal and link the cart to it. Idempotent.',
@@ -55,11 +60,12 @@ export default defineCommand({
     const linkRead = (
       step.link as unknown as Record<string, { list: (w: Record<string, unknown>) => Promise<CartContactRow[]> }>
     ).cartContact
+    const commands = step.command as unknown as CartContactCommands
 
     const link: CartContactLinkOps = {
       list: linkRead.list,
-      link: (i) => step.command.linkCartContact(i),
-      unlink: (i) => step.command.unlinkCartContact(i),
+      link: (i) => commands.linkCartContact(i),
+      unlink: (i) => commands.unlinkCartContact(i),
     }
 
     const result = await upsertContactAndLink({ contact, link, input })
