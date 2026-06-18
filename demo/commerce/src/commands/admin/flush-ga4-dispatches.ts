@@ -1,5 +1,5 @@
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
-import { ga4DestinationConnector } from '../../modules/event-hub/ga4-connector'
+import { ensureMissingGa4DispatchLogs, ga4DestinationConnector } from '../../modules/event-hub/ga4-connector'
 
 export default defineCommand({
   name: 'flushGa4Dispatches',
@@ -13,6 +13,7 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
+        const reconciliation = await ensureMissingGa4DispatchLogs(db)
         const result = await flushDestinationDispatches({
           db,
           connector: ga4DestinationConnector,
@@ -25,10 +26,10 @@ export default defineCommand({
         }
 
         log.info(
-          `[flushGa4Dispatches] scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured}`,
+          `[flushGa4Dispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured}`,
         )
 
-        return result
+        return { reconciled: reconciliation.inserted, ...result }
       },
       compensate: async () => {
         // Dispatch rows are idempotent by event_destination_key. Partial

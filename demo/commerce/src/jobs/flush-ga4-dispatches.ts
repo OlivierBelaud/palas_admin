@@ -1,7 +1,8 @@
 import { flushDestinationDispatches, type RawDispatchDb } from '../modules/event-hub/dispatch-runner'
-import { ga4DestinationConnector } from '../modules/event-hub/ga4-connector'
+import { ensureMissingGa4DispatchLogs, ga4DestinationConnector } from '../modules/event-hub/ga4-connector'
 
 interface FlushGa4Result {
+  reconciled: number
   scanned: number
   sent: number
   invalid: number
@@ -12,6 +13,7 @@ interface FlushGa4Result {
 }
 
 const EMPTY: FlushGa4Result = {
+  reconciled: 0,
   scanned: 0,
   sent: 0,
   invalid: 0,
@@ -33,13 +35,14 @@ export default defineJob('flush-ga4-dispatches', '* * * * *', async ({ db, log }
     return { ...EMPTY, error: 1 }
   }
 
+  const reconciliation = await ensureMissingGa4DispatchLogs(runtimeDb)
   const result = await flushDestinationDispatches({
     db: runtimeDb,
     connector: ga4DestinationConnector,
     batchLimit: 100,
   })
   log.info(
-    `[flush-ga4-dispatches] scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} configured=${result.configured}`,
+    `[flush-ga4-dispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} configured=${result.configured}`,
   )
-  return result
+  return { reconciled: reconciliation.inserted, ...result }
 })
