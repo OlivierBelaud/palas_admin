@@ -124,6 +124,9 @@ export interface DailyReportPayload {
     sold_countries_count: number
     unattributed_orders: number
     unattributed_revenue: number
+    cart_births_without_session: number
+    completed_cart_births_without_session: number
+    completed_cart_value_without_session: number
     source_max_last_event_at: string | null
   }
   segments: DailyReportSegmentRow[]
@@ -140,6 +143,7 @@ export interface DailyReportPayload {
 interface SendDailyReportResult {
   payload: DailyReportPayload
   snapshot_status: 'ready' | 'partial' | 'failed'
+  quality_issues: string[]
   sent: Array<{ to: string; status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: string }>
 }
 
@@ -330,6 +334,7 @@ export async function buildDailyReportPayload(
 
   const segmentRows = buildSegmentRows(rawSegmentRows, summary)
   const unattributed = segmentRows.find((row) => row.segment === 'unattributed')
+  const unattributedCartBirths = rawCartBirthRows.find((row) => row.segment === 'unattributed')
   const abandonedCartSummary = toAbandonedCartSummary(abandonedCartSummaryRow)
 
   return {
@@ -344,6 +349,9 @@ export async function buildDailyReportPayload(
       visitor_conversion_rate: ratio(summary.orders, summary.unique_visitors),
       unattributed_orders: unattributed?.orders ?? 0,
       unattributed_revenue: unattributed?.revenue ?? 0,
+      cart_births_without_session: toNumber(unattributedCartBirths?.carts_born),
+      completed_cart_births_without_session: toNumber(unattributedCartBirths?.carts_completed),
+      completed_cart_value_without_session: roundMoney(toNumber(unattributedCartBirths?.completed_cart_value)),
     },
     segments: segmentRows,
     countries: countryRows.map((row) => ({
@@ -386,20 +394,17 @@ export async function buildDailyReportPayload(
       cart_view_events: toNumber(row.cart_view_events),
       converted_sessions: toNumber(row.converted_sessions),
     })),
-    cart_birth_segments: rawCartBirthRows.map((row) => ({
-      segment: row.segment as SegmentKey | 'unattributed' | 'total',
-      segment_label:
-        row.segment === 'total'
-          ? SEGMENT_LABELS.total
-          : row.segment === 'unattributed'
-            ? SEGMENT_LABELS.unattributed
-            : SEGMENT_LABELS[row.segment as SegmentKey],
-      carts_born: toNumber(row.carts_born),
-      carts_born_with_email: toNumber(row.carts_born_with_email),
-      carts_completed: toNumber(row.carts_completed),
-      completed_cart_value: roundMoney(toNumber(row.completed_cart_value)),
-      cart_visitors: toNumber(row.cart_visitors),
-    })),
+    cart_birth_segments: rawCartBirthRows
+      .filter((row) => row.segment !== 'unattributed')
+      .map((row) => ({
+        segment: row.segment as SegmentKey | 'unattributed' | 'total',
+        segment_label: row.segment === 'total' ? SEGMENT_LABELS.total : SEGMENT_LABELS[row.segment as SegmentKey],
+        carts_born: toNumber(row.carts_born),
+        carts_born_with_email: toNumber(row.carts_born_with_email),
+        carts_completed: toNumber(row.carts_completed),
+        completed_cart_value: roundMoney(toNumber(row.completed_cart_value)),
+        cart_visitors: toNumber(row.cart_visitors),
+      })),
     abandoned_cart_messages: rawAbandonedCartMessageRows.map((row) => ({
       message_type: row.message_type,
       message_label: abandonedCartMessageLabel(row.message_type),
@@ -461,8 +466,17 @@ export async function storeDailyReportSnapshot(
 export async function sendDailyReportEmail(options: SendDailyReportOptions): Promise<SendDailyReportResult> {
   const log = options.log ?? console
   const payload = await buildDailyReportPayload(options.sql, { day: options.day, now: options.now })
-  const snapshotStatus = payload.summary.sessions > 0 && payload.summary.unattributed_orders === 0 ? 'ready' : 'partial'
-  await storeDailyReportSnapshot(options.sql, payload, snapshotStatus)
+  const qualityIssues = dailyReportQualityIssues(payload)
+  const snapshotStatus =
+    payload.summary.sessions > 0 && payload.summary.unattributed_orders === 0 && qualityIssues.length === 0
+      ? 'ready'
+      : 'partial'
+  await storeDailyReportSnapshot(
+    options.sql,
+    payload,
+    snapshotStatus,
+    qualityIssues.length ? qualityIssues.join('\n') : null,
+  )
 
   const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
   const html = renderDailyReportHtml(payload)
@@ -474,6 +488,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
     return {
       payload,
       snapshot_status: snapshotStatus,
+      quality_issues: qualityIssues,
       sent: recipients.map((to) => ({ to, status: 'PENDING' })),
     }
   }
@@ -504,7 +519,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
     }
   }
 
-  return { payload, snapshot_status: snapshotStatus, sent }
+  return { payload, snapshot_status: snapshotStatus, quality_issues: qualityIssues, sent }
 }
 
 export function renderDailyReportHtml(payload: DailyReportPayload): string {
@@ -558,7 +573,7 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
         ${renderCartActivityTable(payload)}
         ${renderCartBirthTable(payload)}
         ${renderAbandonedCartTable(payload)}
-        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}).</p>
+        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}) ; paniers nes sans session exploitable ${payload.summary.cart_births_without_session} (${payload.summary.completed_cart_births_without_session} completes, ${formatMoney(payload.summary.completed_cart_value_without_session)}).</p>
       </div>
     </div>
   </div>
@@ -578,6 +593,7 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Conversion visiteurs: ${formatPercent(payload.summary.visitor_conversion_rate)}`,
     `Pays vendus: ${payload.summary.sold_countries_count}`,
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
+    `Paniers nes sans session exploitable: ${payload.summary.cart_births_without_session} (${payload.summary.completed_cart_births_without_session} completes, ${formatMoney(payload.summary.completed_cart_value_without_session)})`,
     '',
     'Segments:',
     ...payload.segments
@@ -603,10 +619,12 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     ),
     '',
     'Paniers nes:',
-    ...payload.cart_birth_segments.map(
-      (row) =>
-        `- ${row.segment_label}: ${row.carts_born} paniers, ${row.carts_born_with_email} avec email, ${row.carts_completed} completes, ${formatMoney(row.completed_cart_value)}`,
-    ),
+    ...payload.cart_birth_segments
+      .filter((row) => row.segment !== 'unattributed')
+      .map(
+        (row) =>
+          `- ${row.segment_label}: ${row.carts_born} paniers, ${row.carts_born_with_email} avec email, ${row.carts_completed} completes, ${formatMoney(row.completed_cart_value)}`,
+      ),
     '',
     `Relances panier CRM: ${payload.abandoned_cart_summary.due_messages} dues, ${payload.abandoned_cart_summary.sent_inside_period} envoyees dans la periode, ${payload.abandoned_cart_summary.sent_after_period} envoyees apres la periode, ${payload.abandoned_cart_summary.recovered_cases} recoveries, ${formatMoney(payload.abandoned_cart_summary.recovered_revenue)}, taux sur dues ${formatPercent(payload.abandoned_cart_summary.recovery_rate_on_due_messages)}`,
     ...payload.abandoned_cart_messages.map(
@@ -1118,6 +1136,110 @@ function abandonedCartMessageLabel(messageType: string): string {
   return ABANDONED_CART_MESSAGE_LABELS[messageType] ?? messageType
 }
 
+function dailyReportQualityIssues(payload: DailyReportPayload): string[] {
+  const issues: string[] = []
+  const businessSegments = new Set(['unknown', 'known_no_purchase', 'returning_customer', 'total'])
+
+  for (const row of payload.channel_segments) {
+    if (!businessSegments.has(row.segment))
+      issues.push(`channel_segments contains non-business segment: ${row.segment}`)
+  }
+  for (const row of payload.cart_activity_segments) {
+    if (!businessSegments.has(row.segment))
+      issues.push(`cart_activity_segments contains non-business segment: ${row.segment}`)
+  }
+  for (const row of payload.cart_birth_segments) {
+    if (!businessSegments.has(row.segment))
+      issues.push(`cart_birth_segments contains non-business segment: ${row.segment}`)
+  }
+
+  const attributedOrders = payload.summary.orders - payload.summary.unattributed_orders
+  const attributedRevenue = roundMoney(payload.summary.revenue - payload.summary.unattributed_revenue)
+  const sourceOrders = payload.sources.reduce((total, row) => total + row.orders, 0)
+  const sourceRevenue = roundMoney(payload.sources.reduce((total, row) => total + row.revenue, 0))
+  if (sourceOrders !== attributedOrders) {
+    issues.push(`source attributed order total mismatch: sources=${sourceOrders} attributed=${attributedOrders}`)
+  }
+  if (!sameMoney(sourceRevenue, attributedRevenue)) {
+    issues.push(`source attributed revenue total mismatch: sources=${sourceRevenue} attributed=${attributedRevenue}`)
+  }
+
+  const channelTotalOrders = payload.channel_segments
+    .filter((row) => row.segment === 'total')
+    .reduce((total, row) => total + row.orders, 0)
+  const channelTotalRevenue = roundMoney(
+    payload.channel_segments.filter((row) => row.segment === 'total').reduce((total, row) => total + row.revenue, 0),
+  )
+  if (channelTotalOrders !== attributedOrders) {
+    issues.push(
+      `channel attributed order total mismatch: channels=${channelTotalOrders} attributed=${attributedOrders}`,
+    )
+  }
+  if (!sameMoney(channelTotalRevenue, attributedRevenue)) {
+    issues.push(
+      `channel attributed revenue total mismatch: channels=${channelTotalRevenue} attributed=${attributedRevenue}`,
+    )
+  }
+
+  const segmentOrders = payload.segments
+    .filter((row) => row.segment !== 'total')
+    .reduce((total, row) => total + row.orders, 0)
+  const segmentRevenue = roundMoney(
+    payload.segments.filter((row) => row.segment !== 'total').reduce((total, row) => total + row.revenue, 0),
+  )
+  if (segmentOrders !== payload.summary.orders) {
+    issues.push(`segment order total mismatch: segments=${segmentOrders} summary=${payload.summary.orders}`)
+  }
+  if (!sameMoney(segmentRevenue, payload.summary.revenue)) {
+    issues.push(`segment revenue total mismatch: segments=${segmentRevenue} summary=${payload.summary.revenue}`)
+  }
+
+  const cartBirthTotal = payload.cart_birth_segments.find((row) => row.segment === 'total')
+  if (cartBirthTotal) {
+    const visibleCartBirths = payload.cart_birth_segments
+      .filter((row) => row.segment !== 'total')
+      .reduce((total, row) => total + row.carts_born, 0)
+    const visibleCompletedCartBirths = payload.cart_birth_segments
+      .filter((row) => row.segment !== 'total')
+      .reduce((total, row) => total + row.carts_completed, 0)
+    const visibleCompletedCartValue = roundMoney(
+      payload.cart_birth_segments
+        .filter((row) => row.segment !== 'total')
+        .reduce((total, row) => total + row.completed_cart_value, 0),
+    )
+
+    if (visibleCartBirths + payload.summary.cart_births_without_session !== cartBirthTotal.carts_born) {
+      issues.push(
+        `cart birth total mismatch: segments=${visibleCartBirths} without_session=${payload.summary.cart_births_without_session} total=${cartBirthTotal.carts_born}`,
+      )
+    }
+    if (
+      visibleCompletedCartBirths + payload.summary.completed_cart_births_without_session !==
+      cartBirthTotal.carts_completed
+    ) {
+      issues.push(
+        `completed cart birth total mismatch: segments=${visibleCompletedCartBirths} without_session=${payload.summary.completed_cart_births_without_session} total=${cartBirthTotal.carts_completed}`,
+      )
+    }
+    if (
+      !sameMoney(
+        visibleCompletedCartValue + payload.summary.completed_cart_value_without_session,
+        cartBirthTotal.completed_cart_value,
+      )
+    ) {
+      issues.push(
+        `completed cart birth value mismatch: segments=${visibleCompletedCartValue} without_session=${payload.summary.completed_cart_value_without_session} total=${cartBirthTotal.completed_cart_value}`,
+      )
+    }
+  }
+
+  return issues
+}
+
+function sameMoney(left: number, right: number): boolean {
+  return Math.abs(roundMoney(left) - roundMoney(right)) < 0.01
+}
+
 function kpi(label: string, value: string): string {
   return `<div class="kpi"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`
 }
@@ -1197,13 +1319,15 @@ function renderCartBirthTable(payload: DailyReportPayload): string {
   return table(
     'Paniers nes',
     ['Segment', 'Paniers', 'Avec email', 'Completes', 'Valeur completee'],
-    payload.cart_birth_segments.map((row) => [
-      row.segment_label,
-      formatInteger(row.carts_born),
-      formatInteger(row.carts_born_with_email),
-      formatInteger(row.carts_completed),
-      formatMoney(row.completed_cart_value),
-    ]),
+    payload.cart_birth_segments
+      .filter((row) => row.segment !== 'unattributed')
+      .map((row) => [
+        row.segment_label,
+        formatInteger(row.carts_born),
+        formatInteger(row.carts_born_with_email),
+        formatInteger(row.carts_completed),
+        formatMoney(row.completed_cart_value),
+      ]),
   )
 }
 

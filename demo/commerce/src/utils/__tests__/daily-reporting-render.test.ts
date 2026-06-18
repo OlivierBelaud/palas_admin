@@ -20,6 +20,9 @@ const payload: DailyReportPayload = {
     sold_countries_count: 1,
     unattributed_orders: 1,
     unattributed_revenue: 55,
+    cart_births_without_session: 2,
+    completed_cart_births_without_session: 1,
+    completed_cart_value_without_session: 55,
     source_max_last_event_at: '2026-06-16T21:55:00.000Z',
   },
   segments: [
@@ -33,7 +36,35 @@ const payload: DailyReportPayload = {
   sources: [],
   channel_segments: [],
   cart_activity_segments: [],
-  cart_birth_segments: [],
+  cart_birth_segments: [
+    {
+      segment: 'unknown',
+      segment_label: 'Inconnus',
+      carts_born: 3,
+      carts_born_with_email: 0,
+      carts_completed: 0,
+      completed_cart_value: 0,
+      cart_visitors: 3,
+    },
+    {
+      segment: 'unattributed',
+      segment_label: 'Non attribue',
+      carts_born: 2,
+      carts_born_with_email: 1,
+      carts_completed: 1,
+      completed_cart_value: 55,
+      cart_visitors: 0,
+    },
+    {
+      segment: 'total',
+      segment_label: 'Total journee',
+      carts_born: 5,
+      carts_born_with_email: 1,
+      carts_completed: 1,
+      completed_cart_value: 55,
+      cart_visitors: 3,
+    },
+  ],
   abandoned_cart_messages: [],
   abandoned_cart_recoveries: [],
   abandoned_cart_summary: {
@@ -73,6 +104,23 @@ describe('daily reporting render', () => {
     expect(segmentBlock).toContain('Total journee')
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
+  })
+
+  it('keeps unattributed cart births in quality controls, not business segment tables', () => {
+    const html = renderDailyReportHtml(payload)
+    const cartBirthTable = html.slice(
+      html.indexOf('<h2>Paniers nes</h2>'),
+      html.indexOf('<h2>Relances panier CRM</h2>'),
+    )
+    const text = renderDailyReportText(payload)
+    const cartBirthText = text.slice(text.indexOf('Paniers nes:'), text.indexOf('Relances panier CRM:'))
+
+    expect(cartBirthTable).toContain('Inconnus')
+    expect(cartBirthTable).toContain('Total journee')
+    expect(cartBirthTable).not.toContain('Non attribue')
+    expect(cartBirthText).not.toContain('Non attribue')
+    expect(html).toContain('paniers nes sans session exploitable 2')
+    expect(text).toContain('Paniers nes sans session exploitable: 2')
   })
 })
 
