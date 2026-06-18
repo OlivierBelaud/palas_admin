@@ -156,16 +156,21 @@ function compact(input: JsonRecord): JsonRecord {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value != null && value !== ''))
 }
 
+function idStr(value: unknown, max = 160): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value)).slice(0, max)
+  return str(value, max)
+}
+
 function normalizeItems(items: unknown[]): JsonRecord[] {
   return items.slice(0, 24).map((item, index) => {
     const row = obj(item)
     return compact({
       item_id:
-        str(row.item_id, 160) ||
-        str(row.variant_id, 160) ||
-        str(row.product_id, 160) ||
-        str(row.id, 160) ||
-        str(row.sku, 160),
+        idStr(row.item_id, 160) ||
+        idStr(row.variant_id, 160) ||
+        idStr(row.product_id, 160) ||
+        idStr(row.id, 160) ||
+        idStr(row.sku, 160),
       item_name: str(row.item_name, 240) || str(row.title, 240) || str(row.name, 240),
       item_variant: str(row.item_variant, 160) || str(row.variant_title, 160) || str(row.variant, 160),
       item_brand: str(row.item_brand, 160) || str(row.vendor, 160),

@@ -42,6 +42,11 @@ function str(value: unknown, max = 2048): string | null {
   return trimmed
 }
 
+function idStr(value: unknown, max = 160): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value)).slice(0, max)
+  return str(value, max)
+}
+
 function num(value: unknown): number | null {
   if (value == null) return null
   const n = Number(value)
@@ -114,7 +119,7 @@ function mapItems(items: unknown[]): Array<Record<string, unknown>> {
   return items.slice(0, 200).map((item) => {
     const row = obj(item)
     return compact({
-      item_id: str(row.item_id, 160),
+      item_id: idStr(row.item_id, 160) || idStr(row.id, 160) || idStr(row.variant_id, 160) || idStr(row.product_id, 160),
       item_name: str(row.item_name, 240),
       item_variant: str(row.item_variant, 160),
       price: num(row.price),

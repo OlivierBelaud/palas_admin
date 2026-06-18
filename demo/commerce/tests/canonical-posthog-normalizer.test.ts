@@ -117,6 +117,56 @@ describe('canonical PostHog normalizer', () => {
     expect(validation.destinations.ga4).toMatchObject({ ready: true })
   })
 
+  it('keeps numeric Shopify product identifiers on collection list events', () => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        uuid: 'evt_collection_view',
+        event: 'view_item_list',
+        distinct_id: 'ph_1',
+        timestamp: '2026-06-09T10:00:00.000Z',
+        properties: {
+          $current_url: 'https://fancypalas.com/fr/collections/tous-les-bijoux',
+          ecommerce: {
+            currency: 'EUR',
+            item_list_id: 144850485330,
+            item_list_name: 'Tous les bijoux',
+            items: [
+              {
+                item_id: 50123456789012,
+                product_id: 9988776655443,
+                item_name: 'Santa Maria - Bracelet Pink',
+                item_variant: 'Default Title',
+                price: 49,
+                quantity: 1,
+                index: 0,
+              },
+            ],
+          },
+        },
+      },
+      comparison({ signals: { ...comparison().signals, event_id: 'evt_collection_view' } }),
+      { forwarded: true, status: 200 },
+    )
+
+    expect(event?.event_name).toBe('view_item_list')
+    expect(event?.valid).toBe(true)
+    expect(event?.validation_errors).toEqual([])
+    expect(event?.payload_normalized.ecommerce).toMatchObject({
+      currency: 'EUR',
+      item_count: 1,
+      items: [
+        {
+          item_id: '50123456789012',
+          item_name: 'Santa Maria - Bracelet Pink',
+          price: 49,
+          quantity: 1,
+        },
+      ],
+    })
+    const validation = event?.payload_normalized.validation as CanonicalValidationResult
+    expect(validation.destinations.ga4).toMatchObject({ ready: true })
+  })
+
   it('maps checkout completion to purchase and exposes V2 identity', () => {
     const event = normalizePosthogEventToCanonical(
       {

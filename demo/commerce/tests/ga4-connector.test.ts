@@ -28,6 +28,50 @@ describe('GA4 connector mapping', () => {
     expect(mapped.errors).toContain('ga4_client_id_missing')
   })
 
+  it('preserves numeric Shopify item identifiers in GA4 item arrays', () => {
+    const mapped = mapCanonicalToGa4('view_item_list', {
+      user: { ga_client_id: '123456789.987654321' },
+      context: { url: 'https://fancypalas.com/fr/collections/tous-les-bijoux' },
+      ecommerce: {
+        currency: 'EUR',
+        item_list_name: 'Tous les bijoux',
+        items: [
+          {
+            item_id: 50123456789012,
+            product_id: 9988776655443,
+            item_name: 'Santa Maria - Bracelet Pink',
+            item_variant: 'Default Title',
+            price: 49,
+            quantity: 1,
+            index: 0,
+          },
+        ],
+      },
+    })
+
+    expect(mapped.ok).toBe(true)
+    expect(mapped.payload).toMatchObject({
+      events: [
+        {
+          name: 'view_item_list',
+          params: {
+            item_list_name: 'Tous les bijoux',
+            items: [
+              {
+                item_id: '50123456789012',
+                item_name: 'Santa Maria - Bracelet Pink',
+                item_variant: 'Default Title',
+                price: 49,
+                quantity: 1,
+                index: 0,
+              },
+            ],
+          },
+        },
+      ],
+    })
+  })
+
   it('maps purchase payloads to GA4 Measurement Protocol shape', () => {
     const mapped = mapCanonicalToGa4('purchase', {
       user: {
