@@ -55,6 +55,8 @@ export interface DailyReportCartSummary {
   cart_view_events: number
   cart_view_sessions: number
   cart_view_visitors: number
+  cart_view_converted: number
+  cart_view_conversion_rate: number | null
 }
 
 export interface DailyReportCartActivitySegmentRow {
@@ -540,9 +542,9 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
     '',
     'Paniers:',
-    `- Paniers nes: ${formatInteger(payload.cart_summary.carts_created)} paniers, ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes le meme jour`,
-    `- Updates panier: ${formatInteger(payload.cart_summary.carts_updated)} evenements, ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_updated_sessions)} sessions, ${formatInteger(payload.cart_summary.carts_updated_converted)} sessions avec commande`,
-    `- Vues panier: ${formatInteger(payload.cart_summary.cart_view_events)} evenements, ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs, ${formatInteger(payload.cart_summary.cart_view_sessions)} sessions`,
+    `- Creation panier: ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes issues de ces paniers, taux ${formatPercent(payload.cart_summary.carts_created_conversion_rate)}`,
+    `- Update panier: ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_updated_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.carts_updated_conversion_rate)}`,
+    `- Vue panier: ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.cart_view_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.cart_view_conversion_rate)}`,
     ...abandonedCartEmailTextLines(payload),
     '',
     'Segments:',
@@ -757,52 +759,83 @@ function cartSummarySql(): string {
         OR (cart_birth_at IS NULL AND created_at >= $1::timestamptz AND created_at < $2::timestamptz)
       )
   ),
-  carts_created AS (
-    SELECT
-      COUNT(*)::int AS carts_created,
-      COUNT(DISTINCT bc.distinct_id)::int AS carts_created_visitors,
-      COUNT(DISTINCT bc.id) FILTER (WHERE o.id IS NOT NULL)::int AS carts_created_converted
+  born_linked_orders AS (
+    SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
     FROM born_carts bc
-    LEFT JOIN cart_order co
+    JOIN cart_order co
       ON co.deleted_at IS NULL
       AND co.cart_id = bc.id
-    LEFT JOIN orders o
+    JOIN orders o
+      ON o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.id::text = co.order_id
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+    UNION
+    SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
+    FROM born_carts bc
+    JOIN orders o
+      ON o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.shopify_order_id = bc.shopify_order_id
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+  ),
+  carts_created AS (
+    SELECT
+      COUNT(DISTINCT bc.id)::int AS carts_created,
+      COUNT(DISTINCT bc.distinct_id)::int AS carts_created_visitors,
+      COUNT(DISTINCT blo.order_id)::int AS carts_created_converted
+    FROM born_carts bc
+    LEFT JOIN born_linked_orders blo ON blo.cart_id = bc.id
+  ),
+  day_sessions AS (
+    SELECT *
+    FROM visitor_sessions
+    WHERE deleted_at IS NULL
+      AND started_at >= $1::timestamptz
+      AND started_at < $2::timestamptz
+  ),
+  session_orders AS (
+    SELECT DISTINCT ds.id AS session_row_id, o.id AS order_id
+    FROM day_sessions ds
+    JOIN orders o
       ON o.deleted_at IS NULL
       AND o.include_in_ecommerce_analytics = true
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND (
-        o.id::text = co.order_id
-        OR o.shopify_order_id = bc.shopify_order_id
+        ds.order_id = o.shopify_order_id
+        OR ds.order_id = o.id::text
       )
   ),
-  carts_updated AS (
+  cart_activity AS (
     SELECT
-      COALESCE(SUM(carts_updated_in_session), 0)::int AS carts_updated,
-      COUNT(*) FILTER (WHERE carts_updated_in_session > 0)::int AS carts_updated_sessions,
-      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_updated_in_session > 0)::int AS carts_updated_visitors,
-      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND order_id IS NOT NULL)::int AS carts_updated_converted,
-      COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
-      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
+      COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS carts_updated,
+      COUNT(*) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_sessions,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_visitors,
+      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_converted,
+      COALESCE(SUM(ds.carts_viewed_in_session), 0)::int AS cart_view_events,
+      COUNT(*) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_sessions,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_visitors,
+      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_converted
+    FROM day_sessions ds
+    LEFT JOIN session_orders so ON so.session_row_id = ds.id
   )
   SELECT
     cc.carts_created,
     cc.carts_created_visitors,
     cc.carts_created_converted,
-    cu.carts_updated,
-    cu.carts_updated_sessions,
-    cu.carts_updated_visitors,
-    cu.carts_updated_converted,
-    cu.cart_view_events,
-    cu.cart_view_sessions,
-    cu.cart_view_visitors
+    ca.carts_updated,
+    ca.carts_updated_sessions,
+    ca.carts_updated_visitors,
+    ca.carts_updated_converted,
+    ca.cart_view_events,
+    ca.cart_view_sessions,
+    ca.cart_view_visitors,
+    ca.cart_view_converted
   FROM carts_created cc
-  CROSS JOIN carts_updated cu
+  CROSS JOIN cart_activity ca
   `
 }
 
@@ -1053,19 +1086,23 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
   const cartsUpdatedSessions = toNumber(row?.carts_updated_sessions)
   const cartsUpdatedVisitors = toNumber(row?.carts_updated_visitors)
   const cartsUpdatedConverted = toNumber(row?.carts_updated_converted)
+  const cartViewVisitors = toNumber(row?.cart_view_visitors)
+  const cartViewConverted = toNumber(row?.cart_view_converted)
   return {
     carts_created: cartsCreated,
     carts_created_visitors: cartsCreatedVisitors,
     carts_created_converted: cartsCreatedConverted,
-    carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreated),
+    carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreatedVisitors),
     carts_updated: cartsUpdated,
     carts_updated_sessions: cartsUpdatedSessions,
     carts_updated_visitors: cartsUpdatedVisitors,
     carts_updated_converted: cartsUpdatedConverted,
-    carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdatedSessions),
+    carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdatedVisitors),
     cart_view_events: toNumber(row?.cart_view_events),
     cart_view_sessions: toNumber(row?.cart_view_sessions),
-    cart_view_visitors: toNumber(row?.cart_view_visitors),
+    cart_view_visitors: cartViewVisitors,
+    cart_view_converted: cartViewConverted,
+    cart_view_conversion_rate: ratio(cartViewConverted, cartViewVisitors),
   }
 }
 
@@ -1206,28 +1243,25 @@ function renderCartSummaryTable(payload: DailyReportPayload): string {
   const c = payload.cart_summary
   return table(
     'Synthese panier',
-    ['Signal', 'Visiteurs', 'Sessions', 'Volume', 'Commandes'],
+    ['Signal', 'Visiteurs uniques', 'Commandes issues du signal', 'Taux conv.'],
     [
       [
-        'Paniers nes',
+        'Creation panier',
         formatInteger(c.carts_created_visitors),
-        '-',
-        formatInteger(c.carts_created),
         formatInteger(c.carts_created_converted),
+        formatPercent(c.carts_created_conversion_rate),
       ],
       [
-        'Updates panier',
+        'Update panier',
         formatInteger(c.carts_updated_visitors),
-        formatInteger(c.carts_updated_sessions),
-        formatInteger(c.carts_updated),
         formatInteger(c.carts_updated_converted),
+        formatPercent(c.carts_updated_conversion_rate),
       ],
       [
-        'Vues panier',
+        'Vue panier',
         formatInteger(c.cart_view_visitors),
-        formatInteger(c.cart_view_sessions),
-        formatInteger(c.cart_view_events),
-        '-',
+        formatInteger(c.cart_view_converted),
+        formatPercent(c.cart_view_conversion_rate),
       ],
     ],
   )
@@ -1331,9 +1365,9 @@ function renderChannelTable(payload: DailyReportPayload): string {
 
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
-  <p class="note"><strong>Paniers nes</strong> compte les paniers distincts dont le premier signal est dans la journee. Ce n'est pas un nombre de personnes : un meme visiteur peut creer plusieurs paniers.</p>
-  <p class="note"><strong>Updates panier</strong> compte les evenements de modification panier. Les colonnes visiteurs et sessions indiquent combien de personnes/sessions ont porte ces evenements.</p>
-  <p class="note"><strong>Commandes meme jour</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce et rattachees a ces paniers, placees dans la meme journee de reporting.</p>
+  <p class="note"><strong>Synthese panier</strong> est exprimee en visiteurs uniques : un visiteur qui cree, voit ou modifie plusieurs paniers ne compte qu'une fois dans la ligne correspondante.</p>
+  <p class="note"><strong>Commandes issues du signal</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce, rattachees au panier cree ou a la session qui a vu/modifie le panier.</p>
+  <p class="note"><strong>Tables detaillees panier</strong> conservent les volumes techniques : paniers distincts, sessions et evenements. Elles ne doivent pas etre additionnees comme des personnes.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
   <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>
   <p class="note"><strong>Commandes sans session</strong> designe les commandes Shopify incluses dans l'analytics ecommerce mais sans session visiteur rattachee dans la base. Causes typiques : achat hors navigateur suivi, paiement finalise plus tard, session expiree/non synchronisee, tracking bloque, ou rapprochement cart/order incomplet.</p>`
@@ -1534,6 +1568,7 @@ interface CartSummaryRow {
   cart_view_events: number | string
   cart_view_sessions: number | string
   cart_view_visitors: number | string
+  cart_view_converted: number | string
 }
 
 interface CartActivityAggRow {
