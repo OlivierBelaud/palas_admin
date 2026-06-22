@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { type DailyReportPayload, renderDailyReportHtml, renderDailyReportText } from '../daily-reporting'
+import {
+  type DailyReportPayload,
+  dailyReportSnapshotStatus,
+  renderDailyReportHtml,
+  renderDailyReportText,
+} from '../daily-reporting'
 
 const payload: DailyReportPayload = {
   day: '2026-06-16',
@@ -20,9 +25,6 @@ const payload: DailyReportPayload = {
     sold_countries_count: 1,
     unattributed_orders: 1,
     unattributed_revenue: 55,
-    cart_births_without_session: 2,
-    completed_cart_births_without_session: 1,
-    completed_cart_value_without_session: 55,
     source_max_last_event_at: '2026-06-16T21:55:00.000Z',
   },
   segments: [
@@ -33,51 +35,16 @@ const payload: DailyReportPayload = {
     segment('total', 'Total journee', 10, 8, 1, 55),
   ],
   countries: [{ country_code: 'FR', country_name: 'France', orders: 1, revenue: 55 }],
+  cart_summary: {
+    carts_created: 4,
+    carts_created_converted: 1,
+    carts_created_conversion_rate: 0.25,
+    carts_updated: 12,
+    carts_updated_converted: 1,
+    carts_updated_conversion_rate: 1 / 12,
+  },
   sources: [],
   channel_segments: [],
-  cart_activity_segments: [],
-  cart_birth_segments: [
-    {
-      segment: 'unknown',
-      segment_label: 'Inconnus',
-      carts_born: 3,
-      carts_born_with_email: 0,
-      carts_completed: 0,
-      completed_cart_value: 0,
-      cart_visitors: 3,
-    },
-    {
-      segment: 'unattributed',
-      segment_label: 'Non attribue',
-      carts_born: 2,
-      carts_born_with_email: 1,
-      carts_completed: 1,
-      completed_cart_value: 55,
-      cart_visitors: 0,
-    },
-    {
-      segment: 'total',
-      segment_label: 'Total journee',
-      carts_born: 5,
-      carts_born_with_email: 1,
-      carts_completed: 1,
-      completed_cart_value: 55,
-      cart_visitors: 3,
-    },
-  ],
-  abandoned_cart_messages: [],
-  abandoned_cart_recoveries: [],
-  abandoned_cart_summary: {
-    due_messages: 0,
-    sent_inside_period: 0,
-    sent_after_period: 0,
-    recovered_cases: 0,
-    recovered_orders: 0,
-    recovered_revenue: 0,
-    abandoned_email_click_sessions: 0,
-    recovery_rate_on_due_messages: null,
-    recovery_rate_on_sent_messages: null,
-  },
 }
 
 describe('daily reporting render', () => {
@@ -91,7 +58,11 @@ describe('daily reporting render', () => {
     expect(segmentTable).toContain('Total journee')
     expect(segmentTable).not.toContain('Non attribue')
     expect(html).toContain('Cmd sans session')
+    expect(html).toContain('class="kpi-table"')
+    expect(html).not.toContain('class="kpis"')
     expect(html).toContain('commandes sans session exploitable')
+    expect(html).toContain('Paniers')
+    expect(html).toContain('Paniers crees')
   })
 
   it('omits the false unattributed segment from the text report too', () => {
@@ -104,23 +75,29 @@ describe('daily reporting render', () => {
     expect(segmentBlock).toContain('Total journee')
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
+    expect(text).toContain('Paniers crees: 4')
   })
 
-  it('keeps unattributed cart births in quality controls, not business segment tables', () => {
-    const html = renderDailyReportHtml(payload)
-    const cartBirthTable = html.slice(
-      html.indexOf('<h2>Paniers nes</h2>'),
-      html.indexOf('<h2>Relances panier CRM</h2>'),
-    )
-    const text = renderDailyReportText(payload)
-    const cartBirthText = text.slice(text.indexOf('Paniers nes:'), text.indexOf('Relances panier CRM:'))
+  it('marks the snapshot partial when visitor sessions are stale', () => {
+    const readyPayload = {
+      ...payload,
+      summary: {
+        ...payload.summary,
+        unattributed_orders: 0,
+        unattributed_revenue: 0,
+      },
+    }
 
-    expect(cartBirthTable).toContain('Inconnus')
-    expect(cartBirthTable).toContain('Total journee')
-    expect(cartBirthTable).not.toContain('Non attribue')
-    expect(cartBirthText).not.toContain('Non attribue')
-    expect(html).toContain('paniers nes sans session exploitable 2')
-    expect(text).toContain('Paniers nes sans session exploitable: 2')
+    expect(dailyReportSnapshotStatus(readyPayload)).toBe('ready')
+    expect(
+      dailyReportSnapshotStatus({
+        ...readyPayload,
+        summary: {
+          ...readyPayload.summary,
+          source_max_last_event_at: '2026-06-16T12:00:00.000Z',
+        },
+      }),
+    ).toBe('partial')
   })
 })
 

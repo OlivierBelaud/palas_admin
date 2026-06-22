@@ -42,67 +42,13 @@ export interface DailyReportChannelSegmentRow extends MetricRow {
   channel: string
 }
 
-export interface DailyReportCartActivitySegmentRow {
-  segment: SegmentKey | 'total'
-  segment_label: string
-  sessions: number
-  unique_visitors: number
-  cart_activity_sessions: number
-  cart_activity_visitors: number
-  cart_create_sessions: number
-  cart_create_visitors: number
-  cart_create_events: number
-  cart_update_sessions: number
-  cart_update_visitors: number
-  cart_update_events: number
-  cart_view_sessions: number
-  cart_view_events: number
-  converted_sessions: number
-}
-
-export interface DailyReportCartBirthSegmentRow {
-  segment: SegmentKey | 'unattributed' | 'total'
-  segment_label: string
-  carts_born: number
-  carts_born_with_email: number
-  carts_completed: number
-  completed_cart_value: number
-  cart_visitors: number
-}
-
-export interface DailyReportAbandonedCartMessageRow {
-  message_type: string
-  message_label: string
-  sequence_version: number
-  due_messages: number
-  sent_inside_period: number
-  sent_after_period: number
-  skipped: number
-  failed: number
-  average_delay_hours: number | null
-}
-
-export interface DailyReportAbandonedCartRecoveryRow {
-  message_type: string
-  message_label: string
-  sequence_version: number
-  recovered_cases: number
-  recovered_orders: number
-  recovered_revenue: number
-  recovered_from_email_sent_before_day: number
-  recovered_from_email_sent_same_day: number
-}
-
-export interface DailyReportAbandonedCartSummary {
-  due_messages: number
-  sent_inside_period: number
-  sent_after_period: number
-  recovered_cases: number
-  recovered_orders: number
-  recovered_revenue: number
-  abandoned_email_click_sessions: number
-  recovery_rate_on_due_messages: number | null
-  recovery_rate_on_sent_messages: number | null
+export interface DailyReportCartSummary {
+  carts_created: number
+  carts_created_converted: number
+  carts_created_conversion_rate: number | null
+  carts_updated: number
+  carts_updated_converted: number
+  carts_updated_conversion_rate: number | null
 }
 
 export interface DailyReportPayload {
@@ -124,26 +70,18 @@ export interface DailyReportPayload {
     sold_countries_count: number
     unattributed_orders: number
     unattributed_revenue: number
-    cart_births_without_session: number
-    completed_cart_births_without_session: number
-    completed_cart_value_without_session: number
     source_max_last_event_at: string | null
   }
   segments: DailyReportSegmentRow[]
   countries: DailyReportCountryRow[]
+  cart_summary: DailyReportCartSummary
   sources: DailyReportSourceRow[]
   channel_segments: DailyReportChannelSegmentRow[]
-  cart_activity_segments: DailyReportCartActivitySegmentRow[]
-  cart_birth_segments: DailyReportCartBirthSegmentRow[]
-  abandoned_cart_messages: DailyReportAbandonedCartMessageRow[]
-  abandoned_cart_recoveries: DailyReportAbandonedCartRecoveryRow[]
-  abandoned_cart_summary: DailyReportAbandonedCartSummary
 }
 
 interface SendDailyReportResult {
   payload: DailyReportPayload
   snapshot_status: 'ready' | 'partial' | 'failed'
-  quality_issues: string[]
   sent: Array<{ to: string; status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: string }>
 }
 
@@ -156,6 +94,7 @@ interface SendDailyReportOptions {
   fromEmail?: string
   replyTo?: string
   dryRun?: boolean
+  idempotencySuffix?: string
   log?: Pick<Console, 'info' | 'warn' | 'error'>
 }
 
@@ -165,14 +104,6 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
   returning_customer: 'Clients',
   unattributed: 'Non attribue',
   total: 'Total journee',
-}
-
-const ABANDONED_CART_MESSAGE_LABELS: Record<string, string> = {
-  abandoned_cart_1: 'Panier abandonne N1',
-  abandoned_cart_2: 'Panier abandonne N2',
-  abandoned_cart_3: 'Panier abandonne N3',
-  payment_help_1: 'Aide paiement N1',
-  klaviyo_abandoned: 'Klaviyo abandon',
 }
 
 const SOURCE_CASE = `
@@ -189,16 +120,18 @@ CASE
   WHEN COALESCE(utm_source, '') ILIKE '%google%'
     OR COALESCE(utm_source, '') ILIKE '%adwords%'
     OR COALESCE(first_url, '') ILIKE '%gclid=%'
+    OR COALESCE(first_url, '') ILIKE '%gbraid=%'
+    OR COALESCE(first_url, '') ILIKE '%wbraid=%'
+    OR COALESCE(first_url, '') ILIKE '%gad_source=%'
+    OR COALESCE(first_url, '') ILIKE '%gad_campaignid=%'
     THEN 'Google Ads'
   WHEN COALESCE(utm_source, '') ILIKE '%instagram%'
     OR COALESCE(referring_domain, '') ILIKE '%instagram%'
-    THEN 'Meta Ads - Instagram'
-  WHEN COALESCE(utm_source, '') ILIKE '%facebook%'
+    OR COALESCE(utm_source, '') ILIKE '%facebook%'
     OR COALESCE(referring_domain, '') ILIKE '%facebook%'
-    THEN 'Meta Ads - Facebook'
-  WHEN COALESCE(utm_source, '') ILIKE '%meta%'
+    OR COALESCE(utm_source, '') ILIKE '%meta%'
     OR COALESCE(first_url, '') ILIKE '%fbclid=%'
-    THEN 'Meta Ads - unknown'
+    THEN 'Meta Ads'
   WHEN COALESCE(utm_source, '') ILIKE '%tiktok%'
     OR COALESCE(referring_domain, '') ILIKE '%tiktok%'
     OR COALESCE(first_url, '') ILIKE '%ttclid=%'
@@ -209,12 +142,35 @@ CASE
     THEN 'Pinterest Ads'
   WHEN is_paid_session = true
     THEN 'Paid media - unknown'
+  WHEN COALESCE(referring_domain, '') ILIKE '%google.%'
+    OR COALESCE(referring_domain, '') = 'www.google.com'
+    OR COALESCE(referring_domain, '') = 'com.google.android.googlequicksearchbox'
+    THEN 'SEO'
+  WHEN COALESCE(referring_domain, '') ILIKE '%bing.%'
+    OR COALESCE(referring_domain, '') ILIKE '%ecosia.%'
+    OR COALESCE(referring_domain, '') ILIKE '%qwant.%'
+    THEN 'SEO'
+  WHEN COALESCE(referring_domain, '') IN ('fancypalas.com', 'int.fancypalas.com')
+    THEN 'Navigation interne'
+  WHEN COALESCE(referring_domain, '') = '$direct'
+    AND COALESCE(utm_source, '') = ''
+    AND COALESCE(utm_medium, '') = ''
+    AND COALESCE(first_url, '') NOT ILIKE '%gclid=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%gbraid=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%wbraid=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%gad_source=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%fbclid=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%ttclid=%'
+    AND COALESCE(first_url, '') NOT ILIKE '%epik=%'
+    THEN 'Direct'
+  WHEN COALESCE(referring_domain, '') = 'admin.shopify.com'
+    THEN 'Admin Shopify'
   ELSE 'Autres sources'
 END`
 
 const OPERATIONAL_CHANNEL_CASE = `
 CASE
-  WHEN source_label IN ('Google Ads', 'Meta Ads - Instagram', 'Meta Ads - Facebook', 'Meta Ads - unknown', 'TikTok Ads', 'Pinterest Ads', 'Paid media - unknown')
+  WHEN source_label IN ('Google Ads', 'Meta Ads', 'TikTok Ads', 'Pinterest Ads', 'Paid media - unknown')
     THEN 'Paid media'
   WHEN source_label = 'Newsletter / Klaviyo email'
     THEN 'Newsletter / Klaviyo email'
@@ -278,7 +234,6 @@ export async function buildDailyReportPayload(
     FROM orders
     WHERE deleted_at IS NULL
       AND include_in_ecommerce_analytics = true
-      AND status IN ('paid', 'fulfilled')
       AND placed_at >= $1::timestamptz
       AND placed_at < $2::timestamptz
     `,
@@ -288,20 +243,7 @@ export async function buildDailyReportPayload(
   const rawSegmentRows = await sql.unsafe<SegmentAggRow[]>(segmentAggSql(), [startIso, endIso])
   const rawSourceRows = await sql.unsafe<SourceAggRow[]>(sourceAggSql(), [startIso, endIso])
   const rawChannelRows = await sql.unsafe<ChannelAggRow[]>(channelAggSql(), [startIso, endIso])
-  const rawCartActivityRows = await sql.unsafe<CartActivityAggRow[]>(cartActivityAggSql(), [startIso, endIso])
-  const rawCartBirthRows = await sql.unsafe<CartBirthAggRow[]>(cartBirthAggSql(), [startIso, endIso])
-  const rawAbandonedCartMessageRows = await sql.unsafe<AbandonedCartMessageAggRow[]>(abandonedCartMessageAggSql(), [
-    startIso,
-    endIso,
-  ])
-  const rawAbandonedCartRecoveryRows = await sql.unsafe<AbandonedCartRecoveryAggRow[]>(abandonedCartRecoveryAggSql(), [
-    startIso,
-    endIso,
-  ])
-  const [abandonedCartSummaryRow] = await sql.unsafe<AbandonedCartSummaryRow[]>(abandonedCartSummarySql(), [
-    startIso,
-    endIso,
-  ])
+  const [cartSummaryRow] = await sql.unsafe<CartSummaryRow[]>(cartSummarySql(), [startIso, endIso])
   const countryRows = await sql.unsafe<CountryRow[]>(
     `
     SELECT
@@ -312,7 +254,6 @@ export async function buildDailyReportPayload(
     FROM orders
     WHERE deleted_at IS NULL
       AND include_in_ecommerce_analytics = true
-      AND status IN ('paid', 'fulfilled')
       AND placed_at >= $1::timestamptz
       AND placed_at < $2::timestamptz
     GROUP BY 1, 2
@@ -334,8 +275,7 @@ export async function buildDailyReportPayload(
 
   const segmentRows = buildSegmentRows(rawSegmentRows, summary)
   const unattributed = segmentRows.find((row) => row.segment === 'unattributed')
-  const unattributedCartBirths = rawCartBirthRows.find((row) => row.segment === 'unattributed')
-  const abandonedCartSummary = toAbandonedCartSummary(abandonedCartSummaryRow)
+  const cartSummary = buildCartSummary(cartSummaryRow)
 
   return {
     day,
@@ -349,9 +289,6 @@ export async function buildDailyReportPayload(
       visitor_conversion_rate: ratio(summary.orders, summary.unique_visitors),
       unattributed_orders: unattributed?.orders ?? 0,
       unattributed_revenue: unattributed?.revenue ?? 0,
-      cart_births_without_session: toNumber(unattributedCartBirths?.carts_born),
-      completed_cart_births_without_session: toNumber(unattributedCartBirths?.carts_completed),
-      completed_cart_value_without_session: roundMoney(toNumber(unattributedCartBirths?.completed_cart_value)),
     },
     segments: segmentRows,
     countries: countryRows.map((row) => ({
@@ -360,6 +297,7 @@ export async function buildDailyReportPayload(
       orders: toNumber(row.orders),
       revenue: roundMoney(toNumber(row.revenue)),
     })),
+    cart_summary: cartSummary,
     sources: rawSourceRows.map((row) => ({
       source: row.source_label,
       sessions: toNumber(row.sessions),
@@ -377,56 +315,6 @@ export async function buildDailyReportPayload(
       orders: toNumber(row.orders),
       revenue: roundMoney(toNumber(row.revenue)),
     })),
-    cart_activity_segments: rawCartActivityRows.map((row) => ({
-      segment: row.segment as SegmentKey | 'total',
-      segment_label: row.segment === 'total' ? SEGMENT_LABELS.total : SEGMENT_LABELS[row.segment as SegmentKey],
-      sessions: toNumber(row.sessions),
-      unique_visitors: toNumber(row.unique_visitors),
-      cart_activity_sessions: toNumber(row.cart_activity_sessions),
-      cart_activity_visitors: toNumber(row.cart_activity_visitors),
-      cart_create_sessions: toNumber(row.cart_create_sessions),
-      cart_create_visitors: toNumber(row.cart_create_visitors),
-      cart_create_events: toNumber(row.cart_create_events),
-      cart_update_sessions: toNumber(row.cart_update_sessions),
-      cart_update_visitors: toNumber(row.cart_update_visitors),
-      cart_update_events: toNumber(row.cart_update_events),
-      cart_view_sessions: toNumber(row.cart_view_sessions),
-      cart_view_events: toNumber(row.cart_view_events),
-      converted_sessions: toNumber(row.converted_sessions),
-    })),
-    cart_birth_segments: rawCartBirthRows
-      .filter((row) => row.segment !== 'unattributed')
-      .map((row) => ({
-        segment: row.segment as SegmentKey | 'unattributed' | 'total',
-        segment_label: row.segment === 'total' ? SEGMENT_LABELS.total : SEGMENT_LABELS[row.segment as SegmentKey],
-        carts_born: toNumber(row.carts_born),
-        carts_born_with_email: toNumber(row.carts_born_with_email),
-        carts_completed: toNumber(row.carts_completed),
-        completed_cart_value: roundMoney(toNumber(row.completed_cart_value)),
-        cart_visitors: toNumber(row.cart_visitors),
-      })),
-    abandoned_cart_messages: rawAbandonedCartMessageRows.map((row) => ({
-      message_type: row.message_type,
-      message_label: abandonedCartMessageLabel(row.message_type),
-      sequence_version: toNumber(row.sequence_version),
-      due_messages: toNumber(row.due_messages),
-      sent_inside_period: toNumber(row.sent_inside_period),
-      sent_after_period: toNumber(row.sent_after_period),
-      skipped: toNumber(row.skipped),
-      failed: toNumber(row.failed),
-      average_delay_hours: nullableNumber(row.average_delay_hours),
-    })),
-    abandoned_cart_recoveries: rawAbandonedCartRecoveryRows.map((row) => ({
-      message_type: row.message_type,
-      message_label: abandonedCartMessageLabel(row.message_type),
-      sequence_version: toNumber(row.sequence_version),
-      recovered_cases: toNumber(row.recovered_cases),
-      recovered_orders: toNumber(row.recovered_orders),
-      recovered_revenue: roundMoney(toNumber(row.recovered_revenue)),
-      recovered_from_email_sent_before_day: toNumber(row.recovered_from_email_sent_before_day),
-      recovered_from_email_sent_same_day: toNumber(row.recovered_from_email_sent_same_day),
-    })),
-    abandoned_cart_summary: abandonedCartSummary,
   }
 }
 
@@ -466,29 +354,23 @@ export async function storeDailyReportSnapshot(
 export async function sendDailyReportEmail(options: SendDailyReportOptions): Promise<SendDailyReportResult> {
   const log = options.log ?? console
   const payload = await buildDailyReportPayload(options.sql, { day: options.day, now: options.now })
-  const qualityIssues = dailyReportQualityIssues(payload)
-  const snapshotStatus =
-    payload.summary.sessions > 0 && payload.summary.unattributed_orders === 0 && qualityIssues.length === 0
-      ? 'ready'
-      : 'partial'
-  await storeDailyReportSnapshot(
-    options.sql,
-    payload,
-    snapshotStatus,
-    qualityIssues.length ? qualityIssues.join('\n') : null,
-  )
+  const snapshotStatus = dailyReportSnapshotStatus(payload)
+  await storeDailyReportSnapshot(options.sql, payload, snapshotStatus)
 
   const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
   const html = renderDailyReportHtml(payload)
   const text = renderDailyReportText(payload)
-  const subject = `Reporting Palas - ${formatLongDay(payload.day)}`
+  const subject =
+    snapshotStatus === 'ready'
+      ? `Reporting Palas - ${formatLongDay(payload.day)}`
+      : `[PARTIEL] Reporting Palas - ${formatLongDay(payload.day)}`
+  const idempotencyScope = options.idempotencySuffix ? `:${options.idempotencySuffix}` : ''
   const sent: SendDailyReportResult['sent'] = []
 
   if (options.dryRun) {
     return {
       payload,
       snapshot_status: snapshotStatus,
-      quality_issues: qualityIssues,
       sent: recipients.map((to) => ({ to, status: 'PENDING' })),
     }
   }
@@ -502,7 +384,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
       subject,
       html,
       text,
-      idempotency_key: `daily-report:${payload.day}:${to}`,
+      idempotency_key: `daily-report:${payload.day}:${to}${idempotencyScope}`,
       tags: [
         { name: 'kind', value: 'daily_reporting' },
         { name: 'day', value: payload.day },
@@ -519,7 +401,14 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
     }
   }
 
-  return { payload, snapshot_status: snapshotStatus, quality_issues: qualityIssues, sent }
+  return { payload, snapshot_status: snapshotStatus, sent }
+}
+
+export function dailyReportSnapshotStatus(payload: DailyReportPayload): 'ready' | 'partial' {
+  if (payload.summary.sessions <= 0) return 'partial'
+  if (payload.summary.unattributed_orders > 0) return 'partial'
+  if (isSessionSourceStale(payload)) return 'partial'
+  return 'ready'
 }
 
 export function renderDailyReportHtml(payload: DailyReportPayload): string {
@@ -532,17 +421,23 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
     h1{font-size:24px;line-height:1.2;margin:0;color:#161412}
     h2{font-size:17px;margin:28px 0 10px;color:#161412}
     .content{padding:0 28px 28px}
-    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0}
-    .kpi{border:1px solid #ebe6df;border-radius:7px;padding:12px}
-    .kpi .label{font-size:12px;color:#706a60}
-    .kpi .value{font-size:19px;font-weight:650;margin-top:4px}
+    .kpi-table{width:100%;border-collapse:separate;border-spacing:0;margin:22px 0 18px;font-size:13px}
+    .kpi-cell{width:25%;border:1px solid #ebe6df;border-left:0;padding:12px 14px;vertical-align:top;background:#fff}
+    .kpi-row .kpi-cell:first-child{border-left:1px solid #ebe6df}
+    .kpi-row:first-child .kpi-cell:first-child{border-top-left-radius:7px}
+    .kpi-row:first-child .kpi-cell:last-child{border-top-right-radius:7px}
+    .kpi-row:last-child .kpi-cell{border-top:0}
+    .kpi-row:last-child .kpi-cell:first-child{border-bottom-left-radius:7px}
+    .kpi-row:last-child .kpi-cell:last-child{border-bottom-right-radius:7px}
+    .kpi-label{font-size:11px;line-height:1.25;text-transform:uppercase;letter-spacing:.04em;color:#706a60;white-space:nowrap}
+    .kpi-value{font-size:21px;line-height:1.15;font-weight:700;margin-top:6px;color:#161412;white-space:nowrap}
     table{border-collapse:collapse;width:100%;font-size:13px}
     th,td{padding:9px 8px;border-bottom:1px solid #eee8df;text-align:right;vertical-align:top}
     th:first-child,td:first-child{text-align:left}
     th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#706a60;background:#faf8f4}
     .note{font-size:13px;line-height:1.45;color:#4c463f}
     .muted{color:#706a60}
-    @media(max-width:620px){.kpis{grid-template-columns:repeat(2,1fr)}.content,.head{padding-left:18px;padding-right:18px}table{font-size:12px}}
+    @media(max-width:620px){.content,.head{padding-left:18px;padding-right:18px}table{font-size:12px}.kpi-cell{padding:10px 8px}.kpi-label{font-size:10px}.kpi-value{font-size:17px}}
   `
   return `<!doctype html>
 <html>
@@ -556,24 +451,13 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
         <p class="note muted">Journee Europe/Paris, ${formatTimeRange(payload)}. Genere le ${formatDateTime(payload.generated_at)}.</p>
       </div>
       <div class="content">
-        <div class="kpis">
-          ${kpi('Sessions', formatInteger(payload.summary.sessions))}
-          ${kpi('Visiteurs', formatInteger(payload.summary.unique_visitors))}
-          ${kpi('Commandes', formatInteger(payload.summary.orders))}
-          ${kpi('CA', formatMoney(payload.summary.revenue))}
-          ${kpi('Panier moyen', formatNullableMoney(payload.summary.average_order_value))}
-          ${kpi('Conv. visiteurs', formatPercent(payload.summary.visitor_conversion_rate))}
-          ${kpi('Pays vendus', formatInteger(payload.summary.sold_countries_count))}
-          ${kpi('Cmd sans session', `${payload.summary.unattributed_orders} cmd`)}
-        </div>
+        ${renderKpiSummaryTable(payload)}
+        ${renderCartSummaryTable(payload)}
         ${renderSegmentTable(payload)}
         ${renderCountryTable(payload)}
         ${renderSourceTable(payload)}
         ${renderChannelTable(payload)}
-        ${renderCartActivityTable(payload)}
-        ${renderCartBirthTable(payload)}
-        ${renderAbandonedCartTable(payload)}
-        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}) ; paniers nes sans session exploitable ${payload.summary.cart_births_without_session} (${payload.summary.completed_cart_births_without_session} completes, ${formatMoney(payload.summary.completed_cart_value_without_session)}).</p>
+        <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}).</p>
       </div>
     </div>
   </div>
@@ -593,7 +477,10 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Conversion visiteurs: ${formatPercent(payload.summary.visitor_conversion_rate)}`,
     `Pays vendus: ${payload.summary.sold_countries_count}`,
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
-    `Paniers nes sans session exploitable: ${payload.summary.cart_births_without_session} (${payload.summary.completed_cart_births_without_session} completes, ${formatMoney(payload.summary.completed_cart_value_without_session)})`,
+    '',
+    'Paniers:',
+    `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} dont ${formatInteger(payload.cart_summary.carts_created_converted)} convertis (${formatPercent(payload.cart_summary.carts_created_conversion_rate)})`,
+    `- Modifications de panier: ${formatInteger(payload.cart_summary.carts_updated)} ; sessions modifiees converties ${formatInteger(payload.cart_summary.carts_updated_converted)} (${formatPercent(payload.cart_summary.carts_updated_conversion_rate)})`,
     '',
     'Segments:',
     ...payload.segments
@@ -611,26 +498,6 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
       (row) =>
         `- ${row.source}: ${row.sessions} sessions (${formatPercent(row.session_share)}), ${row.unique_visitors} visiteurs, ${row.orders} commandes, ${formatMoney(row.revenue)}`,
     ),
-    '',
-    'Paniers par segment:',
-    ...payload.cart_activity_segments.map(
-      (row) =>
-        `- ${row.segment_label}: ${row.cart_activity_visitors} visiteurs actifs panier, ${row.cart_create_events} creations, ${row.cart_update_events} updates, ${row.converted_sessions} sessions converties`,
-    ),
-    '',
-    'Paniers nes:',
-    ...payload.cart_birth_segments
-      .filter((row) => row.segment !== 'unattributed')
-      .map(
-        (row) =>
-          `- ${row.segment_label}: ${row.carts_born} paniers, ${row.carts_born_with_email} avec email, ${row.carts_completed} completes, ${formatMoney(row.completed_cart_value)}`,
-      ),
-    '',
-    `Relances panier CRM: ${payload.abandoned_cart_summary.due_messages} dues, ${payload.abandoned_cart_summary.sent_inside_period} envoyees dans la periode, ${payload.abandoned_cart_summary.sent_after_period} envoyees apres la periode, ${payload.abandoned_cart_summary.recovered_cases} recoveries, ${formatMoney(payload.abandoned_cart_summary.recovered_revenue)}, taux sur dues ${formatPercent(payload.abandoned_cart_summary.recovery_rate_on_due_messages)}`,
-    ...payload.abandoned_cart_messages.map(
-      (row) =>
-        `- ${row.message_label}: ${row.due_messages} dues, ${row.sent_inside_period} envoyees periode, ${row.sent_after_period} envoyees apres, delai moyen ${formatNullableHours(row.average_delay_hours)}`,
-    ),
   ]
   return lines.join('\n')
 }
@@ -640,36 +507,18 @@ function segmentAggSql(): string {
   WITH ${segmentCte()},
   segment_traffic AS (
     SELECT
-      vs.segment,
+      COALESCE(ds.segment_at_session_start, 'unknown') AS segment,
       COUNT(*)::int AS sessions,
       COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors
     FROM day_sessions ds
-    JOIN visitor_segments vs ON vs.distinct_id = ds.distinct_id
     GROUP BY 1
-  ),
-  attributed_orders AS (
-    SELECT DISTINCT ON (o.id)
-      o.id AS order_row_id,
-      o.total_price,
-      vs.segment
-    FROM orders o
-    JOIN day_sessions ds
-      ON ds.order_id = o.shopify_order_id
-      OR ds.order_id = o.id::text
-    JOIN visitor_segments vs ON vs.distinct_id = ds.distinct_id
-    WHERE o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
-      AND o.status IN ('paid', 'fulfilled')
-      AND o.placed_at >= $1::timestamptz
-      AND o.placed_at < $2::timestamptz
-    ORDER BY o.id, ds.last_event_at DESC
   ),
   segment_orders AS (
     SELECT
       segment,
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
-    FROM attributed_orders
+    FROM attributed_order_sessions
     GROUP BY 1
   ),
   unattributed AS (
@@ -680,10 +529,9 @@ function segmentAggSql(): string {
       COUNT(*)::int AS orders,
       COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM orders o
-    LEFT JOIN attributed_orders ao ON ao.order_row_id = o.id
+    LEFT JOIN attributed_order_sessions ao ON ao.order_row_id = o.id
     WHERE o.deleted_at IS NULL
       AND o.include_in_ecommerce_analytics = true
-      AND o.status IN ('paid', 'fulfilled')
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND ao.order_row_id IS NULL
@@ -693,6 +541,11 @@ function segmentAggSql(): string {
     SELECT st.segment, st.sessions, st.unique_visitors, COALESCE(so.orders, 0)::int AS orders, COALESCE(so.revenue, 0)::float AS revenue
     FROM segment_traffic st
     LEFT JOIN segment_orders so ON so.segment = st.segment
+    UNION ALL
+    SELECT so.segment, 0::int AS sessions, 0::int AS unique_visitors, so.orders, so.revenue
+    FROM segment_orders so
+    LEFT JOIN segment_traffic st ON st.segment = so.segment
+    WHERE st.segment IS NULL
     UNION ALL
     SELECT segment, sessions, unique_visitors, orders, revenue FROM unattributed
   ) rows
@@ -707,6 +560,10 @@ function sourceAggSql(): string {
     SELECT ds.*, ${SOURCE_CASE} AS source_label
     FROM day_sessions ds
   ),
+  classified_order_sessions AS (
+    SELECT aos.*, ${SOURCE_CASE} AS source_label
+    FROM attributed_order_sessions aos
+  ),
   source_traffic AS (
     SELECT
       source_label,
@@ -720,33 +577,18 @@ function sourceAggSql(): string {
       source_label,
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
-    FROM (
-      SELECT DISTINCT ON (o.id)
-        o.id,
-        o.total_price,
-        cs.source_label
-      FROM orders o
-      JOIN classified_sessions cs
-        ON cs.order_id = o.shopify_order_id
-        OR cs.order_id = o.id::text
-      WHERE o.deleted_at IS NULL
-        AND o.include_in_ecommerce_analytics = true
-        AND o.status IN ('paid', 'fulfilled')
-        AND o.placed_at >= $1::timestamptz
-        AND o.placed_at < $2::timestamptz
-      ORDER BY o.id, cs.last_event_at DESC
-    ) attributed
+    FROM classified_order_sessions
     GROUP BY 1
   )
   SELECT
-    st.source_label,
-    st.sessions,
-    st.unique_visitors,
+    COALESCE(st.source_label, so.source_label) AS source_label,
+    COALESCE(st.sessions, 0)::int AS sessions,
+    COALESCE(st.unique_visitors, 0)::int AS unique_visitors,
     COALESCE(so.orders, 0)::int AS orders,
     COALESCE(so.revenue, 0)::float AS revenue
   FROM source_traffic st
-  LEFT JOIN source_orders so ON so.source_label = st.source_label
-  ORDER BY st.sessions DESC, st.source_label ASC
+  FULL JOIN source_orders so ON so.source_label = st.source_label
+  ORDER BY COALESCE(st.sessions, 0) DESC, COALESCE(st.source_label, so.source_label) ASC
   `
 }
 
@@ -754,13 +596,20 @@ function channelAggSql(): string {
   return `
   WITH ${segmentCte()},
   classified_sessions AS (
-    SELECT ds.*, vs.segment, ${SOURCE_CASE} AS source_label
+    SELECT ds.*, COALESCE(ds.segment_at_session_start, 'unknown') AS segment, ${SOURCE_CASE} AS source_label
     FROM day_sessions ds
-    JOIN visitor_segments vs ON vs.distinct_id = ds.distinct_id
+  ),
+  classified_order_sessions AS (
+    SELECT aos.*, ${SOURCE_CASE} AS source_label
+    FROM attributed_order_sessions aos
   ),
   channel_sessions AS (
     SELECT *, ${OPERATIONAL_CHANNEL_CASE} AS operational_channel
     FROM classified_sessions
+  ),
+  channel_order_sessions AS (
+    SELECT *, ${OPERATIONAL_CHANNEL_CASE} AS operational_channel
+    FROM classified_order_sessions
   ),
   channel_traffic AS (
     SELECT
@@ -777,35 +626,19 @@ function channelAggSql(): string {
       operational_channel,
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
-    FROM (
-      SELECT DISTINCT ON (o.id)
-        o.id,
-        o.total_price,
-        cs.segment,
-        cs.operational_channel
-      FROM orders o
-      JOIN channel_sessions cs
-        ON cs.order_id = o.shopify_order_id
-        OR cs.order_id = o.id::text
-      WHERE o.deleted_at IS NULL
-        AND o.include_in_ecommerce_analytics = true
-        AND o.status IN ('paid', 'fulfilled')
-        AND o.placed_at >= $1::timestamptz
-        AND o.placed_at < $2::timestamptz
-      ORDER BY o.id, cs.last_event_at DESC
-    ) attributed
+    FROM channel_order_sessions
     GROUP BY 1, 2
   ),
   segment_rows AS (
     SELECT
-      ct.segment,
-      ct.operational_channel,
-      ct.sessions,
-      ct.unique_visitors,
+      COALESCE(ct.segment, co.segment) AS segment,
+      COALESCE(ct.operational_channel, co.operational_channel) AS operational_channel,
+      COALESCE(ct.sessions, 0)::int AS sessions,
+      COALESCE(ct.unique_visitors, 0)::int AS unique_visitors,
       COALESCE(co.orders, 0)::int AS orders,
       COALESCE(co.revenue, 0)::float AS revenue
     FROM channel_traffic ct
-    LEFT JOIN channel_orders co
+    FULL JOIN channel_orders co
       ON co.segment = ct.segment
       AND co.operational_channel = ct.operational_channel
   ),
@@ -833,180 +666,35 @@ function channelAggSql(): string {
   `
 }
 
-function cartActivityAggSql(): string {
+function cartSummarySql(): string {
   return `
-  WITH ${segmentCte()},
-  segment_rows AS (
+  WITH carts_created AS (
     SELECT
-      vs.segment,
-      COUNT(*)::int AS sessions,
-      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors,
-      COUNT(*) FILTER (WHERE ds.carts_created_in_session > 0 OR ds.carts_updated_in_session > 0)::int AS cart_activity_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_created_in_session > 0 OR ds.carts_updated_in_session > 0)::int AS cart_activity_visitors,
-      COUNT(*) FILTER (WHERE ds.carts_created_in_session > 0)::int AS cart_create_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_created_in_session > 0)::int AS cart_create_visitors,
-      COALESCE(SUM(ds.carts_created_in_session), 0)::int AS cart_create_events,
-      COUNT(*) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS cart_update_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS cart_update_visitors,
-      COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS cart_update_events,
-      COUNT(*) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_sessions,
-      COALESCE(SUM(ds.carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE ds.cart_converted = true)::int AS converted_sessions
-    FROM day_sessions ds
-    JOIN visitor_segments vs ON vs.distinct_id = ds.distinct_id
-    GROUP BY 1
-  ),
-  total_row AS (
-    SELECT
-      'total'::text AS segment,
-      COUNT(*)::int AS sessions,
-      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors,
-      COUNT(*) FILTER (WHERE ds.carts_created_in_session > 0 OR ds.carts_updated_in_session > 0)::int AS cart_activity_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_created_in_session > 0 OR ds.carts_updated_in_session > 0)::int AS cart_activity_visitors,
-      COUNT(*) FILTER (WHERE ds.carts_created_in_session > 0)::int AS cart_create_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_created_in_session > 0)::int AS cart_create_visitors,
-      COALESCE(SUM(ds.carts_created_in_session), 0)::int AS cart_create_events,
-      COUNT(*) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS cart_update_sessions,
-      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS cart_update_visitors,
-      COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS cart_update_events,
-      COUNT(*) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_sessions,
-      COALESCE(SUM(ds.carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE ds.cart_converted = true)::int AS converted_sessions
-    FROM day_sessions ds
-  )
-  SELECT *
-  FROM (
-    SELECT * FROM segment_rows
-    UNION ALL
-    SELECT * FROM total_row
-  ) rows
-  ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 ELSE 4 END
-  `
-}
-
-function cartBirthAggSql(): string {
-  return `
-  WITH ${segmentCte()},
-  cart_births AS (
-    SELECT c.*
-    FROM carts c
-    WHERE c.deleted_at IS NULL
-      AND c.cart_birth_at >= $1::timestamptz
-      AND c.cart_birth_at < $2::timestamptz
-  ),
-  segment_rows AS (
-    SELECT
-      COALESCE(vs.segment, 'unattributed') AS segment,
-      COUNT(*)::int AS carts_born,
-      COUNT(*) FILTER (WHERE cb.email IS NOT NULL)::int AS carts_born_with_email,
-      COUNT(*) FILTER (WHERE cb.status = 'completed' OR cb.highest_stage = 'completed')::int AS carts_completed,
-      COALESCE(SUM(cb.total_price) FILTER (WHERE cb.status = 'completed' OR cb.highest_stage = 'completed'), 0)::float AS completed_cart_value,
-      COUNT(DISTINCT cb.distinct_id)::int AS cart_visitors
-    FROM cart_births cb
-    LEFT JOIN visitor_segments vs ON vs.distinct_id = cb.distinct_id
-    GROUP BY 1
-  ),
-  total_row AS (
-    SELECT
-      'total'::text AS segment,
-      COUNT(*)::int AS carts_born,
-      COUNT(*) FILTER (WHERE cb.email IS NOT NULL)::int AS carts_born_with_email,
-      COUNT(*) FILTER (WHERE cb.status = 'completed' OR cb.highest_stage = 'completed')::int AS carts_completed,
-      COALESCE(SUM(cb.total_price) FILTER (WHERE cb.status = 'completed' OR cb.highest_stage = 'completed'), 0)::float AS completed_cart_value,
-      COUNT(DISTINCT cb.distinct_id)::int AS cart_visitors
-    FROM cart_births cb
-  )
-  SELECT *
-  FROM (
-    SELECT * FROM segment_rows
-    UNION ALL
-    SELECT * FROM total_row
-  ) rows
-  ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 WHEN 'unattributed' THEN 4 ELSE 5 END
-  `
-}
-
-function abandonedCartMessageAggSql(): string {
-  return `
-  SELECT
-    message_type,
-    sequence_version,
-    COUNT(*)::int AS due_messages,
-    COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= $1::timestamptz AND sent_at < $2::timestamptz)::int AS sent_inside_period,
-    COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= $2::timestamptz)::int AS sent_after_period,
-    COUNT(*) FILTER (WHERE status = 'skipped')::int AS skipped,
-    COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
-    ROUND(AVG(EXTRACT(EPOCH FROM (sent_at - scheduled_for)) / 3600) FILTER (WHERE sent_at IS NOT NULL)::numeric, 2)::float AS average_delay_hours
-  FROM abandoned_cart_messages
-  WHERE deleted_at IS NULL
-    AND scheduled_for >= $1::timestamptz
-    AND scheduled_for < $2::timestamptz
-  GROUP BY 1, 2
-  ORDER BY sequence_version, message_type
-  `
-}
-
-function abandonedCartRecoveryAggSql(): string {
-  return `
-  SELECT
-    m.message_type,
-    m.sequence_version,
-    COUNT(DISTINCT acc.id)::int AS recovered_cases,
-    COUNT(DISTINCT acc.recovered_order_id)::int AS recovered_orders,
-    COALESCE(SUM(acc.recovered_amount), 0)::float AS recovered_revenue,
-    COUNT(DISTINCT acc.id) FILTER (WHERE m.sent_at < $1::timestamptz)::int AS recovered_from_email_sent_before_day,
-    COUNT(DISTINCT acc.id) FILTER (WHERE m.sent_at >= $1::timestamptz AND m.sent_at < $2::timestamptz)::int AS recovered_from_email_sent_same_day
-  FROM abandoned_cart_cases acc
-  JOIN abandoned_cart_messages m ON m.id = acc.recovered_source_message_id
-  WHERE acc.deleted_at IS NULL
-    AND acc.status = 'recovered'
-    AND acc.recovered_at >= $1::timestamptz
-    AND acc.recovered_at < $2::timestamptz
-  GROUP BY 1, 2
-  ORDER BY sequence_version, message_type
-  `
-}
-
-function abandonedCartSummarySql(): string {
-  return `
-  WITH due AS (
-    SELECT
-      COUNT(*)::int AS due_messages,
-      COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= $1::timestamptz AND sent_at < $2::timestamptz)::int AS sent_inside_period,
-      COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= $2::timestamptz)::int AS sent_after_period
-    FROM abandoned_cart_messages
+      COUNT(*)::int AS carts_created,
+      COUNT(*) FILTER (WHERE highest_stage = 'completed')::int AS carts_created_converted
+    FROM carts
     WHERE deleted_at IS NULL
-      AND scheduled_for >= $1::timestamptz
-      AND scheduled_for < $2::timestamptz
+      AND (
+        (cart_birth_at >= $1::timestamptz AND cart_birth_at < $2::timestamptz)
+        OR (cart_birth_at IS NULL AND created_at >= $1::timestamptz AND created_at < $2::timestamptz)
+      )
   ),
-  recovered AS (
+  carts_updated AS (
     SELECT
-      COUNT(DISTINCT acc.id)::int AS recovered_cases,
-      COUNT(DISTINCT acc.recovered_order_id)::int AS recovered_orders,
-      COALESCE(SUM(acc.recovered_amount), 0)::float AS recovered_revenue
-    FROM abandoned_cart_cases acc
-    WHERE acc.deleted_at IS NULL
-      AND acc.status = 'recovered'
-      AND acc.recovered_at >= $1::timestamptz
-      AND acc.recovered_at < $2::timestamptz
-  ),
-  click_sessions AS (
-    SELECT COUNT(*)::int AS abandoned_email_click_sessions
+      COALESCE(SUM(carts_updated_in_session), 0)::int AS carts_updated,
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND cart_converted = true)::int AS carts_updated_converted
     FROM visitor_sessions
     WHERE deleted_at IS NULL
       AND started_at >= $1::timestamptz
       AND started_at < $2::timestamptz
-      AND (
-        COALESCE(first_url, '') ILIKE '%palas_email_type=abandoned_cart%'
-        OR COALESCE(first_url, '') ILIKE '%cart_link_id=%'
-        OR COALESCE(utm_source, '') ILIKE 'palas_crm'
-        OR COALESCE(utm_campaign, '') ILIKE '%abandoned%cart%'
-      )
   )
-  SELECT *
-  FROM due
-  CROSS JOIN recovered
-  CROSS JOIN click_sessions
+  SELECT
+    cc.carts_created,
+    cc.carts_created_converted,
+    cu.carts_updated,
+    cu.carts_updated_converted
+  FROM carts_created cc
+  CROSS JOIN carts_updated cu
   `
 }
 
@@ -1019,71 +707,50 @@ function segmentCte(): string {
       AND started_at >= $1::timestamptz
       AND started_at < $2::timestamptz
   ),
-  day_visitors AS (
-    SELECT DISTINCT distinct_id
-    FROM day_sessions
-  ),
-  prior_emails AS (
-    SELECT dv.distinct_id, LOWER(NULLIF(vs.email_at_session_start, '')) AS email
-    FROM day_visitors dv
-    JOIN visitor_sessions vs ON vs.distinct_id = dv.distinct_id
-    WHERE vs.deleted_at IS NULL AND vs.started_at < $1::timestamptz AND vs.email_at_session_start IS NOT NULL
-    UNION ALL
-    SELECT dv.distinct_id, LOWER(NULLIF(vs.email_at_session_end, '')) AS email
-    FROM day_visitors dv
-    JOIN visitor_sessions vs ON vs.distinct_id = dv.distinct_id
-    WHERE vs.deleted_at IS NULL AND vs.started_at < $1::timestamptz AND vs.email_at_session_end IS NOT NULL
-    UNION ALL
-    SELECT dv.distinct_id, LOWER(NULLIF(c.email, '')) AS email
-    FROM day_visitors dv
-    JOIN carts c ON c.distinct_id = dv.distinct_id
-    WHERE c.deleted_at IS NULL
-      AND c.last_action_at < $1::timestamptz
-      AND c.email IS NOT NULL
-    UNION ALL
-    SELECT dv.distinct_id, LOWER(NULLIF(c.email, '')) AS email
-    FROM day_visitors dv
-    JOIN contacts c ON c.distinct_id = dv.distinct_id
-    WHERE c.deleted_at IS NULL
-      AND c.created_at < $1::timestamptz
-      AND c.email IS NOT NULL
-  ),
-  visitor_identity AS (
-    SELECT distinct_id, MIN(email) AS email
-    FROM prior_emails
-    WHERE email IS NOT NULL AND email LIKE '%@%'
-    GROUP BY 1
-  ),
-  visitor_segments AS (
-    SELECT
-      dv.distinct_id,
-      CASE
-        WHEN vi.email IS NULL THEN 'unknown'
-        WHEN EXISTS (
-          SELECT 1
-          FROM orders o
-          WHERE o.deleted_at IS NULL
-            AND o.status IN ('paid', 'fulfilled')
-            AND o.placed_at < $1::timestamptz
-            AND (
-              LOWER(o.email) = vi.email
-              OR EXISTS (
-                SELECT 1
-                FROM order_contact oc
-                JOIN contacts c
-                  ON c.deleted_at IS NULL
-                  AND c.id::text = oc.contact_id
-                WHERE oc.deleted_at IS NULL
-                  AND oc.order_id = o.id::text
-                  AND LOWER(c.email) = vi.email
-              )
-            )
-        ) THEN 'returning_customer'
-        ELSE 'known_no_purchase'
-      END AS segment
-    FROM day_visitors dv
-    LEFT JOIN visitor_identity vi ON vi.distinct_id = dv.distinct_id
+  attributed_order_sessions AS (
+    SELECT DISTINCT ON (o.id)
+      o.id AS order_row_id,
+      o.shopify_order_id,
+      o.total_price,
+      vs.id AS session_row_id,
+      vs.distinct_id,
+      COALESCE(vs.segment_at_session_start, 'unknown') AS segment,
+      vs.started_at,
+      vs.last_event_at,
+      vs.first_url,
+      vs.utm_source,
+      vs.utm_medium,
+      vs.utm_campaign,
+      vs.referring_domain,
+      vs.is_paid_session
+    FROM orders o
+    JOIN visitor_sessions vs
+      ON vs.deleted_at IS NULL
+      AND (
+        vs.order_id = o.shopify_order_id
+        OR vs.order_id = o.id::text
+      )
+    WHERE o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+    ORDER BY o.id, vs.last_event_at DESC
   )`
+}
+
+function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSummary {
+  const cartsCreated = toNumber(row?.carts_created)
+  const cartsCreatedConverted = toNumber(row?.carts_created_converted)
+  const cartsUpdated = toNumber(row?.carts_updated)
+  const cartsUpdatedConverted = toNumber(row?.carts_updated_converted)
+  return {
+    carts_created: cartsCreated,
+    carts_created_converted: cartsCreatedConverted,
+    carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreated),
+    carts_updated: cartsUpdated,
+    carts_updated_converted: cartsUpdatedConverted,
+    carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdated),
+  }
 }
 
 function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyReportSegmentRow[] {
@@ -1115,133 +782,40 @@ function toSegmentRow(segment: SegmentKey, metric: MetricRow): DailyReportSegmen
   }
 }
 
-function toAbandonedCartSummary(row: AbandonedCartSummaryRow | undefined): DailyReportAbandonedCartSummary {
-  const dueMessages = toNumber(row?.due_messages)
-  const sentInsidePeriod = toNumber(row?.sent_inside_period)
-  const recoveredCases = toNumber(row?.recovered_cases)
-  return {
-    due_messages: dueMessages,
-    sent_inside_period: sentInsidePeriod,
-    sent_after_period: toNumber(row?.sent_after_period),
-    recovered_cases: recoveredCases,
-    recovered_orders: toNumber(row?.recovered_orders),
-    recovered_revenue: roundMoney(toNumber(row?.recovered_revenue)),
-    abandoned_email_click_sessions: toNumber(row?.abandoned_email_click_sessions),
-    recovery_rate_on_due_messages: ratio(recoveredCases, dueMessages),
-    recovery_rate_on_sent_messages: ratio(recoveredCases, sentInsidePeriod),
-  }
+function renderKpiSummaryTable(payload: DailyReportPayload): string {
+  const rows = [
+    [
+      ['Sessions', formatInteger(payload.summary.sessions)],
+      ['Visiteurs', formatInteger(payload.summary.unique_visitors)],
+      ['Commandes', formatInteger(payload.summary.orders)],
+      ['CA', formatMoney(payload.summary.revenue)],
+    ],
+    [
+      ['Panier moyen', formatNullableMoney(payload.summary.average_order_value)],
+      ['Conv. visiteurs', formatPercent(payload.summary.visitor_conversion_rate)],
+      ['Pays vendus', formatInteger(payload.summary.sold_countries_count)],
+      ['Cmd sans session', `${payload.summary.unattributed_orders} cmd`],
+    ],
+  ]
+
+  return `<table class="kpi-table" role="presentation" cellpadding="0" cellspacing="0">
+    <tbody>
+      ${rows
+        .map(
+          (row) => `<tr class="kpi-row">
+            ${row.map(([label, value]) => kpiCell(label, value)).join('')}
+          </tr>`,
+        )
+        .join('')}
+    </tbody>
+  </table>`
 }
 
-function abandonedCartMessageLabel(messageType: string): string {
-  return ABANDONED_CART_MESSAGE_LABELS[messageType] ?? messageType
-}
-
-function dailyReportQualityIssues(payload: DailyReportPayload): string[] {
-  const issues: string[] = []
-  const businessSegments = new Set(['unknown', 'known_no_purchase', 'returning_customer', 'total'])
-
-  for (const row of payload.channel_segments) {
-    if (!businessSegments.has(row.segment))
-      issues.push(`channel_segments contains non-business segment: ${row.segment}`)
-  }
-  for (const row of payload.cart_activity_segments) {
-    if (!businessSegments.has(row.segment))
-      issues.push(`cart_activity_segments contains non-business segment: ${row.segment}`)
-  }
-  for (const row of payload.cart_birth_segments) {
-    if (!businessSegments.has(row.segment))
-      issues.push(`cart_birth_segments contains non-business segment: ${row.segment}`)
-  }
-
-  const attributedOrders = payload.summary.orders - payload.summary.unattributed_orders
-  const attributedRevenue = roundMoney(payload.summary.revenue - payload.summary.unattributed_revenue)
-  const sourceOrders = payload.sources.reduce((total, row) => total + row.orders, 0)
-  const sourceRevenue = roundMoney(payload.sources.reduce((total, row) => total + row.revenue, 0))
-  if (sourceOrders !== attributedOrders) {
-    issues.push(`source attributed order total mismatch: sources=${sourceOrders} attributed=${attributedOrders}`)
-  }
-  if (!sameMoney(sourceRevenue, attributedRevenue)) {
-    issues.push(`source attributed revenue total mismatch: sources=${sourceRevenue} attributed=${attributedRevenue}`)
-  }
-
-  const channelTotalOrders = payload.channel_segments
-    .filter((row) => row.segment === 'total')
-    .reduce((total, row) => total + row.orders, 0)
-  const channelTotalRevenue = roundMoney(
-    payload.channel_segments.filter((row) => row.segment === 'total').reduce((total, row) => total + row.revenue, 0),
-  )
-  if (channelTotalOrders !== attributedOrders) {
-    issues.push(
-      `channel attributed order total mismatch: channels=${channelTotalOrders} attributed=${attributedOrders}`,
-    )
-  }
-  if (!sameMoney(channelTotalRevenue, attributedRevenue)) {
-    issues.push(
-      `channel attributed revenue total mismatch: channels=${channelTotalRevenue} attributed=${attributedRevenue}`,
-    )
-  }
-
-  const segmentOrders = payload.segments
-    .filter((row) => row.segment !== 'total')
-    .reduce((total, row) => total + row.orders, 0)
-  const segmentRevenue = roundMoney(
-    payload.segments.filter((row) => row.segment !== 'total').reduce((total, row) => total + row.revenue, 0),
-  )
-  if (segmentOrders !== payload.summary.orders) {
-    issues.push(`segment order total mismatch: segments=${segmentOrders} summary=${payload.summary.orders}`)
-  }
-  if (!sameMoney(segmentRevenue, payload.summary.revenue)) {
-    issues.push(`segment revenue total mismatch: segments=${segmentRevenue} summary=${payload.summary.revenue}`)
-  }
-
-  const cartBirthTotal = payload.cart_birth_segments.find((row) => row.segment === 'total')
-  if (cartBirthTotal) {
-    const visibleCartBirths = payload.cart_birth_segments
-      .filter((row) => row.segment !== 'total')
-      .reduce((total, row) => total + row.carts_born, 0)
-    const visibleCompletedCartBirths = payload.cart_birth_segments
-      .filter((row) => row.segment !== 'total')
-      .reduce((total, row) => total + row.carts_completed, 0)
-    const visibleCompletedCartValue = roundMoney(
-      payload.cart_birth_segments
-        .filter((row) => row.segment !== 'total')
-        .reduce((total, row) => total + row.completed_cart_value, 0),
-    )
-
-    if (visibleCartBirths + payload.summary.cart_births_without_session !== cartBirthTotal.carts_born) {
-      issues.push(
-        `cart birth total mismatch: segments=${visibleCartBirths} without_session=${payload.summary.cart_births_without_session} total=${cartBirthTotal.carts_born}`,
-      )
-    }
-    if (
-      visibleCompletedCartBirths + payload.summary.completed_cart_births_without_session !==
-      cartBirthTotal.carts_completed
-    ) {
-      issues.push(
-        `completed cart birth total mismatch: segments=${visibleCompletedCartBirths} without_session=${payload.summary.completed_cart_births_without_session} total=${cartBirthTotal.carts_completed}`,
-      )
-    }
-    if (
-      !sameMoney(
-        visibleCompletedCartValue + payload.summary.completed_cart_value_without_session,
-        cartBirthTotal.completed_cart_value,
-      )
-    ) {
-      issues.push(
-        `completed cart birth value mismatch: segments=${visibleCompletedCartValue} without_session=${payload.summary.completed_cart_value_without_session} total=${cartBirthTotal.completed_cart_value}`,
-      )
-    }
-  }
-
-  return issues
-}
-
-function sameMoney(left: number, right: number): boolean {
-  return Math.abs(roundMoney(left) - roundMoney(right)) < 0.01
-}
-
-function kpi(label: string, value: string): string {
-  return `<div class="kpi"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`
+function kpiCell(label: string, value: string): string {
+  return `<td class="kpi-cell">
+    <div class="kpi-label">${escapeHtml(label)}</div>
+    <div class="kpi-value">${escapeHtml(value)}</div>
+  </td>`
 }
 
 function renderSegmentTable(payload: DailyReportPayload): string {
@@ -1258,6 +832,28 @@ function renderSegmentTable(payload: DailyReportPayload): string {
         formatMoney(row.revenue),
         formatPercent(row.visitor_conversion_rate),
       ]),
+  )
+}
+
+function renderCartSummaryTable(payload: DailyReportPayload): string {
+  const c = payload.cart_summary
+  return table(
+    'Paniers',
+    ['Signal', 'Total', 'Convertis', 'Taux'],
+    [
+      [
+        'Paniers crees',
+        formatInteger(c.carts_created),
+        formatInteger(c.carts_created_converted),
+        formatPercent(c.carts_created_conversion_rate),
+      ],
+      [
+        'Modifications de panier',
+        formatInteger(c.carts_updated),
+        formatInteger(c.carts_updated_converted),
+        formatPercent(c.carts_updated_conversion_rate),
+      ],
+    ],
   )
 }
 
@@ -1299,56 +895,6 @@ function renderChannelTable(payload: DailyReportPayload): string {
   )
 }
 
-function renderCartActivityTable(payload: DailyReportPayload): string {
-  return table(
-    'Activite panier par segment',
-    ['Segment', 'Visiteurs actifs', 'Sessions actives', 'Creations', 'Updates', 'Vues', 'Conv. sessions'],
-    payload.cart_activity_segments.map((row) => [
-      row.segment_label,
-      formatInteger(row.cart_activity_visitors),
-      formatInteger(row.cart_activity_sessions),
-      formatInteger(row.cart_create_events),
-      formatInteger(row.cart_update_events),
-      formatInteger(row.cart_view_events),
-      formatInteger(row.converted_sessions),
-    ]),
-  )
-}
-
-function renderCartBirthTable(payload: DailyReportPayload): string {
-  return table(
-    'Paniers nes',
-    ['Segment', 'Paniers', 'Avec email', 'Completes', 'Valeur completee'],
-    payload.cart_birth_segments
-      .filter((row) => row.segment !== 'unattributed')
-      .map((row) => [
-        row.segment_label,
-        formatInteger(row.carts_born),
-        formatInteger(row.carts_born_with_email),
-        formatInteger(row.carts_completed),
-        formatMoney(row.completed_cart_value),
-      ]),
-  )
-}
-
-function renderAbandonedCartTable(payload: DailyReportPayload): string {
-  const summary = payload.abandoned_cart_summary
-  const note = `<p class="note muted">Recovery panier CRM : ${formatInteger(summary.recovered_cases)} cas, ${formatMoney(summary.recovered_revenue)} ; taux sur relances dues ${formatPercent(summary.recovery_rate_on_due_messages)} ; clics relance ${formatInteger(summary.abandoned_email_click_sessions)}. Les envois apres periode indiquent un retard par rapport a l'heure planifiee.</p>`
-  return `${table(
-    'Relances panier CRM',
-    ['Email', 'Dues', 'Envoyees periode', 'Envoyees apres', 'Skips', 'Fails', 'Delai moy.'],
-    payload.abandoned_cart_messages.map((row) => [
-      row.message_label,
-      formatInteger(row.due_messages),
-      formatInteger(row.sent_inside_period),
-      formatInteger(row.sent_after_period),
-      formatInteger(row.skipped),
-      formatInteger(row.failed),
-      formatNullableHours(row.average_delay_hours),
-    ]),
-  )}${note}`
-}
-
 function table(title: string, headers: string[], rows: string[][]): string {
   return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows
     .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
@@ -1374,12 +920,6 @@ function toNumber(value: unknown): number {
   return 0
 }
 
-function nullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null
-  const n = toNumber(value)
-  return Number.isFinite(n) ? n : null
-}
-
 function formatInteger(value: number): string {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(value)
 }
@@ -1400,11 +940,6 @@ function formatPercent(value: number | null): string {
       )
 }
 
-function formatNullableHours(value: number | null): string {
-  if (value === null) return '-'
-  return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(value)} h`
-}
-
 function formatLongDay(day: string): string {
   const [year, month, date] = day.split('-').map(Number)
   return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeZone: DAILY_REPORT_TIMEZONE }).format(
@@ -1422,6 +957,14 @@ function formatDateTime(iso: string): string {
 
 function formatTimeRange(payload: DailyReportPayload): string {
   return `${formatDateTime(payload.period.start_utc)} -> ${formatDateTime(payload.period.end_utc)}`
+}
+
+function isSessionSourceStale(payload: DailyReportPayload): boolean {
+  if (!payload.summary.source_max_last_event_at) return true
+  const maxEventAt = new Date(payload.summary.source_max_last_event_at).getTime()
+  const periodEnd = new Date(payload.period.end_utc).getTime()
+  if (!Number.isFinite(maxEventAt) || !Number.isFinite(periodEnd)) return true
+  return periodEnd - maxEventAt > 2 * 60 * 60 * 1000
 }
 
 function escapeHtml(value: string): string {
@@ -1527,66 +1070,16 @@ interface ChannelAggRow {
   revenue: number | string
 }
 
+interface CartSummaryRow {
+  carts_created: number | string
+  carts_created_converted: number | string
+  carts_updated: number | string
+  carts_updated_converted: number | string
+}
+
 interface CountryRow {
   country_code: string
   country_name: string
   orders: number | string
   revenue: number | string
-}
-
-interface CartActivityAggRow {
-  segment: string
-  sessions: number | string
-  unique_visitors: number | string
-  cart_activity_sessions: number | string
-  cart_activity_visitors: number | string
-  cart_create_sessions: number | string
-  cart_create_visitors: number | string
-  cart_create_events: number | string
-  cart_update_sessions: number | string
-  cart_update_visitors: number | string
-  cart_update_events: number | string
-  cart_view_sessions: number | string
-  cart_view_events: number | string
-  converted_sessions: number | string
-}
-
-interface CartBirthAggRow {
-  segment: string
-  carts_born: number | string
-  carts_born_with_email: number | string
-  carts_completed: number | string
-  completed_cart_value: number | string
-  cart_visitors: number | string
-}
-
-interface AbandonedCartMessageAggRow {
-  message_type: string
-  sequence_version: number | string
-  due_messages: number | string
-  sent_inside_period: number | string
-  sent_after_period: number | string
-  skipped: number | string
-  failed: number | string
-  average_delay_hours: number | string | null
-}
-
-interface AbandonedCartRecoveryAggRow {
-  message_type: string
-  sequence_version: number | string
-  recovered_cases: number | string
-  recovered_orders: number | string
-  recovered_revenue: number | string
-  recovered_from_email_sent_before_day: number | string
-  recovered_from_email_sent_same_day: number | string
-}
-
-interface AbandonedCartSummaryRow {
-  due_messages: number | string
-  sent_inside_period: number | string
-  sent_after_period: number | string
-  recovered_cases: number | string
-  recovered_orders: number | string
-  recovered_revenue: number | string
-  abandoned_email_click_sessions: number | string
 }
