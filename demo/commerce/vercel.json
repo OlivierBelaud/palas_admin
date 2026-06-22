@@ -43,10 +43,6 @@
   ],
   "crons": [
     {
-      "path": "/api/crons/backfill-cart-abandoned-may-8",
-      "schedule": "* 4-7 * * *"
-    },
-    {
       "path": "/api/crons/detect-abandoned-carts",
       "schedule": "0 * * * *"
     },
@@ -97,10 +93,6 @@
     {
       "path": "/api/crons/sync-visitor-sessions",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/crons/test-abandoned-cart-random",
-      "schedule": "* * * * *"
     }
   ]
 }
