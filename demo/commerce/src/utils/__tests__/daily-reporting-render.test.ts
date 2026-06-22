@@ -43,6 +43,44 @@ const payload: DailyReportPayload = {
     carts_updated_converted: 1,
     carts_updated_conversion_rate: 1 / 12,
   },
+  abandoned_cart_emails: [
+    {
+      message_type: 'abandoned_cart_1',
+      label: 'Email 1',
+      sent: 10,
+      opens: null,
+      open_rate: null,
+      clicks: 3,
+      click_rate: 0.3,
+      conversions: 1,
+      conversion_rate: 0.1,
+      revenue: 55,
+    },
+    {
+      message_type: 'abandoned_cart_2',
+      label: 'Email 2',
+      sent: 4,
+      opens: null,
+      open_rate: null,
+      clicks: 1,
+      click_rate: 0.25,
+      conversions: 0,
+      conversion_rate: 0,
+      revenue: 0,
+    },
+    {
+      message_type: 'abandoned_cart_3',
+      label: 'Email 3',
+      sent: 1,
+      opens: null,
+      open_rate: null,
+      clicks: 0,
+      click_rate: 0,
+      conversions: 0,
+      conversion_rate: 0,
+      revenue: 0,
+    },
+  ],
   sources: [],
   channel_segments: [],
 }
@@ -63,6 +101,13 @@ describe('daily reporting render', () => {
     expect(html).toContain('commandes sans session exploitable')
     expect(html).toContain('Paniers')
     expect(html).toContain('Paniers crees')
+    expect(html).toContain('Relances panier CRM')
+    expect(html).toContain('Email 1')
+    expect(html).toContain('Taux ouv.')
+    expect(html).toContain('Definitions rapides')
+    expect(html).toContain('Sources de trafic')
+    expect(html).toContain('Canaux operationnels par segment')
+    expect(html).toContain('Commandes sans session')
   })
 
   it('omits the false unattributed segment from the text report too', () => {
@@ -76,6 +121,9 @@ describe('daily reporting render', () => {
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
     expect(text).toContain('Paniers crees: 4')
+    expect(text).toContain('Relances panier CRM:')
+    expect(text).toContain('Email 1: 10 envoyes')
+    expect(text).toContain('Definitions rapides:')
   })
 
   it('marks the snapshot partial when visitor sessions are stale', () => {

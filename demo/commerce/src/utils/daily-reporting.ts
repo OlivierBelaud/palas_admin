@@ -51,6 +51,19 @@ export interface DailyReportCartSummary {
   carts_updated_conversion_rate: number | null
 }
 
+export interface DailyReportAbandonedCartEmailRow {
+  message_type: 'abandoned_cart_1' | 'abandoned_cart_2' | 'abandoned_cart_3'
+  label: string
+  sent: number
+  opens: number | null
+  open_rate: number | null
+  clicks: number
+  click_rate: number | null
+  conversions: number
+  conversion_rate: number | null
+  revenue: number
+}
+
 export interface DailyReportPayload {
   day: string
   timezone: string
@@ -75,6 +88,7 @@ export interface DailyReportPayload {
   segments: DailyReportSegmentRow[]
   countries: DailyReportCountryRow[]
   cart_summary: DailyReportCartSummary
+  abandoned_cart_emails: DailyReportAbandonedCartEmailRow[]
   sources: DailyReportSourceRow[]
   channel_segments: DailyReportChannelSegmentRow[]
 }
@@ -244,6 +258,10 @@ export async function buildDailyReportPayload(
   const rawSourceRows = await sql.unsafe<SourceAggRow[]>(sourceAggSql(), [startIso, endIso])
   const rawChannelRows = await sql.unsafe<ChannelAggRow[]>(channelAggSql(), [startIso, endIso])
   const [cartSummaryRow] = await sql.unsafe<CartSummaryRow[]>(cartSummarySql(), [startIso, endIso])
+  const abandonedCartEmailRows = await sql.unsafe<AbandonedCartEmailAggRow[]>(abandonedCartEmailSql(), [
+    startIso,
+    endIso,
+  ])
   const countryRows = await sql.unsafe<CountryRow[]>(
     `
     SELECT
@@ -298,6 +316,7 @@ export async function buildDailyReportPayload(
       revenue: roundMoney(toNumber(row.revenue)),
     })),
     cart_summary: cartSummary,
+    abandoned_cart_emails: buildAbandonedCartEmailRows(abandonedCartEmailRows),
     sources: rawSourceRows.map((row) => ({
       source: row.source_label,
       sessions: toNumber(row.sessions),
@@ -453,10 +472,12 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
       <div class="content">
         ${renderKpiSummaryTable(payload)}
         ${renderCartSummaryTable(payload)}
+        ${renderAbandonedCartEmailTable(payload)}
         ${renderSegmentTable(payload)}
         ${renderCountryTable(payload)}
         ${renderSourceTable(payload)}
         ${renderChannelTable(payload)}
+        ${renderDefinitionNotes()}
         <p class="note muted">Controle qualite : source sessions max ${payload.summary.source_max_last_event_at ? formatDateTime(payload.summary.source_max_last_event_at) : 'non disponible'} ; commandes sans session exploitable ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)}).</p>
       </div>
     </div>
@@ -482,6 +503,12 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} dont ${formatInteger(payload.cart_summary.carts_created_converted)} convertis (${formatPercent(payload.cart_summary.carts_created_conversion_rate)})`,
     `- Modifications de panier: ${formatInteger(payload.cart_summary.carts_updated)} ; sessions modifiees converties ${formatInteger(payload.cart_summary.carts_updated_converted)} (${formatPercent(payload.cart_summary.carts_updated_conversion_rate)})`,
     '',
+    'Relances panier CRM:',
+    ...payload.abandoned_cart_emails.map(
+      (row) =>
+        `- ${row.label}: ${formatInteger(row.sent)} envoyes, ouvertures ${formatIntegerOrDash(row.opens)} (${formatPercent(row.open_rate)}), clics ${formatInteger(row.clicks)} (${formatPercent(row.click_rate)}), conversions ${formatInteger(row.conversions)} (${formatPercent(row.conversion_rate)}), CA ${formatMoney(row.revenue)}`,
+    ),
+    '',
     'Segments:',
     ...payload.segments
       .filter((row) => row.segment !== 'unattributed')
@@ -498,6 +525,11 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
       (row) =>
         `- ${row.source}: ${row.sessions} sessions (${formatPercent(row.session_share)}), ${row.unique_visitors} visiteurs, ${row.orders} commandes, ${formatMoney(row.revenue)}`,
     ),
+    '',
+    'Definitions rapides:',
+    '- Sources de trafic: detail par source detectee au niveau session.',
+    '- Canaux operationnels par segment: regroupement actionnable des sources, croise avec inconnus / prospects / clients.',
+    '- Commandes sans session: commandes Shopify sans session visiteur rattachee en base.',
   ]
   return lines.join('\n')
 }
@@ -698,6 +730,72 @@ function cartSummarySql(): string {
   `
 }
 
+function abandonedCartEmailSql(): string {
+  return `
+  WITH typed(message_type, label, sort_order) AS (
+    VALUES
+      ('abandoned_cart_1', 'Email 1', 1),
+      ('abandoned_cart_2', 'Email 2', 2),
+      ('abandoned_cart_3', 'Email 3', 3)
+  ),
+  sent_messages AS (
+    SELECT *
+    FROM abandoned_cart_messages
+    WHERE deleted_at IS NULL
+      AND status = 'sent'
+      AND message_type IN ('abandoned_cart_1', 'abandoned_cart_2', 'abandoned_cart_3')
+      AND sent_at >= $1::timestamptz
+      AND sent_at < $2::timestamptz
+  ),
+  click_sessions AS (
+    SELECT
+      CASE
+        WHEN first_url ILIKE '%utm_content=abandoned_cart_1%' THEN 'abandoned_cart_1'
+        WHEN first_url ILIKE '%utm_content=abandoned_cart_2%' THEN 'abandoned_cart_2'
+        WHEN first_url ILIKE '%utm_content=abandoned_cart_3%' THEN 'abandoned_cart_3'
+        ELSE NULL
+      END AS message_type,
+      COUNT(*)::int AS clicks
+    FROM visitor_sessions
+    WHERE deleted_at IS NULL
+      AND started_at >= $1::timestamptz
+      AND started_at < $2::timestamptz
+      AND first_url ILIKE '%palas_email_type=abandoned_cart%'
+      AND (
+        first_url ILIKE '%utm_content=abandoned_cart_1%'
+        OR first_url ILIKE '%utm_content=abandoned_cart_2%'
+        OR first_url ILIKE '%utm_content=abandoned_cart_3%'
+      )
+    GROUP BY 1
+  ),
+  recoveries AS (
+    SELECT
+      m.message_type,
+      COUNT(c.id)::int AS conversions,
+      COALESCE(SUM(c.recovered_amount), 0)::float AS revenue
+    FROM sent_messages m
+    JOIN abandoned_cart_cases c
+      ON c.deleted_at IS NULL
+      AND c.recovered_source_message_id = m.id
+    GROUP BY m.message_type
+  )
+  SELECT
+    t.message_type,
+    t.label,
+    COUNT(m.id)::int AS sent,
+    NULL::int AS opens,
+    COALESCE(cs.clicks, 0)::int AS clicks,
+    COALESCE(r.conversions, 0)::int AS conversions,
+    COALESCE(r.revenue, 0)::float AS revenue
+  FROM typed t
+  LEFT JOIN sent_messages m ON m.message_type = t.message_type
+  LEFT JOIN click_sessions cs ON cs.message_type = t.message_type
+  LEFT JOIN recoveries r ON r.message_type = t.message_type
+  GROUP BY t.message_type, t.label, t.sort_order, cs.clicks, r.conversions, r.revenue
+  ORDER BY t.sort_order ASC
+  `
+}
+
 function segmentCte(): string {
   return `
   day_sessions AS (
@@ -751,6 +849,27 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
     carts_updated_converted: cartsUpdatedConverted,
     carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdated),
   }
+}
+
+function buildAbandonedCartEmailRows(rows: AbandonedCartEmailAggRow[]): DailyReportAbandonedCartEmailRow[] {
+  return rows.map((row) => {
+    const sent = toNumber(row.sent)
+    const opens = toNullableNumber(row.opens)
+    const clicks = toNumber(row.clicks)
+    const conversions = toNumber(row.conversions)
+    return {
+      message_type: row.message_type,
+      label: row.label,
+      sent,
+      opens,
+      open_rate: opens === null ? null : ratio(opens, sent),
+      clicks,
+      click_rate: ratio(clicks, sent),
+      conversions,
+      conversion_rate: ratio(conversions, sent),
+      revenue: roundMoney(toNumber(row.revenue)),
+    }
+  })
 }
 
 function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyReportSegmentRow[] {
@@ -857,6 +976,25 @@ function renderCartSummaryTable(payload: DailyReportPayload): string {
   )
 }
 
+function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
+  const body = table(
+    'Relances panier CRM',
+    ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Clics', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
+    payload.abandoned_cart_emails.map((row) => [
+      row.label,
+      formatInteger(row.sent),
+      formatIntegerOrDash(row.opens),
+      formatPercent(row.open_rate),
+      formatInteger(row.clicks),
+      formatPercent(row.click_rate),
+      formatInteger(row.conversions),
+      formatPercent(row.conversion_rate),
+      formatMoney(row.revenue),
+    ]),
+  )
+  return `${body}<p class="note muted">Les clics correspondent aux sessions arrivees via les liens de relance tagues Email 1/2/3. Les conversions et le CA sont rattaches au message CRM source quand le cas panier est marque recupere. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
+}
+
 function renderCountryTable(payload: DailyReportPayload): string {
   return table(
     'Pays livres',
@@ -895,6 +1033,13 @@ function renderChannelTable(payload: DailyReportPayload): string {
   )
 }
 
+function renderDefinitionNotes(): string {
+  return `<h2>Definitions rapides</h2>
+  <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
+  <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>
+  <p class="note"><strong>Commandes sans session</strong> designe les commandes Shopify incluses dans l'analytics ecommerce mais sans session visiteur rattachee dans la base. Causes typiques : achat hors navigateur suivi, paiement finalise plus tard, session expiree/non synchronisee, tracking bloque, ou rapprochement cart/order incomplet.</p>`
+}
+
 function table(title: string, headers: string[], rows: string[][]): string {
   return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows
     .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
@@ -920,8 +1065,17 @@ function toNumber(value: unknown): number {
   return 0
 }
 
+function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  return toNumber(value)
+}
+
 function formatInteger(value: number): string {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(value)
+}
+
+function formatIntegerOrDash(value: number | null): string {
+  return value === null ? '-' : formatInteger(value)
 }
 
 function formatMoney(value: number): string {
@@ -1075,6 +1229,16 @@ interface CartSummaryRow {
   carts_created_converted: number | string
   carts_updated: number | string
   carts_updated_converted: number | string
+}
+
+interface AbandonedCartEmailAggRow {
+  message_type: 'abandoned_cart_1' | 'abandoned_cart_2' | 'abandoned_cart_3'
+  label: string
+  sent: number | string
+  opens: number | string | null
+  clicks: number | string
+  conversions: number | string
+  revenue: number | string
 }
 
 interface CountryRow {
