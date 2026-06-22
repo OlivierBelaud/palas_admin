@@ -37,12 +37,70 @@ const payload: DailyReportPayload = {
   countries: [{ country_code: 'FR', country_name: 'France', orders: 1, revenue: 55 }],
   cart_summary: {
     carts_created: 4,
+    carts_created_visitors: 3,
     carts_created_converted: 1,
     carts_created_conversion_rate: 0.25,
     carts_updated: 12,
+    carts_updated_sessions: 5,
+    carts_updated_visitors: 4,
     carts_updated_converted: 1,
-    carts_updated_conversion_rate: 1 / 12,
+    carts_updated_conversion_rate: 1 / 5,
+    cart_view_events: 20,
+    cart_view_sessions: 6,
+    cart_view_visitors: 5,
   },
+  cart_activity_segments: [
+    {
+      segment: 'unknown',
+      segment_label: 'Inconnus',
+      sessions: 8,
+      unique_visitors: 7,
+      cart_activity_sessions: 3,
+      cart_activity_visitors: 3,
+      cart_update_sessions: 2,
+      cart_update_visitors: 2,
+      cart_update_events: 6,
+      cart_view_sessions: 3,
+      cart_view_visitors: 3,
+      cart_view_events: 15,
+      order_sessions: 0,
+    },
+    {
+      segment: 'total',
+      segment_label: 'Total journee',
+      sessions: 10,
+      unique_visitors: 8,
+      cart_activity_sessions: 4,
+      cart_activity_visitors: 4,
+      cart_update_sessions: 5,
+      cart_update_visitors: 4,
+      cart_update_events: 12,
+      cart_view_sessions: 6,
+      cart_view_visitors: 5,
+      cart_view_events: 20,
+      order_sessions: 1,
+    },
+  ],
+  cart_birth_segments: [
+    {
+      segment: 'unknown',
+      segment_label: 'Inconnus',
+      carts_born: 3,
+      carts_born_with_email: 2,
+      cart_visitors: 2,
+      orders_same_day: 0,
+      revenue_same_day: 0,
+    },
+    {
+      segment: 'total',
+      segment_label: 'Total journee',
+      carts_born: 4,
+      carts_born_with_email: 3,
+      cart_visitors: 3,
+      orders_same_day: 1,
+      revenue_same_day: 55,
+    },
+  ],
   abandoned_cart_emails: [
     {
       message_type: 'abandoned_cart_1',
@@ -99,9 +157,10 @@ describe('daily reporting render', () => {
     expect(html).toContain('class="kpi-table"')
     expect(html).not.toContain('class="kpis"')
     expect(html).toContain('commandes sans session exploitable')
-    expect(html).toContain('Paniers')
-    expect(html).toContain('Paniers crees')
-    expect(html).toContain('commandes rattachees')
+    expect(html).toContain('Synthese panier')
+    expect(html).toContain('Paniers nes')
+    expect(html).toContain('Activite panier par segment')
+    expect(html).toContain('Commandes meme jour')
     expect(html).not.toContain('Convertis')
     expect(html).toContain('Relances panier CRM')
     expect(html).toContain('Email 1')
@@ -122,7 +181,8 @@ describe('daily reporting render', () => {
     expect(segmentBlock).toContain('Total journee')
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
-    expect(text).toContain('Paniers crees: 4 ; commandes rattachees 1')
+    expect(text).toContain('Paniers nes: 4 paniers, 3 visiteurs, 1 commandes le meme jour')
+    expect(text).toContain('Updates panier: 12 evenements, 4 visiteurs, 5 sessions, 1 sessions avec commande')
     expect(text).toContain('Relances panier CRM:')
     expect(text).toContain('Email 1: 10 envoyes')
     expect(text).toContain('Definitions rapides:')

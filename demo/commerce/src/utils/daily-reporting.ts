@@ -44,11 +44,43 @@ export interface DailyReportChannelSegmentRow extends MetricRow {
 
 export interface DailyReportCartSummary {
   carts_created: number
+  carts_created_visitors: number
   carts_created_converted: number
   carts_created_conversion_rate: number | null
   carts_updated: number
+  carts_updated_sessions: number
+  carts_updated_visitors: number
   carts_updated_converted: number
   carts_updated_conversion_rate: number | null
+  cart_view_events: number
+  cart_view_sessions: number
+  cart_view_visitors: number
+}
+
+export interface DailyReportCartActivitySegmentRow {
+  segment: SegmentKey | 'total'
+  segment_label: string
+  sessions: number
+  unique_visitors: number
+  cart_activity_sessions: number
+  cart_activity_visitors: number
+  cart_update_sessions: number
+  cart_update_visitors: number
+  cart_update_events: number
+  cart_view_sessions: number
+  cart_view_visitors: number
+  cart_view_events: number
+  order_sessions: number
+}
+
+export interface DailyReportCartBirthSegmentRow {
+  segment: SegmentKey | 'total'
+  segment_label: string
+  carts_born: number
+  carts_born_with_email: number
+  cart_visitors: number
+  orders_same_day: number
+  revenue_same_day: number
 }
 
 export interface DailyReportAbandonedCartEmailRow {
@@ -88,6 +120,8 @@ export interface DailyReportPayload {
   segments: DailyReportSegmentRow[]
   countries: DailyReportCountryRow[]
   cart_summary: DailyReportCartSummary
+  cart_activity_segments: DailyReportCartActivitySegmentRow[]
+  cart_birth_segments: DailyReportCartBirthSegmentRow[]
   abandoned_cart_emails: DailyReportAbandonedCartEmailRow[]
   sources: DailyReportSourceRow[]
   channel_segments: DailyReportChannelSegmentRow[]
@@ -258,6 +292,8 @@ export async function buildDailyReportPayload(
   const rawSourceRows = await sql.unsafe<SourceAggRow[]>(sourceAggSql(), [startIso, endIso])
   const rawChannelRows = await sql.unsafe<ChannelAggRow[]>(channelAggSql(), [startIso, endIso])
   const [cartSummaryRow] = await sql.unsafe<CartSummaryRow[]>(cartSummarySql(), [startIso, endIso])
+  const rawCartActivityRows = await sql.unsafe<CartActivityAggRow[]>(cartActivityAggSql(), [startIso, endIso])
+  const rawCartBirthRows = await sql.unsafe<CartBirthAggRow[]>(cartBirthAggSql(), [startIso, endIso])
   const abandonedCartEmailRows = await sql.unsafe<AbandonedCartEmailAggRow[]>(abandonedCartEmailSql(), [
     startIso,
     endIso,
@@ -316,6 +352,8 @@ export async function buildDailyReportPayload(
       revenue: roundMoney(toNumber(row.revenue)),
     })),
     cart_summary: cartSummary,
+    cart_activity_segments: buildCartActivityRows(rawCartActivityRows),
+    cart_birth_segments: buildCartBirthRows(rawCartBirthRows),
     abandoned_cart_emails: buildAbandonedCartEmailRows(abandonedCartEmailRows),
     sources: rawSourceRows.map((row) => ({
       source: row.source_label,
@@ -472,6 +510,8 @@ export function renderDailyReportHtml(payload: DailyReportPayload): string {
       <div class="content">
         ${renderKpiSummaryTable(payload)}
         ${renderCartSummaryTable(payload)}
+        ${renderCartActivityTable(payload)}
+        ${renderCartBirthTable(payload)}
         ${renderAbandonedCartEmailTable(payload)}
         ${renderSegmentTable(payload)}
         ${renderCountryTable(payload)}
@@ -500,8 +540,9 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
     '',
     'Paniers:',
-    `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} ; commandes rattachees ${formatInteger(payload.cart_summary.carts_created_converted)}`,
-    `- Modifications de panier: ${formatInteger(payload.cart_summary.carts_updated)} ; sessions avec commande ${formatInteger(payload.cart_summary.carts_updated_converted)}`,
+    `- Paniers nes: ${formatInteger(payload.cart_summary.carts_created)} paniers, ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes le meme jour`,
+    `- Updates panier: ${formatInteger(payload.cart_summary.carts_updated)} evenements, ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_updated_sessions)} sessions, ${formatInteger(payload.cart_summary.carts_updated_converted)} sessions avec commande`,
+    `- Vues panier: ${formatInteger(payload.cart_summary.cart_view_events)} evenements, ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs, ${formatInteger(payload.cart_summary.cart_view_sessions)} sessions`,
     ...abandonedCartEmailTextLines(payload),
     '',
     'Segments:',
@@ -719,6 +760,7 @@ function cartSummarySql(): string {
   carts_created AS (
     SELECT
       COUNT(*)::int AS carts_created,
+      COUNT(DISTINCT bc.distinct_id)::int AS carts_created_visitors,
       COUNT(DISTINCT bc.id) FILTER (WHERE o.id IS NOT NULL)::int AS carts_created_converted
     FROM born_carts bc
     LEFT JOIN cart_order co
@@ -737,7 +779,12 @@ function cartSummarySql(): string {
   carts_updated AS (
     SELECT
       COALESCE(SUM(carts_updated_in_session), 0)::int AS carts_updated,
-      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND order_id IS NOT NULL)::int AS carts_updated_converted
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0)::int AS carts_updated_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_updated_in_session > 0)::int AS carts_updated_visitors,
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND order_id IS NOT NULL)::int AS carts_updated_converted,
+      COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
+      COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors
     FROM visitor_sessions
     WHERE deleted_at IS NULL
       AND started_at >= $1::timestamptz
@@ -745,11 +792,150 @@ function cartSummarySql(): string {
   )
   SELECT
     cc.carts_created,
+    cc.carts_created_visitors,
     cc.carts_created_converted,
     cu.carts_updated,
-    cu.carts_updated_converted
+    cu.carts_updated_sessions,
+    cu.carts_updated_visitors,
+    cu.carts_updated_converted,
+    cu.cart_view_events,
+    cu.cart_view_sessions,
+    cu.cart_view_visitors
   FROM carts_created cc
   CROSS JOIN carts_updated cu
+  `
+}
+
+function cartActivityAggSql(): string {
+  return `
+  WITH day_sessions AS (
+    SELECT *
+    FROM visitor_sessions
+    WHERE deleted_at IS NULL
+      AND started_at >= $1::timestamptz
+      AND started_at < $2::timestamptz
+  ),
+  segment_rows AS (
+    SELECT
+      COALESCE(segment_at_session_start, 'unknown') AS segment,
+      COUNT(*)::int AS sessions,
+      COUNT(DISTINCT distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE carts_created_in_session > 0 OR carts_updated_in_session > 0 OR carts_viewed_in_session > 0)::int AS cart_activity_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_created_in_session > 0 OR carts_updated_in_session > 0 OR carts_viewed_in_session > 0)::int AS cart_activity_visitors,
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0)::int AS cart_update_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_updated_in_session > 0)::int AS cart_update_visitors,
+      COALESCE(SUM(carts_updated_in_session), 0)::int AS cart_update_events,
+      COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
+      COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
+      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+    FROM day_sessions
+    GROUP BY 1
+  ),
+  total_row AS (
+    SELECT
+      'total'::text AS segment,
+      COUNT(*)::int AS sessions,
+      COUNT(DISTINCT distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE carts_created_in_session > 0 OR carts_updated_in_session > 0 OR carts_viewed_in_session > 0)::int AS cart_activity_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_created_in_session > 0 OR carts_updated_in_session > 0 OR carts_viewed_in_session > 0)::int AS cart_activity_visitors,
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0)::int AS cart_update_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_updated_in_session > 0)::int AS cart_update_visitors,
+      COALESCE(SUM(carts_updated_in_session), 0)::int AS cart_update_events,
+      COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
+      COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
+      COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
+      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+    FROM day_sessions
+  )
+  SELECT *
+  FROM (
+    SELECT * FROM segment_rows
+    UNION ALL
+    SELECT * FROM total_row
+  ) rows
+  ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 ELSE 4 END
+  `
+}
+
+function cartBirthAggSql(): string {
+  return `
+  WITH born_carts AS (
+    SELECT *
+    FROM carts
+    WHERE deleted_at IS NULL
+      AND (
+        (cart_birth_at >= $1::timestamptz AND cart_birth_at < $2::timestamptz)
+        OR (cart_birth_at IS NULL AND created_at >= $1::timestamptz AND created_at < $2::timestamptz)
+      )
+  ),
+  birth_segments AS (
+    SELECT DISTINCT ON (bc.id)
+      bc.id,
+      bc.distinct_id,
+      bc.email,
+      bc.shopify_order_id,
+      COALESCE(vs.segment_at_session_start, 'unknown') AS segment
+    FROM born_carts bc
+    LEFT JOIN visitor_sessions vs
+      ON vs.deleted_at IS NULL
+      AND vs.distinct_id = bc.distinct_id
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
+    ORDER BY bc.id, ABS(EXTRACT(EPOCH FROM (COALESCE(bc.cart_birth_at, bc.created_at) - vs.started_at))) NULLS LAST
+  ),
+  linked_orders AS (
+    SELECT DISTINCT bc.id AS cart_id, o.id AS order_id, o.total_price
+    FROM born_carts bc
+    JOIN cart_order co
+      ON co.deleted_at IS NULL
+      AND co.cart_id = bc.id
+    JOIN orders o
+      ON o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.id::text = co.order_id
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+    UNION
+    SELECT DISTINCT bc.id AS cart_id, o.id AS order_id, o.total_price
+    FROM born_carts bc
+    JOIN orders o
+      ON o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.shopify_order_id = bc.shopify_order_id
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+  ),
+  segment_rows AS (
+    SELECT
+      bs.segment,
+      COUNT(DISTINCT bs.id)::int AS carts_born,
+      COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
+      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
+      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
+      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+    FROM birth_segments bs
+    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
+    GROUP BY 1
+  ),
+  total_row AS (
+    SELECT
+      'total'::text AS segment,
+      COUNT(DISTINCT bs.id)::int AS carts_born,
+      COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
+      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
+      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
+      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+    FROM birth_segments bs
+    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
+  )
+  SELECT *
+  FROM (
+    SELECT * FROM segment_rows
+    UNION ALL
+    SELECT * FROM total_row
+  ) rows
+  ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 ELSE 4 END
   `
 }
 
@@ -861,17 +1047,56 @@ function segmentCte(): string {
 
 function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSummary {
   const cartsCreated = toNumber(row?.carts_created)
+  const cartsCreatedVisitors = toNumber(row?.carts_created_visitors)
   const cartsCreatedConverted = toNumber(row?.carts_created_converted)
   const cartsUpdated = toNumber(row?.carts_updated)
+  const cartsUpdatedSessions = toNumber(row?.carts_updated_sessions)
+  const cartsUpdatedVisitors = toNumber(row?.carts_updated_visitors)
   const cartsUpdatedConverted = toNumber(row?.carts_updated_converted)
   return {
     carts_created: cartsCreated,
+    carts_created_visitors: cartsCreatedVisitors,
     carts_created_converted: cartsCreatedConverted,
     carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreated),
     carts_updated: cartsUpdated,
+    carts_updated_sessions: cartsUpdatedSessions,
+    carts_updated_visitors: cartsUpdatedVisitors,
     carts_updated_converted: cartsUpdatedConverted,
-    carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdated),
+    carts_updated_conversion_rate: ratio(cartsUpdatedConverted, cartsUpdatedSessions),
+    cart_view_events: toNumber(row?.cart_view_events),
+    cart_view_sessions: toNumber(row?.cart_view_sessions),
+    cart_view_visitors: toNumber(row?.cart_view_visitors),
   }
+}
+
+function buildCartActivityRows(rows: CartActivityAggRow[]): DailyReportCartActivitySegmentRow[] {
+  return rows.map((row) => ({
+    segment: row.segment as SegmentKey | 'total',
+    segment_label: row.segment === 'total' ? SEGMENT_LABELS.total : SEGMENT_LABELS[row.segment as SegmentKey],
+    sessions: toNumber(row.sessions),
+    unique_visitors: toNumber(row.unique_visitors),
+    cart_activity_sessions: toNumber(row.cart_activity_sessions),
+    cart_activity_visitors: toNumber(row.cart_activity_visitors),
+    cart_update_sessions: toNumber(row.cart_update_sessions),
+    cart_update_visitors: toNumber(row.cart_update_visitors),
+    cart_update_events: toNumber(row.cart_update_events),
+    cart_view_sessions: toNumber(row.cart_view_sessions),
+    cart_view_visitors: toNumber(row.cart_view_visitors),
+    cart_view_events: toNumber(row.cart_view_events),
+    order_sessions: toNumber(row.order_sessions),
+  }))
+}
+
+function buildCartBirthRows(rows: CartBirthAggRow[]): DailyReportCartBirthSegmentRow[] {
+  return rows.map((row) => ({
+    segment: row.segment as SegmentKey | 'total',
+    segment_label: row.segment === 'total' ? SEGMENT_LABELS.total : SEGMENT_LABELS[row.segment as SegmentKey],
+    carts_born: toNumber(row.carts_born),
+    carts_born_with_email: toNumber(row.carts_born_with_email),
+    cart_visitors: toNumber(row.cart_visitors),
+    orders_same_day: toNumber(row.orders_same_day),
+    revenue_same_day: roundMoney(toNumber(row.revenue_same_day)),
+  }))
 }
 
 function buildAbandonedCartEmailRows(rows: AbandonedCartEmailAggRow[]): DailyReportAbandonedCartEmailRow[] {
@@ -980,20 +1205,62 @@ function renderSegmentTable(payload: DailyReportPayload): string {
 function renderCartSummaryTable(payload: DailyReportPayload): string {
   const c = payload.cart_summary
   return table(
-    'Paniers',
-    ['Signal', 'Volume', 'Resultat verifiable'],
+    'Synthese panier',
+    ['Signal', 'Visiteurs', 'Sessions', 'Volume', 'Commandes'],
     [
       [
-        'Paniers crees',
+        'Paniers nes',
+        formatInteger(c.carts_created_visitors),
+        '-',
         formatInteger(c.carts_created),
-        `${formatInteger(c.carts_created_converted)} commandes rattachees`,
+        formatInteger(c.carts_created_converted),
       ],
       [
-        'Modifications de panier',
+        'Updates panier',
+        formatInteger(c.carts_updated_visitors),
+        formatInteger(c.carts_updated_sessions),
         formatInteger(c.carts_updated),
-        `${formatInteger(c.carts_updated_converted)} sessions avec commande`,
+        formatInteger(c.carts_updated_converted),
+      ],
+      [
+        'Vues panier',
+        formatInteger(c.cart_view_visitors),
+        formatInteger(c.cart_view_sessions),
+        formatInteger(c.cart_view_events),
+        '-',
       ],
     ],
+  )
+}
+
+function renderCartActivityTable(payload: DailyReportPayload): string {
+  return table(
+    'Activite panier par segment',
+    ['Segment', 'Visiteurs actifs', 'Sessions actives', 'Vues', 'Updates', 'Visiteurs update', 'Sessions commande'],
+    payload.cart_activity_segments.map((row) => [
+      row.segment_label,
+      formatInteger(row.cart_activity_visitors),
+      formatInteger(row.cart_activity_sessions),
+      formatInteger(row.cart_view_events),
+      formatInteger(row.cart_update_events),
+      formatInteger(row.cart_update_visitors),
+      formatInteger(row.order_sessions),
+    ]),
+  )
+}
+
+function renderCartBirthTable(payload: DailyReportPayload): string {
+  return table(
+    'Paniers nes',
+    ['Segment', 'Paniers', 'Visiteurs', 'Avec email', 'Commandes meme jour', 'CA meme jour'],
+    payload.cart_birth_segments.map((row) => [
+      row.segment_label,
+      formatInteger(row.carts_born),
+      formatInteger(row.cart_visitors),
+      formatInteger(row.carts_born_with_email),
+      formatInteger(row.orders_same_day),
+      formatMoney(row.revenue_same_day),
+    ]),
   )
 }
 
@@ -1064,6 +1331,9 @@ function renderChannelTable(payload: DailyReportPayload): string {
 
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
+  <p class="note"><strong>Paniers nes</strong> compte les paniers distincts dont le premier signal est dans la journee. Ce n'est pas un nombre de personnes : un meme visiteur peut creer plusieurs paniers.</p>
+  <p class="note"><strong>Updates panier</strong> compte les evenements de modification panier. Les colonnes visiteurs et sessions indiquent combien de personnes/sessions ont porte ces evenements.</p>
+  <p class="note"><strong>Commandes meme jour</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce et rattachees a ces paniers, placees dans la meme journee de reporting.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
   <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>
   <p class="note"><strong>Commandes sans session</strong> designe les commandes Shopify incluses dans l'analytics ecommerce mais sans session visiteur rattachee dans la base. Causes typiques : achat hors navigateur suivi, paiement finalise plus tard, session expiree/non synchronisee, tracking bloque, ou rapprochement cart/order incomplet.</p>`
@@ -1255,9 +1525,39 @@ interface ChannelAggRow {
 
 interface CartSummaryRow {
   carts_created: number | string
+  carts_created_visitors: number | string
   carts_created_converted: number | string
   carts_updated: number | string
+  carts_updated_sessions: number | string
+  carts_updated_visitors: number | string
   carts_updated_converted: number | string
+  cart_view_events: number | string
+  cart_view_sessions: number | string
+  cart_view_visitors: number | string
+}
+
+interface CartActivityAggRow {
+  segment: string
+  sessions: number | string
+  unique_visitors: number | string
+  cart_activity_sessions: number | string
+  cart_activity_visitors: number | string
+  cart_update_sessions: number | string
+  cart_update_visitors: number | string
+  cart_update_events: number | string
+  cart_view_sessions: number | string
+  cart_view_visitors: number | string
+  cart_view_events: number | string
+  order_sessions: number | string
+}
+
+interface CartBirthAggRow {
+  segment: string
+  carts_born: number | string
+  carts_born_with_email: number | string
+  cart_visitors: number | string
+  orders_same_day: number | string
+  revenue_same_day: number | string
 }
 
 interface AbandonedCartEmailAggRow {
