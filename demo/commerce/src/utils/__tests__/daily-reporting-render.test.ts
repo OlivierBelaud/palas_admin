@@ -50,6 +50,9 @@ const payload: DailyReportPayload = {
     cart_view_visitors: 5,
     cart_view_converted: 1,
     cart_view_conversion_rate: 1 / 5,
+    total_cart_visitors: 12,
+    total_cart_converted: 3,
+    total_cart_conversion_rate: 0.25,
   },
   cart_activity_segments: [
     {
@@ -163,6 +166,7 @@ describe('daily reporting render', () => {
     expect(html).toContain('Creation panier')
     expect(html).toContain('Visiteurs uniques')
     expect(html).toContain('Commandes issues du signal')
+    expect(html).toContain('Total panier')
     expect(html).toContain('Activite panier par segment')
     expect(html).toContain('Commandes meme jour')
     expect(html).not.toContain('Convertis')
@@ -186,8 +190,9 @@ describe('daily reporting render', () => {
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
     expect(text).toContain('Creation panier: 3 visiteurs uniques, 1 commandes issues de ces paniers')
-    expect(text).toContain('Update panier: 4 visiteurs uniques, 1 commandes issues de ces sessions')
-    expect(text).toContain('Vue panier: 5 visiteurs uniques, 1 commandes issues de ces sessions')
+    expect(text).toContain('Update panier hors createurs: 4 visiteurs uniques, 1 commandes issues de ces sessions')
+    expect(text).toContain('Vue panier hors createurs/update: 5 visiteurs uniques, 1 commandes issues de ces sessions')
+    expect(text).toContain('Total panier: 12 visiteurs uniques, 3 commandes')
     expect(text).toContain('Relances panier CRM:')
     expect(text).toContain('Email 1: 10 envoyes')
     expect(text).toContain('Definitions rapides:')

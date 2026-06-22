@@ -57,6 +57,9 @@ export interface DailyReportCartSummary {
   cart_view_visitors: number
   cart_view_converted: number
   cart_view_conversion_rate: number | null
+  total_cart_visitors: number
+  total_cart_converted: number
+  total_cart_conversion_rate: number | null
 }
 
 export interface DailyReportCartActivitySegmentRow {
@@ -543,8 +546,9 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     '',
     'Paniers:',
     `- Creation panier: ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes issues de ces paniers, taux ${formatPercent(payload.cart_summary.carts_created_conversion_rate)}`,
-    `- Update panier: ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_updated_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.carts_updated_conversion_rate)}`,
-    `- Vue panier: ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.cart_view_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.cart_view_conversion_rate)}`,
+    `- Update panier hors createurs: ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_updated_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.carts_updated_conversion_rate)}`,
+    `- Vue panier hors createurs/update: ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.cart_view_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.cart_view_conversion_rate)}`,
+    `- Total panier: ${formatInteger(payload.cart_summary.total_cart_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.total_cart_converted)} commandes, taux ${formatPercent(payload.cart_summary.total_cart_conversion_rate)}`,
     ...abandonedCartEmailTextLines(payload),
     '',
     'Segments:',
@@ -809,6 +813,45 @@ function cartSummarySql(): string {
         OR ds.order_id = o.id::text
       )
   ),
+  visitor_flags AS (
+    SELECT
+      distinct_id,
+      BOOL_OR(carts_created_in_session > 0) AS has_created,
+      BOOL_OR(carts_updated_in_session > 0) AS has_updated,
+      BOOL_OR(carts_viewed_in_session > 0) AS has_viewed
+    FROM day_sessions
+    GROUP BY 1
+  ),
+  visitor_bucket AS (
+    SELECT
+      distinct_id,
+      CASE
+        WHEN has_created THEN 'created'
+        WHEN has_updated THEN 'updated'
+        WHEN has_viewed THEN 'viewed'
+        ELSE NULL
+      END AS bucket
+    FROM visitor_flags
+    WHERE has_created OR has_updated OR has_viewed
+  ),
+  visitor_orders AS (
+    SELECT DISTINCT ds.distinct_id, so.order_id
+    FROM day_sessions ds
+    JOIN session_orders so ON so.session_row_id = ds.id
+  ),
+  exclusive_summary AS (
+    SELECT
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'created')::int AS exclusive_created_visitors,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_visitors,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_visitors,
+      COUNT(DISTINCT vb.distinct_id)::int AS total_cart_visitors,
+      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'created')::int AS exclusive_created_converted,
+      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_converted,
+      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_converted,
+      COUNT(DISTINCT vo.order_id)::int AS total_cart_converted
+    FROM visitor_bucket vb
+    LEFT JOIN visitor_orders vo ON vo.distinct_id = vb.distinct_id
+  ),
   cart_activity AS (
     SELECT
       COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS carts_updated,
@@ -824,18 +867,21 @@ function cartSummarySql(): string {
   )
   SELECT
     cc.carts_created,
-    cc.carts_created_visitors,
-    cc.carts_created_converted,
+    es.exclusive_created_visitors AS carts_created_visitors,
+    es.exclusive_created_converted AS carts_created_converted,
     ca.carts_updated,
     ca.carts_updated_sessions,
-    ca.carts_updated_visitors,
-    ca.carts_updated_converted,
+    es.exclusive_updated_visitors AS carts_updated_visitors,
+    es.exclusive_updated_converted AS carts_updated_converted,
     ca.cart_view_events,
     ca.cart_view_sessions,
-    ca.cart_view_visitors,
-    ca.cart_view_converted
+    es.exclusive_viewed_visitors AS cart_view_visitors,
+    es.exclusive_viewed_converted AS cart_view_converted,
+    es.total_cart_visitors,
+    es.total_cart_converted
   FROM carts_created cc
   CROSS JOIN cart_activity ca
+  CROSS JOIN exclusive_summary es
   `
 }
 
@@ -1088,6 +1134,8 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
   const cartsUpdatedConverted = toNumber(row?.carts_updated_converted)
   const cartViewVisitors = toNumber(row?.cart_view_visitors)
   const cartViewConverted = toNumber(row?.cart_view_converted)
+  const totalCartVisitors = toNumber(row?.total_cart_visitors)
+  const totalCartConverted = toNumber(row?.total_cart_converted)
   return {
     carts_created: cartsCreated,
     carts_created_visitors: cartsCreatedVisitors,
@@ -1103,6 +1151,9 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
     cart_view_visitors: cartViewVisitors,
     cart_view_converted: cartViewConverted,
     cart_view_conversion_rate: ratio(cartViewConverted, cartViewVisitors),
+    total_cart_visitors: totalCartVisitors,
+    total_cart_converted: totalCartConverted,
+    total_cart_conversion_rate: ratio(totalCartConverted, totalCartVisitors),
   }
 }
 
@@ -1252,16 +1303,22 @@ function renderCartSummaryTable(payload: DailyReportPayload): string {
         formatPercent(c.carts_created_conversion_rate),
       ],
       [
-        'Update panier',
+        'Update panier hors createurs',
         formatInteger(c.carts_updated_visitors),
         formatInteger(c.carts_updated_converted),
         formatPercent(c.carts_updated_conversion_rate),
       ],
       [
-        'Vue panier',
+        'Vue panier hors createurs/update',
         formatInteger(c.cart_view_visitors),
         formatInteger(c.cart_view_converted),
         formatPercent(c.cart_view_conversion_rate),
+      ],
+      [
+        'Total panier',
+        formatInteger(c.total_cart_visitors),
+        formatInteger(c.total_cart_converted),
+        formatPercent(c.total_cart_conversion_rate),
       ],
     ],
   )
@@ -1365,7 +1422,7 @@ function renderChannelTable(payload: DailyReportPayload): string {
 
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
-  <p class="note"><strong>Synthese panier</strong> est exprimee en visiteurs uniques : un visiteur qui cree, voit ou modifie plusieurs paniers ne compte qu'une fois dans la ligne correspondante.</p>
+  <p class="note"><strong>Synthese panier</strong> est exprimee en visiteurs uniques exclusifs : creation d'abord, puis update seulement si le visiteur n'a pas cree, puis vue seulement s'il n'a ni cree ni update.</p>
   <p class="note"><strong>Commandes issues du signal</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce, rattachees au panier cree ou a la session qui a vu/modifie le panier.</p>
   <p class="note"><strong>Tables detaillees panier</strong> conservent les volumes techniques : paniers distincts, sessions et evenements. Elles ne doivent pas etre additionnees comme des personnes.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
@@ -1569,6 +1626,8 @@ interface CartSummaryRow {
   cart_view_sessions: number | string
   cart_view_visitors: number | string
   cart_view_converted: number | string
+  total_cart_visitors: number | string
+  total_cart_converted: number | string
 }
 
 interface CartActivityAggRow {
