@@ -101,6 +101,8 @@ describe('daily reporting render', () => {
     expect(html).toContain('commandes sans session exploitable')
     expect(html).toContain('Paniers')
     expect(html).toContain('Paniers crees')
+    expect(html).toContain('commandes rattachees')
+    expect(html).not.toContain('Convertis')
     expect(html).toContain('Relances panier CRM')
     expect(html).toContain('Email 1')
     expect(html).toContain('Taux ouv.')
@@ -120,10 +122,29 @@ describe('daily reporting render', () => {
     expect(segmentBlock).toContain('Total journee')
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
-    expect(text).toContain('Paniers crees: 4')
+    expect(text).toContain('Paniers crees: 4 ; commandes rattachees 1')
     expect(text).toContain('Relances panier CRM:')
     expect(text).toContain('Email 1: 10 envoyes')
     expect(text).toContain('Definitions rapides:')
+  })
+
+  it('hides abandoned-cart email rows when only sent counts are available', () => {
+    const emptyRelanceMetrics: DailyReportPayload = {
+      ...payload,
+      abandoned_cart_emails: payload.abandoned_cart_emails.map((row) => ({
+        ...row,
+        opens: null,
+        open_rate: null,
+        clicks: 0,
+        click_rate: 0,
+        conversions: 0,
+        conversion_rate: 0,
+        revenue: 0,
+      })),
+    }
+
+    expect(renderDailyReportHtml(emptyRelanceMetrics)).not.toContain('Relances panier CRM')
+    expect(renderDailyReportText(emptyRelanceMetrics)).not.toContain('Relances panier CRM')
   })
 
   it('marks the snapshot partial when visitor sessions are stale', () => {

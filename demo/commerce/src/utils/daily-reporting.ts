@@ -500,14 +500,9 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
     '',
     'Paniers:',
-    `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} dont ${formatInteger(payload.cart_summary.carts_created_converted)} convertis (${formatPercent(payload.cart_summary.carts_created_conversion_rate)})`,
-    `- Modifications de panier: ${formatInteger(payload.cart_summary.carts_updated)} ; sessions modifiees converties ${formatInteger(payload.cart_summary.carts_updated_converted)} (${formatPercent(payload.cart_summary.carts_updated_conversion_rate)})`,
-    '',
-    'Relances panier CRM:',
-    ...payload.abandoned_cart_emails.map(
-      (row) =>
-        `- ${row.label}: ${formatInteger(row.sent)} envoyes, ouvertures ${formatIntegerOrDash(row.opens)} (${formatPercent(row.open_rate)}), clics ${formatInteger(row.clicks)} (${formatPercent(row.click_rate)}), conversions ${formatInteger(row.conversions)} (${formatPercent(row.conversion_rate)}), CA ${formatMoney(row.revenue)}`,
-    ),
+    `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} ; commandes rattachees ${formatInteger(payload.cart_summary.carts_created_converted)}`,
+    `- Modifications de panier: ${formatInteger(payload.cart_summary.carts_updated)} ; sessions avec commande ${formatInteger(payload.cart_summary.carts_updated_converted)}`,
+    ...abandonedCartEmailTextLines(payload),
     '',
     'Segments:',
     ...payload.segments
@@ -532,6 +527,18 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     '- Commandes sans session: commandes Shopify sans session visiteur rattachee en base.',
   ]
   return lines.join('\n')
+}
+
+function abandonedCartEmailTextLines(payload: DailyReportPayload): string[] {
+  if (!hasMeasuredAbandonedCartEmailMetrics(payload)) return []
+  return [
+    '',
+    'Relances panier CRM:',
+    ...payload.abandoned_cart_emails.map(
+      (row) =>
+        `- ${row.label}: ${formatInteger(row.sent)} envoyes, ouvertures ${formatIntegerOrDash(row.opens)} (${formatPercent(row.open_rate)}), clics ${formatInteger(row.clicks)} (${formatPercent(row.click_rate)}), conversions ${formatInteger(row.conversions)} (${formatPercent(row.conversion_rate)}), CA ${formatMoney(row.revenue)}`,
+    ),
+  ]
 }
 
 function segmentAggSql(): string {
@@ -700,10 +707,8 @@ function channelAggSql(): string {
 
 function cartSummarySql(): string {
   return `
-  WITH carts_created AS (
-    SELECT
-      COUNT(*)::int AS carts_created,
-      COUNT(*) FILTER (WHERE highest_stage = 'completed')::int AS carts_created_converted
+  WITH born_carts AS (
+    SELECT *
     FROM carts
     WHERE deleted_at IS NULL
       AND (
@@ -711,10 +716,28 @@ function cartSummarySql(): string {
         OR (cart_birth_at IS NULL AND created_at >= $1::timestamptz AND created_at < $2::timestamptz)
       )
   ),
+  carts_created AS (
+    SELECT
+      COUNT(*)::int AS carts_created,
+      COUNT(DISTINCT bc.id) FILTER (WHERE o.id IS NOT NULL)::int AS carts_created_converted
+    FROM born_carts bc
+    LEFT JOIN cart_order co
+      ON co.deleted_at IS NULL
+      AND co.cart_id = bc.id
+    LEFT JOIN orders o
+      ON o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+      AND (
+        o.id::text = co.order_id
+        OR o.shopify_order_id = bc.shopify_order_id
+      )
+  ),
   carts_updated AS (
     SELECT
       COALESCE(SUM(carts_updated_in_session), 0)::int AS carts_updated,
-      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND cart_converted = true)::int AS carts_updated_converted
+      COUNT(*) FILTER (WHERE carts_updated_in_session > 0 AND order_id IS NOT NULL)::int AS carts_updated_converted
     FROM visitor_sessions
     WHERE deleted_at IS NULL
       AND started_at >= $1::timestamptz
@@ -958,25 +981,25 @@ function renderCartSummaryTable(payload: DailyReportPayload): string {
   const c = payload.cart_summary
   return table(
     'Paniers',
-    ['Signal', 'Total', 'Convertis', 'Taux'],
+    ['Signal', 'Volume', 'Resultat verifiable'],
     [
       [
         'Paniers crees',
         formatInteger(c.carts_created),
-        formatInteger(c.carts_created_converted),
-        formatPercent(c.carts_created_conversion_rate),
+        `${formatInteger(c.carts_created_converted)} commandes rattachees`,
       ],
       [
         'Modifications de panier',
         formatInteger(c.carts_updated),
-        formatInteger(c.carts_updated_converted),
-        formatPercent(c.carts_updated_conversion_rate),
+        `${formatInteger(c.carts_updated_converted)} sessions avec commande`,
       ],
     ],
   )
 }
 
 function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
+  if (!hasMeasuredAbandonedCartEmailMetrics(payload)) return ''
+
   const body = table(
     'Relances panier CRM',
     ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Clics', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
@@ -993,6 +1016,12 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
     ]),
   )
   return `${body}<p class="note muted">Les clics correspondent aux sessions arrivees via les liens de relance tagues Email 1/2/3. Les conversions et le CA sont rattaches au message CRM source quand le cas panier est marque recupere. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
+}
+
+function hasMeasuredAbandonedCartEmailMetrics(payload: DailyReportPayload): boolean {
+  return payload.abandoned_cart_emails.some(
+    (row) => row.opens !== null || row.clicks > 0 || row.conversions > 0 || row.revenue > 0,
+  )
 }
 
 function renderCountryTable(payload: DailyReportPayload): string {
