@@ -10,7 +10,10 @@
 //
 // Two series:
 //   - `carts_created` — COUNT of carts whose `cart_birth_at` falls on day D
-//   - `carts_created_converted` — of those, COUNT with `highest_stage = 'completed'`
+//   - `carts_created_converted` — of those, COUNT linked to an ecommerce-analytics order
+//     placed in the same reporting range. Do not use `highest_stage='completed'`
+//     here: Shopify POS and external apps such as Choose create completed carts
+//     that are intentionally excluded from ecommerce analytics.
 //
 // `cart_birth_at` is the immutable first-event timestamp (set on cart
 // INSERT in apply-event.ts, frozen forever). If a cart pre-dates the
@@ -29,9 +32,14 @@ import {
 } from '../../utils/visitor-stats-helpers'
 
 interface CartLite {
+  id: string
   cart_birth_at: Date | string | null
   created_at: Date | string | null
-  highest_stage: string
+  shopify_order_id: string | null
+}
+
+interface OrderLite {
+  shopify_order_id: string | null
 }
 
 // Standalone cart pull (separate from pullSessions which is session-bound)
@@ -54,7 +62,7 @@ async function pullCarts(
     for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
       const page = (await readRows(ctx, {
         entity: 'cart',
-        fields: ['cart_birth_at', 'created_at', 'highest_stage'],
+        fields: ['id', 'cart_birth_at', 'created_at', 'shopify_order_id'],
         filters: {
           $or: [
             { cart_birth_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
@@ -88,6 +96,7 @@ export default defineQuery({
     const pulled = await pullCarts(input, { db, schema }, log)
     if (!pulled) return emptyResponse(input)
     const { carts, from, to } = pulled
+    const ecommerceOrderIds = await pullEcommerceOrderIds({ db, schema }, from, to, log)
 
     const buckets = new Map<string, { total: number; converted: number }>()
     for (const c of carts) {
@@ -100,7 +109,7 @@ export default defineQuery({
         buckets.set(day, b)
       }
       b.total += 1
-      if (c.highest_stage === 'completed') b.converted += 1
+      if (c.shopify_order_id && ecommerceOrderIds.has(c.shopify_order_id)) b.converted += 1
     }
 
     const days = buildAllDaysFromTo(from, to)
@@ -123,3 +132,35 @@ export default defineQuery({
     }
   },
 })
+
+async function pullEcommerceOrderIds(
+  ctx: DrizzleReadContext,
+  from: Date,
+  to: Date,
+  log: { warn: (m: string) => void },
+): Promise<Set<string>> {
+  const PAGE = 5000
+  const HARD_CAP = 100_000
+  const ids = new Set<string>()
+  try {
+    for (let offset = 0; offset < HARD_CAP; offset += PAGE) {
+      const page = (await readRows(ctx, {
+        entity: 'order',
+        fields: ['shopify_order_id'],
+        filters: {
+          include_in_ecommerce_analytics: true,
+          placed_at: { $gte: from.toISOString(), $lt: to.toISOString() },
+        },
+        pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
+      })) as OrderLite[]
+      if (!Array.isArray(page) || page.length === 0) break
+      for (const order of page) {
+        if (order.shopify_order_id) ids.add(order.shopify_order_id)
+      }
+      if (page.length < PAGE) break
+    }
+  } catch (err) {
+    log.warn(`[visitor-stats-carts-created] order query failed: ${(err as Error).message}. Conversions set to 0.`)
+  }
+  return ids
+}

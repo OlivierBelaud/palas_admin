@@ -60,6 +60,8 @@ export interface DailyReportCartSummary {
   total_cart_visitors: number
   total_cart_converted: number
   total_cart_conversion_rate: number | null
+  older_cart_orders: number
+  older_cart_revenue: number
 }
 
 export interface DailyReportCartActivitySegmentRow {
@@ -545,10 +547,11 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
     `Commandes sans session exploitable: ${payload.summary.unattributed_orders} (${formatMoney(payload.summary.unattributed_revenue)})`,
     '',
     'Paniers:',
-    `- Creation panier: ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes issues de ces paniers, taux ${formatPercent(payload.cart_summary.carts_created_conversion_rate)}`,
-    `- Update panier hors createurs: ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.carts_updated_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.carts_updated_conversion_rate)}`,
-    `- Vue panier hors createurs/update: ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.cart_view_converted)} commandes issues de ces sessions, taux ${formatPercent(payload.cart_summary.cart_view_conversion_rate)}`,
-    `- Total panier: ${formatInteger(payload.cart_summary.total_cart_visitors)} visiteurs uniques, ${formatInteger(payload.cart_summary.total_cart_converted)} commandes, taux ${formatPercent(payload.cart_summary.total_cart_conversion_rate)}`,
+    `- Paniers crees: ${formatInteger(payload.cart_summary.carts_created)} paniers, ${formatInteger(payload.cart_summary.carts_created_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_created_converted)} commandes, taux ${formatPercent(payload.cart_summary.carts_created_conversion_rate)}`,
+    `- Updates panier: ${formatInteger(payload.cart_summary.carts_updated)} updates, ${formatInteger(payload.cart_summary.carts_updated_sessions)} sessions, ${formatInteger(payload.cart_summary.carts_updated_visitors)} visiteurs, ${formatInteger(payload.cart_summary.carts_updated_converted)} commandes, taux ${formatPercent(payload.cart_summary.carts_updated_conversion_rate)}`,
+    `- Vues panier: ${formatInteger(payload.cart_summary.cart_view_events)} vues, ${formatInteger(payload.cart_summary.cart_view_sessions)} sessions, ${formatInteger(payload.cart_summary.cart_view_visitors)} visiteurs, ${formatInteger(payload.cart_summary.cart_view_converted)} commandes, taux ${formatPercent(payload.cart_summary.cart_view_conversion_rate)}`,
+    `- Total visiteurs avec signal panier: ${formatInteger(payload.cart_summary.total_cart_visitors)} visiteurs, ${formatInteger(payload.cart_summary.total_cart_converted)} commandes, taux ${formatPercent(payload.cart_summary.total_cart_conversion_rate)}`,
+    `- Commandes sur paniers anterieurs: ${formatInteger(payload.cart_summary.older_cart_orders)} commandes, ${formatMoney(payload.cart_summary.older_cart_revenue)}`,
     ...abandonedCartEmailTextLines(payload),
     '',
     'Segments:',
@@ -577,7 +580,7 @@ export function renderDailyReportText(payload: DailyReportPayload): string {
 }
 
 function abandonedCartEmailTextLines(payload: DailyReportPayload): string[] {
-  if (!hasMeasuredAbandonedCartEmailMetrics(payload)) return []
+  if (!hasAbandonedCartEmailRows(payload)) return []
   return [
     '',
     'Relances panier CRM:',
@@ -763,27 +766,27 @@ function cartSummarySql(): string {
         OR (cart_birth_at IS NULL AND created_at >= $1::timestamptz AND created_at < $2::timestamptz)
       )
   ),
+  day_orders AS (
+    SELECT *
+    FROM orders
+    WHERE deleted_at IS NULL
+      AND include_in_ecommerce_analytics = true
+      AND placed_at >= $1::timestamptz
+      AND placed_at < $2::timestamptz
+  ),
   born_linked_orders AS (
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
     FROM born_carts bc
     JOIN cart_order co
       ON co.deleted_at IS NULL
       AND co.cart_id = bc.id
-    JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
-      AND o.id::text = co.order_id
-      AND o.placed_at >= $1::timestamptz
-      AND o.placed_at < $2::timestamptz
+    JOIN day_orders o
+      ON o.id::text = co.order_id
     UNION
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
     FROM born_carts bc
-    JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
-      AND o.shopify_order_id = bc.shopify_order_id
-      AND o.placed_at >= $1::timestamptz
-      AND o.placed_at < $2::timestamptz
+    JOIN day_orders o
+      ON o.shopify_order_id = bc.shopify_order_id
   ),
   carts_created AS (
     SELECT
@@ -792,6 +795,14 @@ function cartSummarySql(): string {
       COUNT(DISTINCT blo.order_id)::int AS carts_created_converted
     FROM born_carts bc
     LEFT JOIN born_linked_orders blo ON blo.cart_id = bc.id
+  ),
+  older_cart_orders AS (
+    SELECT
+      COUNT(DISTINCT o.id)::int AS older_cart_orders,
+      COALESCE(SUM(o.total_price), 0)::float AS older_cart_revenue
+    FROM day_orders o
+    LEFT JOIN born_linked_orders blo ON blo.order_id = o.id
+    WHERE blo.order_id IS NULL
   ),
   day_sessions AS (
     SELECT *
@@ -867,21 +878,24 @@ function cartSummarySql(): string {
   )
   SELECT
     cc.carts_created,
-    es.exclusive_created_visitors AS carts_created_visitors,
-    es.exclusive_created_converted AS carts_created_converted,
+    cc.carts_created_visitors,
+    cc.carts_created_converted,
     ca.carts_updated,
     ca.carts_updated_sessions,
-    es.exclusive_updated_visitors AS carts_updated_visitors,
-    es.exclusive_updated_converted AS carts_updated_converted,
+    ca.carts_updated_visitors,
+    ca.carts_updated_converted,
     ca.cart_view_events,
     ca.cart_view_sessions,
-    es.exclusive_viewed_visitors AS cart_view_visitors,
-    es.exclusive_viewed_converted AS cart_view_converted,
+    ca.cart_view_visitors,
+    ca.cart_view_converted,
     es.total_cart_visitors,
-    es.total_cart_converted
+    es.total_cart_converted,
+    oco.older_cart_orders,
+    oco.older_cart_revenue
   FROM carts_created cc
   CROSS JOIN cart_activity ca
   CROSS JOIN exclusive_summary es
+  CROSS JOIN older_cart_orders oco
   `
 }
 
@@ -1136,11 +1150,12 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
   const cartViewConverted = toNumber(row?.cart_view_converted)
   const totalCartVisitors = toNumber(row?.total_cart_visitors)
   const totalCartConverted = toNumber(row?.total_cart_converted)
+  const olderCartOrders = toNumber(row?.older_cart_orders)
   return {
     carts_created: cartsCreated,
     carts_created_visitors: cartsCreatedVisitors,
     carts_created_converted: cartsCreatedConverted,
-    carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreatedVisitors),
+    carts_created_conversion_rate: ratio(cartsCreatedConverted, cartsCreated),
     carts_updated: cartsUpdated,
     carts_updated_sessions: cartsUpdatedSessions,
     carts_updated_visitors: cartsUpdatedVisitors,
@@ -1154,6 +1169,8 @@ function buildCartSummary(row: CartSummaryRow | undefined): DailyReportCartSumma
     total_cart_visitors: totalCartVisitors,
     total_cart_converted: totalCartConverted,
     total_cart_conversion_rate: ratio(totalCartConverted, totalCartVisitors),
+    older_cart_orders: olderCartOrders,
+    older_cart_revenue: roundMoney(toNumber(row?.older_cart_revenue)),
   }
 }
 
@@ -1294,31 +1311,47 @@ function renderCartSummaryTable(payload: DailyReportPayload): string {
   const c = payload.cart_summary
   return table(
     'Synthese panier',
-    ['Signal', 'Visiteurs uniques', 'Commandes issues du signal', 'Taux conv.'],
+    ['Signal', 'Volume', 'Sessions', 'Visiteurs', 'Commandes', 'Taux conv.'],
     [
       [
-        'Creation panier',
+        'Paniers crees',
+        formatInteger(c.carts_created),
+        '-',
         formatInteger(c.carts_created_visitors),
         formatInteger(c.carts_created_converted),
         formatPercent(c.carts_created_conversion_rate),
       ],
       [
-        'Update panier hors createurs',
+        'Updates panier',
+        formatInteger(c.carts_updated),
+        formatInteger(c.carts_updated_sessions),
         formatInteger(c.carts_updated_visitors),
         formatInteger(c.carts_updated_converted),
         formatPercent(c.carts_updated_conversion_rate),
       ],
       [
-        'Vue panier hors createurs/update',
+        'Vues panier',
+        formatInteger(c.cart_view_events),
+        formatInteger(c.cart_view_sessions),
         formatInteger(c.cart_view_visitors),
         formatInteger(c.cart_view_converted),
         formatPercent(c.cart_view_conversion_rate),
       ],
       [
-        'Total panier',
+        'Visiteurs avec signal panier',
+        '-',
+        '-',
         formatInteger(c.total_cart_visitors),
         formatInteger(c.total_cart_converted),
         formatPercent(c.total_cart_conversion_rate),
+      ],
+      [
+        'Commandes sur paniers anterieurs',
+        '-',
+        '-',
+        '-',
+        `${formatInteger(c.older_cart_orders)} (${formatMoney(c.older_cart_revenue)})`,
+        '-',
       ],
     ],
   )
@@ -1356,7 +1389,7 @@ function renderCartBirthTable(payload: DailyReportPayload): string {
 }
 
 function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
-  if (!hasMeasuredAbandonedCartEmailMetrics(payload)) return ''
+  if (!hasAbandonedCartEmailRows(payload)) return ''
 
   const body = table(
     'Relances panier CRM',
@@ -1376,9 +1409,9 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
   return `${body}<p class="note muted">Les clics correspondent aux sessions arrivees via les liens de relance tagues Email 1/2/3. Les conversions et le CA sont rattaches au message CRM source quand le cas panier est marque recupere. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
 }
 
-function hasMeasuredAbandonedCartEmailMetrics(payload: DailyReportPayload): boolean {
+function hasAbandonedCartEmailRows(payload: DailyReportPayload): boolean {
   return payload.abandoned_cart_emails.some(
-    (row) => row.opens !== null || row.clicks > 0 || row.conversions > 0 || row.revenue > 0,
+    (row) => row.sent > 0 || row.clicks > 0 || row.conversions > 0 || row.revenue > 0,
   )
 }
 
@@ -1422,8 +1455,8 @@ function renderChannelTable(payload: DailyReportPayload): string {
 
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
-  <p class="note"><strong>Synthese panier</strong> est exprimee en visiteurs uniques exclusifs : creation d'abord, puis update seulement si le visiteur n'a pas cree, puis vue seulement s'il n'a ni cree ni update.</p>
-  <p class="note"><strong>Commandes issues du signal</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce, rattachees au panier cree ou a la session qui a vu/modifie le panier.</p>
+  <p class="note"><strong>Synthese panier</strong> separe les volumes de paniers, sessions et visiteurs. Les paniers crees viennent de la table carts ; les vues et updates viennent des compteurs visitor_sessions.</p>
+  <p class="note"><strong>Commandes</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce. Les commandes POS et les commandes d'apps externes exclues ne sont pas des conversions ecommerce.</p>
   <p class="note"><strong>Tables detaillees panier</strong> conservent les volumes techniques : paniers distincts, sessions et evenements. Elles ne doivent pas etre additionnees comme des personnes.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
   <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>
@@ -1628,6 +1661,8 @@ interface CartSummaryRow {
   cart_view_converted: number | string
   total_cart_visitors: number | string
   total_cart_converted: number | string
+  older_cart_orders: number | string
+  older_cart_revenue: number | string
 }
 
 interface CartActivityAggRow {

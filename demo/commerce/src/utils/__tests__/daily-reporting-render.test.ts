@@ -53,6 +53,8 @@ const payload: DailyReportPayload = {
     total_cart_visitors: 12,
     total_cart_converted: 3,
     total_cart_conversion_rate: 0.25,
+    older_cart_orders: 1,
+    older_cart_revenue: 75,
   },
   cart_activity_segments: [
     {
@@ -163,10 +165,10 @@ describe('daily reporting render', () => {
     expect(html).not.toContain('class="kpis"')
     expect(html).toContain('commandes sans session exploitable')
     expect(html).toContain('Synthese panier')
-    expect(html).toContain('Creation panier')
-    expect(html).toContain('Visiteurs uniques')
-    expect(html).toContain('Commandes issues du signal')
-    expect(html).toContain('Total panier')
+    expect(html).toContain('Paniers crees')
+    expect(html).toContain('Volume')
+    expect(html).toContain('Visiteurs')
+    expect(html).toContain('Visiteurs avec signal panier')
     expect(html).toContain('Activite panier par segment')
     expect(html).toContain('Commandes meme jour')
     expect(html).not.toContain('Convertis')
@@ -189,16 +191,17 @@ describe('daily reporting render', () => {
     expect(segmentBlock).toContain('Total journee')
     expect(segmentBlock).not.toContain('Non attribue')
     expect(text).toContain('Commandes sans session exploitable: 1')
-    expect(text).toContain('Creation panier: 3 visiteurs uniques, 1 commandes issues de ces paniers')
-    expect(text).toContain('Update panier hors createurs: 4 visiteurs uniques, 1 commandes issues de ces sessions')
-    expect(text).toContain('Vue panier hors createurs/update: 5 visiteurs uniques, 1 commandes issues de ces sessions')
-    expect(text).toContain('Total panier: 12 visiteurs uniques, 3 commandes')
+    expect(text).toContain('Paniers crees: 4 paniers, 3 visiteurs, 1 commandes')
+    expect(text).toContain('Updates panier: 12 updates, 5 sessions, 4 visiteurs, 1 commandes')
+    expect(text).toContain('Vues panier: 20 vues, 6 sessions, 5 visiteurs, 1 commandes')
+    expect(text).toContain('Total visiteurs avec signal panier: 12 visiteurs, 3 commandes')
+    expect(text).toContain('Commandes sur paniers anterieurs: 1 commandes, 75,00')
     expect(text).toContain('Relances panier CRM:')
     expect(text).toContain('Email 1: 10 envoyes')
     expect(text).toContain('Definitions rapides:')
   })
 
-  it('hides abandoned-cart email rows when only sent counts are available', () => {
+  it('shows abandoned-cart email rows when sent counts are available', () => {
     const emptyRelanceMetrics: DailyReportPayload = {
       ...payload,
       abandoned_cart_emails: payload.abandoned_cart_emails.map((row) => ({
@@ -213,8 +216,9 @@ describe('daily reporting render', () => {
       })),
     }
 
-    expect(renderDailyReportHtml(emptyRelanceMetrics)).not.toContain('Relances panier CRM')
-    expect(renderDailyReportText(emptyRelanceMetrics)).not.toContain('Relances panier CRM')
+    expect(renderDailyReportHtml(emptyRelanceMetrics)).toContain('Relances panier CRM')
+    expect(renderDailyReportText(emptyRelanceMetrics)).toContain('Relances panier CRM')
+    expect(renderDailyReportText(emptyRelanceMetrics)).toContain('Email 1: 10 envoyes')
   })
 
   it('marks the snapshot partial when visitor sessions are stale', () => {
