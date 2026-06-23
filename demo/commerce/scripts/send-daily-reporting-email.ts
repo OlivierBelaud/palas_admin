@@ -4,6 +4,7 @@
 //   pnpm exec tsx scripts/send-daily-reporting-email.ts --day=2026-06-14 --prod
 //   pnpm exec tsx scripts/send-daily-reporting-email.ts --day=2026-06-14 --prod --send
 //   pnpm exec tsx scripts/send-daily-reporting-email.ts --day=2026-06-14 --prod --send --to=me@example.com
+//   pnpm exec tsx scripts/send-daily-reporting-email.ts --day=2026-06-14 --prod --send --idempotency-suffix=test-v2
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -46,6 +47,7 @@ const useProd = args.includes('--prod')
 const doSend = args.includes('--send')
 const day = argValue('--day')
 const toOverride = argValue('--to')
+const idempotencySuffix = argValue('--idempotency-suffix')
 
 loadEnv('.env', { override: false })
 loadEnv('.env.local', { override: false })
@@ -76,6 +78,7 @@ try {
     day,
     recipients,
     dryRun: !doSend,
+    idempotencySuffix,
   })
 
   const previewPath = `/tmp/palas-daily-report-${result.payload.day}.html`
