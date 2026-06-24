@@ -56,10 +56,15 @@ type OrderRow = {
 const EVENTS_PER_PAGE = 500
 const MAX_PAGES_PER_RUN = 8
 const MAX_RUN_MS = 45_000
-// Re-read a full day of PostHog session events on every run. The upsert path
-// dedupes by event_uuid, and this protects reporting from short-lived cursor
-// skips caused by late checkout/session events or deploy gaps.
-const DEFAULT_LOOKBACK_MINUTES = 24 * 60
+// Keep a small overlap behind the current high-water mark. A full-day overlap
+// can starve this job on high-volume days: HogQL keeps returning the same first
+// page, and the session snapshot never reaches the rest of the day.
+const CURSOR_OVERLAP_MINUTES = 15
+const BOOTSTRAP_LOOKBACK_MINUTES = 24 * 60
+
+function hogqlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+}
 
 function segmentForContact(contact: ContactRow | undefined, orders: OrderRow[], occurredAt: string): SessionSegment {
   if (!contact) return 'unknown'
@@ -216,8 +221,8 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
   )
   const latest = latestRows[0]?.max_ts ? new Date(latestRows[0].max_ts) : null
   const since = latest
-    ? new Date(latest.getTime() - DEFAULT_LOOKBACK_MINUTES * 60 * 1000)
-    : new Date(Date.now() - 24 * 60 * 60 * 1000)
+    ? new Date(latest.getTime() - CURSOR_OVERLAP_MINUTES * 60 * 1000)
+    : new Date(Date.now() - BOOTSTRAP_LOOKBACK_MINUTES * 60 * 1000)
   const sinceIso = since.toISOString()
 
   const sessionCache = new Map<string, ExistingSession | undefined>()
@@ -230,18 +235,25 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
   let skipped = 0
   let errors = 0
 
+  let cursorTimestamp = sinceIso
+  let cursorUuid = ''
+
   for (let page = 0; page < MAX_PAGES_PER_RUN; page += 1) {
     if (Date.now() - startedAt > MAX_RUN_MS) break
-    const offset = page * EVENTS_PER_PAGE
+    const cursorClause =
+      page === 0
+        ? `timestamp > toDateTime('${hogqlString(sinceIso)}')`
+        : `(timestamp > toDateTime('${hogqlString(cursorTimestamp)}')
+            OR (timestamp = toDateTime('${hogqlString(cursorTimestamp)}')
+                AND uuid > '${hogqlString(cursorUuid)}'))`
     const rows = (await runPosthogHogQL(
       `SELECT uuid, event, distinct_id, timestamp, properties
          FROM events
-        WHERE timestamp > toDateTime('${sinceIso}')
+        WHERE ${cursorClause}
           AND distinct_id IS NOT NULL
           AND properties.$session_id IS NOT NULL
         ORDER BY timestamp ASC, uuid ASC
-        LIMIT ${EVENTS_PER_PAGE}
-        OFFSET ${offset}`,
+        LIMIT ${EVENTS_PER_PAGE}`,
       { privateKey: key },
     )) as unknown as HogQLEventRow[]
 
@@ -339,6 +351,10 @@ export default defineJob('sync-visitor-sessions', '*/5 * * * *', async ({ db, lo
         }
       }
     }
+
+    const lastEvent = rowToPosthogEvent(rows[rows.length - 1])
+    cursorTimestamp = lastEvent.timestamp
+    cursorUuid = lastEvent.uuid ?? ''
 
     if (rows.length < EVENTS_PER_PAGE) break
   }
