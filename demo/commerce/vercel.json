@@ -40,59 +40,5 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/crons/detect-abandoned-carts",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/crons/flush-ga4-dispatches",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/crons/flush-google-ads-dispatches",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/crons/purge-event-hub-logs",
-      "schedule": "0 */4 * * *"
-    },
-    {
-      "path": "/api/crons/reconcile-shopify-daily",
-      "schedule": "30 6 * * *"
-    },
-    {
-      "path": "/api/crons/reconcile-shopify-orders",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/crons/refresh-visitor-lifecycle-facts",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/crons/run-system-audits-nightly",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/crons/send-daily-reporting-email",
-      "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/crons/sync-from-shopify",
-      "schedule": "45 * * * *"
-    },
-    {
-      "path": "/api/crons/sync-klaviyo-events",
-      "schedule": "20 * * * *"
-    },
-    {
-      "path": "/api/crons/sync-posthog-events",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/crons/sync-visitor-sessions",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
