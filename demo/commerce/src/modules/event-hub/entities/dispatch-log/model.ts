@@ -9,7 +9,7 @@ export default defineModel('DispatchLog', {
   event_id: field.text().index(),
   canonical_event_name: field.text().index(),
   source_event_name: field.text().nullable().index(),
-  destination: field.enum(['ga4', 'google_ads']).index(),
+  destination: field.enum(['ga4', 'google_ads', 'meta_capi']).index(),
   status: field.enum(['pending', 'sending', 'sent', 'invalid', 'error', 'retry', 'not_configured']).index(),
 
   event_received_at: field.dateTime().index(),

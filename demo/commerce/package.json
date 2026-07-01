@@ -11,6 +11,7 @@
     "generate": "manta generate",
     "db:generate": "manta db generate",
     "db:migrate": "manta db migrate",
+    "smoke:meta-capi": "node scripts/smoke-meta-capi.mjs",
     "rebuild:production": "tsx scripts/rebuild-production.ts"
   },
   "dependencies": {

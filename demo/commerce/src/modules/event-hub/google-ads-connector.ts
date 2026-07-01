@@ -10,6 +10,11 @@ export type GoogleAdsConfig = {
   customerId: string | null
   loginCustomerId: string | null
   purchaseConversionActionId: string | null
+  addToCartConversionActionId: string | null
+  beginCheckoutConversionActionId: string | null
+  leadConversionActionId: string | null
+  addShippingInfoConversionActionId: string | null
+  addPaymentInfoConversionActionId: string | null
   apiVersion: string
   validateOnly: boolean
   endpoint: string
@@ -114,6 +119,13 @@ export function getGoogleAdsConfig(env: NodeJS.ProcessEnv = process.env): Google
     customerId: digits(env.GOOGLE_ADS_CUSTOMER_ID || null),
     loginCustomerId: digits(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || null),
     purchaseConversionActionId: digits(env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID || null),
+    addToCartConversionActionId: digits(env.GOOGLE_ADS_ADD_TO_CART_CONVERSION_ACTION_ID || null),
+    beginCheckoutConversionActionId: digits(env.GOOGLE_ADS_BEGIN_CHECKOUT_CONVERSION_ACTION_ID || null),
+    leadConversionActionId: digits(
+      env.GOOGLE_ADS_LEAD_CONVERSION_ACTION_ID || env.GOOGLE_ADS_ADD_CONTACT_INFO_CONVERSION_ACTION_ID || null,
+    ),
+    addShippingInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_SHIPPING_INFO_CONVERSION_ACTION_ID || null),
+    addPaymentInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_PAYMENT_INFO_CONVERSION_ACTION_ID || null),
     apiVersion,
     validateOnly: env.GOOGLE_ADS_VALIDATE_ONLY === 'true',
     endpoint: env.GOOGLE_ADS_ENDPOINT || `https://googleads.googleapis.com/${apiVersion}`,
@@ -128,16 +140,60 @@ export function isGoogleAdsConfigured(config: GoogleAdsConfig = getGoogleAdsConf
       config.clientSecret &&
       config.refreshToken &&
       config.customerId &&
-      config.purchaseConversionActionId,
+      (config.purchaseConversionActionId ||
+        config.addToCartConversionActionId ||
+        config.beginCheckoutConversionActionId ||
+        config.leadConversionActionId ||
+        config.addShippingInfoConversionActionId ||
+        config.addPaymentInfoConversionActionId),
   )
+}
+
+function conversionActionIdFor(
+  canonicalEventName: string,
+  config: Pick<
+    GoogleAdsConfig,
+    | 'purchaseConversionActionId'
+    | 'addToCartConversionActionId'
+    | 'beginCheckoutConversionActionId'
+    | 'leadConversionActionId'
+    | 'addShippingInfoConversionActionId'
+    | 'addPaymentInfoConversionActionId'
+  >,
+): string | null {
+  if (canonicalEventName === 'purchase') return config.purchaseConversionActionId
+  if (canonicalEventName === 'add_to_cart') return config.addToCartConversionActionId
+  if (canonicalEventName === 'begin_checkout') return config.beginCheckoutConversionActionId
+  if (canonicalEventName === 'add_contact_info') return config.leadConversionActionId
+  if (canonicalEventName === 'add_shipping_info') return config.addShippingInfoConversionActionId
+  if (canonicalEventName === 'add_payment_info') return config.addPaymentInfoConversionActionId
+  return null
 }
 
 export function mapCanonicalToGoogleAds(
   canonicalEventName: string,
   canonicalPayload: Record<string, unknown>,
-  config: Pick<GoogleAdsConfig, 'customerId' | 'purchaseConversionActionId'> = getGoogleAdsConfig(),
+  config: Pick<
+    GoogleAdsConfig,
+    | 'customerId'
+    | 'purchaseConversionActionId'
+    | 'addToCartConversionActionId'
+    | 'beginCheckoutConversionActionId'
+    | 'leadConversionActionId'
+    | 'addShippingInfoConversionActionId'
+    | 'addPaymentInfoConversionActionId'
+  > = getGoogleAdsConfig(),
 ): GoogleAdsMapResult {
-  if (canonicalEventName !== 'purchase') {
+  if (
+    ![
+      'purchase',
+      'add_to_cart',
+      'begin_checkout',
+      'add_contact_info',
+      'add_shipping_info',
+      'add_payment_info',
+    ].includes(canonicalEventName)
+  ) {
     return {
       supported: false,
       ok: false,
@@ -155,7 +211,7 @@ export function mapCanonicalToGoogleAds(
   const consent = obj(canonicalPayload.consent)
 
   const customerId = config.customerId
-  const conversionActionId = config.purchaseConversionActionId
+  const conversionActionId = conversionActionIdFor(canonicalEventName, config)
   const conversionDateTime = toGoogleAdsDateTime(canonicalPayload.event_time)
   const conversionValue = num(ecommerce.value)
   const currencyCode = str(ecommerce.currency, 8)
@@ -165,11 +221,17 @@ export function mapCanonicalToGoogleAds(
   const wbraid = pickClickId(user.wbraid) || clickIdFromUrl(context.url, 'wbraid')
   const hashedEmail = str(user.email_sha256, 128)
   const hashedPhone = str(user.phone_sha256, 128)
+  const userAgent = str(user.user_agent, 1024)
 
+  if (!conversionActionId) errors.push('google_ads_conversion_action_id_missing')
   if (!conversionDateTime) errors.push('google_ads_conversion_date_time_missing')
-  if (conversionValue == null) errors.push('google_ads_conversion_value_missing')
-  if (!currencyCode) errors.push('google_ads_currency_code_missing')
-  if (!orderId) errors.push('google_ads_order_id_missing')
+  if (
+    ['purchase', 'add_to_cart', 'begin_checkout', 'add_shipping_info', 'add_payment_info'].includes(canonicalEventName)
+  ) {
+    if (conversionValue == null) errors.push('google_ads_conversion_value_missing')
+    if (!currencyCode) errors.push('google_ads_currency_code_missing')
+  }
+  if (canonicalEventName === 'purchase' && !orderId) errors.push('google_ads_order_id_missing')
   if (!gclid && !gbraid && !wbraid && !isSha256(hashedEmail) && !isSha256(hashedPhone)) {
     errors.push('google_ads_identifier_missing')
   }
@@ -198,10 +260,11 @@ export function mapCanonicalToGoogleAds(
     conversionDateTime,
     conversionValue,
     currencyCode,
-    orderId,
+    orderId: canonicalEventName === 'purchase' ? orderId : null,
     gclid,
     gbraid,
     wbraid,
+    userAgent,
     consent: {
       adUserData: googleConsent(consent.ad_user_data),
       adPersonalization: googleConsent(consent.ad_personalization),
@@ -263,8 +326,7 @@ export async function sendGoogleAdsPurchasePayload(
       status: 'not_configured',
       http_status: null,
       error_code: 'google_ads_not_configured',
-      error_message:
-        'GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN, GOOGLE_ADS_CUSTOMER_ID and GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID are required',
+      error_message: 'Google Ads API credentials and at least one conversion action id are required',
       response_payload: null,
     }
   }
@@ -357,9 +419,8 @@ export async function sendGoogleAdsPurchasePayload(
 export const googleAdsDestinationConnector: DestinationConnector = {
   destination: 'google_ads',
   pendingStatuses: ['pending', 'retry', 'not_configured'],
-  eventNameFilter: 'purchase',
   notConfiguredErrorCode: 'google_ads_not_configured',
-  notConfiguredMessage: 'Set Google Ads API credentials and purchase conversion action to enable dispatch',
+  notConfiguredMessage: 'Set Google Ads API credentials and at least one conversion action id to enable dispatch',
   isConfigured: () => isGoogleAdsConfigured(getGoogleAdsConfig()),
   send: (payload, signal) => sendGoogleAdsPurchasePayload(payload, getGoogleAdsConfig(), signal),
 }

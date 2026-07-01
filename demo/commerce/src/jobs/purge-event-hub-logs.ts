@@ -2,7 +2,9 @@ type RuntimeDatabase = {
   raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
 }
 
-// Cron: every 4 hours, keep only the last 24h of Event Hub hot logs.
+const RETENTION_DAYS = 7
+
+// Cron: every 4 hours, keep the last week of Event Hub delivery logs.
 export default defineJob('purge-event-hub-logs', '0 */4 * * *', async ({ db, log }) => {
   const runtimeDb = db as RuntimeDatabase | undefined
   if (!runtimeDb?.raw) {
@@ -13,18 +15,20 @@ export default defineJob('purge-event-hub-logs', '0 */4 * * *', async ({ db, log
   const eventRows = await runtimeDb.raw<{ count: string }>(
     `WITH deleted AS (
        DELETE FROM event_logs
-        WHERE received_at < NOW() - INTERVAL '24 hours'
+        WHERE received_at < NOW() - ($1::text || ' days')::interval
         RETURNING 1
      )
      SELECT COUNT(*)::text AS count FROM deleted`,
+    [RETENTION_DAYS],
   )
   const dispatchRows = await runtimeDb.raw<{ count: string }>(
     `WITH deleted AS (
        DELETE FROM dispatch_logs
-        WHERE event_received_at < NOW() - INTERVAL '24 hours'
+        WHERE event_received_at < NOW() - ($1::text || ' days')::interval
         RETURNING 1
      )
      SELECT COUNT(*)::text AS count FROM deleted`,
+    [RETENTION_DAYS],
   )
   const eventsDeleted = Number(eventRows[0]?.count ?? 0)
   const dispatchesDeleted = Number(dispatchRows[0]?.count ?? 0)

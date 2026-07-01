@@ -18,6 +18,9 @@ function makeReq(body: Record<string, unknown>, unsafeCalls: Array<{ query: stri
     headers: {
       origin: 'https://fancypalas.com',
       'content-type': 'application/json',
+      'user-agent': 'Vitest Browser',
+      'x-forwarded-for': '203.0.113.10, 10.0.0.1',
+      cookie: '_fbp=fb.1.1710000000.1234567890; _fbc=fb.1.1710000000.fbclid_123',
     },
     body: JSON.stringify(body),
   })
@@ -140,5 +143,22 @@ describe('Event Hub ingest consent logging', () => {
     const ga4Call = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:ga4')
     expect(ga4Call?.params?.[4]).toBe('pending')
     expect(ga4Call?.params?.[8]).toBeNull()
+
+    const metaCall = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:meta_capi')
+    expect(metaCall?.params?.[4]).toBe('pending')
+    expect(metaCall?.params?.[8]).toBeNull()
+    const metaPayload = JSON.parse(metaCall?.params?.[9] as string)
+    expect(metaPayload.data[0]).toMatchObject({
+      event_name: 'Purchase',
+      event_id: 'evt_purchase_with_event_hub_client_id',
+      action_source: 'website',
+      event_source_url: 'https://fancypalas.com/checkouts/cn/thank-you',
+      user_data: {
+        client_ip_address: '203.0.113.10',
+        client_user_agent: 'Vitest Browser',
+        fbp: 'fb.1.1710000000.1234567890',
+        fbc: 'fb.1.1710000000.fbclid_123',
+      },
+    })
   })
 })

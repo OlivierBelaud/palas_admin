@@ -105,13 +105,14 @@ export function readCookie(header: string | null, name: string): string | null {
 
 export function ga4ContextFromHeaders(headers: Headers): Record<string, unknown> {
   const cookie = headers.get('cookie')
+  const forwardedFor = headers.get('x-forwarded-for')
   return compact({
     ga_client_id: gaClientIdFromCookie(readCookie(cookie, '_ga')),
     fbp: readCookie(cookie, '_fbp'),
     fbc: readCookie(cookie, '_fbc'),
     gclid: readCookie(cookie, 'gclid') || readCookie(cookie, '_gcl_aw'),
     user_agent: headers.get('user-agent'),
-    client_ip: headers.get('x-forwarded-for') ?? headers.get('x-real-ip'),
+    client_ip: forwardedFor?.split(',')[0]?.trim() || headers.get('x-real-ip'),
   })
 }
 

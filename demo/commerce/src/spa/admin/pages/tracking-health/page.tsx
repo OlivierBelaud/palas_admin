@@ -29,6 +29,10 @@ interface TrackingHealthData {
     ga4_sent: number
     ga4_invalid: number
     ga4_error: number
+    meta_pending: number
+    meta_sent: number
+    meta_invalid: number
+    meta_error: number
     posthog_forwarded: number
     consent_analytics_granted: number
     consent_analytics_denied: number
@@ -84,12 +88,22 @@ interface TrackingHealthData {
     ga4_error_message: string | null
     ga4_attempt_count: number
     ga4_sent_at: string | null
-    ad_destinations: Array<{
-      destination: string
-      supported: boolean
-      ready: boolean
-      blockers: string[]
-    }>
+    meta_ready: boolean
+    meta_status: string
+    meta_http_status: number | null
+    meta_error_code: string | null
+    meta_error_message: string | null
+    meta_attempt_count: number
+    meta_sent_at: string | null
+    meta_blockers: string[]
+    google_ads_ready: boolean
+    google_ads_status: string
+    google_ads_http_status: number | null
+    google_ads_error_code: string | null
+    google_ads_error_message: string | null
+    google_ads_attempt_count: number
+    google_ads_sent_at: string | null
+    google_ads_blockers: string[]
   }>
 }
 
@@ -262,6 +276,12 @@ function Kpis({ data }: { data: TrackingHealthData }) {
       mark: 'G4',
     },
     {
+      label: 'Meta',
+      value: data.kpis.meta_sent,
+      detail: `${data.kpis.meta_pending} attente · ${data.kpis.meta_invalid + data.kpis.meta_error} à corriger`,
+      mark: 'ME',
+    },
+    {
       label: 'Consentement',
       value: data.kpis.consent_analytics_granted,
       detail: `${data.kpis.consent_analytics_denied} refus analytics · ${data.kpis.consent_ads_denied} refus ads`,
@@ -380,7 +400,8 @@ function LiveEventTable({
               <Table.Head>Articles</Table.Head>
               <Table.Head>Source</Table.Head>
               <Table.Head>GA4</Table.Head>
-              <Table.Head>Ads</Table.Head>
+              <Table.Head>Meta</Table.Head>
+              <Table.Head>Google Ads</Table.Head>
               <Table.Head>Validité</Table.Head>
               <Table.Head>Event ID</Table.Head>
             </Table.Row>
@@ -467,7 +488,7 @@ function LiveEventTable({
                 </Table.Cell>
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
-                    <Badge variant={ga4BadgeVariant(event.ga4_status)}>{formatGa4Status(event)}</Badge>
+                    <Badge variant={deliveryBadgeVariant(event.ga4_status)}>{formatDeliveryStatus('ga4', event)}</Badge>
                     {event.ga4_error_code ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
@@ -479,20 +500,39 @@ function LiveEventTable({
                   </div>
                 </Table.Cell>
                 <Table.Cell>
-                  <div className="flex max-w-[240px] flex-wrap gap-1">
-                    {event.ad_destinations.length > 0 ? (
-                      event.ad_destinations.map((destination) => (
-                        <Badge
-                          key={destination.destination}
-                          variant={destination.ready ? 'secondary' : 'destructive'}
-                          title={destination.blockers.join(', ') || undefined}
-                        >
-                          {shortDestination(destination.destination)} {destination.ready ? 'ok' : 'bloqué'}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant={deliveryBadgeVariant(event.meta_status)}
+                      title={event.meta_blockers.join(', ') || undefined}
+                    >
+                      {formatDeliveryStatus('meta', event)}
+                    </Badge>
+                    {event.meta_error_code ? (
+                      <span
+                        className="max-w-[180px] truncate text-xs text-muted-foreground"
+                        title={event.meta_error_message ?? event.meta_error_code}
+                      >
+                        {event.meta_error_code}
+                      </span>
+                    ) : null}
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant={deliveryBadgeVariant(event.google_ads_status)}
+                      title={event.google_ads_blockers.join(', ') || undefined}
+                    >
+                      {formatDeliveryStatus('google_ads', event)}
+                    </Badge>
+                    {event.google_ads_error_code ? (
+                      <span
+                        className="max-w-[180px] truncate text-xs text-muted-foreground"
+                        title={event.google_ads_error_message ?? event.google_ads_error_code}
+                      >
+                        {event.google_ads_error_code}
+                      </span>
+                    ) : null}
                   </div>
                 </Table.Cell>
                 <Table.Cell>
@@ -509,7 +549,7 @@ function LiveEventTable({
             ))}
             {events.length === 0 ? (
               <Table.Row>
-                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={15}>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={17}>
                   Aucun event reçu.
                 </Table.Cell>
               </Table.Row>
@@ -580,21 +620,28 @@ function fmtNumber(value: number) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(value)
 }
 
-function ga4BadgeVariant(status: string) {
+function deliveryBadgeVariant(status: string) {
   if (status === 'sent') return 'secondary'
   if (status === 'invalid' || status === 'error') return 'destructive'
   return 'outline'
 }
 
-function formatGa4Status(event: TrackingHealthData['events'][number]) {
-  if (event.ga4_http_status) return `${event.ga4_status} ${event.ga4_http_status}`
-  if (event.ga4_attempt_count > 0) return `${event.ga4_status} x${event.ga4_attempt_count}`
-  return event.ga4_status
-}
-
-function shortDestination(destination: string) {
-  if (destination === 'meta_capi') return 'Meta'
-  if (destination === 'google_ads') return 'GAds'
-  if (destination === 'tiktok') return 'TT'
-  return destination
+function formatDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event: TrackingHealthData['events'][number]) {
+  const status =
+    destination === 'ga4' ? event.ga4_status : destination === 'meta' ? event.meta_status : event.google_ads_status
+  const httpStatus =
+    destination === 'ga4'
+      ? event.ga4_http_status
+      : destination === 'meta'
+        ? event.meta_http_status
+        : event.google_ads_http_status
+  const attemptCount =
+    destination === 'ga4'
+      ? event.ga4_attempt_count
+      : destination === 'meta'
+        ? event.meta_attempt_count
+        : event.google_ads_attempt_count
+  if (httpStatus) return `${status} ${httpStatus}`
+  if (attemptCount > 0) return `${status} x${attemptCount}`
+  return status
 }

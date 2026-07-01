@@ -9,6 +9,7 @@ import {
 import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../dispatch-runner'
 import { ga4ContextFromHeaders, ga4DestinationConnector, mapCanonicalToGa4 } from '../../ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../google-ads-connector'
+import { mapCanonicalToMetaCapi } from '../../meta-capi-connector'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
@@ -293,6 +294,16 @@ function queryParamFromUrl(url: string | null, key: string): string | null {
   }
 }
 
+function fbcFromClickId(url: string | null, eventTime: Date): string | null {
+  const fbclid = queryParamFromUrl(url, 'fbclid')
+  if (!fbclid) return null
+  return `fb.1.${Math.floor(eventTime.getTime() / 1000)}.${fbclid}`
+}
+
+function hasAdsConsentError(errors: string[]): boolean {
+  return errors.some((error) => error.includes('consent_not_granted'))
+}
+
 function pickGaClientId(
   eventHubClientId: string | null,
   body: JsonRecord,
@@ -362,6 +373,7 @@ function summarizePayload(
     (cartItems.length || checkoutItems.length || ecommerceItems.length)
 
   return {
+    event_id: str(body.event_id, 180) || str(obj(body.event_data).id, 180),
     event_name: eventName,
     raw_event_name: str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
     event_time: pickEventTime(body).toISOString(),
@@ -372,7 +384,7 @@ function summarizePayload(
       email_sha256: identity.emailSha256,
       ga_client_id: pickGaClientId(identity.muid, body, props, context, pageData, user, userData, sourceContext),
       fbp: str(sourceContext.fbp, 256),
-      fbc: str(sourceContext.fbc, 256),
+      fbc: str(sourceContext.fbc, 256) || fbcFromClickId(url, pickEventTime(body)),
       gclid:
         str(user.gclid, 512) ||
         str(userData.gclid, 512) ||
@@ -380,6 +392,7 @@ function summarizePayload(
         str(sourceContext.gclid, 512),
       gbraid: str(user.gbraid, 512) || str(userData.gbraid, 512) || queryParamFromUrl(url, 'gbraid'),
       wbraid: str(user.wbraid, 512) || str(userData.wbraid, 512) || queryParamFromUrl(url, 'wbraid'),
+      fbclid: str(user.fbclid, 512) || str(userData.fbclid, 512) || queryParamFromUrl(url, 'fbclid'),
       phone_sha256: str(user.phone_sha256, 128) || str(userData.phone_sha256, 128),
       user_agent: str(sourceContext.user_agent, 1024),
       client_ip: str(sourceContext.client_ip, 256),
@@ -485,11 +498,17 @@ export async function POST(req: Request) {
     eventIdWasGenerated: pickedEventId.generated,
     payload: normalized,
   })
+  normalized.event_id = eventId
   normalized.validation = validation
   const ga4 = mapCanonicalToGa4(eventName, normalized)
   const googleAds = mapCanonicalToGoogleAds(eventName, normalized)
+  const metaCapi = mapCanonicalToMetaCapi(eventName, normalized)
   const errors = Array.from(
-    new Set([...validationErrorsForSupportedDestinations(validation), ...(ga4.ok ? [] : ga4.errors)]),
+    new Set([
+      ...validationErrorsForSupportedDestinations(validation),
+      ...(ga4.ok ? [] : ga4.errors),
+      ...(metaCapi.supported && !metaCapi.ok && !hasAdsConsentError(metaCapi.errors) ? metaCapi.errors : []),
+    ]),
   )
   const valid = errors.length === 0
 
@@ -607,6 +626,46 @@ export async function POST(req: Request) {
         googleAds.ok ? null : googleAds.errors.join(', '),
         JSON.stringify(googleAds.payload),
         JSON.stringify({ ...googleAds.metadata, ready: googleAds.ok, errors: googleAds.ok ? [] : googleAds.errors }),
+      ],
+    )
+  }
+
+  if (metaCapi.supported) {
+    await sql.unsafe(
+      `INSERT INTO dispatch_logs (
+         id, event_destination_key, event_id, canonical_event_name, source_event_name,
+         destination, status, event_received_at, first_attempt_at, last_attempt_at,
+         next_attempt_at, sent_at, attempt_count, http_status, error_code,
+         error_message, request_payload, response_payload, metadata, created_at, updated_at
+       ) VALUES (
+         gen_random_uuid(), $1, $2, $3, $4,
+         'meta_capi', $5, $6, NULL, NULL,
+         $7, NULL, 0, NULL, $8,
+         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+       )
+       ON CONFLICT (event_destination_key) DO UPDATE SET
+         canonical_event_name = EXCLUDED.canonical_event_name,
+         source_event_name = EXCLUDED.source_event_name,
+         status = EXCLUDED.status,
+         event_received_at = EXCLUDED.event_received_at,
+         next_attempt_at = EXCLUDED.next_attempt_at,
+         error_code = EXCLUDED.error_code,
+         error_message = EXCLUDED.error_message,
+         request_payload = EXCLUDED.request_payload,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      [
+        `${eventId}:meta_capi`,
+        eventId,
+        eventName,
+        str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
+        metaCapi.ok ? 'pending' : 'invalid',
+        eventTime,
+        metaCapi.ok ? new Date() : null,
+        metaCapi.ok ? null : (metaCapi.errors[0] ?? 'meta_capi_invalid_payload'),
+        metaCapi.ok ? null : metaCapi.errors.join(', '),
+        JSON.stringify(metaCapi.payload),
+        JSON.stringify({ ...metaCapi.metadata, ready: metaCapi.ok, errors: metaCapi.ok ? [] : metaCapi.errors }),
       ],
     )
   }

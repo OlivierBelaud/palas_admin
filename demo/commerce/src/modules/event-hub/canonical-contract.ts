@@ -74,7 +74,13 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
     requires: { url: true, searchTerm: true },
   },
   add_to_cart: {
-    destinations: { posthog: 'add_to_cart', ga4: 'add_to_cart', meta_capi: 'AddToCart', tiktok: 'AddToCart' },
+    destinations: {
+      posthog: 'add_to_cart',
+      ga4: 'add_to_cart',
+      meta_capi: 'AddToCart',
+      google_ads: 'add_to_cart',
+      tiktok: 'AddToCart',
+    },
     requires: { items: true, valueCurrency: true },
   },
   remove_from_cart: {
@@ -89,19 +95,25 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
       posthog: 'begin_checkout',
       ga4: 'begin_checkout',
       meta_capi: 'InitiateCheckout',
+      google_ads: 'begin_checkout',
       tiktok: 'InitiateCheckout',
     },
     requires: { valueCurrency: true },
   },
   add_contact_info: {
-    destinations: { posthog: 'add_contact_info', meta_capi: 'Lead' },
+    destinations: { posthog: 'add_contact_info', meta_capi: 'Lead', google_ads: 'add_contact_info' },
   },
   add_shipping_info: {
-    destinations: { posthog: 'add_shipping_info', ga4: 'add_shipping_info' },
+    destinations: { posthog: 'add_shipping_info', ga4: 'add_shipping_info', google_ads: 'add_shipping_info' },
     requires: { valueCurrency: true },
   },
   add_payment_info: {
-    destinations: { posthog: 'add_payment_info', ga4: 'add_payment_info' },
+    destinations: {
+      posthog: 'add_payment_info',
+      ga4: 'add_payment_info',
+      meta_capi: 'AddPaymentInfo',
+      google_ads: 'add_payment_info',
+    },
     requires: { valueCurrency: true },
   },
   purchase: {
@@ -144,7 +156,7 @@ export const DISPATCHABLE_CANONICAL_EVENT_NAMES = new Set(
     .map(([eventName]) => eventName),
 )
 
-const ACTIONABLE_DESTINATIONS = new Set<CanonicalDestination>(['ga4', 'google_ads'])
+const ACTIONABLE_DESTINATIONS = new Set<CanonicalDestination>(['ga4', 'google_ads', 'meta_capi'])
 
 export function isCanonicalEventName(value: string): value is CanonicalEventName {
   return Object.hasOwn(CANONICAL_EVENT_CONTRACTS, value)
@@ -202,8 +214,8 @@ export function validationErrorsForSupportedDestinations(validation: CanonicalVa
   for (const [destination, result] of Object.entries(validation.destinations)) {
     if (!ACTIONABLE_DESTINATIONS.has(destination as CanonicalDestination)) continue
     if (!result.supported || result.ready) continue
+    if (result.blockers.some(isConsentBlocker)) continue
     for (const blocker of result.blockers) {
-      if (isConsentBlocker(blocker)) continue
       errors.push(`${destination}:${blocker}`)
     }
   }
@@ -259,21 +271,24 @@ function destinationResult(
 
   if (destination === 'meta_capi') {
     if (!str(context.url, 4096)) blockers.push('event_source_url_missing')
-    if (!str(user.client_ip, 256)) blockers.push('client_ip_missing')
     if (!str(user.user_agent, 1024)) blockers.push('user_agent_missing')
-    if (!hasAny(user, ['email_sha256', 'phone_sha256', 'fbp', 'fbc', 'external_id', 'shopify_customer_id'])) {
+    if (!hasAny(user, ['email_sha256', 'phone_sha256', 'fbp', 'fbc', 'external_id', 'shopify_customer_id', 'muid'])) {
       blockers.push('meta_user_data_missing')
     }
     addAdsConsentBlockers(blockers, consent)
   }
 
   if (destination === 'google_ads') {
-    if (eventName !== 'purchase') blockers.push('google_ads_conversion_not_supported')
-    if (!str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180)) {
+    if (!['purchase', 'add_to_cart', 'begin_checkout', 'add_contact_info'].includes(eventName)) {
+      blockers.push('google_ads_conversion_not_supported')
+    }
+    if (eventName === 'purchase' && !str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180)) {
       blockers.push('order_id_missing')
     }
-    if (num(ecommerce.value) == null) blockers.push('conversion_value_missing')
-    if (!str(ecommerce.currency, 8)) blockers.push('conversion_currency_missing')
+    if (['purchase', 'add_to_cart', 'begin_checkout'].includes(eventName)) {
+      if (num(ecommerce.value) == null) blockers.push('conversion_value_missing')
+      if (!str(ecommerce.currency, 8)) blockers.push('conversion_currency_missing')
+    }
     if (!hasAny(user, ['gclid', 'gbraid', 'wbraid', 'email_sha256', 'phone_sha256'])) {
       blockers.push('google_ads_identifier_missing')
     }
