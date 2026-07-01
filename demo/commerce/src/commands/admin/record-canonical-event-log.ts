@@ -3,6 +3,7 @@ import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canoni
 import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
 import { ga4DestinationConnector, mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 import { mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
+import { mapCanonicalToMetaCapi } from '../../modules/event-hub/meta-capi-connector'
 import {
   compareIdentityResolvers,
   type IdentityServiceLike,
@@ -66,7 +67,7 @@ export default defineCommand({
         received_at: new Date(),
         page_type: canonical.page_type,
         market: canonical.market,
-        identity_muid: null,
+        identity_muid: canonical.identity_muid,
         identity_email_sha256: canonical.identity_email_sha256,
         distinct_id: canonical.distinct_id,
         valid: canonical.valid,
@@ -150,6 +151,34 @@ export default defineCommand({
           request_payload: googleAds.payload,
           response_payload: null,
           metadata: { ...googleAds.metadata, ready: googleAds.ok, errors: googleAds.ok ? [] : googleAds.errors },
+        })
+      } catch (err) {
+        if (!isDuplicateError(err)) throw err
+      }
+    }
+
+    const metaCapi = mapCanonicalToMetaCapi(canonical.event_name, canonical.payload_normalized)
+    if (metaCapi.supported) {
+      try {
+        await services.dispatchLog.create({
+          event_destination_key: `${canonical.event_id}:meta_capi`,
+          event_id: canonical.event_id,
+          canonical_event_name: canonical.event_name,
+          source_event_name: canonical.raw_event_name,
+          destination: 'meta_capi',
+          status: metaCapi.ok ? 'pending' : 'invalid',
+          event_received_at: toDate(canonical.event_time),
+          first_attempt_at: null,
+          last_attempt_at: null,
+          next_attempt_at: metaCapi.ok ? new Date() : null,
+          sent_at: null,
+          attempt_count: 0,
+          http_status: null,
+          error_code: metaCapi.ok ? null : (metaCapi.errors[0] ?? 'meta_capi_invalid_payload'),
+          error_message: metaCapi.ok ? null : metaCapi.errors.join(', '),
+          request_payload: metaCapi.payload,
+          response_payload: null,
+          metadata: { ...metaCapi.metadata, ready: metaCapi.ok, errors: metaCapi.ok ? [] : metaCapi.errors },
         })
       } catch (err) {
         if (!isDuplicateError(err)) throw err

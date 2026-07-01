@@ -1,6 +1,5 @@
 import {
   DISPATCHABLE_CANONICAL_EVENT_NAMES,
-  GA4_CANONICAL_EVENT_NAMES,
 } from '../../modules/event-hub/canonical-contract'
 import { type RawDb, resolveRawDb } from '../../utils/raw-db'
 
@@ -60,6 +59,8 @@ type StatRow = {
   total: string | number
   valid: string | number
   identified: string | number
+  unique_distinct_ids: string | number
+  unique_session_ids: string | number
   ga4_ready: string | number
   posthog_forwarded: string | number
   consent_analytics_granted: string | number
@@ -67,6 +68,7 @@ type StatRow = {
 }
 
 type StatusCountRow = {
+  destination?: string
   status: string
   count: string | number
 }
@@ -79,7 +81,6 @@ type DestinationSummary = {
 }
 
 const DISPATCHABLE_EVENT_NAMES = Array.from(DISPATCHABLE_CANONICAL_EVENT_NAMES)
-const GA4_EVENT_NAMES = Array.from(GA4_CANONICAL_EVENT_NAMES)
 const CONSENT_BLOCKERS = [
   'analytics_consent_not_granted',
   'ad_storage_consent_not_granted',
@@ -138,7 +139,7 @@ export async function loadTrackingHealthData(
     loadPageRows(db, from, to, eventName, limit, offset),
     loadEventTypes(db, from, to),
     loadStats(db, from, to, eventName),
-    loadGa4StatusCounts(db, from, to),
+    loadDestinationStatusCounts(db, from, to),
   ])
   const total = toNumber(rows[0]?.total_count)
   const stats = statRows[0] ?? emptyStats()
@@ -146,7 +147,7 @@ export async function loadTrackingHealthData(
 
   const pageEventIds = rows.map((row) => row.event_id).filter(Boolean)
   const pageDispatchRows = pageEventIds.length > 0 ? await loadPageDispatches(db, pageEventIds) : []
-  const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
+  const dispatchByKey = new Map(pageDispatchRows.map((row) => [`${row.event_id}:${row.destination}`, row]))
 
   const contactIds = uniqueStrings(
     rows
@@ -201,10 +202,13 @@ export async function loadTrackingHealthData(
     const validation = (payload.validation ?? {}) as Record<string, unknown>
     const validationDestinations = (validation.destinations ?? {}) as Record<string, unknown>
     const ga4Destination = destinationSummary('ga4', validationDestinations.ga4)
+    const metaCapiDestination = destinationSummary('meta_capi', validationDestinations.meta_capi)
     const googleAdsDestination = destinationSummary('google_ads', validationDestinations.google_ads)
     const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
     const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
-    const ga4Log = dispatchByEventId.get(row.event_id)
+    const ga4Log = dispatchByKey.get(`${row.event_id}:ga4`)
+    const metaCapiLog = dispatchByKey.get(`${row.event_id}:meta_capi`)
+    const googleAdsLog = dispatchByKey.get(`${row.event_id}:google_ads`)
     const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
     const cartToken = typeof cart.token === 'string' ? cart.token : null
     const checkoutToken = typeof checkout.token === 'string' ? checkout.token : null
@@ -241,6 +245,8 @@ export async function loadTrackingHealthData(
         row.identity_muid ??
         (row.distinct_id ? `posthog:${row.distinct_id}` : null) ??
         (row.identity_email_sha256 ? `sha256:${row.identity_email_sha256}` : null),
+      distinct_id: row.distinct_id,
+      session_id: typeof user.session_id === 'string' ? user.session_id : null,
       identity_source: typeof user.identity_source === 'string' ? user.identity_source : null,
       contact_id: contactId,
       email: email ?? null,
@@ -276,13 +282,38 @@ export async function loadTrackingHealthData(
       ga4_error_message: ga4Log?.error_message ?? null,
       ga4_attempt_count: ga4Log?.attempt_count ?? 0,
       ga4_sent_at: ga4Log?.sent_at ? new Date(ga4Log.sent_at).toISOString() : null,
-      ad_destinations: [googleAdsDestination].filter((destination) => destination.supported),
+      meta_ready: metaCapiDestination.supported
+        ? metaCapiLog
+          ? ['pending', 'sending', 'sent', 'retry'].includes(metaCapiLog.status)
+          : metaCapiDestination.ready === true
+        : false,
+      meta_status: metaCapiDestination.supported ? (metaCapiLog?.status ?? 'pending') : 'unsupported',
+      meta_http_status: metaCapiLog?.http_status ?? null,
+      meta_error_code: metaCapiLog?.error_code ?? null,
+      meta_error_message: metaCapiLog?.error_message ?? null,
+      meta_attempt_count: metaCapiLog?.attempt_count ?? 0,
+      meta_sent_at: metaCapiLog?.sent_at ? new Date(metaCapiLog.sent_at).toISOString() : null,
+      meta_blockers: metaCapiDestination.blockers,
+      google_ads_ready: googleAdsDestination.supported
+        ? googleAdsLog
+          ? ['pending', 'sending', 'sent', 'retry'].includes(googleAdsLog.status)
+          : googleAdsDestination.ready === true
+        : false,
+      google_ads_status: googleAdsDestination.supported ? (googleAdsLog?.status ?? 'pending') : 'unsupported',
+      google_ads_http_status: googleAdsLog?.http_status ?? null,
+      google_ads_error_code: googleAdsLog?.error_code ?? null,
+      google_ads_error_message: googleAdsLog?.error_message ?? null,
+      google_ads_attempt_count: googleAdsLog?.attempt_count ?? 0,
+      google_ads_sent_at: googleAdsLog?.sent_at ? new Date(googleAdsLog.sent_at).toISOString() : null,
+      google_ads_blockers: googleAdsDestination.blockers,
     }
   })
 
   const valid = toNumber(stats.valid)
   const identified = toNumber(stats.identified)
-  const ga4StatusCounts = countByStatus(dispatchStatRows)
+  const statusCounts = countByDestinationStatus(dispatchStatRows)
+  const ga4StatusCounts = statusCounts.get('ga4') ?? new Map<string, number>()
+  const metaStatusCounts = statusCounts.get('meta_capi') ?? new Map<string, number>()
   return {
     meta: {
       range: { from: from.toISOString(), to: to.toISOString() },
@@ -303,6 +334,8 @@ export async function loadTrackingHealthData(
       invalid: total - valid,
       identified,
       anonymous: total - identified,
+      unique_distinct_ids: toNumber(stats.unique_distinct_ids),
+      unique_session_ids: toNumber(stats.unique_session_ids),
       ga4_ready: toNumber(stats.ga4_ready),
       ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
       ga4_sent: countStatus(ga4StatusCounts, 'sent'),
@@ -311,6 +344,13 @@ export async function loadTrackingHealthData(
         countStatus(ga4StatusCounts, 'error') +
         countStatus(ga4StatusCounts, 'not_configured') +
         countStatus(ga4StatusCounts, 'sending'),
+      meta_pending: countStatus(metaStatusCounts, 'pending') + countStatus(metaStatusCounts, 'retry'),
+      meta_sent: countStatus(metaStatusCounts, 'sent'),
+      meta_invalid: countStatus(metaStatusCounts, 'invalid'),
+      meta_error:
+        countStatus(metaStatusCounts, 'error') +
+        countStatus(metaStatusCounts, 'not_configured') +
+        countStatus(metaStatusCounts, 'sending'),
       posthog_forwarded: toNumber(stats.posthog_forwarded),
       consent_analytics_granted: toNumber(stats.consent_analytics_granted),
       consent_analytics_denied: total - toNumber(stats.consent_analytics_granted),
@@ -373,6 +413,8 @@ function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
                  OR identity_muid IS NOT NULL
                  OR distinct_id IS NOT NULL
             )::text AS identified,
+            COUNT(DISTINCT distinct_id)::text AS unique_distinct_ids,
+            COUNT(DISTINCT payload_normalized #>> '{user,session_id}')::text AS unique_session_ids,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,ga4,ready}' = 'true')::text AS ga4_ready,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{dispatch,posthog,status}' = 'forwarded')::text AS posthog_forwarded,
             COUNT(*) FILTER (WHERE payload_normalized #>> '{consent,analytics_storage}' = 'true')::text
@@ -392,17 +434,16 @@ function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
   )
 }
 
-function loadGa4StatusCounts(db: RawDb, from: Date, to: Date) {
+function loadDestinationStatusCounts(db: RawDb, from: Date, to: Date) {
   return db.raw<StatusCountRow>(
-    `SELECT status, COUNT(*)::text AS count
+    `SELECT destination, status, COUNT(*)::text AS count
        FROM dispatch_logs
       WHERE deleted_at IS NULL
-        AND destination = 'ga4'
-        AND canonical_event_name = ANY($3::text[])
+        AND destination = ANY($3::text[])
         AND event_received_at >= $1
         AND event_received_at <= $2
-      GROUP BY status`,
-    [from.toISOString(), to.toISOString(), GA4_EVENT_NAMES],
+      GROUP BY destination, status`,
+    [from.toISOString(), to.toISOString(), ['ga4', 'meta_capi', 'google_ads']],
   )
 }
 
@@ -412,10 +453,10 @@ function loadPageDispatches(db: RawDb, eventIds: string[]) {
             attempt_count, sent_at, last_attempt_at
        FROM dispatch_logs
       WHERE deleted_at IS NULL
-        AND destination = 'ga4'
+        AND destination = ANY($2::text[])
         AND event_id = ANY($1::text[])
       ORDER BY event_received_at DESC`,
-    [eventIds],
+    [eventIds, ['ga4', 'meta_capi', 'google_ads']],
   )
 }
 
@@ -456,6 +497,8 @@ function emptyStats(): StatRow {
     total: 0,
     valid: 0,
     identified: 0,
+    unique_distinct_ids: 0,
+    unique_session_ids: 0,
     ga4_ready: 0,
     posthog_forwarded: 0,
     consent_analytics_granted: 0,
@@ -463,9 +506,14 @@ function emptyStats(): StatRow {
   }
 }
 
-function countByStatus(rows: StatusCountRow[]) {
-  const map = new Map<string, number>()
-  for (const row of rows) map.set(row.status, toNumber(row.count))
+function countByDestinationStatus(rows: StatusCountRow[]) {
+  const map = new Map<string, Map<string, number>>()
+  for (const row of rows) {
+    const destination = row.destination ?? 'unknown'
+    const destinationMap = map.get(destination) ?? new Map<string, number>()
+    destinationMap.set(row.status, toNumber(row.count))
+    map.set(destination, destinationMap)
+  }
   return map
 }
 

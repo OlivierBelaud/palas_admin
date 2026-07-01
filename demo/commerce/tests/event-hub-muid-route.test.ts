@@ -26,4 +26,14 @@ describe('Event Hub muid route', () => {
     expect(res.headers.get('set-cookie')).toContain('muid=')
     expect(await res.json()).toMatchObject({ ok: true })
   })
+
+  it('accepts a valid client-created muid so browser events and server cookie stay aligned', async () => {
+    const res = await GET(
+      makeReq('https://admin.fancypalas.com/api/event-hub/muid?m=muid_0123456789abcdef0123456789abcdef'),
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('set-cookie')).toContain('muid=muid_0123456789abcdef0123456789abcdef')
+    expect(await res.json()).toMatchObject({ ok: true, muid: 'muid_0123456789abcdef0123456789abcdef' })
+  })
 })

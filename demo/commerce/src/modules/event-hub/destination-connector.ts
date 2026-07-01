@@ -1,4 +1,4 @@
-export type DispatchDestination = 'ga4' | 'google_ads'
+export type DispatchDestination = 'ga4' | 'google_ads' | 'meta_capi'
 
 export type DispatchStatus = 'sent' | 'invalid' | 'error' | 'retry' | 'not_configured'
 

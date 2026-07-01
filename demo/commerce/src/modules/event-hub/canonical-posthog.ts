@@ -20,6 +20,7 @@ export type CanonicalPosthogEvent = {
   valid: boolean
   validation_errors: string[]
   identity_email_sha256: string | null
+  identity_muid: string | null
   distinct_id: string | null
   payload_normalized: Record<string, unknown>
 }
@@ -105,6 +106,16 @@ function parseUrl(url: string | null): URL | null {
 function queryParamFromUrl(url: string | null, key: string, max = 512): string | null {
   const parsed = parseUrl(url)
   return parsed ? str(parsed.searchParams.get(key), max) : null
+}
+
+function fbcFromClickId(url: string | null, observedAt: string | null): string | null {
+  const fbclid = queryParamFromUrl(url, 'fbclid')
+  if (!fbclid) return null
+  const parsed = observedAt ? new Date(observedAt) : new Date()
+  const seconds = Number.isFinite(parsed.getTime())
+    ? Math.floor(parsed.getTime() / 1000)
+    : Math.floor(Date.now() / 1000)
+  return `fb.1.${seconds}.${fbclid}`
 }
 
 function muidFromMantaToken(token: string | null): string | null {
@@ -261,14 +272,27 @@ export function normalizePosthogEventToCanonical(
       str(obj(props.user).manta_uid_token, 4096) ||
       str(props.manta_uid_token, 4096),
   )
+  const userProps = obj(props.user)
+  const userDataProps = obj(props.user_data)
+  const setProps = obj(props.$set)
+  const muid =
+    tokenMuid ||
+    str(sourceContext.muid, 128) ||
+    str(props.muid, 128) ||
+    str(props.palas_muid, 128) ||
+    str(userProps.muid, 128) ||
+    str(userDataProps.muid, 128) ||
+    str(setProps.palas_muid, 128) ||
+    null
 
   const payload: Record<string, unknown> = {
+    event_id: eventId,
     raw_event_name: rawEventName,
     canonical_source: rawEventName === '$pageview' ? 'posthog_pageview_derivation' : 'posthog_event_mapping',
     event_time: signals.observed_at,
     search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
-      muid: tokenMuid || str(sourceContext.muid, 128) || str(props.muid, 128) || null,
+      muid,
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
       contact_id: comparison.v2.contact_id,
@@ -279,20 +303,37 @@ export function normalizePosthogEventToCanonical(
         str(sourceContext.ga_client_id, 128) ||
         str(props.ga_client_id, 128) ||
         str(props.$ga_client_id, 128) ||
-        tokenMuid ||
-        str(sourceContext.muid, 128) ||
-        str(props.muid, 128) ||
+        muid ||
         str(signals.posthog_distinct_id, 128),
       ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
-      fbp: str(sourceContext.fbp, 256) || str(props.fbp, 256) || str(props._fbp, 256),
-      fbc: str(sourceContext.fbc, 256) || str(props.fbc, 256) || str(props._fbc, 256),
+      fbp:
+        str(sourceContext.fbp, 256) ||
+        str(userProps.fbp, 256) ||
+        str(userDataProps.fbp, 256) ||
+        str(props.fbp, 256) ||
+        str(props._fbp, 256),
+      fbc:
+        str(sourceContext.fbc, 256) ||
+        str(userProps.fbc, 256) ||
+        str(userDataProps.fbc, 256) ||
+        str(props.fbc, 256) ||
+        str(props._fbc, 256) ||
+        fbcFromClickId(currentUrl, signals.observed_at),
       gclid: str(sourceContext.gclid, 512) || str(props.gclid, 512) || queryParamFromUrl(currentUrl, 'gclid'),
       gbraid: str(sourceContext.gbraid, 512) || str(props.gbraid, 512) || queryParamFromUrl(currentUrl, 'gbraid'),
       wbraid: str(sourceContext.wbraid, 512) || str(props.wbraid, 512) || queryParamFromUrl(currentUrl, 'wbraid'),
       fbclid: str(sourceContext.fbclid, 512) || str(props.fbclid, 512) || queryParamFromUrl(currentUrl, 'fbclid'),
       ttclid: str(sourceContext.ttclid, 512) || str(props.ttclid, 512) || queryParamFromUrl(currentUrl, 'ttclid'),
-      client_ip: str(sourceContext.client_ip, 256),
-      user_agent: str(sourceContext.user_agent, 1024),
+      client_ip:
+        str(sourceContext.client_ip, 256) || str(userProps.client_ip, 256) || str(userDataProps.client_ip, 256),
+      user_agent:
+        str(sourceContext.user_agent, 1024) ||
+        str(props.$raw_user_agent, 1024) ||
+        str(props.user_agent, 1024) ||
+        str(userProps.user_agent, 1024) ||
+        str(userProps.userAgent, 1024) ||
+        str(userDataProps.user_agent, 1024) ||
+        str(userDataProps.userAgent, 1024),
       matched_v1: comparison.matched_v1,
     },
     context: {
@@ -414,6 +455,7 @@ export function normalizePosthogEventToCanonical(
     valid: errors.length === 0,
     validation_errors: errors,
     identity_email_sha256: emailSha256(comparison.v2.email),
+    identity_muid: muid,
     distinct_id: signals.posthog_distinct_id,
     payload_normalized: payload,
   }

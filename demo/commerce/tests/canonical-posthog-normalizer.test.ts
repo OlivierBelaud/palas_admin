@@ -237,6 +237,7 @@ describe('canonical PostHog normalizer', () => {
       fbp: 'fb.1.123.xyz',
       fbc: 'fb.1.123.abc',
     })
+    expect(event?.identity_muid).toBe('muid_1')
     expect(event?.payload_normalized.context).toMatchObject({
       utm: {
         source: 'google',

@@ -65,6 +65,11 @@ function newMuid(): string {
   return `muid_${randomUUID().replace(/-/g, '')}`
 }
 
+function validClientMuid(value: string | null): string | null {
+  const trimmed = value?.trim() ?? ''
+  return /^muid_[a-f0-9]{32}$/i.test(trimmed) ? trimmed.toLowerCase() : null
+}
+
 function cookieDomain(req: Request): string | null {
   const host = new URL(req.url).hostname
   return host === 'fancypalas.com' || host.endsWith('.fancypalas.com') ? '.fancypalas.com' : null
@@ -102,7 +107,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const tokenMuid = deriveMuidFromToken((url.searchParams.get('u') ?? '').trim())
   const existing = parseCookie(req.headers.get('cookie'))[COOKIE_NAME]
-  const muid = tokenMuid || existing || newMuid()
+  const clientMuid = validClientMuid(url.searchParams.get('m'))
+  const muid = tokenMuid || validClientMuid(existing) || clientMuid || newMuid()
   headers['Set-Cookie'] = cookieHeader(req, muid)
 
   return Response.json({ ok: true, muid }, { headers })
