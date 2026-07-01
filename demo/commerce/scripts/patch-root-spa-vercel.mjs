@@ -133,9 +133,7 @@ function patchOutputConfig() {
     { src: '^/(?!api(?:/|$)).*', dest: '/index.html', status: 200 },
     { src: '/(.*)', dest: '/__server' },
   ]
-  if (Array.isArray(vercelConfig.crons)) {
-    config.crons = vercelConfig.crons
-  }
+  delete config.crons
   writeJson(path, config)
 }
 
