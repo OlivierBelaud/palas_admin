@@ -62,7 +62,7 @@ interface SimulatorDiscount {
   source: 'shopify'
 }
 
-type PalasRuleType = 'order_discount' | 'gift_threshold' | 'shipping_threshold'
+type PalasRuleType = 'order_discount' | 'first_order_discount' | 'gift_threshold' | 'shipping_threshold'
 
 interface PalasRule {
   id: string
@@ -474,6 +474,7 @@ function RuleBuilder({
             value={form.rule_type}
             options={[
               { value: 'order_discount', label: 'Remise' },
+              { value: 'first_order_discount', label: '1ere commande' },
               { value: 'gift_threshold', label: 'Cadeau' },
               { value: 'shipping_threshold', label: 'Livraison' },
             ]}
@@ -511,7 +512,7 @@ function RuleBuilder({
             </label>
           </div>
 
-          {form.rule_type === 'order_discount' ? (
+          {form.rule_type === 'order_discount' || form.rule_type === 'first_order_discount' ? (
             <div className="grid gap-3 md:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-value-type">
                 <span className="font-medium">Type remise</span>
@@ -1029,21 +1030,43 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
 
   const palasCampaigns = (config?.palas_rules ?? [])
     .filter((rule) => rule.execution_kind !== 'shopify_discount')
-    .map(palasRuleToCampaign)
+    .map((rule, index) => palasRuleToCampaign(rule, index))
     .filter((campaign): campaign is MarketingCampaign => Boolean(campaign))
 
   return [...palasCampaigns, ...shopifyDiscountCampaigns, shippingCampaign]
 }
 
-function palasRuleToCampaign(rule: PalasRule): MarketingCampaign | null {
+function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign | null {
   const base = {
     id: `palas-rule-${rule.id}`,
     title: rule.title,
     status: rule.status,
     startsAt: rule.starts_at,
     endsAt: rule.ends_at,
-    priority: rule.rule_type === 'shipping_threshold' ? 200 : 150,
+    priority: rule.rule_type === 'shipping_threshold' ? 250 - index : 200 - index,
   } satisfies Omit<MarketingCampaign, 'rules'>
+
+  if (rule.rule_type === 'first_order_discount' && rule.value_type && rule.value != null) {
+    return {
+      ...base,
+      rules: [
+        {
+          id: `palas-first-order-${rule.id}`,
+          kind: 'order_discount',
+          label: rule.title,
+          enabled: true,
+          execution: ['email_copy', 'theme_surface'],
+          customerSegments: ['new_customer'],
+          exclusiveGroup: 'first_order_discount',
+          valueType: rule.value_type,
+          value: rule.value,
+          target: { type: 'all' },
+          code: rule.code,
+          combinableWith: ['shipping_threshold'],
+        },
+      ],
+    }
+  }
 
   if (rule.rule_type === 'gift_threshold' && rule.threshold != null && rule.gift_title) {
     return {
@@ -1117,7 +1140,7 @@ function toMarketingRuleInput(form: MarketingRuleFormState, fallbackCurrencyCode
     ends_at: form.ends_at ? localDateTimeToIso(form.ends_at) : null,
   }
 
-  if (form.rule_type === 'order_discount') {
+  if (form.rule_type === 'order_discount' || form.rule_type === 'first_order_discount') {
     return {
       ...base,
       value_type: form.value_type,
@@ -1154,12 +1177,13 @@ function setRuleField<Key extends keyof MarketingRuleFormState>(
 
 function placeholderForRule(ruleType: PalasRuleType): string {
   if (ruleType === 'order_discount') return 'Summer sale -15%'
+  if (ruleType === 'first_order_discount') return 'Nouveaux clients -10%'
   if (ruleType === 'shipping_threshold') return 'Livraison offerte France'
   return 'Charm offert des 150 euros'
 }
 
 function ruleSummary(rule: PalasRule): string {
-  if (rule.rule_type === 'order_discount') {
+  if (rule.rule_type === 'order_discount' || rule.rule_type === 'first_order_discount') {
     const suffix = rule.value_type === 'percentage' ? '%' : (rule.currency_code ?? '')
     return `${rule.value ?? 0}${suffix}${rule.code ? ` · code ${rule.code}` : ' · automatique'}`
   }
@@ -1206,6 +1230,7 @@ function defaultDateTimeLocal(): string {
 
 function kindLabel(kind: string): string {
   if (kind === 'order_discount') return 'Discount'
+  if (kind === 'first_order_discount') return '1ere commande'
   if (kind === 'shipping_threshold') return 'Livraison'
   if (kind === 'gift_threshold') return 'Cadeau seuil'
   if (kind === 'gift_with_purchase') return 'Cadeau achat'

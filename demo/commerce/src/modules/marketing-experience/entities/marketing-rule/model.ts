@@ -1,6 +1,6 @@
 export default defineModel('MarketingRule', {
   title: field.text().index(),
-  rule_type: field.enum(['order_discount', 'gift_threshold', 'shipping_threshold']).index(),
+  rule_type: field.enum(['order_discount', 'first_order_discount', 'gift_threshold', 'shipping_threshold']).index(),
   status: field.enum(['draft', 'active', 'paused']).default('active').index(),
   starts_at: field.dateTime().index(),
   ends_at: field.dateTime().nullable().index(),

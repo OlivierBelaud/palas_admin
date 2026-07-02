@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS "marketing_rules" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   "title" TEXT NOT NULL,
-  "rule_type" TEXT NOT NULL CHECK ("rule_type" IN ('order_discount', 'gift_threshold', 'shipping_threshold')),
+  "rule_type" TEXT NOT NULL CHECK ("rule_type" IN ('order_discount', 'first_order_discount', 'gift_threshold', 'shipping_threshold')),
   "status" TEXT NOT NULL DEFAULT 'active' CHECK ("status" IN ('draft', 'active', 'paused')),
   "starts_at" TIMESTAMPTZ NOT NULL,
   "ends_at" TIMESTAMPTZ,

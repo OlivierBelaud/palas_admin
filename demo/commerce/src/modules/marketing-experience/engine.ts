@@ -52,6 +52,7 @@ interface BaseRule {
   execution: ExecutionChannel[]
   markets?: MarketCode[]
   customerSegments?: CustomerSegment[]
+  exclusiveGroup?: string
 }
 
 export interface OrderDiscountRule extends BaseRule {
@@ -191,11 +192,15 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
   }
 
   let shippingRuleSeen = false
+  const exclusiveGroupsSeen = new Set<string>()
 
   for (const { campaign, rule } of activeRules) {
+    if (rule.exclusiveGroup && exclusiveGroupsSeen.has(rule.exclusiveGroup)) continue
+
     if (rule.kind === 'announcement') {
       result.announcements.push(rule.message)
       appendAppliedRule(result, campaign, rule, 'Annonce visible sur les surfaces marketing.')
+      if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
       continue
     }
 
@@ -225,6 +230,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
           ? `Livraison estimee offerte via ${threshold.source}.`
           : `Livraison estimee a ${formatMoney(threshold.paidRate, threshold.currencyCode)} via ${threshold.source}.`,
       )
+      if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
       continue
     }
 
@@ -241,6 +247,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
       if (reached) {
         result.gifts.push({ productId: rule.giftProductId, title: rule.giftTitle, quantity: 1, sourceRuleId: rule.id })
         appendAppliedRule(result, campaign, rule, `${rule.giftTitle} ajoute au panier simule.`)
+        if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
       }
       continue
     }
@@ -253,6 +260,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
       if (quantity >= rule.minQuantity) {
         result.gifts.push({ productId: rule.giftProductId, title: rule.giftTitle, quantity: 1, sourceRuleId: rule.id })
         appendAppliedRule(result, campaign, rule, `${rule.giftTitle} ajoute car ${rule.buyCategory} present.`)
+        if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
       }
       continue
     }
@@ -264,6 +272,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
         rule.valueType === 'percentage' ? eligibleSubtotal * (rule.value / 100) : Math.min(rule.value, eligibleSubtotal)
       result.discountTotal += discount
       appendAppliedRule(result, campaign, rule, `${formatMoney(discount, input.currencyCode)} de remise estimee.`)
+      if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
     }
   }
 

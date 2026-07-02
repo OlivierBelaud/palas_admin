@@ -142,7 +142,7 @@ interface ShippingThreshold {
 interface NormalizedPalasRule {
   id: string
   title: string
-  rule_type: 'order_discount' | 'gift_threshold' | 'shipping_threshold'
+  rule_type: 'order_discount' | 'first_order_discount' | 'gift_threshold' | 'shipping_threshold'
   status: 'draft' | 'active' | 'paused'
   starts_at: string
   ends_at: string | null
@@ -221,7 +221,11 @@ function normalizePalasRule(row: Record<string, unknown>): NormalizedPalasRule {
   return {
     id: String(row.id),
     title: String(row.title ?? 'Regle Palas'),
-    rule_type: readEnum(row.rule_type, ['order_discount', 'gift_threshold', 'shipping_threshold'], 'gift_threshold'),
+    rule_type: readEnum(
+      row.rule_type,
+      ['order_discount', 'first_order_discount', 'gift_threshold', 'shipping_threshold'],
+      'gift_threshold',
+    ),
     status: readEnum(row.status, ['draft', 'active', 'paused'], 'active'),
     starts_at: toIsoString(row.starts_at) ?? new Date().toISOString(),
     ends_at: toIsoString(row.ends_at),

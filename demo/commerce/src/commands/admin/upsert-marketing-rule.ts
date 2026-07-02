@@ -1,4 +1,4 @@
-type MarketingRuleType = 'order_discount' | 'gift_threshold' | 'shipping_threshold'
+type MarketingRuleType = 'order_discount' | 'first_order_discount' | 'gift_threshold' | 'shipping_threshold'
 type ExecutionKind = 'shopify_discount' | 'local_cart_rule' | 'shipping_profile'
 
 interface MarketingRuleRow {
@@ -32,7 +32,7 @@ interface MarketingRuleInput {
 const inputSchema = z.object({
   id: z.string().min(1).optional(),
   title: z.string().trim().min(1),
-  rule_type: z.enum(['order_discount', 'gift_threshold', 'shipping_threshold']),
+  rule_type: z.enum(['order_discount', 'first_order_discount', 'gift_threshold', 'shipping_threshold']),
   status: z.enum(['draft', 'active', 'paused']).default('active'),
   starts_at: z.string().datetime(),
   ends_at: z.string().datetime().nullable().optional(),
@@ -133,7 +133,7 @@ function executionKindFor(ruleType: MarketingRuleType): ExecutionKind {
 }
 
 function validateMarketingRule(input: MarketingRuleInput) {
-  if (input.rule_type === 'order_discount') {
+  if (input.rule_type === 'order_discount' || input.rule_type === 'first_order_discount') {
     if (!input.value_type || !input.value) {
       throw new MantaError('INVALID_DATA', 'Une remise doit avoir un type et une valeur.')
     }
