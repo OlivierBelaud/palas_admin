@@ -2,6 +2,11 @@ import {
   DISPATCHABLE_CANONICAL_EVENT_NAMES,
 } from '../../modules/event-hub/canonical-contract'
 import { type RawDb, resolveRawDb } from '../../utils/raw-db'
+import {
+  isTrackingHealthValid,
+  trackingHealthValidationErrors,
+  type DestinationSummary,
+} from './tracking-health-validity'
 
 type EventLogRow = {
   id: string
@@ -73,40 +78,12 @@ type StatusCountRow = {
   count: string | number
 }
 
-type DestinationSummary = {
-  destination: string
-  supported: boolean
-  ready: boolean
-  blockers: string[]
-}
-
 const DISPATCHABLE_EVENT_NAMES = Array.from(DISPATCHABLE_CANONICAL_EVENT_NAMES)
-const CONSENT_BLOCKERS = [
-  'analytics_consent_not_granted',
-  'ad_storage_consent_not_granted',
-  'ad_user_data_consent_not_granted',
-  'ad_personalization_consent_not_granted',
-]
-const ACTIONABLE_VALID_SQL = `(
+const TRACKING_HEALTH_VALID_SQL = `(
   COALESCE(jsonb_array_length(payload_normalized #> '{validation,errors}'), 0) = 0
   AND (
     COALESCE(payload_normalized #>> '{validation,destinations,ga4,supported}', 'false') <> 'true'
     OR COALESCE(payload_normalized #>> '{validation,destinations,ga4,ready}', 'false') = 'true'
-  )
-  AND (
-    COALESCE(payload_normalized #>> '{validation,destinations,google_ads,supported}', 'false') <> 'true'
-    OR NOT EXISTS (
-      SELECT 1
-        FROM jsonb_array_elements_text(
-          COALESCE(payload_normalized #> '{validation,destinations,google_ads,blockers}', '[]'::jsonb)
-        ) AS google_ads_blocker(blocker)
-       WHERE google_ads_blocker.blocker NOT IN (
-         'analytics_consent_not_granted',
-         'ad_storage_consent_not_granted',
-         'ad_user_data_consent_not_granted',
-         'ad_personalization_consent_not_granted'
-       )
-    )
   )
 )`
 
@@ -259,8 +236,8 @@ export async function loadTrackingHealthData(
         ad_personalization: consent.ad_personalization === true,
         source: typeof consent.source === 'string' ? consent.source : 'unknown',
       },
-      valid: isActionableValid(validation, ga4Destination, googleAdsDestination),
-      validation_errors: actionableValidationErrors(validation, ga4Destination, googleAdsDestination),
+      valid: isTrackingHealthValid(validation, ga4Destination),
+      validation_errors: trackingHealthValidationErrors(validation, ga4Destination),
       value: ecommerce.value ?? null,
       currency: ecommerce.currency ?? null,
       item_count: ecommerce.item_count ?? null,
@@ -371,7 +348,7 @@ export async function loadTrackingHealthData(
 function loadPageRows(db: RawDb, from: Date, to: Date, eventName: string | null, limit: number, offset: number) {
   return db.raw<EventLogRow>(
     `SELECT id, event_id, event_name, source, received_at, page_type, market,
-            identity_muid, identity_email_sha256, distinct_id, ${ACTIONABLE_VALID_SQL} AS valid,
+            identity_muid, identity_email_sha256, distinct_id, ${TRACKING_HEALTH_VALID_SQL} AS valid,
             validation_errors, payload_normalized, COUNT(*) OVER()::text AS total_count
        FROM event_logs
       WHERE deleted_at IS NULL
@@ -389,8 +366,8 @@ function loadEventTypes(db: RawDb, from: Date, to: Date) {
   return db.raw<EventTypeRow>(
     `SELECT event_name,
             COUNT(*)::text AS count,
-            COUNT(*) FILTER (WHERE ${ACTIONABLE_VALID_SQL})::text AS valid,
-            COUNT(*) FILTER (WHERE NOT ${ACTIONABLE_VALID_SQL})::text AS invalid,
+            COUNT(*) FILTER (WHERE ${TRACKING_HEALTH_VALID_SQL})::text AS valid,
+            COUNT(*) FILTER (WHERE NOT ${TRACKING_HEALTH_VALID_SQL})::text AS invalid,
             MAX(received_at) AS latest_at
        FROM event_logs
       WHERE deleted_at IS NULL
@@ -406,7 +383,7 @@ function loadEventTypes(db: RawDb, from: Date, to: Date) {
 function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
   return db.raw<StatRow>(
     `SELECT COUNT(*)::text AS total,
-            COUNT(*) FILTER (WHERE ${ACTIONABLE_VALID_SQL})::text AS valid,
+            COUNT(*) FILTER (WHERE ${TRACKING_HEALTH_VALID_SQL})::text AS valid,
             COUNT(*) FILTER (
               WHERE payload_normalized #>> '{user,contact_id}' IS NOT NULL
                  OR identity_email_sha256 IS NOT NULL
@@ -587,43 +564,4 @@ function destinationSummary(destination: string, value: unknown): DestinationSum
       ? row.blockers.filter((item): item is string => typeof item === 'string')
       : [],
   }
-}
-
-function validationBaseErrors(validation: Record<string, unknown>): string[] {
-  return Array.isArray(validation.errors)
-    ? validation.errors.filter((item): item is string => typeof item === 'string')
-    : []
-}
-
-function isConsentBlocker(blocker: string) {
-  return CONSENT_BLOCKERS.includes(blocker)
-}
-
-function actionableValidationErrors(
-  validation: Record<string, unknown>,
-  ga4Destination: DestinationSummary,
-  googleAdsDestination: DestinationSummary,
-) {
-  const errors = [...validationBaseErrors(validation)]
-  if (ga4Destination.supported && !ga4Destination.ready) {
-    errors.push(
-      ...ga4Destination.blockers.filter((blocker) => !isConsentBlocker(blocker)).map((blocker) => `ga4:${blocker}`),
-    )
-  }
-  if (googleAdsDestination.supported && !googleAdsDestination.ready) {
-    errors.push(
-      ...googleAdsDestination.blockers
-        .filter((blocker) => !isConsentBlocker(blocker))
-        .map((blocker) => `google_ads:${blocker}`),
-    )
-  }
-  return Array.from(new Set(errors))
-}
-
-function isActionableValid(
-  validation: Record<string, unknown>,
-  ga4Destination: DestinationSummary,
-  googleAdsDestination: DestinationSummary,
-) {
-  return actionableValidationErrors(validation, ga4Destination, googleAdsDestination).length === 0
 }

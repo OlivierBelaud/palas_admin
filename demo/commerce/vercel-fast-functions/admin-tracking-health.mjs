@@ -28,6 +28,19 @@ const GA4_EVENT_NAMES = [
   'add_payment_info',
   'purchase',
 ]
+const CONSENT_BLOCKERS = [
+  'analytics_consent_not_granted',
+  'ad_storage_consent_not_granted',
+  'ad_user_data_consent_not_granted',
+  'ad_personalization_consent_not_granted',
+]
+const TRACKING_HEALTH_VALID_SQL = `(
+  COALESCE(jsonb_array_length(payload_normalized #> '{validation,errors}'), 0) = 0
+  AND (
+    COALESCE(payload_normalized #>> '{validation,destinations,ga4,supported}', 'false') <> 'true'
+    OR COALESCE(payload_normalized #>> '{validation,destinations,ga4,ready}', 'false') = 'true'
+  )
+)`
 
 export default {
   async fetch(req) {
@@ -130,7 +143,7 @@ export default {
 function loadPageRows(from, to, eventName, limit, offset) {
   return db().unsafe(
     `SELECT id, event_id, event_name, source, received_at, page_type, market,
-            identity_muid, identity_email_sha256, distinct_id, valid,
+            identity_muid, identity_email_sha256, distinct_id, ${TRACKING_HEALTH_VALID_SQL} AS valid,
             validation_errors, payload_normalized, COUNT(*) OVER()::text AS total_count
        FROM event_logs
       WHERE deleted_at IS NULL
@@ -148,8 +161,8 @@ function loadEventTypes(from, to) {
   return db().unsafe(
     `SELECT event_name,
             COUNT(*)::text AS count,
-            COUNT(*) FILTER (WHERE valid)::text AS valid,
-            COUNT(*) FILTER (WHERE NOT valid)::text AS invalid,
+            COUNT(*) FILTER (WHERE ${TRACKING_HEALTH_VALID_SQL})::text AS valid,
+            COUNT(*) FILTER (WHERE NOT ${TRACKING_HEALTH_VALID_SQL})::text AS invalid,
             MAX(received_at) AS latest_at
        FROM event_logs
       WHERE deleted_at IS NULL
@@ -165,7 +178,7 @@ function loadEventTypes(from, to) {
 function loadStats(from, to, eventName) {
   return db().unsafe(
     `SELECT COUNT(*)::text AS total,
-            COUNT(*) FILTER (WHERE valid)::text AS valid,
+            COUNT(*) FILTER (WHERE ${TRACKING_HEALTH_VALID_SQL})::text AS valid,
             COUNT(*) FILTER (
               WHERE payload_normalized #>> '{user,contact_id}' IS NOT NULL
                  OR identity_email_sha256 IS NOT NULL
@@ -273,8 +286,8 @@ function eventDto(row, ga4Log) {
       ad_personalization: consent.ad_personalization === true,
       source: typeof consent.source === 'string' ? consent.source : 'unknown',
     },
-    valid: row.valid,
-    validation_errors: Array.isArray(row.validation_errors) ? row.validation_errors : [],
+    valid: isTrackingHealthValid(validation, ga4Destination),
+    validation_errors: trackingHealthValidationErrors(validation, ga4Destination),
     value: ecommerce.value ?? null,
     currency: ecommerce.currency ?? null,
     item_count: ecommerce.item_count ?? null,
@@ -344,4 +357,26 @@ function destinationSummary(destination, value) {
     ready: row.ready === true,
     blockers: Array.isArray(row.blockers) ? row.blockers.filter((item) => typeof item === 'string') : [],
   }
+}
+
+function validationBaseErrors(validation) {
+  return Array.isArray(validation.errors) ? validation.errors.filter((item) => typeof item === 'string') : []
+}
+
+function isConsentBlocker(blocker) {
+  return CONSENT_BLOCKERS.includes(blocker)
+}
+
+function trackingHealthValidationErrors(validation, ga4Destination) {
+  const errors = [...validationBaseErrors(validation)]
+  if (ga4Destination.supported && !ga4Destination.ready) {
+    errors.push(
+      ...ga4Destination.blockers.filter((blocker) => !isConsentBlocker(blocker)).map((blocker) => `ga4:${blocker}`),
+    )
+  }
+  return Array.from(new Set(errors))
+}
+
+function isTrackingHealthValid(validation, ga4Destination) {
+  return trackingHealthValidationErrors(validation, ga4Destination).length === 0
 }
