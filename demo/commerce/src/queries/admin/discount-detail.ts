@@ -31,7 +31,14 @@ interface DiscountDetailData {
         items?: {
           __typename: string
           allItems?: boolean
-          collections?: { nodes?: Array<{ id: string; title: string }> }
+          collections?: {
+            nodes?: Array<{
+              id: string
+              title: string
+              handle?: string | null
+              productsCount?: { count: number } | null
+            }>
+          }
           products?: { nodes?: Array<{ id: string; title: string }> }
           productVariants?: { nodes?: Array<{ id: string; title: string }> }
         }
@@ -77,7 +84,9 @@ export default defineQuery({
                   items {
                     __typename
                     ... on AllDiscountItems { allItems }
-                    ... on DiscountCollections { collections(first: 100) { nodes { id title } } }
+                    ... on DiscountCollections {
+                      collections(first: 100) { nodes { id title handle productsCount { count } } }
+                    }
                     ... on DiscountProducts {
                       products(first: 100) { nodes { id title } }
                       productVariants(first: 100) { nodes { id title } }
@@ -100,7 +109,9 @@ export default defineQuery({
                   items {
                     __typename
                     ... on AllDiscountItems { allItems }
-                    ... on DiscountCollections { collections(first: 100) { nodes { id title } } }
+                    ... on DiscountCollections {
+                      collections(first: 100) { nodes { id title handle productsCount { count } } }
+                    }
                     ... on DiscountProducts {
                       products(first: 100) { nodes { id title } }
                       productVariants(first: 100) { nodes { id title } }
@@ -146,6 +157,8 @@ export default defineQuery({
       target_type: target.type,
       collection_ids: target.collectionIds,
       product_ids: target.productIds,
+      selected_collections: target.collections,
+      selected_products: target.products,
       applies_once_per_customer: Boolean(discount.appliesOncePerCustomer),
       usage_limit: discount.usageLimit ?? null,
       combines_with_order: Boolean(discount.combinesWith?.orderDiscounts),
@@ -159,23 +172,47 @@ function normalizeTarget(items: DiscountItemsDetail): {
   type: DiscountTargetType
   collectionIds: string[]
   productIds: string[]
+  collections: Array<{ id: string; label: string; handle: string | null; meta: string | null }>
+  products: Array<{ id: string; label: string; handle: string | null; meta: string | null }>
 } {
   if (!items || items.__typename === 'AllDiscountItems') {
-    return { type: 'all', collectionIds: [], productIds: [] }
+    return { type: 'all', collectionIds: [], productIds: [], collections: [], products: [] }
   }
   if (items.__typename === 'DiscountCollections') {
+    const collections =
+      items.collections?.nodes?.map((node) => ({
+        id: node.id,
+        label: node.title,
+        handle: node.handle ?? null,
+        meta: `${formatNumber(node.productsCount?.count ?? 0)} produits`,
+      })) ?? []
     return {
       type: 'collections',
-      collectionIds: items.collections?.nodes?.map((node) => node.id) ?? [],
+      collectionIds: collections.map((node) => node.id),
       productIds: [],
+      collections,
+      products: [],
     }
   }
   if (items.__typename === 'DiscountProducts') {
+    const products =
+      items.products?.nodes?.map((node) => ({
+        id: node.id,
+        label: node.title,
+        handle: null,
+        meta: null,
+      })) ?? []
     return {
       type: 'products',
       collectionIds: [],
-      productIds: items.products?.nodes?.map((node) => node.id) ?? [],
+      productIds: products.map((node) => node.id),
+      collections: [],
+      products,
     }
   }
-  return { type: 'all', collectionIds: [], productIds: [] }
+  return { type: 'all', collectionIds: [], productIds: [], collections: [], products: [] }
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat('fr-FR').format(value)
 }

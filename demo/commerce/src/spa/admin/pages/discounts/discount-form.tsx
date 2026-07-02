@@ -1,6 +1,6 @@
 import { useCommand, useQuery } from '@mantajs/sdk'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Skeleton } from '@mantajs/ui'
-import { ArrowLeft, Save } from 'lucide-react'
+import { ArrowLeft, Check, Loader2, Save, Search, X } from 'lucide-react'
 import * as React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
@@ -8,9 +8,19 @@ type DiscountMethod = 'code' | 'automatic'
 type DiscountTargetType = 'all' | 'collections' | 'products'
 type DiscountValueType = 'percentage' | 'amount'
 
-interface DiscountFormOptions {
-  products: Array<{ id: string; label: string; handle: string | null }>
-  collections: Array<{ id: string; label: string; handle: string | null }>
+interface ResourceOption {
+  id: string
+  label: string
+  handle: string | null
+  meta: string | null
+}
+
+interface ResourceSearchData {
+  items: ResourceOption[]
+  page_info: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
 }
 
 interface DiscountDetail {
@@ -25,6 +35,8 @@ interface DiscountDetail {
   target_type: DiscountTargetType
   collection_ids: string[]
   product_ids: string[]
+  selected_collections: ResourceOption[]
+  selected_products: ResourceOption[]
   applies_once_per_customer: boolean
   usage_limit: number | null
   combines_with_order: boolean
@@ -42,6 +54,8 @@ interface DiscountFormState {
   target_type: DiscountTargetType
   collection_ids: string[]
   product_ids: string[]
+  selected_collections: ResourceOption[]
+  selected_products: ResourceOption[]
   starts_at: string
   ends_at: string
   applies_once_per_customer: boolean
@@ -79,6 +93,8 @@ const initialState: DiscountFormState = {
   target_type: 'all',
   collection_ids: [],
   product_ids: [],
+  selected_collections: [],
+  selected_products: [],
   starts_at: toLocalDateTimeValue(new Date().toISOString()),
   ends_at: '',
   applies_once_per_customer: false,
@@ -90,7 +106,6 @@ const initialState: DiscountFormState = {
 
 export function ShopifyDiscountForm({ discountId }: { discountId?: string }) {
   const navigate = useNavigate()
-  const optionsQuery = useQuery<DiscountFormOptions>('discount-form-options', { limit: 100 }, { staleTime: 5 * 60_000 })
   const detailQuery = useQuery<DiscountDetail>(
     'discount-detail',
     { id: discountId ?? '' },
@@ -107,7 +122,7 @@ export function ShopifyDiscountForm({ discountId }: { discountId?: string }) {
     setForm(fromDetail(detailQuery.data))
   }, [detailQuery.data])
 
-  const isLoading = optionsQuery.isLoading || (Boolean(discountId) && detailQuery.isLoading)
+  const isLoading = Boolean(discountId) && detailQuery.isLoading
   const isSaving = status === 'running'
 
   const submit = async (event: React.FormEvent) => {
@@ -127,10 +142,7 @@ export function ShopifyDiscountForm({ discountId }: { discountId?: string }) {
   }
 
   if (isLoading) return <LoadingState />
-  if (optionsQuery.isError) return <ErrorBox message={optionsQuery.error.message} />
   if (detailQuery.isError) return <ErrorBox message={detailQuery.error.message} />
-
-  const options = optionsQuery.data ?? { products: [], collections: [] }
 
   return (
     <form className="flex max-w-5xl flex-col gap-4 pb-8" onSubmit={submit}>
@@ -181,7 +193,7 @@ export function ShopifyDiscountForm({ discountId }: { discountId?: string }) {
                   ['automatic', 'Automatique'],
                   ['code', 'Code promo'],
                 ]}
-                onChange={(value) => setFormValue(setForm, 'method', value as DiscountMethod)}
+                onChange={(value) => setMethod(setForm, value as DiscountMethod, Boolean(discountId))}
               />
 
               {form.method === 'code' ? (
@@ -248,20 +260,32 @@ export function ShopifyDiscountForm({ discountId }: { discountId?: string }) {
               />
 
               {form.target_type === 'collections' ? (
-                <MultiSelect
+                <ResourceCombobox
+                  key="collections"
                   label="Collections"
+                  placeholder="Chercher une collection..."
+                  resource="collections"
                   values={form.collection_ids}
-                  options={options.collections}
-                  onChange={(values) => setFormValue(setForm, 'collection_ids', values)}
+                  selected={form.selected_collections}
+                  onChange={(values, selected) => {
+                    setFormValue(setForm, 'collection_ids', values)
+                    setFormValue(setForm, 'selected_collections', selected)
+                  }}
                 />
               ) : null}
 
               {form.target_type === 'products' ? (
-                <MultiSelect
+                <ResourceCombobox
+                  key="products"
                   label="Produits"
+                  placeholder="Chercher un produit..."
+                  resource="products"
                   values={form.product_ids}
-                  options={options.products}
-                  onChange={(values) => setFormValue(setForm, 'product_ids', values)}
+                  selected={form.selected_products}
+                  onChange={(values, selected) => {
+                    setFormValue(setForm, 'product_ids', values)
+                    setFormValue(setForm, 'selected_products', selected)
+                  }}
                 />
               ) : null}
             </CardContent>
@@ -383,32 +407,135 @@ function SegmentedControl({
   )
 }
 
-function MultiSelect({
+function ResourceCombobox({
   label,
+  placeholder,
+  resource,
   values,
-  options,
+  selected,
   onChange,
 }: {
   label: string
+  placeholder: string
+  resource: 'collections' | 'products'
   values: string[]
-  options: Array<{ id: string; label: string; handle: string | null }>
-  onChange: (values: string[]) => void
+  selected: ResourceOption[]
+  onChange: (values: string[], selected: ResourceOption[]) => void
 }) {
+  const [search, setSearch] = React.useState('')
+  const [after, setAfter] = React.useState<string | null>(null)
+  const debouncedSearch = useDebouncedValue(search, 250)
+  const query = useQuery<ResourceSearchData>(
+    'discount-resource-search',
+    { resource, search: debouncedSearch, after, limit: 25 },
+    { staleTime: 30_000 },
+  )
+  const [options, setOptions] = React.useState<ResourceOption[]>([])
+
+  React.useEffect(() => {
+    if (!query.data) return
+    setOptions((previous) => mergeOptions(after ? previous : [], query.data.items))
+  }, [after, query.data])
+
+  const selectedMap = React.useMemo(() => new Map(selected.map((item) => [item.id, item])), [selected])
+  const pageInfo = query.data?.page_info
+  const canLoadMore = Boolean(pageInfo?.hasNextPage && pageInfo.endCursor && !query.isFetching)
+
+  const toggle = (option: ResourceOption) => {
+    if (values.includes(option.id)) {
+      const nextSelected = selected.filter((item) => item.id !== option.id)
+      onChange(
+        values.filter((id) => id !== option.id),
+        nextSelected,
+      )
+      return
+    }
+    const nextSelected = mergeOptions(selected, [option])
+    onChange([...values, option.id], nextSelected)
+  }
+
+  const remove = (id: string) => {
+    onChange(
+      values.filter((value) => value !== id),
+      selected.filter((item) => item.id !== id),
+    )
+  }
+
   return (
     <Field label={label}>
-      <select
-        className="min-h-48 rounded-md border border-input bg-background p-2 text-sm"
-        multiple
-        value={values}
-        onChange={(event) => onChange(Array.from(event.currentTarget.selectedOptions).map((option) => option.value))}
-      >
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <span className="text-xs font-normal text-muted-foreground">{values.length} sélectionné(s)</span>
+      <div className="rounded-md border border-input bg-background">
+        <div className="relative border-b">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="border-0 pl-9 shadow-none focus-visible:ring-0"
+            onChange={(event) => {
+              setAfter(null)
+              setOptions([])
+              setSearch(event.target.value)
+            }}
+            placeholder={placeholder}
+            value={search}
+          />
+        </div>
+
+        {selected.length > 0 ? (
+          <div className="flex flex-wrap gap-2 border-b p-3">
+            {selected.map((option) => (
+              <button
+                key={option.id}
+                className="inline-flex max-w-full items-center gap-2 rounded-md border bg-muted px-2 py-1 text-xs"
+                onClick={() => remove(option.id)}
+                type="button"
+              >
+                <span className="truncate">{option.label}</span>
+                {option.meta ? <span className="shrink-0 text-muted-foreground">{option.meta}</span> : null}
+                <X className="size-3 shrink-0" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div
+          className="max-h-72 overflow-y-auto"
+          onScroll={(event) => {
+            const element = event.currentTarget
+            const isNearBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 48
+            if (isNearBottom && canLoadMore) setAfter(pageInfo?.endCursor ?? null)
+          }}
+        >
+          {options.map((option) => {
+            const isSelected = selectedMap.has(option.id)
+            return (
+              <button
+                className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
+                key={option.id}
+                onClick={() => toggle(option)}
+                type="button"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{option.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {[option.handle ? `/${option.handle}` : null, option.meta].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+                {isSelected ? <Check className="size-4 shrink-0" /> : null}
+              </button>
+            )
+          })}
+          {query.isFetching ? (
+            <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Chargement
+            </div>
+          ) : null}
+          {!query.isFetching && options.length === 0 ? (
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">Aucun résultat.</div>
+          ) : null}
+        </div>
+      </div>
+      <span className="text-xs font-normal text-muted-foreground">
+        {values.length} sélectionné(s). Fais défiler pour charger la suite.
+      </span>
     </Field>
   )
 }
@@ -456,6 +583,18 @@ function setFormValue<K extends keyof DiscountFormState>(
   setForm((previous) => ({ ...previous, [key]: value }))
 }
 
+function setMethod(
+  setForm: React.Dispatch<React.SetStateAction<DiscountFormState>>,
+  method: DiscountMethod,
+  isEditing: boolean,
+) {
+  setForm((previous) => ({
+    ...previous,
+    method,
+    applies_once_per_customer: method === 'code' && !isEditing ? true : previous.applies_once_per_customer,
+  }))
+}
+
 function fromDetail(detail: DiscountDetail): DiscountFormState {
   return {
     id: detail.id,
@@ -467,6 +606,8 @@ function fromDetail(detail: DiscountDetail): DiscountFormState {
     target_type: detail.target_type,
     collection_ids: detail.collection_ids,
     product_ids: detail.product_ids,
+    selected_collections: detail.selected_collections,
+    selected_products: detail.selected_products,
     starts_at: toLocalDateTimeValue(detail.starts_at),
     ends_at: detail.ends_at ? toLocalDateTimeValue(detail.ends_at) : '',
     applies_once_per_customer: detail.applies_once_per_customer,
@@ -512,4 +653,19 @@ function toLocalDateTimeValue(value: string): string {
 
 function fromLocalDateTimeValue(value: string): string {
   return new Date(value).toISOString()
+}
+
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = React.useState(value)
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(timeout)
+  }, [delayMs, value])
+  return debounced
+}
+
+function mergeOptions(previous: ResourceOption[], next: ResourceOption[]): ResourceOption[] {
+  const byId = new Map(previous.map((option) => [option.id, option]))
+  for (const option of next) byId.set(option.id, option)
+  return [...byId.values()]
 }
