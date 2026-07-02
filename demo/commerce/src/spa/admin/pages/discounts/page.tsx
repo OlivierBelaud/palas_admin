@@ -37,6 +37,11 @@ interface DiscountListData {
     shop: number
     individual: number
   }
+  page_info?: {
+    has_next_page: boolean
+    end_cursor: string | null
+    scanned: number
+  }
   shop: DiscountRow[]
   individual: DiscountRow[]
 }
@@ -51,13 +56,19 @@ export default function DiscountsPage() {
 export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
   const [search, setSearch] = React.useState('')
   const [status, setStatus] = React.useState<StatusFilter>('all')
-  const query = useQuery<DiscountListData>('discount-list', { limit: 500 }, { staleTime: 60_000 })
+  const [cursor, setCursor] = React.useState<string | null>(null)
+  const [cursorStack, setCursorStack] = React.useState<string[]>([])
+  const isIndividual = mode === 'individual'
+  const queryInput = isIndividual
+    ? { group: 'individual', page_size: 50, after: cursor, search, status }
+    : { group: 'all', limit: 500, search, status }
+  const query = useQuery<DiscountListData>('discount-list', queryInput, { staleTime: 60_000 })
   const data = query.data
 
-  const selectedRows = React.useMemo(
-    () => filterRows(mode === 'shop' ? (data?.shop ?? []) : (data?.individual ?? []), search, status),
-    [data?.individual, data?.shop, mode, search, status],
-  )
+  const selectedRows = React.useMemo(() => {
+    const rows = mode === 'shop' ? (data?.shop ?? []) : (data?.individual ?? [])
+    return isIndividual ? rows : filterRows(rows, search, status)
+  }, [data?.individual, data?.shop, isIndividual, mode, search, status])
   const copy = viewCopy(mode)
 
   return (
@@ -98,7 +109,11 @@ export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setCursor(null)
+                setCursorStack([])
+              }}
               placeholder="Chercher par titre, code, résumé, type..."
               className="pl-9"
             />
@@ -108,7 +123,11 @@ export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
               <button
                 key={value}
                 type="button"
-                onClick={() => setStatus(value)}
+                onClick={() => {
+                  setStatus(value)
+                  setCursor(null)
+                  setCursorStack([])
+                }}
                 className={`inline-flex h-9 items-center rounded-md border px-3 text-sm transition-colors ${
                   status === value
                     ? 'border-foreground bg-foreground text-background'
@@ -124,12 +143,59 @@ export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
 
       {query.isLoading ? <LoadingState /> : null}
       {query.isError ? <ErrorState message={query.error.message} /> : null}
-      {data ? <DiscountTable title={copy.tableTitle} description={copy.tableDescription} rows={selectedRows} /> : null}
+      {data ? (
+        <DiscountTable
+          title={copy.tableTitle}
+          description={copy.tableDescription}
+          rows={selectedRows}
+          pagination={
+            isIndividual
+              ? {
+                  hasNextPage: Boolean(data.page_info?.has_next_page),
+                  hasPreviousPage: cursorStack.length > 0,
+                  scanned: data.page_info?.scanned ?? selectedRows.length,
+                  isFetching: query.isFetching,
+                  onNext: () => {
+                    if (!data.page_info?.end_cursor) return
+                    if (cursor) setCursorStack((previous) => [...previous, cursor])
+                    else setCursorStack((previous) => [...previous, ''])
+                    setCursor(data.page_info.end_cursor)
+                  },
+                  onPrevious: () => {
+                    setCursorStack((previous) => {
+                      const next = [...previous]
+                      const previousCursor = next.pop()
+                      setCursor(previousCursor ? previousCursor : null)
+                      return next
+                    })
+                  },
+                }
+              : undefined
+          }
+        />
+      ) : null}
     </div>
   )
 }
 
-function DiscountTable({ title, description, rows }: { title: string; description: string; rows: DiscountRow[] }) {
+function DiscountTable({
+  title,
+  description,
+  rows,
+  pagination,
+}: {
+  title: string
+  description: string
+  rows: DiscountRow[]
+  pagination?: {
+    hasNextPage: boolean
+    hasPreviousPage: boolean
+    scanned: number
+    isFetching: boolean
+    onNext: () => void
+    onPrevious: () => void
+  }
+}) {
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
@@ -138,7 +204,10 @@ function DiscountTable({ title, description, rows }: { title: string; descriptio
             <CardTitle className="text-base font-semibold tracking-normal">{title}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">{description}</p>
           </div>
-          <Badge variant="outline">{rows.length}</Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{rows.length}</Badge>
+            {pagination ? <Badge variant="outline">{pagination.scanned} lus Shopify</Badge> : null}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -170,6 +239,30 @@ function DiscountTable({ title, description, rows }: { title: string; descriptio
             </tbody>
           </table>
         </div>
+        {pagination ? (
+          <div className="flex items-center justify-between gap-3 border-t p-4">
+            <Button
+              disabled={!pagination.hasPreviousPage || pagination.isFetching}
+              onClick={pagination.onPrevious}
+              size="small"
+              type="button"
+              variant="outline"
+            >
+              Précédent
+            </Button>
+            <span className="text-sm text-muted-foreground">{rows.length} discounts sur cette page</span>
+            <Button
+              disabled={!pagination.hasNextPage || pagination.isFetching}
+              isLoading={pagination.isFetching}
+              onClick={pagination.onNext}
+              size="small"
+              type="button"
+              variant="outline"
+            >
+              Suivant
+            </Button>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

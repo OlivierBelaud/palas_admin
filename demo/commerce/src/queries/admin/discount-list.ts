@@ -68,9 +68,25 @@ export default defineQuery({
   description: 'Live Shopify discounts grouped for Palas promotion operations.',
   input: z.object({
     limit: z.number().int().positive().max(500).default(250),
+    group: z.enum(['shop', 'individual', 'all']).default('all'),
+    page_size: z.number().int().positive().max(100).default(50),
+    after: z.string().nullable().optional(),
+    search: z.string().trim().default(''),
+    status: z.enum(['all', 'active', 'scheduled', 'expired']).default('all'),
   }),
   handler: async (input) => {
     const client = new ShopifyAdminClient()
+    const group = input.group ?? 'all'
+    if (group !== 'all') {
+      return fetchGroupedDiscountPage(client, {
+        group,
+        pageSize: input.page_size ?? 50,
+        after: input.after ?? null,
+        search: input.search ?? '',
+        status: input.status ?? 'all',
+      })
+    }
+
     const nodes = await paginateConnection<ShopifyDiscountNode>(
       client,
       (cursor) => ({
@@ -91,7 +107,10 @@ export default defineQuery({
       { hardCap: input.limit },
     )
 
-    const rows = nodes.map(normalizeDiscount).sort(sortDiscounts)
+    const rows = nodes
+      .map(normalizeDiscount)
+      .filter((row) => matchesFilters(row, input.search ?? '', input.status ?? 'all'))
+      .sort(sortDiscounts)
     const shop = rows.filter((row) => row.group === 'shop')
     const individual = rows.filter((row) => row.group === 'individual')
 
@@ -103,11 +122,77 @@ export default defineQuery({
         shop: shop.length,
         individual: individual.length,
       },
+      page_info: {
+        has_next_page: false,
+        end_cursor: null,
+        scanned: rows.length,
+      },
       shop,
       individual,
     }
   },
 })
+
+async function fetchGroupedDiscountPage(
+  client: ShopifyAdminClient,
+  input: {
+    group: DiscountGroup
+    pageSize: number
+    after: string | null
+    search: string
+    status: 'all' | 'active' | 'scheduled' | 'expired'
+  },
+) {
+  const rows: DiscountRow[] = []
+  let cursor = input.after
+  let hasNextPage = true
+  let scanned = 0
+  const maxScanned = Math.max(input.pageSize * 20, 500)
+
+  while (hasNextPage && rows.length < input.pageSize && scanned < maxScanned) {
+    const data = await client.query<{
+      discountNodes?: {
+        edges?: Array<{ node: ShopifyDiscountNode }>
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
+      }
+    }>(DISCOUNTS_QUERY, { cursor })
+    const conn = data.discountNodes ?? {}
+    const nodes = conn.edges?.map((edge) => edge.node) ?? []
+    scanned += nodes.length
+
+    for (const node of nodes) {
+      const row = normalizeDiscount(node)
+      if (row.group !== input.group) continue
+      if (!matchesFilters(row, input.search, input.status)) continue
+      rows.push(row)
+      if (rows.length >= input.pageSize) break
+    }
+
+    cursor = conn.pageInfo?.endCursor ?? null
+    hasNextPage = Boolean(conn.pageInfo?.hasNextPage && cursor)
+  }
+
+  const sortedRows = rows.sort(sortDiscounts)
+  const shop = input.group === 'shop' ? sortedRows : []
+  const individual = input.group === 'individual' ? sortedRows : []
+
+  return {
+    meta: {
+      generated_at: new Date().toISOString(),
+      total: sortedRows.length,
+      active: sortedRows.filter((row) => row.is_active).length,
+      shop: shop.length,
+      individual: individual.length,
+    },
+    page_info: {
+      has_next_page: hasNextPage && Boolean(cursor),
+      end_cursor: cursor,
+      scanned,
+    },
+    shop,
+    individual,
+  }
+}
 
 function normalizeDiscount(node: ShopifyDiscountNode): DiscountRow {
   const discount = node.discount ?? { __typename: 'UnknownDiscount' }
@@ -187,6 +272,18 @@ function combinesWithLabels(combinesWith: DiscountCombinesWith | undefined): str
 function sortDiscounts(a: DiscountRow, b: DiscountRow): number {
   if (a.is_active !== b.is_active) return a.is_active ? -1 : 1
   return new Date(b.updated_at ?? b.starts_at ?? 0).getTime() - new Date(a.updated_at ?? a.starts_at ?? 0).getTime()
+}
+
+function matchesFilters(row: DiscountRow, search: string, status: 'all' | 'active' | 'scheduled' | 'expired'): boolean {
+  if (status === 'active' && !row.is_active) return false
+  if (status === 'scheduled' && row.status !== 'SCHEDULED') return false
+  if (status === 'expired' && row.status !== 'EXPIRED') return false
+  const needle = search.trim().toLowerCase()
+  if (!needle) return true
+  return [row.title, row.type, row.status, row.summary, row.classification_reason, ...row.sample_codes]
+    .join(' ')
+    .toLowerCase()
+    .includes(needle)
 }
 
 const CODE_FIELDS = `
