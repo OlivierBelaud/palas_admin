@@ -1,7 +1,8 @@
 import { useQuery } from '@mantajs/sdk'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Skeleton } from '@mantajs/ui'
-import { RefreshCw, Search } from 'lucide-react'
+import { Edit3, Plus, RefreshCw, Search } from 'lucide-react'
 import * as React from 'react'
+import { Link } from 'react-router-dom'
 
 type DiscountGroup = 'shop' | 'individual'
 
@@ -75,10 +76,20 @@ export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
             </div>
           ) : null}
         </div>
-        <Button variant="outline" size="small" onClick={() => query.refetch()} isLoading={query.isFetching}>
-          <RefreshCw className="mr-2 h-3.5 w-3.5" />
-          Rafraîchir
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {mode === 'shop' ? (
+            <Button asChild size="small">
+              <Link to="/discounts/create">
+                <Plus className="mr-2 h-3.5 w-3.5" />
+                Créer un discount
+              </Link>
+            </Button>
+          ) : null}
+          <Button variant="outline" size="small" onClick={() => query.refetch()} isLoading={query.isFetching}>
+            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            Rafraîchir
+          </Button>
+        </div>
       </div>
 
       <Card className="border border-border/70 shadow-none">
@@ -143,12 +154,13 @@ function DiscountTable({ title, description, rows }: { title: string; descriptio
                 <th className="px-4 py-3 font-medium">Fenêtre</th>
                 <th className="px-4 py-3 font-medium">Cumul</th>
                 <th className="px-4 py-3 font-medium">Classement</th>
+                <th className="px-4 py-3 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-muted-foreground" colSpan={8}>
+                  <td className="px-4 py-8 text-center text-muted-foreground" colSpan={9}>
                     Aucun discount dans cette vue.
                   </td>
                 </tr>
@@ -221,6 +233,18 @@ function DiscountTableRow({ row }: { row: DiscountRow }) {
         )}
       </td>
       <td className="max-w-[180px] px-4 py-3 text-xs text-muted-foreground">{row.classification_reason}</td>
+      <td className="px-4 py-3">
+        {isEditable(row) ? (
+          <Button asChild variant="outline" size="small">
+            <Link to={`/discounts/${encodeURIComponent(row.id)}/edit`}>
+              <Edit3 className="mr-2 h-3.5 w-3.5" />
+              Editer
+            </Link>
+          </Button>
+        ) : (
+          <span className="text-xs text-muted-foreground">Lecture seule</span>
+        )}
+      </td>
     </tr>
   )
 }
@@ -305,6 +329,10 @@ function methodLabel(method: DiscountRow['method']): string {
 
 function typeLabel(type: string): string {
   return type.replace(/^Discount/, '').replace(/([a-z])([A-Z])/g, '$1 $2')
+}
+
+function isEditable(row: DiscountRow): boolean {
+  return row.type === 'DiscountCodeBasic' || row.type === 'DiscountAutomaticBasic'
 }
 
 function formatDateTime(value: string): string {
