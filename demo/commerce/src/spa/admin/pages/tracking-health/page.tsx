@@ -668,13 +668,14 @@ function normalizedDeliveryStatus(
       : destination === 'meta'
         ? event.meta_error_code
         : event.google_ads_error_code
-  if (normalizedStatus === 'invalid' && isAdConsentErrorCode(errorCode)) return 'not_applicable'
+  if (normalizedStatus === 'invalid' && isAdConsentErrorCode(errorCode)) return 'consent_blocked'
   if (normalizedStatus) return normalizedStatus
   return legacyDeliveryStatus(destination, event)
 }
 
 function deliveryStatusLabel(status: string) {
   if (status === 'not_applicable') return 'Non applicable'
+  if (status === 'consent_blocked') return 'Consentement'
   if (status === 'pending') return 'À envoyer'
   if (status === 'sent') return 'Envoyé'
   if (status === 'invalid') return 'Invalide'
@@ -701,7 +702,7 @@ function legacyDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event:
   const legacy = legacyDestinations.find((row) => row?.destination === canonicalDestination)
   if (!legacy) return 'unsupported'
   const blockers = asStringArray(legacy.blockers)
-  if (blockers.some(isConsentBlocker)) return 'not_applicable'
+  if (blockers.some(isConsentBlocker)) return 'consent_blocked'
   return legacy.ready ? 'pending' : 'invalid'
 }
 
