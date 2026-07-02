@@ -1,6 +1,6 @@
 import { useQuery } from '@mantajs/sdk'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Progress, Skeleton } from '@mantajs/ui'
-import { CalendarDays, Gift, Megaphone, PackagePlus, Play, RefreshCw, RotateCcw, Truck } from 'lucide-react'
+import { CalendarDays, Megaphone, PackagePlus, Play, RefreshCw, RotateCcw, Truck } from 'lucide-react'
 import * as React from 'react'
 import {
   type CustomerSegment,
@@ -43,6 +43,22 @@ interface SimulatorConfig {
   }
   markets: SimulatorMarket[]
   shipping_thresholds: SimulatorShippingThreshold[]
+  shopify_discounts: SimulatorDiscount[]
+}
+
+interface SimulatorDiscount {
+  id: string
+  title: string
+  type: string
+  status: string
+  starts_at: string | null
+  ends_at: string | null
+  summary: string
+  value_type: 'percentage' | 'fixed_amount'
+  value: number
+  currency_code: string | null
+  code: string | null
+  source: 'shopify'
 }
 
 const PRODUCTS: MarketingProduct[] = [
@@ -57,103 +73,6 @@ const PRODUCTS: MarketingProduct[] = [
   { id: 'charm-soleil', title: 'Charm Soleil', price: 42, category: 'charm', collectionIds: ['charms'] },
   { id: 'charm-mystere', title: 'Charm mystere', price: 39, category: 'charm', collectionIds: ['charms'] },
   { id: 'tote-bag-palas', title: 'Tote bag Palas', price: 24, category: 'accessory', collectionIds: ['accessories'] },
-]
-
-const INTERNAL_CAMPAIGNS: MarketingCampaign[] = [
-  {
-    id: 'summer-sale',
-    title: 'Operation ete -15%',
-    status: 'active',
-    startsAt: '2026-07-01T00:00:00.000Z',
-    endsAt: '2026-07-10T23:59:59.000Z',
-    priority: 80,
-    rules: [
-      {
-        id: 'summer-announcement',
-        kind: 'announcement',
-        label: 'Announcement bar ete',
-        enabled: true,
-        execution: ['theme_surface', 'email_copy'],
-        message: '-15% sur la boutique pendant l operation ete',
-      },
-      {
-        id: 'summer-discount',
-        kind: 'order_discount',
-        label: '-15% boutique',
-        enabled: true,
-        execution: ['shopify_discount', 'theme_surface', 'email_copy'],
-        valueType: 'percentage',
-        value: 15,
-        target: { type: 'all' },
-        code: null,
-        combinableWith: ['shipping_threshold', 'gift_threshold', 'gift_with_purchase'],
-      },
-    ],
-  },
-  {
-    id: 'gift-threshold',
-    title: 'Cadeau panier 150',
-    status: 'active',
-    startsAt: '2026-01-01T00:00:00.000Z',
-    endsAt: null,
-    priority: 40,
-    rules: [
-      {
-        id: 'free-charm-150',
-        kind: 'gift_threshold',
-        label: 'Charm offert des 150',
-        enabled: true,
-        execution: ['cart_transform', 'theme_surface', 'email_copy'],
-        threshold: 150,
-        giftProductId: 'charm-mystere',
-        giftTitle: 'Charm mystere offert',
-      },
-    ],
-  },
-  {
-    id: 'charm-weekend',
-    title: 'Weekend charms',
-    status: 'active',
-    startsAt: '2026-07-04T00:00:00.000Z',
-    endsAt: '2026-07-06T23:59:59.000Z',
-    priority: 60,
-    rules: [
-      {
-        id: 'buy-charm-get-charm',
-        kind: 'gift_with_purchase',
-        label: 'Un charm offert pour un charm achete',
-        enabled: true,
-        execution: ['cart_transform', 'theme_surface', 'email_copy'],
-        buyCategory: 'charm',
-        minQuantity: 1,
-        giftProductId: 'charm-mystere',
-        giftTitle: 'Charm surprise offert',
-      },
-    ],
-  },
-  {
-    id: 'welcome-new-customer',
-    title: 'Welcome first order',
-    status: 'active',
-    startsAt: '2026-01-01T00:00:00.000Z',
-    endsAt: null,
-    priority: 20,
-    rules: [
-      {
-        id: 'welcome-10',
-        kind: 'order_discount',
-        label: 'Code bienvenue 10%',
-        enabled: true,
-        execution: ['shopify_discount', 'email_copy'],
-        customerSegments: ['new_customer'],
-        valueType: 'percentage',
-        value: 10,
-        target: { type: 'all' },
-        code: 'PALAS10',
-        combinableWith: ['shipping_threshold'],
-      },
-    ],
-  },
 ]
 
 const CUSTOMER_OPTIONS: Array<{ value: CustomerSegment; label: string }> = [
@@ -224,7 +143,7 @@ export default function MarketingSimulatorPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">Marketing simulator</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Dry-run des regles Palas avec markets et livraison lus depuis Shopify.
+            Dry-run des discounts, markets et seuils de livraison lus depuis Shopify.
           </p>
           {config ? (
             <div className="mt-2 text-xs text-muted-foreground">
@@ -565,7 +484,6 @@ function DecisionGrid({ result }: { result: ReturnType<typeof evaluateMarketingE
 
       <div className="flex flex-col gap-4">
         <SummaryCard result={result} />
-        <GiftCard result={result} />
         <PlanCard result={result} />
       </div>
     </div>
@@ -583,30 +501,6 @@ function SummaryCard({ result }: { result: ReturnType<typeof evaluateMarketingEx
         <SummaryRow label="Discounts" value={`-${formatMoney(result.discountTotal, result.currencyCode)}`} />
         <SummaryRow label="Livraison estimee" value={formatMoney(result.estimatedShipping, result.currencyCode)} />
         <SummaryRow label="Total avant taxes" value={formatMoney(result.totalBeforeTax, result.currencyCode)} strong />
-      </CardContent>
-    </Card>
-  )
-}
-
-function GiftCard({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
-  return (
-    <Card className="border border-border/70 shadow-none">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-normal">
-          <Gift className="size-4" />
-          Cadeaux
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-2 text-sm">
-        {result.gifts.length === 0 ? (
-          <span className="text-muted-foreground">Aucun cadeau dans ce scenario.</span>
-        ) : (
-          result.gifts.map((gift) => (
-            <div key={`${gift.sourceRuleId}-${gift.productId}`} className="rounded-md border p-2">
-              {gift.quantity} x {gift.title}
-            </div>
-          ))
-        )}
       </CardContent>
     </Card>
   )
@@ -744,7 +638,35 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
     ],
   }
 
-  return [shippingCampaign, ...INTERNAL_CAMPAIGNS]
+  const shopifyDiscountCampaigns = (config?.shopify_discounts ?? [])
+    .filter((discount) => discount.status === 'ACTIVE' || discount.status === 'SCHEDULED')
+    .map((discount, index): MarketingCampaign => {
+      const startsAt = discount.starts_at ?? '2020-01-01T00:00:00.000Z'
+      return {
+        id: `shopify-discount-${discount.id}`,
+        title: discount.title,
+        status: 'active',
+        startsAt,
+        endsAt: discount.ends_at,
+        priority: 100 - index,
+        rules: [
+          {
+            id: `shopify-discount-rule-${discount.id}`,
+            kind: 'order_discount',
+            label: discount.title,
+            enabled: true,
+            execution: ['shopify_discount', 'theme_surface', 'email_copy'],
+            valueType: discount.value_type === 'fixed_amount' ? 'fixed_amount' : 'percentage',
+            value: discount.value,
+            target: { type: 'all' },
+            code: discount.code,
+            combinableWith: ['shipping_threshold'],
+          },
+        ],
+      }
+    })
+
+  return [...shopifyDiscountCampaigns, shippingCampaign]
 }
 
 function defaultMarketKey(markets: SimulatorMarket[]): string {

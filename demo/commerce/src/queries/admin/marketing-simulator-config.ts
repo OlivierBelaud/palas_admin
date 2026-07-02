@@ -76,6 +76,28 @@ interface DeliveryProfileNode {
   }>
 }
 
+interface ShopifyDiscountNode {
+  id: string
+  discount: {
+    __typename: string
+    title?: string | null
+    status?: string | null
+    startsAt?: string | null
+    endsAt?: string | null
+    summary?: string | null
+    shortSummary?: string | null
+    customerGets?: {
+      value?:
+        | { __typename: 'DiscountPercentage'; percentage: number }
+        | { __typename: 'DiscountAmount'; amount: MoneyNode; appliesOnEachItem?: boolean | null }
+        | { __typename: string }
+    } | null
+    codes?: { nodes?: Array<{ code: string }> } | null
+  }
+}
+
+type DiscountValueNode = NonNullable<NonNullable<ShopifyDiscountNode['discount']['customerGets']>['value']>
+
 interface NormalizedMarket {
   key: string
   id: string
@@ -85,6 +107,21 @@ interface NormalizedMarket {
   currency_code: string
   currency_name: string
   countries: Array<{ code: string; name: string; currency_code: string }>
+}
+
+interface NormalizedShopifyDiscount {
+  id: string
+  title: string
+  type: string
+  status: string
+  starts_at: string | null
+  ends_at: string | null
+  summary: string
+  value_type: 'percentage' | 'fixed_amount' | 'unsupported'
+  value: number
+  currency_code: string | null
+  code: string | null
+  source: 'shopify'
 }
 
 interface ShippingThreshold {
@@ -106,7 +143,7 @@ export default defineQuery({
   input: z.object({}),
   handler: async () => {
     const client = new ShopifyAdminClient()
-    const [marketsData, deliveryData] = await Promise.all([
+    const [marketsData, deliveryData, discountData] = await Promise.all([
       client.query<{
         shop: { currencyCode: string }
         markets: { nodes: MarketNode[] }
@@ -114,10 +151,14 @@ export default defineQuery({
       client.query<{
         deliveryProfiles: { nodes: DeliveryProfileNode[] }
       }>(DELIVERY_QUERY),
+      client.query<{
+        discountNodes: { nodes: ShopifyDiscountNode[] }
+      }>(DISCOUNTS_QUERY),
     ])
 
     const markets = marketsData.markets.nodes.filter((market) => market.status === 'ACTIVE').map(normalizeMarket)
     const shippingThresholds = normalizeShippingThresholds(markets, deliveryData.deliveryProfiles.nodes)
+    const shopifyDiscounts = discountData.discountNodes.nodes.map(normalizeShopifyDiscount).filter(Boolean)
 
     return {
       meta: {
@@ -126,9 +167,58 @@ export default defineQuery({
       },
       markets,
       shipping_thresholds: shippingThresholds,
+      shopify_discounts: shopifyDiscounts,
     }
   },
 })
+
+function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyDiscount | null {
+  const discount = node.discount
+  if (!['DiscountCodeBasic', 'DiscountAutomaticBasic'].includes(discount.__typename)) return null
+
+  const value = discount.customerGets?.value
+  const normalizedValue = isDiscountPercentage(value)
+    ? { value_type: 'percentage' as const, value: value.percentage * 100, currency_code: null }
+    : isDiscountAmount(value)
+      ? {
+          value_type: 'fixed_amount' as const,
+          value: Number(value.amount.amount),
+          currency_code: value.amount.currencyCode,
+        }
+      : { value_type: 'unsupported' as const, value: 0, currency_code: null }
+
+  if (normalizedValue.value_type === 'unsupported') return null
+
+  return {
+    id: node.id,
+    title: discount.title ?? '(Discount Shopify sans titre)',
+    type: discount.__typename,
+    status: discount.status ?? 'UNKNOWN',
+    starts_at: discount.startsAt ?? null,
+    ends_at: discount.endsAt ?? null,
+    summary: discount.shortSummary ?? discount.summary ?? '',
+    value_type: normalizedValue.value_type,
+    value: normalizedValue.value,
+    currency_code: normalizedValue.currency_code,
+    code: discount.codes?.nodes?.[0]?.code ?? null,
+    source: 'shopify',
+  }
+}
+
+function isDiscountPercentage(value: DiscountValueNode | undefined): value is {
+  __typename: 'DiscountPercentage'
+  percentage: number
+} {
+  return value?.__typename === 'DiscountPercentage'
+}
+
+function isDiscountAmount(value: DiscountValueNode | undefined): value is {
+  __typename: 'DiscountAmount'
+  amount: MoneyNode
+  appliesOnEachItem?: boolean | null
+} {
+  return value?.__typename === 'DiscountAmount'
+}
 
 function normalizeMarket(market: MarketNode): NormalizedMarket {
   const countries =
@@ -339,6 +429,50 @@ const DELIVERY_QUERY = `
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
+const DISCOUNTS_QUERY = `
+  query PalasMarketingSimulatorDiscounts {
+    discountNodes(first: 100, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        discount {
+          __typename
+          ... on DiscountCodeBasic {
+            title
+            status
+            startsAt
+            endsAt
+            summary
+            shortSummary
+            codes(first: 1) { nodes { code } }
+            customerGets {
+              value {
+                __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount currencyCode } appliesOnEachItem }
+              }
+            }
+          }
+          ... on DiscountAutomaticBasic {
+            title
+            status
+            startsAt
+            endsAt
+            summary
+            shortSummary
+            customerGets {
+              value {
+                __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount currencyCode } appliesOnEachItem }
               }
             }
           }
