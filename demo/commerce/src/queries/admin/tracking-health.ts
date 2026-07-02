@@ -3,6 +3,7 @@ import {
 } from '../../modules/event-hub/canonical-contract'
 import { type RawDb, resolveRawDb } from '../../utils/raw-db'
 import {
+  AD_CONSENT_ERROR_CODES,
   isTrackingHealthValid,
   trackingHealthValidationErrors,
   type DestinationSummary,
@@ -413,14 +414,18 @@ function loadStats(db: RawDb, from: Date, to: Date, eventName: string | null) {
 
 function loadDestinationStatusCounts(db: RawDb, from: Date, to: Date) {
   return db.raw<StatusCountRow>(
-    `SELECT destination, status, COUNT(*)::text AS count
-       FROM dispatch_logs
-      WHERE deleted_at IS NULL
-        AND destination = ANY($3::text[])
-        AND event_received_at >= $1
-        AND event_received_at <= $2
-      GROUP BY destination, status`,
-    [from.toISOString(), to.toISOString(), ['ga4', 'meta_capi', 'google_ads']],
+    `SELECT destination, normalized_status AS status, COUNT(*)::text AS count
+       FROM (
+         SELECT destination,
+                CASE WHEN error_code = ANY($4::text[]) THEN 'not_applicable' ELSE status END AS normalized_status
+           FROM dispatch_logs
+          WHERE deleted_at IS NULL
+            AND destination = ANY($3::text[])
+            AND event_received_at >= $1
+            AND event_received_at <= $2
+       ) AS normalized_dispatch_logs
+      GROUP BY destination, normalized_status`,
+    [from.toISOString(), to.toISOString(), ['ga4', 'meta_capi', 'google_ads'], AD_CONSENT_ERROR_CODES],
   )
 }
 

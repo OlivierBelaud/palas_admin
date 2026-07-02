@@ -1,6 +1,7 @@
 import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@mantajs/ui'
 import * as React from 'react'
+import { isAdConsentErrorCode } from '../../../../queries/admin/tracking-health-validity'
 
 interface TrackingHealthData {
   meta: {
@@ -488,7 +489,9 @@ function LiveEventTable({
                 </Table.Cell>
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
-                    <Badge variant={deliveryBadgeVariant(event.ga4_status)}>{formatDeliveryStatus('ga4', event)}</Badge>
+                    <Badge variant={deliveryBadgeVariant(normalizedDeliveryStatus('ga4', event))}>
+                      {formatDeliveryStatus('ga4', event)}
+                    </Badge>
                     {event.ga4_error_code ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
@@ -502,12 +505,12 @@ function LiveEventTable({
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
                     <Badge
-                      variant={deliveryBadgeVariant(event.meta_status)}
+                      variant={deliveryBadgeVariant(normalizedDeliveryStatus('meta', event))}
                       title={event.meta_blockers.join(', ') || undefined}
                     >
                       {formatDeliveryStatus('meta', event)}
                     </Badge>
-                    {event.meta_error_code ? (
+                    {event.meta_error_code && !isAdConsentErrorCode(event.meta_error_code) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
                         title={event.meta_error_message ?? event.meta_error_code}
@@ -520,12 +523,12 @@ function LiveEventTable({
                 <Table.Cell>
                   <div className="flex flex-col gap-1">
                     <Badge
-                      variant={deliveryBadgeVariant(event.google_ads_status)}
+                      variant={deliveryBadgeVariant(normalizedDeliveryStatus('google_ads', event))}
                       title={event.google_ads_blockers.join(', ') || undefined}
                     >
                       {formatDeliveryStatus('google_ads', event)}
                     </Badge>
-                    {event.google_ads_error_code ? (
+                    {event.google_ads_error_code && !isAdConsentErrorCode(event.google_ads_error_code) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
                         title={event.google_ads_error_message ?? event.google_ads_error_code}
@@ -621,14 +624,14 @@ function fmtNumber(value: number) {
 }
 
 function deliveryBadgeVariant(status: string) {
+  if (status === 'not_applicable') return 'outline'
   if (status === 'sent') return 'secondary'
   if (status === 'invalid' || status === 'error') return 'destructive'
   return 'outline'
 }
 
 function formatDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event: TrackingHealthData['events'][number]) {
-  const status =
-    destination === 'ga4' ? event.ga4_status : destination === 'meta' ? event.meta_status : event.google_ads_status
+  const status = normalizedDeliveryStatus(destination, event)
   const httpStatus =
     destination === 'ga4'
       ? event.ga4_http_status
@@ -643,5 +646,33 @@ function formatDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event:
         : event.google_ads_attempt_count
   if (httpStatus) return `${status} ${httpStatus}`
   if (attemptCount > 0) return `${status} x${attemptCount}`
+  return deliveryStatusLabel(status)
+}
+
+function normalizedDeliveryStatus(
+  destination: 'ga4' | 'meta' | 'google_ads',
+  event: TrackingHealthData['events'][number],
+) {
+  const status =
+    destination === 'ga4' ? event.ga4_status : destination === 'meta' ? event.meta_status : event.google_ads_status
+  const errorCode =
+    destination === 'ga4'
+      ? event.ga4_error_code
+      : destination === 'meta'
+        ? event.meta_error_code
+        : event.google_ads_error_code
+  if (status === 'invalid' && isAdConsentErrorCode(errorCode)) return 'not_applicable'
+  return status
+}
+
+function deliveryStatusLabel(status: string) {
+  if (status === 'not_applicable') return 'Non applicable'
+  if (status === 'pending') return 'À envoyer'
+  if (status === 'sent') return 'Envoyé'
+  if (status === 'invalid') return 'Invalide'
+  if (status === 'error') return 'Erreur'
+  if (status === 'retry') return 'Retry'
+  if (status === 'not_configured') return 'Config'
+  if (status === 'unsupported') return 'Non applicable'
   return status
 }

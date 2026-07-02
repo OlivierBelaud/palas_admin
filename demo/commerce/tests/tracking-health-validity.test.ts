@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isAdConsentErrorCode,
   isTrackingHealthValid,
   trackingHealthValidationErrors,
   type DestinationSummary,
@@ -41,5 +42,11 @@ describe('tracking health validity', () => {
 
     expect(isTrackingHealthValid({ errors: [] }, ga4MissingClientId)).toBe(false)
     expect(trackingHealthValidationErrors({ errors: [] }, ga4MissingClientId)).toEqual(['ga4:ga4_client_id_missing'])
+  })
+
+  it('classifies ads consent errors as not-applicable delivery blockers', () => {
+    expect(isAdConsentErrorCode('meta_capi_ad_storage_consent_not_granted')).toBe(true)
+    expect(isAdConsentErrorCode('google_ads_ad_user_data_consent_not_granted')).toBe(true)
+    expect(isAdConsentErrorCode('meta_capi_client_user_agent_missing')).toBe(false)
   })
 })

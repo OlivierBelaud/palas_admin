@@ -12,6 +12,15 @@ export const CONSENT_BLOCKERS = [
   'ad_personalization_consent_not_granted',
 ]
 
+export const AD_CONSENT_ERROR_CODES = [
+  'meta_capi_ad_storage_consent_not_granted',
+  'meta_capi_ad_user_data_consent_not_granted',
+  'meta_capi_ad_personalization_consent_not_granted',
+  'google_ads_ad_storage_consent_not_granted',
+  'google_ads_ad_user_data_consent_not_granted',
+  'google_ads_ad_personalization_consent_not_granted',
+]
+
 export function trackingHealthValidationErrors(
   validation: Record<string, unknown>,
   ga4Destination: DestinationSummary,
@@ -35,6 +44,10 @@ function validationBaseErrors(validation: Record<string, unknown>): string[] {
     : []
 }
 
-function isConsentBlocker(blocker: string) {
+export function isConsentBlocker(blocker: string) {
   return CONSENT_BLOCKERS.includes(blocker)
+}
+
+export function isAdConsentErrorCode(value: unknown): value is string {
+  return typeof value === 'string' && AD_CONSENT_ERROR_CODES.includes(value)
 }
