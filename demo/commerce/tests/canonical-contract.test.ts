@@ -46,6 +46,28 @@ describe('canonical event contract', () => {
     expect(result.destinations.google_ads.supported).toBe(false)
   })
 
+  it('routes storefront browsing and checkout step events to Meta instead of marking them unsupported', () => {
+    for (const [eventName, metaEventName] of [
+      ['view_item_list', 'ViewContent'],
+      ['remove_from_cart', 'ViewContent'],
+      ['view_cart', 'ViewContent'],
+      ['add_shipping_info', 'InitiateCheckout'],
+    ] as const) {
+      const result = validateCanonicalEvent({
+        eventName,
+        eventId: `evt_${eventName}`,
+        eventTime: '2026-06-11T10:00:00.000Z',
+        payload: basePayload,
+      })
+
+      expect(result.destinations.meta_capi).toMatchObject({
+        supported: true,
+        ready: true,
+        event_name: metaEventName,
+      })
+    }
+  })
+
   it('rejects a product view without items', () => {
     const result = validateCanonicalEvent({
       eventName: 'view_item',

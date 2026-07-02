@@ -132,6 +132,25 @@ describe('Meta CAPI connector mapping', () => {
     })
   })
 
+  it('maps storefront browsing and checkout step events to Meta standard events', () => {
+    expect(mapCanonicalToMetaCapi('view_item_list', purchasePayload)).toMatchObject({
+      ok: true,
+      payload: { data: [{ event_name: 'ViewContent' }] },
+    })
+    expect(mapCanonicalToMetaCapi('view_cart', purchasePayload)).toMatchObject({
+      ok: true,
+      payload: { data: [{ event_name: 'ViewContent' }] },
+    })
+    expect(mapCanonicalToMetaCapi('remove_from_cart', purchasePayload)).toMatchObject({
+      ok: true,
+      payload: { data: [{ event_name: 'ViewContent' }] },
+    })
+    expect(mapCanonicalToMetaCapi('add_shipping_info', purchasePayload)).toMatchObject({
+      ok: true,
+      payload: { data: [{ event_name: 'InitiateCheckout' }] },
+    })
+  })
+
   it('keeps non-consented events out of Meta dispatch', () => {
     const mapped = mapCanonicalToMetaCapi('purchase', {
       ...purchasePayload,

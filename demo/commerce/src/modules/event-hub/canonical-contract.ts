@@ -62,7 +62,7 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
     requires: { url: true },
   },
   view_item_list: {
-    destinations: { posthog: 'view_item_list', ga4: 'view_item_list' },
+    destinations: { posthog: 'view_item_list', ga4: 'view_item_list', meta_capi: 'ViewContent' },
     requires: { url: true, items: true },
   },
   view_item: {
@@ -84,11 +84,11 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
     requires: { items: true, valueCurrency: true },
   },
   remove_from_cart: {
-    destinations: { posthog: 'remove_from_cart', ga4: 'remove_from_cart' },
+    destinations: { posthog: 'remove_from_cart', ga4: 'remove_from_cart', meta_capi: 'ViewContent' },
     requires: { items: true },
   },
   view_cart: {
-    destinations: { posthog: 'view_cart', ga4: 'view_cart' },
+    destinations: { posthog: 'view_cart', ga4: 'view_cart', meta_capi: 'ViewContent' },
   },
   begin_checkout: {
     destinations: {
@@ -104,7 +104,12 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
     destinations: { posthog: 'add_contact_info', meta_capi: 'Lead', google_ads: 'add_contact_info' },
   },
   add_shipping_info: {
-    destinations: { posthog: 'add_shipping_info', ga4: 'add_shipping_info', google_ads: 'add_shipping_info' },
+    destinations: {
+      posthog: 'add_shipping_info',
+      ga4: 'add_shipping_info',
+      meta_capi: 'InitiateCheckout',
+      google_ads: 'add_shipping_info',
+    },
     requires: { valueCurrency: true },
   },
   add_payment_info: {

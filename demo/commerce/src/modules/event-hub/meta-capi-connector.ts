@@ -37,11 +37,15 @@ export type MetaCapiSendResult = DispatchSendResult
 
 const META_EVENT_NAMES: Record<string, string> = {
   page_view: 'PageView',
+  view_item_list: 'ViewContent',
   view_item: 'ViewContent',
   search: 'Search',
   add_to_cart: 'AddToCart',
+  remove_from_cart: 'ViewContent',
+  view_cart: 'ViewContent',
   begin_checkout: 'InitiateCheckout',
   add_contact_info: 'Lead',
+  add_shipping_info: 'InitiateCheckout',
   add_payment_info: 'AddPaymentInfo',
   purchase: 'Purchase',
 }
