@@ -15,24 +15,20 @@ const DISPATCHABLE_EVENT_NAMES = [
   'purchase',
 ]
 
-const GA4_EVENT_NAMES = [
-  'page_view',
-  'view_item_list',
-  'view_item',
-  'search',
-  'add_to_cart',
-  'remove_from_cart',
-  'view_cart',
-  'begin_checkout',
-  'add_shipping_info',
-  'add_payment_info',
-  'purchase',
-]
+const DESTINATIONS = ['ga4', 'meta_capi', 'google_ads']
 const CONSENT_BLOCKERS = [
   'analytics_consent_not_granted',
   'ad_storage_consent_not_granted',
   'ad_user_data_consent_not_granted',
   'ad_personalization_consent_not_granted',
+]
+const AD_CONSENT_ERROR_CODES = [
+  'meta_capi_ad_storage_consent_not_granted',
+  'meta_capi_ad_user_data_consent_not_granted',
+  'meta_capi_ad_personalization_consent_not_granted',
+  'google_ads_ad_storage_consent_not_granted',
+  'google_ads_ad_user_data_consent_not_granted',
+  'google_ads_ad_personalization_consent_not_granted',
 ]
 const TRACKING_HEALTH_VALID_SQL = `(
   COALESCE(jsonb_array_length(payload_normalized #> '{validation,errors}'), 0) = 0
@@ -62,7 +58,7 @@ export default {
       loadPageRows(from, to, filterEventName, limit, offset),
       loadEventTypes(from, to),
       loadStats(from, to, filterEventName),
-      loadGa4StatusCounts(from, to),
+      loadDestinationStatusCounts(from, to),
     ])
     const queryDone = nowMs()
 
@@ -70,10 +66,12 @@ export default {
     const pageDispatchRows = pageEventIds.length > 0 ? await loadPageDispatches(pageEventIds) : []
     const dispatchDone = nowMs()
 
-    const dispatchByEventId = new Map(pageDispatchRows.map((row) => [row.event_id, row]))
+    const dispatchByKey = new Map(pageDispatchRows.map((row) => [`${row.event_id}:${row.destination}`, row]))
     const stats = statRows[0] ?? emptyStats()
     const total = toNumber(rows[0]?.total_count)
-    const ga4StatusCounts = countByStatus(dispatchStatRows)
+    const statusCounts = countByDestinationStatus(dispatchStatRows)
+    const ga4StatusCounts = statusCounts.get('ga4') ?? new Map()
+    const metaStatusCounts = statusCounts.get('meta_capi') ?? new Map()
     const valid = toNumber(stats.valid)
     const identified = toNumber(stats.identified)
     const data = {
@@ -106,6 +104,13 @@ export default {
           countStatus(ga4StatusCounts, 'error') +
           countStatus(ga4StatusCounts, 'not_configured') +
           countStatus(ga4StatusCounts, 'sending'),
+        meta_pending: countStatus(metaStatusCounts, 'pending') + countStatus(metaStatusCounts, 'retry'),
+        meta_sent: countStatus(metaStatusCounts, 'sent'),
+        meta_invalid: countStatus(metaStatusCounts, 'invalid'),
+        meta_error:
+          countStatus(metaStatusCounts, 'error') +
+          countStatus(metaStatusCounts, 'not_configured') +
+          countStatus(metaStatusCounts, 'sending'),
         posthog_forwarded: toNumber(stats.posthog_forwarded),
         consent_analytics_granted: toNumber(stats.consent_analytics_granted),
         consent_analytics_denied: total - toNumber(stats.consent_analytics_granted),
@@ -119,7 +124,13 @@ export default {
         invalid: toNumber(row.invalid),
         latest_at: row.latest_at ? iso(row.latest_at) : null,
       })),
-      events: rows.map((row) => eventDto(row, dispatchByEventId.get(row.event_id))),
+      events: rows.map((row) =>
+        eventDto(row, {
+          ga4Log: dispatchByKey.get(`${row.event_id}:ga4`),
+          metaCapiLog: dispatchByKey.get(`${row.event_id}:meta_capi`),
+          googleAdsLog: dispatchByKey.get(`${row.event_id}:google_ads`),
+        }),
+      ),
     }
     const serializeDone = nowMs()
 
@@ -206,17 +217,20 @@ function loadStats(from, to, eventName) {
   )
 }
 
-function loadGa4StatusCounts(from, to) {
+function loadDestinationStatusCounts(from, to) {
   return db().unsafe(
-    `SELECT status, COUNT(*)::text AS count
-      FROM dispatch_logs
-      WHERE deleted_at IS NULL
-        AND destination = 'ga4'
-        AND canonical_event_name = ANY($3::text[])
-        AND event_received_at >= $1
-        AND event_received_at <= $2
-      GROUP BY status`,
-    [from.toISOString(), to.toISOString(), GA4_EVENT_NAMES],
+    `SELECT destination, normalized_status AS status, COUNT(*)::text AS count
+       FROM (
+         SELECT destination,
+                CASE WHEN error_code = ANY($4::text[]) THEN 'not_applicable' ELSE status END AS normalized_status
+           FROM dispatch_logs
+          WHERE deleted_at IS NULL
+            AND destination = ANY($3::text[])
+            AND event_received_at >= $1
+            AND event_received_at <= $2
+       ) AS normalized_dispatch_logs
+      GROUP BY destination, normalized_status`,
+    [from.toISOString(), to.toISOString(), DESTINATIONS, AD_CONSENT_ERROR_CODES],
   )
 }
 
@@ -224,16 +238,16 @@ function loadPageDispatches(eventIds) {
   return db().unsafe(
     `SELECT event_id, destination, status, http_status, error_code, error_message,
             attempt_count, sent_at, last_attempt_at
-       FROM dispatch_logs
+      FROM dispatch_logs
       WHERE deleted_at IS NULL
-        AND destination = 'ga4'
+        AND destination = ANY($2::text[])
         AND event_id = ANY($1::text[])
       ORDER BY event_received_at DESC`,
-    [eventIds],
+    [eventIds, DESTINATIONS],
   )
 }
 
-function eventDto(row, ga4Log) {
+function eventDto(row, { ga4Log, metaCapiLog, googleAdsLog }) {
   const payload = row.payload_normalized ?? {}
   const ecommerce = payload.ecommerce ?? {}
   const cart = payload.cart ?? {}
@@ -244,6 +258,8 @@ function eventDto(row, ga4Log) {
   const validation = payload.validation ?? {}
   const validationDestinations = validation.destinations ?? {}
   const ga4Destination = destinationSummary('ga4', validationDestinations.ga4)
+  const metaCapiDestination = destinationSummary('meta_capi', validationDestinations.meta_capi)
+  const googleAdsDestination = destinationSummary('google_ads', validationDestinations.google_ads)
   const ga4 = dispatch.ga4 ?? {}
   const posthog = dispatch.posthog ?? {}
   const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
@@ -309,6 +325,30 @@ function eventDto(row, ga4Log) {
     ga4_error_message: ga4Log?.error_message ?? null,
     ga4_attempt_count: ga4Log?.attempt_count ?? 0,
     ga4_sent_at: ga4Log?.sent_at ? iso(ga4Log.sent_at) : null,
+    meta_ready: metaCapiDestination.supported
+      ? metaCapiLog
+        ? ['pending', 'sending', 'sent', 'retry'].includes(metaCapiLog.status)
+        : metaCapiDestination.ready === true
+      : false,
+    meta_status: metaCapiDestination.supported ? (metaCapiLog?.status ?? 'pending') : 'unsupported',
+    meta_http_status: metaCapiLog?.http_status ?? null,
+    meta_error_code: metaCapiLog?.error_code ?? null,
+    meta_error_message: metaCapiLog?.error_message ?? null,
+    meta_attempt_count: metaCapiLog?.attempt_count ?? 0,
+    meta_sent_at: metaCapiLog?.sent_at ? iso(metaCapiLog.sent_at) : null,
+    meta_blockers: metaCapiDestination.blockers,
+    google_ads_ready: googleAdsDestination.supported
+      ? googleAdsLog
+        ? ['pending', 'sending', 'sent', 'retry'].includes(googleAdsLog.status)
+        : googleAdsDestination.ready === true
+      : false,
+    google_ads_status: googleAdsDestination.supported ? (googleAdsLog?.status ?? 'pending') : 'unsupported',
+    google_ads_http_status: googleAdsLog?.http_status ?? null,
+    google_ads_error_code: googleAdsLog?.error_code ?? null,
+    google_ads_error_message: googleAdsLog?.error_message ?? null,
+    google_ads_attempt_count: googleAdsLog?.attempt_count ?? 0,
+    google_ads_sent_at: googleAdsLog?.sent_at ? iso(googleAdsLog.sent_at) : null,
+    google_ads_blockers: googleAdsDestination.blockers,
     ad_destinations: ['meta_capi', 'google_ads', 'tiktok']
       .map((destination) => destinationSummary(destination, validationDestinations[destination]))
       .filter((destination) => destination.supported),
@@ -329,9 +369,14 @@ function emptyStats() {
   }
 }
 
-function countByStatus(rows) {
+function countByDestinationStatus(rows) {
   const map = new Map()
-  for (const row of rows) map.set(row.status, toNumber(row.count))
+  for (const row of rows) {
+    const destination = row.destination ?? 'unknown'
+    const destinationMap = map.get(destination) ?? new Map()
+    destinationMap.set(row.status, toNumber(row.count))
+    map.set(destination, destinationMap)
+  }
   return map
 }
 

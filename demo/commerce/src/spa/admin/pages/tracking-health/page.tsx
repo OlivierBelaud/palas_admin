@@ -105,6 +105,12 @@ interface TrackingHealthData {
     google_ads_attempt_count: number
     google_ads_sent_at: string | null
     google_ads_blockers: string[]
+    ad_destinations?: Array<{
+      destination: string
+      supported: boolean
+      ready: boolean
+      blockers: string[]
+    }>
   }>
 }
 
@@ -506,7 +512,7 @@ function LiveEventTable({
                   <div className="flex flex-col gap-1">
                     <Badge
                       variant={deliveryBadgeVariant(normalizedDeliveryStatus('meta', event))}
-                      title={event.meta_blockers.join(', ') || undefined}
+                      title={asStringArray(event.meta_blockers).join(', ') || undefined}
                     >
                       {formatDeliveryStatus('meta', event)}
                     </Badge>
@@ -524,7 +530,7 @@ function LiveEventTable({
                   <div className="flex flex-col gap-1">
                     <Badge
                       variant={deliveryBadgeVariant(normalizedDeliveryStatus('google_ads', event))}
-                      title={event.google_ads_blockers.join(', ') || undefined}
+                      title={asStringArray(event.google_ads_blockers).join(', ') || undefined}
                     >
                       {formatDeliveryStatus('google_ads', event)}
                     </Badge>
@@ -542,7 +548,7 @@ function LiveEventTable({
                   {event.valid ? (
                     <Badge variant="secondary">ok</Badge>
                   ) : (
-                    <Badge variant="destructive">{event.validation_errors.join(', ') || 'invalid'}</Badge>
+                    <Badge variant="destructive">{asStringArray(event.validation_errors).join(', ') || 'invalid'}</Badge>
                   )}
                 </Table.Cell>
                 <Table.Cell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
@@ -655,14 +661,16 @@ function normalizedDeliveryStatus(
 ) {
   const status =
     destination === 'ga4' ? event.ga4_status : destination === 'meta' ? event.meta_status : event.google_ads_status
+  const normalizedStatus = nonEmptyString(status)
   const errorCode =
     destination === 'ga4'
       ? event.ga4_error_code
       : destination === 'meta'
         ? event.meta_error_code
         : event.google_ads_error_code
-  if (status === 'invalid' && isAdConsentErrorCode(errorCode)) return 'not_applicable'
-  return status
+  if (normalizedStatus === 'invalid' && isAdConsentErrorCode(errorCode)) return 'not_applicable'
+  if (normalizedStatus) return normalizedStatus
+  return legacyDeliveryStatus(destination, event)
 }
 
 function deliveryStatusLabel(status: string) {
@@ -674,5 +682,35 @@ function deliveryStatusLabel(status: string) {
   if (status === 'retry') return 'Retry'
   if (status === 'not_configured') return 'Config'
   if (status === 'unsupported') return 'Non applicable'
+  if (status === 'unknown') return 'N/A'
   return status
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function legacyDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event: TrackingHealthData['events'][number]) {
+  if (destination === 'ga4') return 'unknown'
+  const canonicalDestination = destination === 'meta' ? 'meta_capi' : destination
+  const legacyDestinations = Array.isArray(event.ad_destinations) ? event.ad_destinations : []
+  const legacy = legacyDestinations.find((row) => row?.destination === canonicalDestination)
+  if (!legacy) return 'unsupported'
+  const blockers = asStringArray(legacy.blockers)
+  if (blockers.some(isConsentBlocker)) return 'not_applicable'
+  return legacy.ready ? 'pending' : 'invalid'
+}
+
+function isConsentBlocker(blocker: string) {
+  return (
+    blocker === 'analytics_consent_not_granted' ||
+    blocker === 'ad_storage_consent_not_granted' ||
+    blocker === 'ad_user_data_consent_not_granted' ||
+    blocker === 'ad_personalization_consent_not_granted' ||
+    isAdConsentErrorCode(blocker)
+  )
 }
