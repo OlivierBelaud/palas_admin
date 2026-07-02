@@ -213,6 +213,29 @@ const CODE_FIELDS = `
   }
 `
 
+const CODE_BXGY_FIELDS = `
+  title
+  status
+  startsAt
+  endsAt
+  createdAt
+  updatedAt
+  summary
+  asyncUsageCount
+  discountClasses
+  appliesOncePerCustomer
+  usageLimit
+  combinesWith {
+    orderDiscounts
+    productDiscounts
+    shippingDiscounts
+  }
+  codesCount { count }
+  codes(first: 5) {
+    nodes { code }
+  }
+`
+
 const AUTOMATIC_FIELDS = `
   title
   status
@@ -231,6 +254,23 @@ const AUTOMATIC_FIELDS = `
   }
 `
 
+const AUTOMATIC_BXGY_FIELDS = `
+  title
+  status
+  startsAt
+  endsAt
+  createdAt
+  updatedAt
+  summary
+  asyncUsageCount
+  discountClasses
+  combinesWith {
+    orderDiscounts
+    productDiscounts
+    shippingDiscounts
+  }
+`
+
 const DISCOUNTS_QUERY = `
   query PalasDiscountList($cursor: String) {
     discountNodes(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true) {
@@ -240,10 +280,10 @@ const DISCOUNTS_QUERY = `
           discount {
             __typename
             ... on DiscountCodeBasic { ${CODE_FIELDS} }
-            ... on DiscountCodeBxgy { ${CODE_FIELDS} }
+            ... on DiscountCodeBxgy { ${CODE_BXGY_FIELDS} }
             ... on DiscountCodeFreeShipping { ${CODE_FIELDS} }
             ... on DiscountAutomaticBasic { ${AUTOMATIC_FIELDS} }
-            ... on DiscountAutomaticBxgy { ${AUTOMATIC_FIELDS} }
+            ... on DiscountAutomaticBxgy { ${AUTOMATIC_BXGY_FIELDS} }
             ... on DiscountAutomaticFreeShipping { ${AUTOMATIC_FIELDS} }
           }
         }
