@@ -200,6 +200,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
     }
 
     if (rule.kind === 'shipping_threshold') {
+      if (shippingRuleSeen) continue
       const threshold = rule.thresholds[input.market]
       if (!threshold) {
         result.warnings.push(`${rule.label}: aucun seuil defini pour le market ${input.market}.`)

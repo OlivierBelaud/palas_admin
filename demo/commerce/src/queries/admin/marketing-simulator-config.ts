@@ -1,4 +1,6 @@
+import { desc, isNull } from 'drizzle-orm'
 import { ShopifyAdminClient } from '../../modules/shopify-admin/client'
+import { resolveTable } from '../../utils/drizzle-read'
 
 interface MoneyNode {
   amount: string
@@ -137,13 +139,36 @@ interface ShippingThreshold {
   source: string
 }
 
+interface NormalizedPalasRule {
+  id: string
+  title: string
+  rule_type: 'order_discount' | 'gift_threshold' | 'shipping_threshold'
+  status: 'draft' | 'active' | 'paused'
+  starts_at: string
+  ends_at: string | null
+  execution_kind: 'shopify_discount' | 'local_cart_rule' | 'shipping_profile'
+  sync_status: 'local_only' | 'synced' | 'pending' | 'error'
+  shopify_id: string | null
+  sync_error: string | null
+  market_key: string | null
+  currency_code: string | null
+  value_type: 'percentage' | 'fixed_amount' | null
+  value: number | null
+  code: string | null
+  threshold: number | null
+  gift_product_id: string | null
+  gift_title: string | null
+  paid_rate: number | null
+  source: 'palas'
+}
+
 export default defineQuery({
   name: 'marketing-simulator-config',
   description: 'Live Shopify markets and delivery thresholds for the Palas marketing simulator.',
   input: z.object({}),
-  handler: async () => {
+  handler: async (_input, { db, schema }) => {
     const client = new ShopifyAdminClient()
-    const [marketsData, deliveryData, discountData] = await Promise.all([
+    const [marketsData, deliveryData, discountData, palasRules] = await Promise.all([
       client.query<{
         shop: { currencyCode: string }
         markets: { nodes: MarketNode[] }
@@ -154,6 +179,7 @@ export default defineQuery({
       client.query<{
         discountNodes: { nodes: ShopifyDiscountNode[] }
       }>(DISCOUNTS_QUERY),
+      readPalasRules(db, schema),
     ])
 
     const markets = marketsData.markets.nodes.filter((market) => market.status === 'ACTIVE').map(normalizeMarket)
@@ -168,9 +194,57 @@ export default defineQuery({
       markets,
       shipping_thresholds: shippingThresholds,
       shopify_discounts: shopifyDiscounts,
+      palas_rules: palasRules,
     }
   },
 })
+
+async function readPalasRules(db: unknown, schema: unknown): Promise<NormalizedPalasRule[]> {
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: Mantajs beta exposes Drizzle dynamically in app code.
+    const database = db as any
+    // biome-ignore lint/suspicious/noExplicitAny: dynamic schema lookup is required before generated types catch up.
+    const table = resolveTable(schema as Record<string, unknown>, 'marketingRule') as any
+    const rows = await database
+      .select()
+      .from(table)
+      .where(isNull(table.deleted_at))
+      .orderBy(desc(table.created_at))
+      .limit(500)
+    return rows.map((row: unknown) => normalizePalasRule(row as Record<string, unknown>))
+  } catch {
+    return []
+  }
+}
+
+function normalizePalasRule(row: Record<string, unknown>): NormalizedPalasRule {
+  return {
+    id: String(row.id),
+    title: String(row.title ?? 'Regle Palas'),
+    rule_type: readEnum(row.rule_type, ['order_discount', 'gift_threshold', 'shipping_threshold'], 'gift_threshold'),
+    status: readEnum(row.status, ['draft', 'active', 'paused'], 'active'),
+    starts_at: toIsoString(row.starts_at) ?? new Date().toISOString(),
+    ends_at: toIsoString(row.ends_at),
+    execution_kind: readEnum(
+      row.execution_kind,
+      ['shopify_discount', 'local_cart_rule', 'shipping_profile'],
+      'local_cart_rule',
+    ),
+    sync_status: readEnum(row.sync_status, ['local_only', 'synced', 'pending', 'error'], 'local_only'),
+    shopify_id: nullableString(row.shopify_id),
+    sync_error: nullableString(row.sync_error),
+    market_key: nullableString(row.market_key),
+    currency_code: nullableString(row.currency_code),
+    value_type: readNullableEnum(row.value_type, ['percentage', 'fixed_amount']),
+    value: nullableNumber(row.value),
+    code: nullableString(row.code),
+    threshold: nullableNumber(row.threshold),
+    gift_product_id: nullableString(row.gift_product_id),
+    gift_title: nullableString(row.gift_title),
+    paid_rate: nullableNumber(row.paid_rate),
+    source: 'palas',
+  }
+}
 
 function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyDiscount | null {
   const discount = node.discount
@@ -203,6 +277,33 @@ function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyD
     code: discount.codes?.nodes?.[0]?.code ?? null,
     source: 'shopify',
   }
+}
+
+function readEnum<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
+  return values.includes(value as T) ? (value as T) : fallback
+}
+
+function readNullableEnum<T extends string>(value: unknown, values: readonly T[]): T | null {
+  return values.includes(value as T) ? (value as T) : null
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function toIsoString(value: unknown): string | null {
+  if (!value) return null
+  if (value instanceof Date) return value.toISOString()
+  if (typeof value !== 'string') return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
 function isDiscountPercentage(value: DiscountValueNode | undefined): value is {
