@@ -41,27 +41,30 @@ interface DiscountListData {
 }
 
 type StatusFilter = 'all' | 'active' | 'scheduled' | 'expired'
+type DiscountViewMode = 'shop' | 'individual'
 
 export default function DiscountsPage() {
+  return <DiscountsView mode="shop" />
+}
+
+export function DiscountsView({ mode }: { mode: DiscountViewMode }) {
   const [search, setSearch] = React.useState('')
   const [status, setStatus] = React.useState<StatusFilter>('all')
   const query = useQuery<DiscountListData>('discount-list', { limit: 500 }, { staleTime: 60_000 })
   const data = query.data
 
-  const shopRows = React.useMemo(() => filterRows(data?.shop ?? [], search, status), [data?.shop, search, status])
-  const individualRows = React.useMemo(
-    () => filterRows(data?.individual ?? [], search, status),
-    [data?.individual, search, status],
+  const selectedRows = React.useMemo(
+    () => filterRows(mode === 'shop' ? (data?.shop ?? []) : (data?.individual ?? []), search, status),
+    [data?.individual, data?.shop, mode, search, status],
   )
+  const copy = viewCopy(mode)
 
   return (
     <div className="flex flex-col gap-4 pb-8">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-normal">Discounts</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Vue live Shopify Admin API, classée pour préparer le moteur promotionnel Palas.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-normal">{copy.heading}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{copy.intro}</p>
           {data ? (
             <div className="mt-2 flex flex-wrap gap-2 text-sm">
               <Badge variant="outline">{data.meta.total} discounts</Badge>
@@ -110,20 +113,7 @@ export default function DiscountsPage() {
 
       {query.isLoading ? <LoadingState /> : null}
       {query.isError ? <ErrorState message={query.error.message} /> : null}
-      {data ? (
-        <>
-          <DiscountTable
-            title="Discounts boutique"
-            description="Promos globales, automatiques ou codes publics qui décrivent une opération commerciale."
-            rows={shopRows}
-          />
-          <DiscountTable
-            title="Individual discounts"
-            description="Coupons lifecycle, welcome, Klaviyo, abandoned cart ou codes one-shot rattachés à un client."
-            rows={individualRows}
-          />
-        </>
-      ) : null}
+      {data ? <DiscountTable title={copy.tableTitle} description={copy.tableDescription} rows={selectedRows} /> : null}
     </div>
   )
 }
@@ -276,6 +266,28 @@ function statusLabel(status: StatusFilter): string {
   if (status === 'scheduled') return 'Planifiés'
   if (status === 'expired') return 'Expirés'
   return 'Tous'
+}
+
+function viewCopy(mode: DiscountViewMode): {
+  heading: string
+  intro: string
+  tableTitle: string
+  tableDescription: string
+} {
+  if (mode === 'individual') {
+    return {
+      heading: 'Individual discounts',
+      intro: 'Coupons lifecycle, welcome, Klaviyo, abandoned cart ou codes one-shot rattachés à un client.',
+      tableTitle: 'Individual discounts',
+      tableDescription: 'Promos individuelles et pools de coupons qui ne décrivent pas une opération boutique globale.',
+    }
+  }
+  return {
+    heading: 'Discounts boutique',
+    intro: 'Promos globales, automatiques ou codes publics qui décrivent une opération commerciale Palas.',
+    tableTitle: 'Discounts boutique',
+    tableDescription: 'Vue live Shopify Admin API, classée pour préparer le moteur promotionnel Palas.',
+  }
 }
 
 function statusClass(status: string): string {

@@ -27,6 +27,12 @@ export default defineSpa({
       to: '/orders',
     },
     {
+      icon: 'BadgePercent',
+      label: 'Discounts',
+      to: '/discounts',
+      items: [{ label: 'Individual', to: '/discounts/individual' }],
+    },
+    {
       icon: 'Users',
       label: 'Clients',
       to: '/clients',
