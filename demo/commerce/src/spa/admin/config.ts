@@ -33,6 +33,12 @@ export default defineSpa({
       items: [{ label: 'Individual', to: '/discounts/individual' }],
     },
     {
+      icon: 'Megaphone',
+      label: 'Marketing',
+      to: '/marketing/simulator',
+      items: [{ label: 'Simulator', to: '/marketing/simulator' }],
+    },
+    {
       icon: 'Users',
       label: 'Clients',
       to: '/clients',
