@@ -198,11 +198,16 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const [now, setNow] = React.useState(defaultDateTimeLocal)
   const [market, setMarket] = React.useState<MarketCode>('')
   const [cart, setCart] = React.useState<MarketingCartLine[]>([])
+  const [resolvedCartProducts, setResolvedCartProducts] = React.useState<MarketingProduct[]>([])
+  const previousMarketRef = React.useRef<MarketCode>('')
   const campaigns = React.useMemo(() => buildCampaigns(config), [config])
   const [selectedCodes, setSelectedCodes] = React.useState<string[]>([])
   const [selectedPersonalOffers, setSelectedPersonalOffers] = React.useState<PersonalOfferType[]>([])
   const [ruleForm, setRuleForm] = React.useState<MarketingRuleFormState>(() => initialRuleForm('', 'EUR'))
   const [ruleFormError, setRuleFormError] = React.useState<string | null>(null)
+  const handleResolvedCartProductsChange = React.useCallback((next: MarketingProduct[]) => {
+    setResolvedCartProducts((previous) => (sameProductList(previous, next) ? previous : next))
+  }, [])
 
   React.useEffect(() => {
     if (!config || market) return
@@ -212,6 +217,10 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const selectedMarket = config?.markets.find((item) => item.key === market) ?? null
   const selectedShippingThreshold = config?.shipping_thresholds.find((item) => item.market_key === market) ?? null
   const products = React.useMemo(() => productsForMarket(config, market), [config, market])
+  const evaluationProducts = React.useMemo(
+    () => mergeProducts(products, resolvedCartProducts),
+    [products, resolvedCartProducts],
+  )
   const marketProductCurrency = config?.products.find((product) => product.market_key === market)?.currency_code
   const currencyCode =
     marketProductCurrency ??
@@ -235,6 +244,18 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
     if (cart.length > 0 || products.length === 0) return
     setCart(defaultCart(products))
   }, [cart.length, products])
+
+  React.useEffect(() => {
+    if (!market) return
+    if (!previousMarketRef.current) {
+      previousMarketRef.current = market
+      return
+    }
+    if (previousMarketRef.current === market) return
+    previousMarketRef.current = market
+    setCart([])
+    setResolvedCartProducts([])
+  }, [market])
 
   const submitMarketingRule = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -263,11 +284,11 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
         customerSegment: 'anonymous',
         cart,
         campaigns,
-        products,
+        products: evaluationProducts,
         selectedCodes,
         selectedPersonalOffers,
       }),
-    [campaigns, cart, currencyCode, market, products, scenarioDateIso, selectedCodes, selectedPersonalOffers],
+    [campaigns, cart, currencyCode, evaluationProducts, market, scenarioDateIso, selectedCodes, selectedPersonalOffers],
   )
   const controlRules = React.useMemo(() => buildControlRules(config), [config])
   const availableCodes = React.useMemo(() => buildAvailableCodes(config, scenarioDateIso), [config, scenarioDateIso])
@@ -369,12 +390,13 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
               onChange={setSelectedPersonalOffers}
             />
             <CartBuilder
-              products={products}
+              products={evaluationProducts}
               market={market}
               country={selectedMarket?.countries[0]?.code ?? 'FR'}
               cart={cart}
               currencyCode={currencyCode}
               onCartChange={setCart}
+              onResolvedProductsChange={handleResolvedCartProductsChange}
             />
             <AutomaticOffersList offers={automaticOffers} />
             <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
@@ -508,6 +530,7 @@ function CartBuilder({
   cart,
   currencyCode,
   onCartChange,
+  onResolvedProductsChange,
 }: {
   products: MarketingProduct[]
   market: string
@@ -515,6 +538,7 @@ function CartBuilder({
   cart: MarketingCartLine[]
   currencyCode: string
   onCartChange: (cart: MarketingCartLine[]) => void
+  onResolvedProductsChange: (products: MarketingProduct[]) => void
 }) {
   const [query, setQuery] = React.useState('')
   const [after, setAfter] = React.useState<string | null>(null)
@@ -556,6 +580,9 @@ function CartBuilder({
         .filter((product): product is MarketingProduct => Boolean(product)),
     [cart, products, remoteProducts],
   )
+  React.useEffect(() => {
+    onResolvedProductsChange(selectedProducts)
+  }, [onResolvedProductsChange, selectedProducts])
   const productMap = React.useMemo(
     () =>
       new Map(
@@ -1348,6 +1375,14 @@ function mergeProducts(base: MarketingProduct[], next: MarketingProduct[]): Mark
   for (const product of base) map.set(product.id, product)
   for (const product of next) map.set(product.id, product)
   return Array.from(map.values())
+}
+
+function sameProductList(a: MarketingProduct[], b: MarketingProduct[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((product, index) => {
+    const other = b[index]
+    return Boolean(other) && product.id === other.id && product.price === other.price && product.title === other.title
+  })
 }
 
 function useDebouncedValue(value: string, delayMs: number): string {
