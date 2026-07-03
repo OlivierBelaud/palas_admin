@@ -139,6 +139,16 @@ interface AutomaticOffer {
   source: 'shopify' | 'palas' | 'shipping_profile'
 }
 
+interface CartAutomationRule {
+  id: string
+  title: string
+  giftTitle: string
+  threshold: number
+  currencyCode: string
+  marketKey: string | null
+  status: string
+}
+
 interface PersonalOfferOption {
   type: PersonalOfferType
   title: string
@@ -298,6 +308,10 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const controlRules = React.useMemo(() => buildControlRules(config), [config])
   const availableCodes = React.useMemo(() => buildAvailableCodes(config, scenarioDateIso), [config, scenarioDateIso])
   const automaticOffers = React.useMemo(() => buildAutomaticOffers(config, scenarioDateIso), [config, scenarioDateIso])
+  const cartAutomationRules = React.useMemo(
+    () => buildCartAutomationRules(config, scenarioDateIso, market, currencyCode),
+    [config, currencyCode, market, scenarioDateIso],
+  )
   const personalOffers = React.useMemo(() => buildPersonalOffers(config), [config])
 
   if (configQuery.isLoading) return <LoadingState />
@@ -403,6 +417,7 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
               onCartChange={setCart}
               onResolvedProductsChange={handleResolvedCartProductsChange}
             />
+            <CartAutomationList rules={cartAutomationRules} currencyCode={currencyCode} />
             <AutomaticOffersList offers={automaticOffers} />
             <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
           </div>
@@ -410,7 +425,7 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
           <div className="flex flex-col gap-4">
             <DecisionGrid result={result} />
           </div>
-          <ImpactColumn result={result} />
+          <ImpactColumn result={result} cart={cart} products={evaluationProducts} />
         </div>
       )}
     </div>
@@ -706,12 +721,12 @@ function AutomaticOffersList({ offers }: { offers: AutomaticOffer[] }) {
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold tracking-normal">Codes automatiques</CardTitle>
+        <CardTitle className="text-base font-semibold tracking-normal">Offres automatiques</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {offers.length === 0 ? (
           <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-            Aucun code automatique actif à cette date.
+            Aucune offre automatique active à cette date.
           </div>
         ) : null}
         {offers.map((offer) => (
@@ -719,6 +734,39 @@ function AutomaticOffersList({ offers }: { offers: AutomaticOffer[] }) {
             <div className="font-medium">{offer.title}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {offer.summary} · {offer.source}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function CartAutomationList({ rules, currencyCode }: { rules: CartAutomationRule[]; currencyCode: string }) {
+  return (
+    <Card className="border border-border/70 shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-normal">
+          <PackagePlus className="size-4" />
+          Gifts automatiques
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {rules.length === 0 ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+            Aucun cadeau automatique actif pour ce market et cette date.
+          </div>
+        ) : null}
+        {rules.map((rule) => (
+          <div key={rule.id} className="rounded-md border p-3 text-sm">
+            <div className="font-medium">{rule.giftTitle}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {rule.threshold <= 0
+                ? 'Ajout automatique dès le premier produit'
+                : `Ajout automatique dès ${formatMoney(rule.threshold, rule.currencyCode || currencyCode)}`}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {rule.title} · {rule.marketKey ?? 'tous markets'} · {rule.status}
             </div>
           </div>
         ))}
@@ -1008,20 +1056,18 @@ function CodeSelector({
 }
 
 function buildAnnouncementText(result: ReturnType<typeof evaluateMarketingExperience>): string {
-  const shipping = result.progress.milestones.find((milestone) => milestone.kind === 'shipping')
-  if (shipping) {
-    if (shipping.reached) return 'Livraison offerte debloquee'
-    return `Livraison offerte des ${formatMoney(shipping.amount, result.currencyCode)}`
-  }
+  const milestoneMessages = result.progress.milestones.map((milestone) => {
+    if (milestone.kind === 'shipping')
+      return `Livraison offerte dès ${formatMoney(milestone.amount, result.currencyCode)}`
+    if (milestone.amount <= 0) return `${milestone.label} offert dès le premier produit`
+    return `${milestone.label} offert dès ${formatMoney(milestone.amount, result.currencyCode)}`
+  })
+  if (milestoneMessages.length > 0) return milestoneMessages.join(' · ')
 
-  const gift = result.progress.milestones.find((milestone) => milestone.kind === 'gift')
-  if (gift) {
-    if (gift.reached) return `${gift.label} offert debloque`
-    return `${gift.label} offert des ${formatMoney(gift.amount, result.currencyCode)}`
+  const discountRules = result.appliedRules.filter((rule) => rule.kind === 'order_discount')
+  if (discountRules.length > 0) {
+    return discountRules.map((rule) => rule.impact).join(' · ')
   }
-
-  const discountRule = result.appliedRules.find((rule) => rule.kind === 'order_discount')
-  if (discountRule) return discountRule.impact
 
   return 'Aucune offre automatique active pour ce scenario'
 }
@@ -1338,37 +1384,80 @@ function decisionRows(result: ReturnType<typeof evaluateMarketingExperience>) {
   return [...result.decisionTrace, ...appliedRows]
 }
 
-function ImpactColumn({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
+function ImpactColumn({
+  result,
+  cart,
+  products,
+}: {
+  result: ReturnType<typeof evaluateMarketingExperience>
+  cart: MarketingCartLine[]
+  products: MarketingProduct[]
+}) {
   return (
     <div className="flex flex-col gap-4">
       <SurfacePreview result={result} />
-      <SummaryCard result={result} />
+      <SummaryCard result={result} cart={cart} products={products} />
     </div>
   )
 }
 
-function SummaryCard({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
+function SummaryCard({
+  result,
+  cart,
+  products,
+}: {
+  result: ReturnType<typeof evaluateMarketingExperience>
+  cart: MarketingCartLine[]
+  products: MarketingProduct[]
+}) {
+  const productMap = React.useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
         <CardTitle className="text-base font-semibold tracking-normal">Panier calcule</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-2 text-sm">
+        <div className="grid gap-2">
+          {cart.length === 0 && result.gifts.length === 0 ? (
+            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              Aucun produit dans le panier calculé.
+            </div>
+          ) : null}
+          {cart.map((line) => {
+            const product = productMap.get(line.productId)
+            if (!product) return null
+            return (
+              <div
+                key={`paid-${line.productId}`}
+                className="flex items-center justify-between gap-3 rounded-md border p-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{product.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {line.quantity} × {formatMoney(product.price, result.currencyCode)}
+                  </div>
+                </div>
+                <div className="shrink-0 font-medium">
+                  {formatMoney(product.price * line.quantity, result.currencyCode)}
+                </div>
+              </div>
+            )
+          })}
+          {result.gifts.map((gift) => (
+            <div
+              key={`gift-${gift.sourceRuleId}-${gift.productId}`}
+              className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-emerald-950"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-medium">{gift.title}</div>
+                <div className="text-xs">Cadeau auto-ajouté · x{gift.quantity}</div>
+              </div>
+              <div className="shrink-0 font-semibold">{formatMoney(0, result.currencyCode)}</div>
+            </div>
+          ))}
+        </div>
         <SummaryRow label="Subtotal" value={formatMoney(result.subtotal, result.currencyCode)} />
         <SummaryRow label="Discounts" value={`-${formatMoney(result.discountTotal, result.currencyCode)}`} />
-        {result.gifts.length > 0 ? (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-950">
-            <div className="font-medium">Cadeaux auto-ajoutes</div>
-            <div className="mt-1 grid gap-1 text-xs">
-              {result.gifts.map((gift) => (
-                <div key={`${gift.sourceRuleId}-${gift.productId}`} className="flex items-center justify-between gap-3">
-                  <span className="truncate">{gift.title}</span>
-                  <span className="shrink-0">x{gift.quantity}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
         <SummaryRow label="Livraison estimee" value={formatMoney(result.estimatedShipping, result.currencyCode)} />
         <SummaryRow label="Total avant taxes" value={formatMoney(result.totalBeforeTax, result.currencyCode)} strong />
       </CardContent>
@@ -1600,7 +1689,11 @@ function buildAutomaticOffers(config: SimulatorConfig | undefined, nowIso: strin
   const palas = config.palas_rules
     .filter(
       (rule) =>
-        rule.status === 'active' && !rule.code && !personalOfferTypeForRule(rule) && isRuleActiveAt(rule, nowIso),
+        rule.status === 'active' &&
+        rule.rule_type !== 'gift_threshold' &&
+        !rule.code &&
+        !personalOfferTypeForRule(rule) &&
+        isRuleActiveAt(rule, nowIso),
     )
     .map(
       (rule): AutomaticOffer => ({
@@ -1611,6 +1704,35 @@ function buildAutomaticOffers(config: SimulatorConfig | undefined, nowIso: strin
       }),
     )
   return [...shopify, ...palas]
+}
+
+function buildCartAutomationRules(
+  config: SimulatorConfig | undefined,
+  nowIso: string,
+  market: MarketCode,
+  fallbackCurrencyCode: string,
+): CartAutomationRule[] {
+  if (!config) return []
+  return config.palas_rules
+    .filter(
+      (rule) =>
+        rule.rule_type === 'gift_threshold' &&
+        isRuleActiveAt(rule, nowIso) &&
+        (!rule.market_key || rule.market_key === market),
+    )
+    .map((rule): CartAutomationRule => {
+      const marketConfig = config.markets.find((item) => item.key === rule.market_key)
+      return {
+        id: rule.id,
+        title: rule.title,
+        giftTitle: rule.gift_title ?? 'Cadeau',
+        threshold: rule.threshold ?? 0,
+        currencyCode: rule.currency_code ?? marketConfig?.currency_code ?? fallbackCurrencyCode,
+        marketKey: rule.market_key,
+        status: rule.status,
+      }
+    })
+    .sort((a, b) => a.threshold - b.threshold || a.title.localeCompare(b.title))
 }
 
 function discountValueLabel(discount: SimulatorDiscount, fallbackCurrencyCode: string): string {
@@ -1883,6 +2005,7 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
           enabled: true,
           execution: ['cart_transform', 'theme_surface', 'email_copy'],
           trigger: { type: 'automatic' },
+          markets: rule.market_key ? [rule.market_key] : undefined,
           threshold: rule.threshold,
           giftProductId: rule.gift_product_id ?? `palas-gift-${rule.id}`,
           giftTitle: rule.gift_title,
