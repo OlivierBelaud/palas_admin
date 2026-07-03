@@ -10,7 +10,7 @@ import {
   type MarketingCartLine,
   type MarketingProduct,
   type ShippingThresholdRule,
-} from '../../../../../modules/marketing-experience/engine'
+} from '../../../modules/marketing-experience/engine'
 
 interface SimulatorMarket {
   key: string
@@ -165,7 +165,21 @@ type UpsertMarketingRuleInput = {
   paid_rate?: number | null
 }
 
+type MarketingPageMode = 'rules' | 'simulator'
+
+export function MarketingRulesPage() {
+  return <MarketingWorkspacePage mode="rules" />
+}
+
+export function MarketingSimulatorOnlyPage() {
+  return <MarketingWorkspacePage mode="simulator" />
+}
+
 export default function MarketingSimulatorPage() {
+  return <MarketingSimulatorOnlyPage />
+}
+
+function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const configQuery = useQuery<SimulatorConfig>('marketing-simulator-config', {}, { staleTime: 120_000 })
   const upsertMarketingRule = useCommand<UpsertMarketingRuleInput, PalasRule>('upsertMarketingRule')
   const config = configQuery.data
@@ -265,9 +279,13 @@ export default function MarketingSimulatorPage() {
     <div className="flex flex-col gap-4 pb-8">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal">Marketing simulator</h1>
+          <h1 className="text-2xl font-semibold tracking-normal">
+            {mode === 'rules' ? 'Marketing rules' : 'Marketing simulator'}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Dry-run des discounts, markets et seuils de livraison lus depuis Shopify.
+            {mode === 'rules'
+              ? 'Source de verite des frais de livraison, offres marketing, codes et cadeaux.'
+              : 'Dry-run des scenarios panier, market, client, codes et surfaces marketing.'}
           </p>
           {config ? (
             <div className="mt-2 text-xs text-muted-foreground">
@@ -290,29 +308,22 @@ export default function MarketingSimulatorPage() {
             variant="outline"
             size="small"
             type="button"
-            onClick={() =>
+            onClick={() => {
+              if (mode === 'rules') {
+                setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
+                return
+              }
               resetScenario(setNow, setMarket, setCustomerSegment, setCart, config?.markets ?? [], products)
-            }
+            }}
           >
             <RotateCcw className="mr-2 size-3.5" />
-            Reset scenario
+            {mode === 'rules' ? 'Reset form' : 'Reset scenario'}
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
-          <ScenarioCard
-            now={now}
-            market={market}
-            markets={config?.markets ?? []}
-            customerSegment={customerSegment}
-            shippingThreshold={selectedShippingThreshold}
-            onNowChange={setNow}
-            onMarketChange={setMarket}
-            onCustomerSegmentChange={setCustomerSegment}
-          />
-          <CartBuilder products={products} cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
+      {mode === 'rules' ? (
+        <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
           <RuleBuilder
             form={ruleForm}
             markets={config?.markets ?? []}
@@ -324,20 +335,41 @@ export default function MarketingSimulatorPage() {
               setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
             }
           />
-          <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
-          <CampaignToggles
-            campaigns={campaigns}
-            enabledCampaignIds={enabledCampaignIds}
-            onChange={setEnabledCampaignIds}
+          <MarketingRulesDashboard
+            rules={controlRules}
+            markets={config?.markets ?? []}
+            shippingThresholds={config?.shipping_thresholds ?? []}
+            onEditPalasRule={(rule) => setRuleForm(ruleToForm(rule, currencyCode))}
           />
         </div>
+      ) : (
+        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <div className="flex flex-col gap-4">
+            <ScenarioCard
+              now={now}
+              market={market}
+              markets={config?.markets ?? []}
+              customerSegment={customerSegment}
+              shippingThreshold={selectedShippingThreshold}
+              onNowChange={setNow}
+              onMarketChange={setMarket}
+              onCustomerSegmentChange={setCustomerSegment}
+            />
+            <CartBuilder products={products} cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
+            <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
+            <CampaignToggles
+              campaigns={campaigns}
+              enabledCampaignIds={enabledCampaignIds}
+              onChange={setEnabledCampaignIds}
+            />
+          </div>
 
-        <div className="flex flex-col gap-4">
-          <ControlCenter rules={controlRules} onEditPalasRule={(rule) => setRuleForm(ruleToForm(rule, currencyCode))} />
-          <SurfacePreview result={result} />
-          <DecisionGrid result={result} />
+          <div className="flex flex-col gap-4">
+            <SurfacePreview result={result} />
+            <DecisionGrid result={result} />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -857,81 +889,157 @@ function SurfacePreview({ result }: { result: ReturnType<typeof evaluateMarketin
   )
 }
 
-function ControlCenter({
+function MarketingRulesDashboard({
   rules,
+  markets,
+  shippingThresholds,
   onEditPalasRule,
 }: {
   rules: ControlRule[]
+  markets: SimulatorMarket[]
+  shippingThresholds: SimulatorShippingThreshold[]
+  onEditPalasRule: (rule: PalasRule) => void
+}) {
+  const shippingRules = rules.filter((rule) => rule.family === 'shipping')
+  const lifecycleRules = rules.filter((rule) => rule.family === 'email')
+  const automaticRules = rules.filter(
+    (rule) => rule.family !== 'shipping' && rule.family !== 'email' && rule.trigger !== 'code',
+  )
+  const codeRules = rules.filter((rule) => rule.trigger === 'code')
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="border border-border/70 shadow-none">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold tracking-normal">Structure livraison par market</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {markets.map((market) => {
+              const threshold = shippingThresholds.find((item) => item.market_key === market.key)
+              return (
+                <div key={market.key} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium">{market.name}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {market.countries.map((country) => country.code).join(', ') || market.handle} ·{' '}
+                        {market.currency_code}
+                      </div>
+                    </div>
+                    <Badge variant="outline">{market.status}</Badge>
+                  </div>
+                  {threshold ? (
+                    <div className="mt-3 grid gap-1 text-sm">
+                      <div>
+                        {formatMoney(threshold.paid_rate, threshold.currency_code)} avant{' '}
+                        {formatMoney(threshold.threshold, threshold.currency_code)}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Puis livraison offerte · {threshold.zone_name}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                      Aucun seuil natif trouve.
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <RuleSection
+          title="Offres bienvenue et paniers abandonnes"
+          description="Rules qui servent de source pour emails, popups et relances."
+          rules={lifecycleRules}
+          empty="Aucune rule lifecycle configuree."
+          onEditPalasRule={onEditPalasRule}
+        />
+        <RuleSection
+          title="Offres automatiques"
+          description="Promotions globales et cadeaux qui s'appliquent sans code."
+          rules={automaticRules}
+          empty="Aucune offre automatique configuree."
+          onEditPalasRule={onEditPalasRule}
+        />
+        <RuleSection
+          title="Offres avec code public"
+          description="Codes publics utiles en campagne, hors coupons individuels."
+          rules={codeRules}
+          empty="Aucun code public configure."
+          onEditPalasRule={onEditPalasRule}
+        />
+        <RuleSection
+          title="Rules shipping"
+          description="Rules Palas qui peuvent mettre a jour les profils livraison Shopify."
+          rules={shippingRules}
+          empty="Aucune rule shipping configuree."
+          onEditPalasRule={onEditPalasRule}
+        />
+      </div>
+    </div>
+  )
+}
+
+function RuleSection({
+  title,
+  description,
+  rules,
+  empty,
+  onEditPalasRule,
+}: {
+  title: string
+  description: string
+  rules: ControlRule[]
+  empty: string
   onEditPalasRule: (rule: PalasRule) => void
 }) {
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold tracking-normal">Control center</CardTitle>
+        <CardTitle className="text-base font-semibold tracking-normal">{title}</CardTitle>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </CardHeader>
-      <CardContent className="p-0">
-        {rules.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-muted-foreground">Aucune regle marketing configuree.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
-              <thead className="border-y bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Regle</th>
-                  <th className="px-4 py-3 font-medium">Famille</th>
-                  <th className="px-4 py-3 font-medium">Trigger</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Fenetre</th>
-                  <th className="px-4 py-3 font-medium">Execution</th>
-                  <th className="px-4 py-3 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((rule) => (
-                  <tr key={rule.id} className="border-b align-top last:border-b-0">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{rule.title}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{rule.summary}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="outline">{controlFamilyLabel(rule.family)}</Badge>
-                    </td>
-                    <td className="px-4 py-3">{controlTriggerLabel(rule.trigger)}</td>
-                    <td className="px-4 py-3">
-                      <Badge variant="outline" className={controlStatusClass(rule.status)}>
-                        {rule.status}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      <div>{rule.starts_at ? formatDateTime(rule.starts_at) : 'Toujours'}</div>
-                      <div>{rule.ends_at ? formatDateTime(rule.ends_at) : 'Sans fin'}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <Badge variant="outline">{rule.execution}</Badge>
-                        <span className="text-xs text-muted-foreground">{rule.source}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {rule.editablePalasRule ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="small"
-                          onClick={() => onEditPalasRule(rule.editablePalasRule as PalasRule)}
-                        >
-                          Editer
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Lecture</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <CardContent className="flex flex-col gap-2">
+        {rules.length === 0 ? <div className="rounded-md border bg-muted/40 p-3 text-sm">{empty}</div> : null}
+        {rules.map((rule) => (
+          <div key={rule.id} className="rounded-md border p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium">{rule.title}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{rule.summary}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className={controlStatusClass(rule.status)}>
+                  {rule.status}
+                </Badge>
+                {rule.editablePalasRule ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="small"
+                    onClick={() => onEditPalasRule(rule.editablePalasRule as PalasRule)}
+                  >
+                    Editer
+                  </Button>
+                ) : (
+                  <Badge variant="outline">{rule.source}</Badge>
+                )}
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">{controlFamilyLabel(rule.family)}</Badge>
+              <Badge variant="outline">{controlTriggerLabel(rule.trigger)}</Badge>
+              <Badge variant="outline">{rule.execution}</Badge>
+              <span>{rule.starts_at ? formatDateTime(rule.starts_at) : 'Toujours'}</span>
+              <span>{rule.ends_at ? `Fin ${formatDateTime(rule.ends_at)}` : 'Sans fin'}</span>
+            </div>
           </div>
-        )}
+        ))}
       </CardContent>
     </Card>
   )
@@ -1105,7 +1213,7 @@ function resetScenario(
 
 function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
   if (!config) return []
-  const shopifyDiscountRules = config.shopify_discounts.map(
+  const shopifyDiscountRules = config.shopify_discounts.filter(isPublicShopifyCampaignDiscount).map(
     (discount): ControlRule => ({
       id: `shopify-${discount.id}`,
       title: discount.title,
@@ -1162,7 +1270,12 @@ function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
 function buildAvailableCodes(config: SimulatorConfig | undefined): AvailableCode[] {
   if (!config) return []
   const shopifyCodes = config.shopify_discounts
-    .filter((discount) => discount.code && (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED'))
+    .filter(
+      (discount) =>
+        discount.code &&
+        isPublicShopifyCampaignDiscount(discount) &&
+        (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED'),
+    )
     .map(
       (discount): AvailableCode => ({
         id: `shopify-code-${discount.id}`,
@@ -1198,6 +1311,29 @@ function triggerForPalasRule(rule: PalasRule): ControlRule['trigger'] {
   if (rule.rule_type === 'gift_threshold') return 'cart_condition'
   if (rule.rule_type === 'first_order_discount') return 'email_context'
   return rule.code ? 'code' : 'automatic'
+}
+
+function isPublicShopifyCampaignDiscount(discount: SimulatorDiscount): boolean {
+  if (!discount.code) return true
+  const haystack = `${discount.title} ${discount.code}`.toLowerCase()
+  const individualHints = [
+    'abandoned',
+    'abandon',
+    'panier',
+    'welcome',
+    'bienvenue',
+    'klaviyo',
+    'individual',
+    'personal',
+    'unique',
+    'one shot',
+    'one-shot',
+    'retarget',
+    'winback',
+  ]
+  if (individualHints.some((hint) => haystack.includes(hint))) return false
+  const compactCode = discount.code.replace(/[^a-zA-Z0-9]/g, '')
+  return compactCode.length <= 18
 }
 
 function compareControlRules(a: ControlRule, b: ControlRule): number {
@@ -1263,7 +1399,10 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
   }
 
   const shopifyDiscountCampaigns = (config?.shopify_discounts ?? [])
-    .filter((discount) => discount.status === 'ACTIVE' || discount.status === 'SCHEDULED')
+    .filter(
+      (discount) =>
+        isPublicShopifyCampaignDiscount(discount) && (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED'),
+    )
     .map((discount, index): MarketingCampaign => {
       const startsAt = discount.starts_at ?? '2020-01-01T00:00:00.000Z'
       return {

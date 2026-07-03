@@ -27,16 +27,10 @@ export default defineSpa({
       to: '/orders',
     },
     {
-      icon: 'BadgePercent',
-      label: 'Discounts',
-      to: '/discounts',
-      items: [{ label: 'Individual', to: '/discounts/individual' }],
-    },
-    {
       icon: 'Megaphone',
-      label: 'Marketing',
-      to: '/marketing/simulator',
-      items: [{ label: 'Control center', to: '/marketing/simulator' }],
+      label: 'Marketing rules',
+      to: '/marketing-rules',
+      items: [{ label: 'Simulator', to: '/marketing-simulator' }],
     },
     {
       icon: 'Users',
