@@ -1,5 +1,68 @@
+import { ShopifyAdminClient } from '../../modules/shopify-admin/client'
+
 type MarketingRuleType = 'order_discount' | 'first_order_discount' | 'gift_threshold' | 'shipping_threshold'
 type ExecutionKind = 'shopify_discount' | 'local_cart_rule' | 'shipping_profile'
+type SyncStatus = 'local_only' | 'synced' | 'pending' | 'error'
+
+interface MoneyNode {
+  amount: string
+  currencyCode: string
+}
+
+interface MarketNode {
+  id: string
+  name: string
+  handle: string
+  status: string
+  conditions: {
+    regionsCondition: {
+      regions: {
+        nodes: Array<{
+          code: string
+          name: string
+        }>
+      }
+    } | null
+  } | null
+}
+
+interface DeliveryMethodNode {
+  id: string
+  name: string
+  active: boolean
+  methodConditions: Array<{
+    id: string
+    field: string
+    operator: string
+    conditionCriteria: ({ __typename: 'MoneyV2' } & MoneyNode) | { __typename: string }
+  }>
+  rateProvider: ({ __typename: 'DeliveryRateDefinition'; price: MoneyNode } | { __typename: string }) | null
+}
+
+interface DeliveryProfileNode {
+  id: string
+  name: string
+  profileLocationGroups: Array<{
+    locationGroup: { id: string }
+    locationGroupZones: {
+      nodes: Array<{
+        zone: {
+          id: string
+          name: string
+          countries: Array<{
+            code: {
+              countryCode: string | null
+              restOfWorld: boolean
+            }
+          }>
+        }
+        methodDefinitions: {
+          nodes: DeliveryMethodNode[]
+        }
+      }>
+    }
+  }>
+}
 
 interface MarketingRuleRow {
   id: string
@@ -56,8 +119,7 @@ export default defineCommand({
     const executionKind = executionKindFor(input.rule_type)
     const svc = step.service as unknown as { marketingRule: EntityCrud<MarketingRuleRow> }
     let shopifyId: string | null = null
-    let syncStatus: 'local_only' | 'synced' | 'pending' | 'error' =
-      executionKind === 'local_cart_rule' ? 'local_only' : 'pending'
+    let syncStatus: SyncStatus = executionKind === 'local_cart_rule' ? 'local_only' : 'pending'
     let syncError: string | null = null
 
     if (executionKind === 'shopify_discount' && input.status !== 'draft') {
@@ -89,6 +151,18 @@ export default defineCommand({
         syncStatus = 'error'
         syncError = (err as Error).message
         log.warn(`[upsertMarketingRule] Shopify sync failed: ${syncError}`)
+      }
+    }
+
+    if (executionKind === 'shipping_profile' && input.status !== 'draft') {
+      try {
+        const result = await syncShopifyShippingThreshold(input)
+        shopifyId = result.shopifyId
+        syncStatus = 'synced'
+      } catch (err) {
+        syncStatus = 'error'
+        syncError = (err as Error).message
+        log.warn(`[upsertMarketingRule] Shopify shipping sync failed: ${syncError}`)
       }
     }
 
@@ -152,3 +226,265 @@ function validateMarketingRule(input: MarketingRuleInput) {
     }
   }
 }
+
+async function syncShopifyShippingThreshold(input: MarketingRuleInput): Promise<{ shopifyId: string }> {
+  if (!input.market_key || !input.currency_code || input.threshold == null || input.paid_rate == null) {
+    throw new MantaError('INVALID_DATA', 'Shipping rule incomplete.')
+  }
+
+  const client = new ShopifyAdminClient()
+  const [marketsData, deliveryData] = await Promise.all([
+    client.query<{ markets: { nodes: MarketNode[] } }>(SHIPPING_MARKETS_QUERY),
+    client.query<{ deliveryProfiles: { nodes: DeliveryProfileNode[] } }>(SHIPPING_DELIVERY_QUERY),
+  ])
+  const market = findMarket(marketsData.markets.nodes, input.market_key)
+  if (!market) throw new MantaError('NOT_FOUND', `Market Shopify introuvable: ${input.market_key}`)
+  const zoneMatch = findShippingZoneForMarket(deliveryData.deliveryProfiles.nodes, market)
+  if (!zoneMatch) throw new MantaError('NOT_FOUND', `Zone livraison introuvable pour ${market.name}.`)
+
+  const freeMethod = findFreeShippingMethod(zoneMatch.methods, input.currency_code)
+  if (!freeMethod) throw new MantaError('NOT_FOUND', `Methode livraison gratuite introuvable pour ${market.name}.`)
+  const paidMethod = findPaidShippingMethod(zoneMatch.methods, input.currency_code, input.threshold)
+
+  const methodDefinitionsToUpdate: Array<Record<string, unknown>> = [
+    buildFreeShippingMethodUpdate(freeMethod, input.threshold, input.currency_code),
+  ]
+  if (paidMethod) {
+    methodDefinitionsToUpdate.push(buildPaidShippingMethodUpdate(paidMethod, input.paid_rate, input.currency_code))
+  }
+
+  const data = await client.query<{
+    deliveryProfileUpdate: {
+      profile: { id: string } | null
+      userErrors: Array<{ field?: string[] | null; message: string }>
+    }
+  }>(SHIPPING_UPDATE_MUTATION, {
+    id: zoneMatch.profileId,
+    profile: {
+      locationGroupsToUpdate: [
+        {
+          id: zoneMatch.locationGroupId,
+          zonesToUpdate: [
+            {
+              id: zoneMatch.zoneId,
+              methodDefinitionsToUpdate,
+            },
+          ],
+        },
+      ],
+    },
+  })
+
+  const errors = data.deliveryProfileUpdate.userErrors
+  if (errors.length > 0) {
+    throw new MantaError('UNEXPECTED_STATE', errors.map((error) => error.message).join(' | '))
+  }
+  if (!data.deliveryProfileUpdate.profile) {
+    throw new MantaError('UNEXPECTED_STATE', 'Shopify a retourne un profile vide apres update livraison.')
+  }
+
+  return { shopifyId: `${zoneMatch.profileId}|${zoneMatch.zoneId}|${freeMethod.id}` }
+}
+
+function findMarket(markets: MarketNode[], key: string): MarketNode | null {
+  return markets.find((market) => market.status === 'ACTIVE' && (market.handle === key || market.id === key)) ?? null
+}
+
+function findShippingZoneForMarket(profiles: DeliveryProfileNode[], market: MarketNode) {
+  const countryCodes = new Set(market.conditions?.regionsCondition?.regions.nodes.map((country) => country.code) ?? [])
+  for (const profile of profiles) {
+    for (const group of profile.profileLocationGroups) {
+      for (const zoneNode of group.locationGroupZones.nodes) {
+        const matchesZone = zoneNode.zone.countries.some((country) => {
+          if (country.code.restOfWorld && countryCodes.size === 0) return true
+          return country.code.countryCode ? countryCodes.has(country.code.countryCode) : false
+        })
+        if (matchesZone) {
+          return {
+            profileId: profile.id,
+            locationGroupId: group.locationGroup.id,
+            zoneId: zoneNode.zone.id,
+            methods: zoneNode.methodDefinitions.nodes.filter((method) => method.active),
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
+function findFreeShippingMethod(methods: DeliveryMethodNode[], currencyCode: string): DeliveryMethodNode | null {
+  return (
+    methods.find((method) => {
+      const price = readRatePrice(method)
+      return price?.currencyCode === currencyCode && price.amount === 0
+    }) ?? null
+  )
+}
+
+function findPaidShippingMethod(
+  methods: DeliveryMethodNode[],
+  currencyCode: string,
+  threshold: number,
+): DeliveryMethodNode | null {
+  return (
+    methods.find((method) => {
+      const price = readRatePrice(method)
+      if (!price || price.currencyCode !== currencyCode || price.amount <= 0) return false
+      const max = readMoneyCondition(method, 'TOTAL_PRICE', 'LESS_THAN_OR_EQUAL_TO')
+      return max === null || max <= threshold || Math.abs(max - 0.01 - threshold) < 1
+    }) ?? null
+  )
+}
+
+function buildFreeShippingMethodUpdate(method: DeliveryMethodNode, threshold: number, currencyCode: string) {
+  const minCondition = method.methodConditions.find(
+    (condition) =>
+      condition.field === 'TOTAL_PRICE' &&
+      condition.operator === 'GREATER_THAN_OR_EQUAL_TO' &&
+      condition.conditionCriteria.__typename === 'MoneyV2',
+  )
+  return {
+    id: method.id,
+    name: method.name,
+    active: true,
+    rateDefinition: { price: { amount: '0', currencyCode } },
+    ...(minCondition
+      ? {
+          conditionsToUpdate: [
+            {
+              id: minCondition.id,
+              field: 'TOTAL_PRICE',
+              operator: 'GREATER_THAN_OR_EQUAL_TO',
+              criteria: threshold,
+              criteriaUnit: currencyCode,
+            },
+          ],
+        }
+      : {
+          priceConditionsToCreate: [
+            {
+              operator: 'GREATER_THAN_OR_EQUAL_TO',
+              criteria: { amount: String(threshold), currencyCode },
+            },
+          ],
+        }),
+  }
+}
+
+function buildPaidShippingMethodUpdate(method: DeliveryMethodNode, paidRate: number, currencyCode: string) {
+  return {
+    id: method.id,
+    name: method.name,
+    active: true,
+    rateDefinition: { price: { amount: String(paidRate), currencyCode } },
+  }
+}
+
+function readRatePrice(method: DeliveryMethodNode): { amount: number; currencyCode: string } | null {
+  if (!isDeliveryRateDefinition(method.rateProvider)) return null
+  return {
+    amount: Number(method.rateProvider.price.amount),
+    currencyCode: method.rateProvider.price.currencyCode,
+  }
+}
+
+function readMoneyCondition(method: DeliveryMethodNode, field: string, operator: string): number | null {
+  const condition = method.methodConditions.find(
+    (condition) =>
+      condition.field === field &&
+      condition.operator === operator &&
+      condition.conditionCriteria.__typename === 'MoneyV2',
+  )
+  if (!isMoneyV2(condition?.conditionCriteria)) return null
+  const amount = Number(condition.conditionCriteria.amount)
+  return Number.isFinite(amount) ? amount : null
+}
+
+function isDeliveryRateDefinition(
+  value: DeliveryMethodNode['rateProvider'],
+): value is { __typename: 'DeliveryRateDefinition'; price: MoneyNode } {
+  return value?.__typename === 'DeliveryRateDefinition'
+}
+
+function isMoneyV2(
+  value: DeliveryMethodNode['methodConditions'][number]['conditionCriteria'] | undefined,
+): value is { __typename: 'MoneyV2' } & MoneyNode {
+  return value?.__typename === 'MoneyV2'
+}
+
+const SHIPPING_MARKETS_QUERY = `
+  query PalasShippingRuleMarkets {
+    markets(first: 50) {
+      nodes {
+        id
+        name
+        handle
+        status
+        conditions {
+          regionsCondition {
+            regions(first: 250) {
+              nodes {
+                id
+                name
+                ... on MarketRegionCountry { code }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
+const SHIPPING_DELIVERY_QUERY = `
+  query PalasShippingRuleDeliveryProfiles {
+    deliveryProfiles(first: 5, merchantOwnedOnly: true) {
+      nodes {
+        id
+        name
+        profileLocationGroups {
+          locationGroup { id }
+          locationGroupZones(first: 30) {
+            nodes {
+              zone {
+                id
+                name
+                countries { code { countryCode restOfWorld } }
+              }
+              methodDefinitions(first: 30) {
+                nodes {
+                  id
+                  name
+                  active
+                  methodConditions {
+                    id
+                    field
+                    operator
+                    conditionCriteria {
+                      __typename
+                      ... on MoneyV2 { amount currencyCode }
+                    }
+                  }
+                  rateProvider {
+                    __typename
+                    ... on DeliveryRateDefinition { price { amount currencyCode } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
+const SHIPPING_UPDATE_MUTATION = `
+  mutation PalasUpdateShippingThreshold($id: ID!, $profile: DeliveryProfileInput!) {
+    deliveryProfileUpdate(id: $id, profile: $profile) {
+      profile { id }
+      userErrors { field message }
+    }
+  }
+`
