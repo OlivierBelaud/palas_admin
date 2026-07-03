@@ -9,6 +9,7 @@ import {
   type MarketingCartLine,
   type MarketingProduct,
   type PersonalOfferType,
+  type RuleKind,
   type ShippingThresholdRule,
 } from '../../../modules/marketing-experience/engine'
 
@@ -1594,6 +1595,13 @@ function discountCombinabilityLabel(combinesWith: string[]): string {
   return `Cumulable avec ${labels.join(', ')}`
 }
 
+function discountCombinesWithToRuleKinds(combinesWith: string[]): RuleKind[] {
+  const kinds: RuleKind[] = []
+  if (combinesWith.includes('order')) kinds.push('order_discount')
+  if (combinesWith.includes('shipping')) kinds.push('shipping_threshold')
+  return kinds
+}
+
 function validityLabel(startsAt: string | null, endsAt: string | null): string {
   if (!startsAt && !endsAt) return 'Valide sans fenêtre définie'
   const start = startsAt ? `Depuis ${formatDateTime(startsAt)}` : 'Actif immédiatement'
@@ -1764,7 +1772,7 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
             value: discount.value,
             target: { type: 'all' },
             code: discount.code,
-            combinableWith: ['shipping_threshold'],
+            combinableWith: discountCombinesWithToRuleKinds(discount.combines_with ?? []),
           },
         ],
       }

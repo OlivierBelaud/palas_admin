@@ -208,6 +208,11 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
 
   let shippingRuleSeen = false
   const exclusiveGroupsSeen = new Set<string>()
+  const orderDiscountCandidates: Array<{
+    campaign: MarketingCampaign
+    rule: OrderDiscountRule
+    discount: number
+  }> = []
 
   for (const { campaign, rule } of activeRules) {
     if (rule.exclusiveGroup && exclusiveGroupsSeen.has(rule.exclusiveGroup)) continue
@@ -285,10 +290,15 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
       if (eligibleSubtotal <= 0) continue
       const discount =
         rule.valueType === 'percentage' ? eligibleSubtotal * (rule.value / 100) : Math.min(rule.value, eligibleSubtotal)
-      result.discountTotal += discount
-      appendAppliedRule(result, campaign, rule, `${formatMoney(discount, input.currencyCode)} de remise estimee.`)
-      if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
+      orderDiscountCandidates.push({ campaign, rule, discount })
     }
+  }
+
+  const selectedOrderDiscounts = selectCompatibleOrderDiscounts(orderDiscountCandidates)
+  for (const { campaign, rule, discount } of selectedOrderDiscounts) {
+    result.discountTotal += discount
+    appendAppliedRule(result, campaign, rule, `${formatMoney(discount, input.currencyCode)} de remise estimee.`)
+    if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
   }
 
   if (!shippingRuleSeen) result.warnings.push('Aucune regle de livraison active pour ce scenario.')
@@ -307,6 +317,25 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
   )
 
   return result
+}
+
+function selectCompatibleOrderDiscounts(
+  candidates: Array<{ campaign: MarketingCampaign; rule: OrderDiscountRule; discount: number }>,
+): Array<{ campaign: MarketingCampaign; rule: OrderDiscountRule; discount: number }> {
+  const selected: Array<{ campaign: MarketingCampaign; rule: OrderDiscountRule; discount: number }> = []
+  const sorted = [...candidates].sort((a, b) => b.discount - a.discount)
+
+  for (const candidate of sorted) {
+    if (selected.every((applied) => orderDiscountsCanCombine(applied.rule, candidate.rule))) {
+      selected.push(candidate)
+    }
+  }
+
+  return selected
+}
+
+function orderDiscountsCanCombine(a: OrderDiscountRule, b: OrderDiscountRule): boolean {
+  return a.combinableWith.includes('order_discount') && b.combinableWith.includes('order_discount')
 }
 
 function appendAppliedRule(
