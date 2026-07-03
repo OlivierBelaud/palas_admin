@@ -95,6 +95,9 @@ interface ShopifyDiscountNode {
         | { __typename: string }
     } | null
     codes?: { nodes?: Array<{ code: string }> } | null
+    codesCount?: { count: number } | null
+    appliesOncePerCustomer?: boolean | null
+    usageLimit?: number | null
   }
 }
 
@@ -142,6 +145,9 @@ interface NormalizedShopifyDiscount {
   value: number
   currency_code: string | null
   code: string | null
+  usage_limit: number | null
+  applies_once_per_customer: boolean
+  codes_count: number | null
   source: 'shopify'
 }
 
@@ -371,6 +377,9 @@ function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyD
     value: normalizedValue.value,
     currency_code: normalizedValue.currency_code,
     code: discount.codes?.nodes?.[0]?.code ?? null,
+    usage_limit: discount.usageLimit ?? null,
+    applies_once_per_customer: Boolean(discount.appliesOncePerCustomer),
+    codes_count: discount.codesCount?.count ?? (discount.codes?.nodes?.length ? discount.codes.nodes.length : null),
     source: 'shopify',
   }
 }
@@ -650,6 +659,9 @@ const DISCOUNTS_QUERY = `
             summary
             shortSummary
             codes(first: 1) { nodes { code } }
+            codesCount { count }
+            appliesOncePerCustomer
+            usageLimit
             customerGets {
               value {
                 __typename

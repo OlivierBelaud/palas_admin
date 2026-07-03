@@ -20,7 +20,7 @@ export class ShopifyAdminClient {
   private readonly token: string
 
   constructor(opts?: { domain?: string; token?: string; apiVersion?: string }) {
-    const domain = opts?.domain ?? process.env.SHOPIFY_SHOP_DOMAIN
+    const domain = opts?.domain ?? process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
     const token = opts?.token ?? process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
     const apiVersion = opts?.apiVersion ?? process.env.SHOPIFY_ADMIN_API_VERSION ?? DEFAULT_API_VERSION
     if (!domain) throw new MantaError('INVALID_DATA', '[shopify-admin] SHOPIFY_SHOP_DOMAIN not set')
