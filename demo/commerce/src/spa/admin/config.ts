@@ -36,7 +36,7 @@ export default defineSpa({
       icon: 'Megaphone',
       label: 'Marketing',
       to: '/marketing/simulator',
-      items: [{ label: 'Simulator', to: '/marketing/simulator' }],
+      items: [{ label: 'Control center', to: '/marketing/simulator' }],
     },
     {
       icon: 'Users',

@@ -53,6 +53,7 @@ interface BaseRule {
   markets?: MarketCode[]
   customerSegments?: CustomerSegment[]
   exclusiveGroup?: string
+  trigger?: { type: 'automatic' } | { type: 'code'; code: string }
 }
 
 export interface OrderDiscountRule extends BaseRule {
@@ -110,6 +111,7 @@ export interface MarketingExperienceInput {
   cart: MarketingCartLine[]
   campaigns: MarketingCampaign[]
   products: MarketingProduct[]
+  selectedCodes?: string[]
 }
 
 export interface AppliedMarketingRule {
@@ -168,7 +170,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
     .sort((a, b) => b.priority - a.priority)
     .flatMap((campaign) =>
       campaign.rules
-        .filter((rule) => isRuleEligible(rule, input.market, input.customerSegment))
+        .filter((rule) => isRuleEligible(rule, input.market, input.customerSegment, input.selectedCodes ?? []))
         .map((rule) => ({ campaign, rule })),
     )
 
@@ -319,10 +321,16 @@ function isWithinWindow(now: Date, startsAt: string, endsAt: string | null): boo
   return !Number.isNaN(end.getTime()) && now <= end
 }
 
-function isRuleEligible(rule: MarketingRule, market: MarketCode, customerSegment: CustomerSegment): boolean {
+function isRuleEligible(
+  rule: MarketingRule,
+  market: MarketCode,
+  customerSegment: CustomerSegment,
+  selectedCodes: string[],
+): boolean {
   if (!rule.enabled) return false
   if (rule.markets && !rule.markets.includes(market)) return false
   if (rule.customerSegments && !rule.customerSegments.includes(customerSegment)) return false
+  if (rule.trigger?.type === 'code' && !selectedCodes.includes(rule.trigger.code)) return false
   return true
 }
 

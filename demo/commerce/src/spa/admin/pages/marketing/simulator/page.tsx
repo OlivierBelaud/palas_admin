@@ -100,8 +100,32 @@ interface PalasRule {
   source: 'palas'
 }
 
+interface ControlRule {
+  id: string
+  title: string
+  family: 'discount' | 'gift' | 'shipping' | 'email'
+  source: 'shopify' | 'palas' | 'shipping_profile'
+  trigger: 'automatic' | 'code' | 'email_context' | 'cart_condition' | 'shipping'
+  status: string
+  starts_at: string | null
+  ends_at: string | null
+  execution: string
+  summary: string
+  editablePalasRule: PalasRule | null
+}
+
+interface AvailableCode {
+  id: string
+  code: string
+  title: string
+  status: string
+  source: 'shopify' | 'palas'
+}
+
 interface MarketingRuleFormState {
+  id: string | null
   rule_type: PalasRuleType
+  status: 'draft' | 'active' | 'paused'
   title: string
   starts_at: string
   ends_at: string
@@ -124,9 +148,10 @@ const CUSTOMER_OPTIONS: Array<{ value: CustomerSegment; label: string }> = [
 ]
 
 type UpsertMarketingRuleInput = {
+  id?: string
   title: string
   rule_type: PalasRuleType
-  status: 'active'
+  status: 'draft' | 'active' | 'paused'
   starts_at: string
   ends_at?: string | null
   market_key?: string | null
@@ -150,6 +175,7 @@ export default function MarketingSimulatorPage() {
   const [cart, setCart] = React.useState<MarketingCartLine[]>([])
   const campaigns = React.useMemo(() => buildCampaigns(config), [config])
   const [enabledCampaignIds, setEnabledCampaignIds] = React.useState<string[]>([])
+  const [selectedCodes, setSelectedCodes] = React.useState<string[]>([])
   const [ruleForm, setRuleForm] = React.useState<MarketingRuleFormState>(() => initialRuleForm('', 'EUR'))
   const [ruleFormError, setRuleFormError] = React.useState<string | null>(null)
 
@@ -225,9 +251,12 @@ export default function MarketingSimulatorPage() {
         cart,
         campaigns: activeCampaigns,
         products,
+        selectedCodes,
       }),
-    [activeCampaigns, cart, currencyCode, customerSegment, market, now, products],
+    [activeCampaigns, cart, currencyCode, customerSegment, market, now, products, selectedCodes],
   )
+  const controlRules = React.useMemo(() => buildControlRules(config), [config])
+  const availableCodes = React.useMemo(() => buildAvailableCodes(config), [config])
 
   if (configQuery.isLoading) return <LoadingState />
   if (configQuery.isError) return <ErrorState message={configQuery.error.message} />
@@ -291,7 +320,11 @@ export default function MarketingSimulatorPage() {
             error={ruleFormError ?? upsertMarketingRule.error?.message ?? null}
             onChange={setRuleForm}
             onSubmit={submitMarketingRule}
+            onCancelEdit={() =>
+              setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
+            }
           />
+          <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
           <CampaignToggles
             campaigns={campaigns}
             enabledCampaignIds={enabledCampaignIds}
@@ -300,8 +333,8 @@ export default function MarketingSimulatorPage() {
         </div>
 
         <div className="flex flex-col gap-4">
+          <ControlCenter rules={controlRules} onEditPalasRule={(rule) => setRuleForm(ruleToForm(rule, currencyCode))} />
           <SurfacePreview result={result} />
-          <PalasRuleTable rules={config?.palas_rules ?? []} />
           <DecisionGrid result={result} />
         </div>
       </div>
@@ -459,6 +492,7 @@ function RuleBuilder({
   error,
   onChange,
   onSubmit,
+  onCancelEdit,
 }: {
   form: MarketingRuleFormState
   markets: SimulatorMarket[]
@@ -466,6 +500,7 @@ function RuleBuilder({
   error: string | null
   onChange: React.Dispatch<React.SetStateAction<MarketingRuleFormState>>
   onSubmit: (event: React.FormEvent) => void
+  onCancelEdit: () => void
 }) {
   const selectedMarket = markets.find((market) => market.key === form.market_key)
 
@@ -492,6 +527,18 @@ function RuleBuilder({
               { value: 'shipping_threshold', label: 'Livraison' },
             ]}
             onChange={(value) => onChange((current) => ({ ...current, rule_type: value as PalasRuleType }))}
+          />
+          <SegmentedControl
+            label="Statut"
+            value={form.status}
+            options={[
+              { value: 'active', label: 'Actif' },
+              { value: 'draft', label: 'Draft' },
+              { value: 'paused', label: 'Pause' },
+            ]}
+            onChange={(value) =>
+              onChange((current) => ({ ...current, status: value as MarketingRuleFormState['status'] }))
+            }
           />
           <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-title">
             <span className="font-medium">Titre</span>
@@ -647,11 +694,65 @@ function RuleBuilder({
             </div>
           ) : null}
 
-          <Button type="submit" size="small" isLoading={isSaving}>
-            <Save className="mr-2 size-3.5" />
-            Enregistrer
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" size="small" isLoading={isSaving}>
+              <Save className="mr-2 size-3.5" />
+              {form.id ? 'Mettre a jour' : 'Enregistrer'}
+            </Button>
+            {form.id ? (
+              <Button type="button" variant="outline" size="small" onClick={onCancelEdit}>
+                Annuler
+              </Button>
+            ) : null}
+          </div>
         </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CodeSelector({
+  codes,
+  selectedCodes,
+  onChange,
+}: {
+  codes: AvailableCode[]
+  selectedCodes: string[]
+  onChange: (codes: string[]) => void
+}) {
+  return (
+    <Card className="border border-border/70 shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold tracking-normal">Codes promo</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {codes.length === 0 ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+            Aucun code actif ou programme pour ce scenario.
+          </div>
+        ) : null}
+        {codes.map((item) => {
+          const selected = selectedCodes.includes(item.code)
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() =>
+                onChange(selected ? selectedCodes.filter((code) => code !== item.code) : [...selectedCodes, item.code])
+              }
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                selected
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                  : 'border-input bg-background text-muted-foreground'
+              }`}
+            >
+              <div className="font-medium">{item.code}</div>
+              <div className="mt-1 text-xs">
+                {item.title} · {item.source} · {item.status}
+              </div>
+            </button>
+          )
+        })}
       </CardContent>
     </Card>
   )
@@ -756,27 +857,33 @@ function SurfacePreview({ result }: { result: ReturnType<typeof evaluateMarketin
   )
 }
 
-function PalasRuleTable({ rules }: { rules: PalasRule[] }) {
+function ControlCenter({
+  rules,
+  onEditPalasRule,
+}: {
+  rules: ControlRule[]
+  onEditPalasRule: (rule: PalasRule) => void
+}) {
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold tracking-normal">Regles Palas</CardTitle>
+        <CardTitle className="text-base font-semibold tracking-normal">Control center</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         {rules.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-muted-foreground">
-            Aucune regle Palas locale enregistree pour le moment.
-          </div>
+          <div className="px-4 py-6 text-sm text-muted-foreground">Aucune regle marketing configuree.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[960px] text-sm">
               <thead className="border-y bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-medium">Regle</th>
-                  <th className="px-4 py-3 font-medium">Type</th>
+                  <th className="px-4 py-3 font-medium">Famille</th>
+                  <th className="px-4 py-3 font-medium">Trigger</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Fenetre</th>
                   <th className="px-4 py-3 font-medium">Execution</th>
-                  <th className="px-4 py-3 font-medium">Sync</th>
+                  <th className="px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -784,23 +891,40 @@ function PalasRuleTable({ rules }: { rules: PalasRule[] }) {
                   <tr key={rule.id} className="border-b align-top last:border-b-0">
                     <td className="px-4 py-3">
                       <div className="font-medium">{rule.title}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{ruleSummary(rule)}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{rule.summary}</div>
                     </td>
-                    <td className="px-4 py-3">{kindLabel(rule.rule_type)}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline">{controlFamilyLabel(rule.family)}</Badge>
+                    </td>
+                    <td className="px-4 py-3">{controlTriggerLabel(rule.trigger)}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={controlStatusClass(rule.status)}>
+                        {rule.status}
+                      </Badge>
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
-                      <div>{formatDateTime(rule.starts_at)}</div>
+                      <div>{rule.starts_at ? formatDateTime(rule.starts_at) : 'Toujours'}</div>
                       <div>{rule.ends_at ? formatDateTime(rule.ends_at) : 'Sans fin'}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant="outline">{rule.execution_kind}</Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant="outline">{rule.execution}</Badge>
+                        <span className="text-xs text-muted-foreground">{rule.source}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <Badge variant="outline" className={syncBadgeClass(rule.sync_status)}>
-                          {rule.sync_status}
-                        </Badge>
-                        {rule.sync_error ? <span className="text-xs text-red-700">{rule.sync_error}</span> : null}
-                      </div>
+                      {rule.editablePalasRule ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="small"
+                          onClick={() => onEditPalasRule(rule.editablePalasRule as PalasRule)}
+                        >
+                          Editer
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Lecture</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -979,6 +1103,113 @@ function resetScenario(
   setCart(defaultCart(products))
 }
 
+function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
+  if (!config) return []
+  const shopifyDiscountRules = config.shopify_discounts.map(
+    (discount): ControlRule => ({
+      id: `shopify-${discount.id}`,
+      title: discount.title,
+      family: 'discount',
+      source: 'shopify',
+      trigger: discount.code ? 'code' : 'automatic',
+      status: discount.status,
+      starts_at: discount.starts_at,
+      ends_at: discount.ends_at,
+      execution: 'shopify_discount',
+      summary: `${discount.value_type === 'percentage' ? `${discount.value}%` : formatMoney(discount.value, discount.currency_code ?? config.meta.shop_currency_code)}${discount.code ? ` · code ${discount.code}` : ' · automatique'}`,
+      editablePalasRule: null,
+    }),
+  )
+
+  const shippingRules = config.shipping_thresholds.map(
+    (threshold): ControlRule => ({
+      id: `shipping-${threshold.market_key}`,
+      title: `Livraison offerte ${threshold.market_name}`,
+      family: 'shipping',
+      source: 'shipping_profile',
+      trigger: 'shipping',
+      status: 'ACTIVE',
+      starts_at: null,
+      ends_at: null,
+      execution: 'shipping_profile',
+      summary: `${formatMoney(threshold.paid_rate, threshold.currency_code)} puis offert des ${formatMoney(
+        threshold.threshold,
+        threshold.currency_code,
+      )} · ${threshold.source}`,
+      editablePalasRule: null,
+    }),
+  )
+
+  const palasRules = config.palas_rules.map(
+    (rule): ControlRule => ({
+      id: `palas-${rule.id}`,
+      title: rule.title,
+      family: familyForPalasRule(rule.rule_type),
+      source: 'palas',
+      trigger: triggerForPalasRule(rule),
+      status: rule.status,
+      starts_at: rule.starts_at,
+      ends_at: rule.ends_at,
+      execution: rule.execution_kind,
+      summary: ruleSummary(rule),
+      editablePalasRule: rule,
+    }),
+  )
+
+  return [...palasRules, ...shopifyDiscountRules, ...shippingRules].sort(compareControlRules)
+}
+
+function buildAvailableCodes(config: SimulatorConfig | undefined): AvailableCode[] {
+  if (!config) return []
+  const shopifyCodes = config.shopify_discounts
+    .filter((discount) => discount.code && (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED'))
+    .map(
+      (discount): AvailableCode => ({
+        id: `shopify-code-${discount.id}`,
+        code: discount.code as string,
+        title: discount.title,
+        status: discount.status,
+        source: 'shopify',
+      }),
+    )
+  const palasCodes = config.palas_rules
+    .filter((rule) => rule.code && rule.status !== 'paused')
+    .map(
+      (rule): AvailableCode => ({
+        id: `palas-code-${rule.id}`,
+        code: rule.code as string,
+        title: rule.title,
+        status: rule.status,
+        source: 'palas',
+      }),
+    )
+  return [...shopifyCodes, ...palasCodes]
+}
+
+function familyForPalasRule(type: PalasRuleType): ControlRule['family'] {
+  if (type === 'shipping_threshold') return 'shipping'
+  if (type === 'gift_threshold') return 'gift'
+  if (type === 'first_order_discount') return 'email'
+  return 'discount'
+}
+
+function triggerForPalasRule(rule: PalasRule): ControlRule['trigger'] {
+  if (rule.rule_type === 'shipping_threshold') return 'shipping'
+  if (rule.rule_type === 'gift_threshold') return 'cart_condition'
+  if (rule.rule_type === 'first_order_discount') return 'email_context'
+  return rule.code ? 'code' : 'automatic'
+}
+
+function compareControlRules(a: ControlRule, b: ControlRule): number {
+  const rank = (rule: ControlRule) => {
+    if (rule.status === 'active' || rule.status === 'ACTIVE') return 0
+    if (rule.status === 'SCHEDULED') return 1
+    if (rule.status === 'draft') return 2
+    return 3
+  }
+  return rank(a) - rank(b) || (b.starts_at ?? '').localeCompare(a.starts_at ?? '')
+}
+
 function productsForMarket(config: SimulatorConfig | undefined, market: MarketCode): MarketingProduct[] {
   const products = config?.products.filter((product) => product.market_key === market) ?? []
   return products.map((product) => ({
@@ -1025,6 +1256,7 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
         label: 'Seuils livraison Shopify',
         enabled: true,
         execution: ['shipping_profile', 'theme_surface', 'email_copy'],
+        trigger: { type: 'automatic' },
         thresholds,
       },
     ],
@@ -1048,6 +1280,7 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
             label: discount.title,
             enabled: true,
             execution: ['shopify_discount', 'theme_surface', 'email_copy'],
+            trigger: discount.code ? { type: 'code', code: discount.code } : { type: 'automatic' },
             valueType: discount.value_type === 'fixed_amount' ? 'fixed_amount' : 'percentage',
             value: discount.value,
             target: { type: 'all' },
@@ -1086,6 +1319,7 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
           label: rule.title,
           enabled: true,
           execution: ['email_copy', 'theme_surface'],
+          trigger: { type: 'automatic' },
           customerSegments: ['new_customer'],
           exclusiveGroup: 'first_order_discount',
           valueType: rule.value_type,
@@ -1108,6 +1342,7 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
           label: rule.title,
           enabled: true,
           execution: ['cart_transform', 'theme_surface', 'email_copy'],
+          trigger: { type: 'automatic' },
           threshold: rule.threshold,
           giftProductId: rule.gift_product_id ?? `palas-gift-${rule.id}`,
           giftTitle: rule.gift_title,
@@ -1126,6 +1361,7 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
           label: rule.title,
           enabled: true,
           execution: ['shipping_profile', 'theme_surface', 'email_copy'],
+          trigger: { type: 'automatic' },
           markets: [rule.market_key],
           thresholds: {
             [rule.market_key]: {
@@ -1145,7 +1381,9 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
 
 function initialRuleForm(marketKey: string, currencyCode: string): MarketingRuleFormState {
   return {
+    id: null,
     rule_type: 'gift_threshold',
+    status: 'active',
     title: '',
     starts_at: defaultDateTimeLocal(),
     ends_at: '',
@@ -1163,9 +1401,10 @@ function initialRuleForm(marketKey: string, currencyCode: string): MarketingRule
 
 function toMarketingRuleInput(form: MarketingRuleFormState, fallbackCurrencyCode: string): UpsertMarketingRuleInput {
   const base = {
+    id: form.id ?? undefined,
     title: form.title,
     rule_type: form.rule_type,
-    status: 'active' as const,
+    status: form.status,
     starts_at: localDateTimeToIso(form.starts_at),
     ends_at: form.ends_at ? localDateTimeToIso(form.ends_at) : null,
   }
@@ -1197,6 +1436,26 @@ function toMarketingRuleInput(form: MarketingRuleFormState, fallbackCurrencyCode
   }
 }
 
+function ruleToForm(rule: PalasRule, fallbackCurrencyCode: string): MarketingRuleFormState {
+  return {
+    id: rule.id,
+    rule_type: rule.rule_type,
+    status: rule.status,
+    title: rule.title,
+    starts_at: toLocalDateTimeValue(rule.starts_at),
+    ends_at: rule.ends_at ? toLocalDateTimeValue(rule.ends_at) : '',
+    market_key: rule.market_key ?? '',
+    currency_code: rule.currency_code ?? fallbackCurrencyCode,
+    value_type: rule.value_type ?? 'percentage',
+    value: String(rule.value ?? 15),
+    code: rule.code ?? '',
+    threshold: String(rule.threshold ?? 150),
+    gift_title: rule.gift_title ?? '',
+    gift_product_id: rule.gift_product_id ?? '',
+    paid_rate: String(rule.paid_rate ?? 6),
+  }
+}
+
 function setRuleField<Key extends keyof MarketingRuleFormState>(
   setForm: React.Dispatch<React.SetStateAction<MarketingRuleFormState>>,
   key: Key,
@@ -1223,10 +1482,25 @@ function ruleSummary(rule: PalasRule): string {
   return `${rule.gift_title ?? 'Cadeau'} des ${rule.threshold ?? 0}`
 }
 
-function syncBadgeClass(status: PalasRule['sync_status']): string {
-  if (status === 'synced') return 'border-emerald-200 bg-emerald-50 text-emerald-900'
+function controlFamilyLabel(family: ControlRule['family']): string {
+  if (family === 'discount') return 'Discount'
+  if (family === 'gift') return 'Cadeau'
+  if (family === 'shipping') return 'Livraison'
+  return 'Email'
+}
+
+function controlTriggerLabel(trigger: ControlRule['trigger']): string {
+  if (trigger === 'automatic') return 'Automatique'
+  if (trigger === 'code') return 'Code'
+  if (trigger === 'email_context') return 'Contexte email'
+  if (trigger === 'cart_condition') return 'Condition panier'
+  return 'Shipping'
+}
+
+function controlStatusClass(status: string): string {
+  if (status === 'active' || status === 'ACTIVE') return 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  if (status === 'SCHEDULED' || status === 'draft') return 'border-amber-200 bg-amber-50 text-amber-900'
   if (status === 'error') return 'border-red-200 bg-red-50 text-red-900'
-  if (status === 'pending') return 'border-amber-200 bg-amber-50 text-amber-900'
   return ''
 }
 
@@ -1246,6 +1520,13 @@ function localDateTimeToIso(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) throw new MantaError('INVALID_DATA', 'Date invalide.')
   return date.toISOString()
+}
+
+function toLocalDateTimeValue(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return defaultDateTimeLocal()
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+  return date.toISOString().slice(0, 16)
 }
 
 function defaultMarketKey(markets: SimulatorMarket[]): string {
