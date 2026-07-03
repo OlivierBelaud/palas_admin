@@ -129,6 +129,17 @@ export interface AppliedMarketingRule {
   impact: string
 }
 
+export interface MarketingDecisionTrace {
+  campaignId: string
+  campaignTitle: string
+  ruleId: string
+  label: string
+  kind: RuleKind
+  status: 'applied' | 'rejected'
+  reason: string
+  impact: string
+}
+
 export interface CartGift {
   productId: string
   title: string
@@ -153,6 +164,7 @@ export interface MarketingExperienceResult {
   totalBeforeTax: number
   announcements: string[]
   appliedRules: AppliedMarketingRule[]
+  decisionTrace: MarketingDecisionTrace[]
   gifts: CartGift[]
   progress: {
     current: number
@@ -200,6 +212,7 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
     totalBeforeTax: subtotal,
     announcements: [],
     appliedRules: [],
+    decisionTrace: [],
     gifts: [],
     progress: { current: subtotal, next: null, milestones: [] },
     shopifyPlan: [],
@@ -295,10 +308,27 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
   }
 
   const selectedOrderDiscounts = selectCompatibleOrderDiscounts(orderDiscountCandidates)
+  const selectedOrderDiscountIds = new Set(selectedOrderDiscounts.map((candidate) => candidate.rule.id))
   for (const { campaign, rule, discount } of selectedOrderDiscounts) {
     result.discountTotal += discount
     appendAppliedRule(result, campaign, rule, `${formatMoney(discount, input.currencyCode)} de remise estimee.`)
+    appendDecisionTrace(result, campaign, rule, {
+      status: 'applied',
+      reason: 'Meilleure remise commande compatible avec les autres règles retenues.',
+      impact: `${formatMoney(discount, input.currencyCode)} de remise estimee.`,
+    })
     if (rule.exclusiveGroup) exclusiveGroupsSeen.add(rule.exclusiveGroup)
+  }
+  for (const { campaign, rule, discount } of orderDiscountCandidates) {
+    if (selectedOrderDiscountIds.has(rule.id)) continue
+    const blocker = selectedOrderDiscounts.find((candidate) => !orderDiscountsCanCombine(candidate.rule, rule))
+    appendDecisionTrace(result, campaign, rule, {
+      status: 'rejected',
+      reason: blocker
+        ? `Ecartee car non cumulable avec ${blocker.rule.label}, qui donne une meilleure remise.`
+        : 'Ecartee par arbitrage des remises commande.',
+      impact: `${formatMoney(discount, input.currencyCode)} de remise potentielle non appliquee.`,
+    })
   }
 
   if (!shippingRuleSeen) result.warnings.push('Aucune regle de livraison active pour ce scenario.')
@@ -352,6 +382,24 @@ function appendAppliedRule(
     kind: rule.kind,
     execution: rule.execution,
     impact,
+  })
+}
+
+function appendDecisionTrace(
+  result: MarketingExperienceResult,
+  campaign: MarketingCampaign,
+  rule: MarketingRule,
+  decision: Pick<MarketingDecisionTrace, 'status' | 'reason' | 'impact'>,
+) {
+  result.decisionTrace.push({
+    campaignId: campaign.id,
+    campaignTitle: campaign.title,
+    ruleId: rule.id,
+    label: rule.label,
+    kind: rule.kind,
+    status: decision.status,
+    reason: decision.reason,
+    impact: decision.impact,
   })
 }
 

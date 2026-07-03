@@ -1256,6 +1256,7 @@ function RuleSection({
 }
 
 function DecisionGrid({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
+  const rows = decisionRows(result)
   return (
     <Card className="border border-border/70 shadow-none">
       <CardHeader className="pb-3">
@@ -1266,23 +1267,37 @@ function DecisionGrid({ result }: { result: ReturnType<typeof evaluateMarketingE
           <table className="w-full min-w-[620px] text-sm">
             <thead className="border-y bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
               <tr>
-                <th className="px-4 py-3 font-medium">Regle retenue</th>
+                <th className="px-4 py-3 font-medium">Decision</th>
                 <th className="px-4 py-3 font-medium">Type</th>
                 <th className="px-4 py-3 font-medium">Raisonnement</th>
               </tr>
             </thead>
             <tbody>
-              {result.appliedRules.map((rule) => (
-                <tr key={`${rule.campaignId}-${rule.ruleId}`} className="border-b align-top last:border-b-0">
+              {rows.map((rule) => (
+                <tr
+                  key={`${rule.campaignId}-${rule.ruleId}-${rule.status}`}
+                  className={`border-b align-top last:border-b-0 ${rule.status === 'rejected' ? 'bg-muted/30 text-muted-foreground' : ''}`}
+                >
                   <td className="px-4 py-3">
-                    <div className="font-medium">{rule.label}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{rule.label}</span>
+                      <Badge
+                        variant="outline"
+                        className={rule.status === 'applied' ? 'border-emerald-200 bg-emerald-50' : ''}
+                      >
+                        {rule.status === 'applied' ? 'Retenue' : 'Ecartee'}
+                      </Badge>
+                    </div>
                     <div className="mt-1 text-xs text-muted-foreground">{rule.campaignTitle}</div>
                   </td>
                   <td className="px-4 py-3">{kindLabel(rule.kind)}</td>
-                  <td className="px-4 py-3">{rule.impact}</td>
+                  <td className="px-4 py-3">
+                    <div>{rule.reason}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{rule.impact}</div>
+                  </td>
                 </tr>
               ))}
-              {result.appliedRules.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={3}>
                     Aucune règle applicable pour ce scénario.
@@ -1304,6 +1319,23 @@ function DecisionGrid({ result }: { result: ReturnType<typeof evaluateMarketingE
       </CardContent>
     </Card>
   )
+}
+
+function decisionRows(result: ReturnType<typeof evaluateMarketingExperience>) {
+  const tracedKeys = new Set(result.decisionTrace.map((rule) => `${rule.campaignId}:${rule.ruleId}`))
+  const appliedRows = result.appliedRules
+    .filter((rule) => !tracedKeys.has(`${rule.campaignId}:${rule.ruleId}`))
+    .map((rule) => ({
+      campaignId: rule.campaignId,
+      campaignTitle: rule.campaignTitle,
+      ruleId: rule.ruleId,
+      label: rule.label,
+      kind: rule.kind,
+      status: 'applied' as const,
+      reason: 'Règle applicable au scénario.',
+      impact: rule.impact,
+    }))
+  return [...result.decisionTrace, ...appliedRows]
 }
 
 function ImpactColumn({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
