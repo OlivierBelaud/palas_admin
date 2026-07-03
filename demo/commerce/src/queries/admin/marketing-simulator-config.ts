@@ -98,6 +98,10 @@ interface ShopifyDiscountNode {
     codesCount?: { count: number } | null
     appliesOncePerCustomer?: boolean | null
     usageLimit?: number | null
+    customerSelection?: {
+      __typename: string
+      allCustomers?: boolean | null
+    } | null
   }
 }
 
@@ -148,6 +152,10 @@ interface NormalizedShopifyDiscount {
   usage_limit: number | null
   applies_once_per_customer: boolean
   codes_count: number | null
+  customer_selection: {
+    type: string
+    all_customers: boolean
+  } | null
   source: 'shopify'
 }
 
@@ -380,6 +388,15 @@ function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyD
     usage_limit: discount.usageLimit ?? null,
     applies_once_per_customer: Boolean(discount.appliesOncePerCustomer),
     codes_count: discount.codesCount?.count ?? (discount.codes?.nodes?.length ? discount.codes.nodes.length : null),
+    customer_selection: discount.customerSelection
+      ? {
+          type: discount.customerSelection.__typename,
+          all_customers:
+            discount.customerSelection.__typename === 'DiscountCustomerAll'
+              ? discount.customerSelection.allCustomers !== false
+              : false,
+        }
+      : null,
     source: 'shopify',
   }
 }
@@ -662,6 +679,10 @@ const DISCOUNTS_QUERY = `
             codesCount { count }
             appliesOncePerCustomer
             usageLimit
+            customerSelection {
+              __typename
+              ... on DiscountCustomerAll { allCustomers }
+            }
             customerGets {
               value {
                 __typename

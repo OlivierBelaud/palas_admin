@@ -63,6 +63,7 @@ interface SimulatorDiscount {
   usage_limit?: number | null
   applies_once_per_customer?: boolean
   codes_count?: number | null
+  customer_selection?: { type: string; all_customers: boolean } | null
   source: 'shopify'
 }
 
@@ -1531,36 +1532,9 @@ function triggerForPalasRule(rule: PalasRule): ControlRule['trigger'] {
 function isPublicShopifyCampaignDiscount(discount: SimulatorDiscount): boolean {
   if (!discount.code) return true
   if (discount.usage_limit === 1) return false
-  if (discount.applies_once_per_customer && (discount.codes_count ?? 0) > 20) return false
-  const haystack = `${discount.title} ${discount.code}`.toLowerCase()
-  const individualHints = [
-    'abandoned',
-    'abandon',
-    'abandonne',
-    'abandonné',
-    'panier',
-    'welcome',
-    'bienvenue',
-    'birthday',
-    'bday',
-    'anniversaire',
-    'klaviyo',
-    'individual',
-    'personal',
-    'personnel',
-    'client',
-    'unique',
-    'one shot',
-    'one-shot',
-    'single',
-    'retarget',
-    'winback',
-    'enjoy',
-  ]
-  if (individualHints.some((hint) => haystack.includes(hint))) return false
-  const compactCode = discount.code.replace(/[^a-zA-Z0-9]/g, '')
-  if (/[a-z]{5,}\d{4,}/i.test(compactCode) || /\d{4,}[a-z]{4,}/i.test(compactCode)) return false
-  return compactCode.length <= 18
+  if ((discount.codes_count ?? 1) > 1) return false
+  if (discount.customer_selection && !discount.customer_selection.all_customers) return false
+  return true
 }
 
 function personalOfferTypeForRule(rule: PalasRule): PersonalOfferType | null {

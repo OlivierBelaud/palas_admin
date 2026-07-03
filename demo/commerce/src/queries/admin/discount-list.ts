@@ -16,6 +16,11 @@ interface DiscountCombinesWith {
   shippingDiscounts?: boolean
 }
 
+interface DiscountCustomerSelection {
+  __typename: string
+  allCustomers?: boolean | null
+}
+
 interface ShopifyDiscountBase {
   __typename: string
   title?: string
@@ -33,6 +38,7 @@ interface ShopifyDiscountBase {
   codesCount?: DiscountCodeCount
   appliesOncePerCustomer?: boolean
   usageLimit?: number | null
+  customerSelection?: DiscountCustomerSelection | null
 }
 
 interface ShopifyDiscountNode {
@@ -199,7 +205,7 @@ function normalizeDiscount(node: ShopifyDiscountNode): DiscountRow {
   const method = discountMethod(discount.__typename)
   const codes = discount.codes?.nodes?.map((node) => node.code).filter(Boolean) ?? []
   const codesCount = discount.codesCount?.count ?? (codes.length > 0 ? codes.length : null)
-  const classification = classifyDiscount(discount, method, codes, codesCount)
+  const classification = classifyDiscount(discount, method, codesCount)
 
   return {
     id: node.id,
@@ -235,29 +241,30 @@ function discountMethod(typeName: string): DiscountRow['method'] {
 function classifyDiscount(
   discount: ShopifyDiscountBase,
   method: DiscountRow['method'],
-  codes: string[],
   codesCount: number | null,
 ): { group: DiscountGroup; reason: string } {
   if (method === 'automatic') return { group: 'shop', reason: 'automatic discount' }
-
-  const haystack = [discount.title, discount.summary, discount.shortSummary, ...codes].filter(Boolean).join(' ')
-  const lifecyclePattern =
-    /\b(klaviyo|welcome|bienvenue|abandoned|abandon|cart|panier|recovery|recover|surprise|palas10)\b/i
-  const looksLifecycle = lifecyclePattern.test(haystack)
-
-  if (looksLifecycle) {
-    return { group: 'individual', reason: 'lifecycle/customer code naming' }
-  }
 
   if (method === 'code' && discount.usageLimit === 1) {
     return { group: 'individual', reason: 'single-use code' }
   }
 
-  if (method === 'code' && discount.appliesOncePerCustomer && (codesCount ?? 0) > 20) {
+  if (method === 'code' && (codesCount ?? 1) > 1) {
     return { group: 'individual', reason: 'multi-code customer pool' }
   }
 
+  if (method === 'code' && !discountTargetsAllCustomers(discount)) {
+    return { group: 'individual', reason: 'targeted customer selection' }
+  }
+
   return { group: 'shop', reason: method === 'code' ? 'public/manual code' : 'fallback' }
+}
+
+function discountTargetsAllCustomers(discount: ShopifyDiscountBase): boolean {
+  const selection = discount.customerSelection
+  if (!selection) return true
+  if (selection.__typename !== 'DiscountCustomerAll') return false
+  return selection.allCustomers !== false
 }
 
 function combinesWithLabels(combinesWith: DiscountCombinesWith | undefined): string[] {
@@ -308,6 +315,10 @@ const CODE_FIELDS = `
   codes(first: 5) {
     nodes { code }
   }
+  customerSelection {
+    __typename
+    ... on DiscountCustomerAll { allCustomers }
+  }
 `
 
 const CODE_BXGY_FIELDS = `
@@ -330,6 +341,10 @@ const CODE_BXGY_FIELDS = `
   codesCount { count }
   codes(first: 5) {
     nodes { code }
+  }
+  customerSelection {
+    __typename
+    ... on DiscountCustomerAll { allCustomers }
   }
 `
 
