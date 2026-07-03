@@ -63,6 +63,7 @@ interface SimulatorDiscount {
   usage_limit?: number | null
   applies_once_per_customer?: boolean
   codes_count?: number | null
+  combines_with?: string[]
   customer_selection?: { type: string; all_customers: boolean } | null
   source: 'shopify'
 }
@@ -125,6 +126,9 @@ interface AvailableCode {
   title: string
   status: string
   source: 'shopify' | 'palas'
+  valueLabel: string
+  combinabilityLabel: string
+  validityLabel: string
 }
 
 interface AutomaticOffer {
@@ -983,9 +987,16 @@ function CodeSelector({
                   : 'border-input bg-background text-muted-foreground'
               }`}
             >
-              <div className="font-medium">{item.code}</div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-medium">{item.code}</div>
+                <div className="shrink-0 rounded-full bg-background/80 px-2 py-0.5 text-xs">{item.valueLabel}</div>
+              </div>
               <div className="mt-1 text-xs">
                 {item.title} · {item.source} · {item.status}
+              </div>
+              <div className="mt-2 grid gap-1 text-xs">
+                <div>{item.combinabilityLabel}</div>
+                <div>{item.validityLabel}</div>
               </div>
             </button>
           )
@@ -1483,6 +1494,9 @@ function buildAvailableCodes(config: SimulatorConfig | undefined, nowIso: string
         title: discount.title,
         status: discount.status,
         source: 'shopify',
+        valueLabel: discountValueLabel(discount, config.meta.shop_currency_code),
+        combinabilityLabel: discountCombinabilityLabel(discount.combines_with ?? []),
+        validityLabel: validityLabel(discount.starts_at, discount.ends_at),
       }),
     )
   const palasCodes = config.palas_rules
@@ -1497,6 +1511,9 @@ function buildAvailableCodes(config: SimulatorConfig | undefined, nowIso: string
         title: rule.title,
         status: rule.status,
         source: 'palas',
+        valueLabel: palasRuleValueLabel(rule, config.meta.shop_currency_code),
+        combinabilityLabel: 'Cumul defini par le moteur Palas',
+        validityLabel: validityLabel(rule.starts_at, rule.ends_at),
       }),
     )
   return [...shopifyCodes, ...palasCodes]
@@ -1528,6 +1545,44 @@ function buildAutomaticOffers(config: SimulatorConfig | undefined, nowIso: strin
       }),
     )
   return [...shopify, ...palas]
+}
+
+function discountValueLabel(discount: SimulatorDiscount, fallbackCurrencyCode: string): string {
+  if (discount.value_type === 'percentage') return `${formatPercentage(discount.value)}%`
+  if (discount.value_type === 'fixed_amount') {
+    return formatMoney(discount.value, discount.currency_code ?? fallbackCurrencyCode)
+  }
+  return 'Valeur inconnue'
+}
+
+function palasRuleValueLabel(rule: PalasRule, fallbackCurrencyCode: string): string {
+  if (rule.value_type === 'percentage' && rule.value != null) return `${formatPercentage(rule.value)}%`
+  if (rule.value_type === 'fixed_amount' && rule.value != null) {
+    return formatMoney(rule.value, rule.currency_code ?? fallbackCurrencyCode)
+  }
+  return ruleSummary(rule)
+}
+
+function discountCombinabilityLabel(combinesWith: string[]): string {
+  if (combinesWith.length === 0) return 'Non cumulable avec les autres discounts Shopify'
+  const labels = combinesWith.map((item) => {
+    if (item === 'order') return 'remises commande'
+    if (item === 'product') return 'remises produit'
+    if (item === 'shipping') return 'livraison'
+    return item
+  })
+  return `Cumulable avec ${labels.join(', ')}`
+}
+
+function validityLabel(startsAt: string | null, endsAt: string | null): string {
+  if (!startsAt && !endsAt) return 'Valide sans fenêtre définie'
+  const start = startsAt ? `Depuis ${formatDateTime(startsAt)}` : 'Actif immédiatement'
+  const end = endsAt ? `jusqu'au ${formatDateTime(endsAt)}` : 'sans date de fin'
+  return `${start}, ${end}`
+}
+
+function formatPercentage(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
 }
 
 function buildPersonalOffers(config: SimulatorConfig | undefined): PersonalOfferOption[] {
@@ -1699,8 +1754,16 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
     .filter((rule) => rule.execution_kind !== 'shopify_discount')
     .map((rule, index) => palasRuleToCampaign(rule, index))
     .filter((campaign): campaign is MarketingCampaign => Boolean(campaign))
+  const configuredPersonalOffers = new Set(
+    (config?.palas_rules ?? [])
+      .map(personalOfferTypeForRule)
+      .filter((type): type is PersonalOfferType => Boolean(type)),
+  )
+  const defaultPersonalOfferCampaigns = buildPersonalOffers(config)
+    .filter((offer) => !configuredPersonalOffers.has(offer.type))
+    .map((offer, index): MarketingCampaign => personalOfferToCampaign(offer, index))
 
-  return [...palasCampaigns, ...shopifyDiscountCampaigns, shippingCampaign]
+  return [...palasCampaigns, ...defaultPersonalOfferCampaigns, ...shopifyDiscountCampaigns, shippingCampaign]
 }
 
 function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign | null {
@@ -1781,6 +1844,33 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
   }
 
   return null
+}
+
+function personalOfferToCampaign(offer: PersonalOfferOption, index: number): MarketingCampaign {
+  return {
+    id: `default-personal-${offer.type}`,
+    title: offer.title,
+    status: 'active',
+    startsAt: '2020-01-01T00:00:00.000Z',
+    endsAt: null,
+    priority: 190 - index,
+    rules: [
+      {
+        id: `default-personal-rule-${offer.type}`,
+        kind: 'order_discount',
+        label: offer.title,
+        enabled: true,
+        execution: ['email_copy', 'theme_surface'],
+        trigger: { type: 'personal_offer', offer: offer.type },
+        exclusiveGroup: 'personal_discount',
+        valueType: offer.value_type,
+        value: offer.value,
+        target: { type: 'all' },
+        code: null,
+        combinableWith: ['shipping_threshold'],
+      },
+    ],
+  }
 }
 
 function initialRuleForm(marketKey: string, currencyCode: string): MarketingRuleFormState {

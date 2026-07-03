@@ -98,6 +98,11 @@ interface ShopifyDiscountNode {
     codesCount?: { count: number } | null
     appliesOncePerCustomer?: boolean | null
     usageLimit?: number | null
+    combinesWith?: {
+      orderDiscounts?: boolean | null
+      productDiscounts?: boolean | null
+      shippingDiscounts?: boolean | null
+    } | null
     customerSelection?: {
       __typename: string
       allCustomers?: boolean | null
@@ -152,6 +157,7 @@ interface NormalizedShopifyDiscount {
   usage_limit: number | null
   applies_once_per_customer: boolean
   codes_count: number | null
+  combines_with: string[]
   customer_selection: {
     type: string
     all_customers: boolean
@@ -388,6 +394,7 @@ function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyD
     usage_limit: discount.usageLimit ?? null,
     applies_once_per_customer: Boolean(discount.appliesOncePerCustomer),
     codes_count: discount.codesCount?.count ?? (discount.codes?.nodes?.length ? discount.codes.nodes.length : null),
+    combines_with: combinesWithLabels(discount.combinesWith),
     customer_selection: discount.customerSelection
       ? {
           type: discount.customerSelection.__typename,
@@ -399,6 +406,17 @@ function normalizeShopifyDiscount(node: ShopifyDiscountNode): NormalizedShopifyD
       : null,
     source: 'shopify',
   }
+}
+
+function combinesWithLabels(
+  combinesWith: ShopifyDiscountNode['discount']['combinesWith'] | undefined | null,
+): string[] {
+  if (!combinesWith) return []
+  const labels: string[] = []
+  if (combinesWith.orderDiscounts) labels.push('order')
+  if (combinesWith.productDiscounts) labels.push('product')
+  if (combinesWith.shippingDiscounts) labels.push('shipping')
+  return labels
 }
 
 function readEnum<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
@@ -679,6 +697,11 @@ const DISCOUNTS_QUERY = `
             codesCount { count }
             appliesOncePerCustomer
             usageLimit
+            combinesWith {
+              orderDiscounts
+              productDiscounts
+              shippingDiscounts
+            }
             customerSelection {
               __typename
               ... on DiscountCustomerAll { allCustomers }
