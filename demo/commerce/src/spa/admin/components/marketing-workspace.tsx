@@ -1356,6 +1356,19 @@ function SummaryCard({ result }: { result: ReturnType<typeof evaluateMarketingEx
       <CardContent className="grid gap-2 text-sm">
         <SummaryRow label="Subtotal" value={formatMoney(result.subtotal, result.currencyCode)} />
         <SummaryRow label="Discounts" value={`-${formatMoney(result.discountTotal, result.currencyCode)}`} />
+        {result.gifts.length > 0 ? (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-950">
+            <div className="font-medium">Cadeaux auto-ajoutes</div>
+            <div className="mt-1 grid gap-1 text-xs">
+              {result.gifts.map((gift) => (
+                <div key={`${gift.sourceRuleId}-${gift.productId}`} className="flex items-center justify-between gap-3">
+                  <span className="truncate">{gift.title}</span>
+                  <span className="shrink-0">x{gift.quantity}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <SummaryRow label="Livraison estimee" value={formatMoney(result.estimatedShipping, result.currencyCode)} />
         <SummaryRow label="Total avant taxes" value={formatMoney(result.totalBeforeTax, result.currencyCode)} strong />
       </CardContent>
