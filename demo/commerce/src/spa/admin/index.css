@@ -3,3 +3,64 @@
 @source "./**/*.{ts,tsx}";
 @source "../../../node_modules/@mantajs/dashboard/dist/**/*.{js,mjs}";
 @source "../../../node_modules/@mantajs/ui/dist/**/*.{js,mjs}";
+
+@layer components {
+  @media (max-width: 1023.98px) {
+    body > div[data-radix-portal] {
+      position: relative;
+      z-index: 80;
+    }
+
+    body > div[data-radix-portal] [data-state] {
+      z-index: 80;
+    }
+
+    body > div[data-radix-portal] [role="dialog"][data-state] {
+      z-index: 81;
+      width: calc(100vw - 1rem);
+      max-width: 20rem;
+    }
+
+    body:has([role="dialog"][data-state="open"]) {
+      overflow: hidden;
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    main > div {
+      max-width: 100%;
+      padding: 1rem;
+      padding-bottom: 1.25rem;
+    }
+
+    main h1,
+    main h2,
+    main h3 {
+      overflow-wrap: anywhere;
+    }
+
+    main table {
+      font-size: 0.8125rem;
+    }
+
+    main .overflow-x-auto,
+    main .overflow-y-auto {
+      -webkit-overflow-scrolling: touch;
+    }
+  }
+
+  @media (max-width: 639.98px) {
+    main input,
+    main select,
+    main textarea,
+    main button {
+      max-width: 100%;
+    }
+
+    main [class*="grid-cols-"] {
+      min-width: 0;
+    }
+  }
+}
