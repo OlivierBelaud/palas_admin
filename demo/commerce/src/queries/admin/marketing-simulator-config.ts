@@ -100,6 +100,25 @@ interface ShopifyDiscountNode {
 
 type DiscountValueNode = NonNullable<NonNullable<ShopifyDiscountNode['discount']['customerGets']>['value']>
 
+interface ProductVariantNode {
+  id: string
+  title: string
+  price: string
+  product: {
+    id: string
+    title: string
+    handle: string
+    productType: string | null
+    collections: {
+      nodes: Array<{ id: string; handle: string }>
+    }
+  }
+  contextualPricing: {
+    price: MoneyNode
+    compareAtPrice: MoneyNode | null
+  } | null
+}
+
 interface NormalizedMarket {
   key: string
   id: string
@@ -137,6 +156,18 @@ interface ShippingThreshold {
   free_method_id: string
   paid_method_id: string | null
   source: string
+}
+
+interface NormalizedProduct {
+  id: string
+  title: string
+  price: number
+  currency_code: string
+  category: 'jewelry' | 'charm' | 'accessory'
+  collectionIds: string[]
+  market_key: string
+  context_country: string | null
+  source: 'shopify'
 }
 
 interface NormalizedPalasRule {
@@ -183,6 +214,7 @@ export default defineQuery({
     ])
 
     const markets = marketsData.markets.nodes.filter((market) => market.status === 'ACTIVE').map(normalizeMarket)
+    const products = await readMarketProducts(client, markets, marketsData.shop.currencyCode)
     const shippingThresholds = normalizeShippingThresholds(markets, deliveryData.deliveryProfiles.nodes)
     const shopifyDiscounts = discountData.discountNodes.nodes.map(normalizeShopifyDiscount).filter(Boolean)
 
@@ -195,9 +227,67 @@ export default defineQuery({
       shipping_thresholds: shippingThresholds,
       shopify_discounts: shopifyDiscounts,
       palas_rules: palasRules,
+      products,
     }
   },
 })
+
+async function readMarketProducts(
+  client: ShopifyAdminClient,
+  markets: NormalizedMarket[],
+  fallbackCurrencyCode: string,
+): Promise<NormalizedProduct[]> {
+  const results = await Promise.all(
+    markets.map(async (market) => {
+      const countryCode = market.countries[0]?.code ?? 'FR'
+      try {
+        const data = await client.query<{
+          productVariants: { nodes: ProductVariantNode[] }
+        }>(PRODUCT_VARIANTS_QUERY, { country: countryCode })
+        return data.productVariants.nodes.map((variant) =>
+          normalizeProductVariant(variant, market, fallbackCurrencyCode),
+        )
+      } catch {
+        return []
+      }
+    }),
+  )
+  return results.flat()
+}
+
+function normalizeProductVariant(
+  variant: ProductVariantNode,
+  market: NormalizedMarket,
+  fallbackCurrencyCode: string,
+): NormalizedProduct {
+  const contextualPrice = variant.contextualPricing?.price
+  const price = Number(contextualPrice?.amount ?? variant.price)
+  const collections = variant.product.collections.nodes.map((collection) => collection.handle || collection.id)
+  const title =
+    variant.title === 'Default Title' ? variant.product.title : `${variant.product.title} · ${variant.title}`
+  return {
+    id: variant.id,
+    title,
+    price: Number.isFinite(price) ? price : 0,
+    currency_code: contextualPrice?.currencyCode ?? market.currency_code ?? fallbackCurrencyCode,
+    category: inferProductCategory(variant.product.title, variant.product.productType, collections),
+    collectionIds: collections,
+    market_key: market.key,
+    context_country: market.countries[0]?.code ?? null,
+    source: 'shopify',
+  }
+}
+
+function inferProductCategory(
+  title: string,
+  productType: string | null,
+  collectionIds: string[],
+): NormalizedProduct['category'] {
+  const haystack = [title, productType ?? '', ...collectionIds].join(' ').toLowerCase()
+  if (haystack.includes('charm')) return 'charm'
+  if (haystack.includes('tote') || haystack.includes('accessor')) return 'accessory'
+  return 'jewelry'
+}
 
 async function readPalasRules(db: unknown, schema: unknown): Promise<NormalizedPalasRule[]> {
   try {
@@ -580,6 +670,31 @@ const DISCOUNTS_QUERY = `
                 ... on DiscountAmount { amount { amount currencyCode } appliesOnEachItem }
               }
             }
+          }
+        }
+      }
+    }
+  }
+`
+
+const PRODUCT_VARIANTS_QUERY = `
+  query PalasMarketingSimulatorProducts($country: CountryCode!) {
+    productVariants(first: 30, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        id
+        title
+        price
+        contextualPricing(context: { country: $country }) {
+          price { amount currencyCode }
+          compareAtPrice { amount currencyCode }
+        }
+        product {
+          id
+          title
+          handle
+          productType
+          collections(first: 10) {
+            nodes { id handle }
           }
         }
       }

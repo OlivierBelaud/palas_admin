@@ -45,6 +45,7 @@ interface SimulatorConfig {
   shipping_thresholds: SimulatorShippingThreshold[]
   shopify_discounts: SimulatorDiscount[]
   palas_rules: PalasRule[]
+  products: SimulatorProduct[]
 }
 
 interface SimulatorDiscount {
@@ -59,6 +60,18 @@ interface SimulatorDiscount {
   value: number
   currency_code: string | null
   code: string | null
+  source: 'shopify'
+}
+
+interface SimulatorProduct {
+  id: string
+  title: string
+  price: number
+  currency_code: string
+  category: MarketingProduct['category']
+  collectionIds: string[]
+  market_key: string
+  context_country: string | null
   source: 'shopify'
 }
 
@@ -103,20 +116,6 @@ interface MarketingRuleFormState {
   paid_rate: string
 }
 
-const PRODUCTS: MarketingProduct[] = [
-  {
-    id: 'necklace-alta-marea',
-    title: 'Collier Alta Marea',
-    price: 145,
-    category: 'jewelry',
-    collectionIds: ['jewelry'],
-  },
-  { id: 'necklace-no-jardim', title: 'Collier No Jardim', price: 165, category: 'jewelry', collectionIds: ['jewelry'] },
-  { id: 'charm-soleil', title: 'Charm Soleil', price: 42, category: 'charm', collectionIds: ['charms'] },
-  { id: 'charm-mystere', title: 'Charm mystere', price: 39, category: 'charm', collectionIds: ['charms'] },
-  { id: 'tote-bag-palas', title: 'Tote bag Palas', price: 24, category: 'accessory', collectionIds: ['accessories'] },
-]
-
 const CUSTOMER_OPTIONS: Array<{ value: CustomerSegment; label: string }> = [
   { value: 'anonymous', label: 'Anonyme' },
   { value: 'new_customer', label: 'Nouveau client' },
@@ -148,10 +147,7 @@ export default function MarketingSimulatorPage() {
   const [now, setNow] = React.useState(defaultDateTimeLocal)
   const [market, setMarket] = React.useState<MarketCode>('')
   const [customerSegment, setCustomerSegment] = React.useState<CustomerSegment>('new_customer')
-  const [cart, setCart] = React.useState<MarketingCartLine[]>([
-    { productId: 'necklace-alta-marea', quantity: 1 },
-    { productId: 'charm-soleil', quantity: 1 },
-  ])
+  const [cart, setCart] = React.useState<MarketingCartLine[]>([])
   const campaigns = React.useMemo(() => buildCampaigns(config), [config])
   const [enabledCampaignIds, setEnabledCampaignIds] = React.useState<string[]>([])
   const [ruleForm, setRuleForm] = React.useState<MarketingRuleFormState>(() => initialRuleForm('', 'EUR'))
@@ -169,7 +165,10 @@ export default function MarketingSimulatorPage() {
 
   const selectedMarket = config?.markets.find((item) => item.key === market) ?? null
   const selectedShippingThreshold = config?.shipping_thresholds.find((item) => item.market_key === market) ?? null
+  const products = React.useMemo(() => productsForMarket(config, market), [config, market])
+  const marketProductCurrency = config?.products.find((product) => product.market_key === market)?.currency_code
   const currencyCode =
+    marketProductCurrency ??
     selectedShippingThreshold?.currency_code ??
     selectedMarket?.currency_code ??
     config?.meta.shop_currency_code ??
@@ -185,6 +184,11 @@ export default function MarketingSimulatorPage() {
       currency_code: market?.currency_code ?? config.meta.shop_currency_code,
     }))
   }, [config, ruleForm.market_key])
+
+  React.useEffect(() => {
+    if (cart.length > 0 || products.length === 0) return
+    setCart(defaultCart(products))
+  }, [cart.length, products])
 
   const submitMarketingRule = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -220,9 +224,9 @@ export default function MarketingSimulatorPage() {
         customerSegment,
         cart,
         campaigns: activeCampaigns,
-        products: PRODUCTS,
+        products,
       }),
-    [activeCampaigns, cart, currencyCode, customerSegment, market, now],
+    [activeCampaigns, cart, currencyCode, customerSegment, market, now, products],
   )
 
   if (configQuery.isLoading) return <LoadingState />
@@ -257,7 +261,9 @@ export default function MarketingSimulatorPage() {
             variant="outline"
             size="small"
             type="button"
-            onClick={() => resetScenario(setNow, setMarket, setCustomerSegment, setCart, config?.markets ?? [])}
+            onClick={() =>
+              resetScenario(setNow, setMarket, setCustomerSegment, setCart, config?.markets ?? [], products)
+            }
           >
             <RotateCcw className="mr-2 size-3.5" />
             Reset scenario
@@ -277,7 +283,7 @@ export default function MarketingSimulatorPage() {
             onMarketChange={setMarket}
             onCustomerSegmentChange={setCustomerSegment}
           />
-          <CartBuilder cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
+          <CartBuilder products={products} cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
           <RuleBuilder
             form={ruleForm}
             markets={config?.markets ?? []}
@@ -380,15 +386,17 @@ function ScenarioCard({
 }
 
 function CartBuilder({
+  products,
   cart,
   currencyCode,
   onCartChange,
 }: {
+  products: MarketingProduct[]
   cart: MarketingCartLine[]
   currencyCode: string
   onCartChange: (cart: MarketingCartLine[]) => void
 }) {
-  const productMap = React.useMemo(() => new Map(PRODUCTS.map((product) => [product.id, product])), [])
+  const productMap = React.useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
   const subtotal = cart.reduce((sum, line) => sum + (productMap.get(line.productId)?.price ?? 0) * line.quantity, 0)
 
   return (
@@ -401,7 +409,12 @@ function CartBuilder({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="grid gap-2">
-          {PRODUCTS.map((product) => {
+          {products.length === 0 ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              Aucun produit Shopify contextualise trouve pour ce market.
+            </div>
+          ) : null}
+          {products.map((product) => {
             const line = cart.find((item) => item.productId === product.id)
             return (
               <div key={product.id} className="flex items-center justify-between gap-3 rounded-md border p-2">
@@ -958,14 +971,31 @@ function resetScenario(
   setCustomerSegment: (value: CustomerSegment) => void,
   setCart: (value: MarketingCartLine[]) => void,
   markets: SimulatorMarket[],
+  products: MarketingProduct[],
 ) {
   setNow(defaultDateTimeLocal())
   setMarket(defaultMarketKey(markets))
   setCustomerSegment('new_customer')
-  setCart([
-    { productId: 'necklace-alta-marea', quantity: 1 },
-    { productId: 'charm-soleil', quantity: 1 },
-  ])
+  setCart(defaultCart(products))
+}
+
+function productsForMarket(config: SimulatorConfig | undefined, market: MarketCode): MarketingProduct[] {
+  const products = config?.products.filter((product) => product.market_key === market) ?? []
+  return products.map((product) => ({
+    id: product.id,
+    title: product.title,
+    price: product.price,
+    category: product.category,
+    collectionIds: product.collectionIds,
+  }))
+}
+
+function defaultCart(products: MarketingProduct[]): MarketingCartLine[] {
+  const firstJewelry = products.find((product) => product.category === 'jewelry') ?? products[0]
+  const firstCharm = products.find((product) => product.category === 'charm' && product.id !== firstJewelry?.id)
+  return [firstJewelry, firstCharm]
+    .filter((product): product is MarketingProduct => Boolean(product))
+    .map((product) => ({ productId: product.id, quantity: 1 }))
 }
 
 function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[] {
