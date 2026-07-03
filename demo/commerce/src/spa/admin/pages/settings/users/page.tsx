@@ -36,13 +36,6 @@ type AdminInvite = {
   invite_url: string
 }
 
-function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAdapter']) {
-  return {
-    'Content-Type': 'application/json',
-    ...authAdapter.getAuthHeaders(),
-  }
-}
-
 function formatDate(value?: string | null) {
   if (!value) return '-'
   return new Date(value).toLocaleString()
@@ -63,7 +56,7 @@ function emailBadge(invite: AdminInvite) {
 }
 
 export default function SettingsUsersPage() {
-  const { authAdapter } = useDashboardContext()
+  const { dataSource } = useDashboardContext()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [invites, setInvites] = useState<AdminInvite[]>([])
   const [email, setEmail] = useState('')
@@ -76,30 +69,24 @@ export default function SettingsUsersPage() {
   const sortedUsers = useMemo(() => [...users].sort((a, b) => a.email.localeCompare(b.email)), [users])
 
   const loadUsers = useCallback(async () => {
-    const res = await window.fetch('/api/admin/users?limit=100', {
-      headers: authHeaders(authAdapter),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      return body.message || 'Unable to load users'
+    try {
+      const body = (await dataSource.fetch('/api/admin/users?limit=100')) as { data?: AdminUser[] }
+      setUsers(body.data ?? [])
+      return null
+    } catch (err) {
+      return err instanceof Error ? err.message : 'Unable to load users'
     }
-    const body = (await res.json()) as { data?: AdminUser[] }
-    setUsers(body.data ?? [])
-    return null
-  }, [authAdapter])
+  }, [dataSource])
 
   const loadInvites = useCallback(async () => {
-    const res = await window.fetch('/api/admin/invitations', {
-      headers: authHeaders(authAdapter),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      return body.message || 'Unable to load invitations'
+    try {
+      const body = (await dataSource.fetch('/api/admin/invitations')) as { data?: AdminInvite[] }
+      setInvites(body.data ?? [])
+      return null
+    } catch (err) {
+      return err instanceof Error ? err.message : 'Unable to load invitations'
     }
-    const body = (await res.json()) as { data?: AdminInvite[] }
-    setInvites(body.data ?? [])
-    return null
-  }, [authAdapter])
+  }, [dataSource])
 
   const loadAll = useCallback(async () => {
     setIsLoading(true)
@@ -114,13 +101,14 @@ export default function SettingsUsersPage() {
   }, [loadAll])
 
   async function mutateInvitations(input: Record<string, unknown>) {
-    const res = await window.fetch('/api/admin/invitations', {
-      method: 'POST',
-      headers: authHeaders(authAdapter),
-      body: JSON.stringify(input),
-    })
-    const body = (await res.json().catch(() => ({}))) as { data?: AdminInvite; message?: string }
-    return res.ok ? { data: body.data, error: null } : { data: null, error: body.message || 'Invitation action failed' }
+    try {
+      const body = (await dataSource.mutate('/api/admin/invitations', 'POST', input)) as {
+        data?: AdminInvite
+      }
+      return { data: body.data, error: null }
+    } catch (err) {
+      return { data: null, error: err instanceof Error ? err.message : 'Invitation action failed' }
+    }
   }
 
   async function handleInvite(event: React.FormEvent<HTMLFormElement>) {

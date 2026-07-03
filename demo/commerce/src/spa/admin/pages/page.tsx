@@ -97,15 +97,8 @@ const statusCopy: Record<SystemStatus, { label: string; className: string; dot: 
   },
 }
 
-function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAdapter']) {
-  return {
-    'Content-Type': 'application/json',
-    ...authAdapter.getAuthHeaders(),
-  }
-}
-
 export default function SystemDashboardPage() {
-  const { authAdapter } = useDashboardContext()
+  const { dataSource } = useDashboardContext()
   const {
     run: runSystemAudits,
     status: auditCommandStatus,
@@ -121,17 +114,10 @@ export default function SystemDashboardPage() {
 
   const loadDashboard = useCallback(async () => {
     setError(null)
-    const res = await window.fetch(SYSTEM_DASHBOARD_ENDPOINT, {
-      headers: authHeaders(authAdapter),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw new MantaError('UNEXPECTED_STATE', body.message ?? 'Impossible de charger le dashboard')
-    }
-    const body = (await res.json()) as { data?: SystemDashboardData }
+    const body = (await dataSource.fetch(SYSTEM_DASHBOARD_ENDPOINT)) as { data?: SystemDashboardData }
     if (!body.data) throw new MantaError('UNEXPECTED_STATE', 'Réponse dashboard invalide')
     setData(body.data)
-  }, [authAdapter])
+  }, [dataSource])
 
   const refreshDashboard = useCallback(
     async (options: { silent?: boolean } = {}) => {

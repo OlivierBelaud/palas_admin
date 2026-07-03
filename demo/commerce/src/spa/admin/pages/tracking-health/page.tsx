@@ -120,15 +120,8 @@ const LIVE_STALE_MS = 2 * 60 * 1000
 const REFRESH_INTERVAL_MS = 15_000
 const kpiGridStyle = { gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }
 
-function authHeaders(authAdapter: ReturnType<typeof useDashboardContext>['authAdapter']) {
-  return {
-    'Content-Type': 'application/json',
-    ...authAdapter.getAuthHeaders(),
-  }
-}
-
 export default function TrackingHealthPage() {
-  const { authAdapter } = useDashboardContext()
+  const { dataSource } = useDashboardContext()
   const [hours, setHours] = React.useState(4)
   const [eventName, setEventName] = React.useState('all')
   const [pageIndex, setPageIndex] = React.useState(0)
@@ -146,17 +139,12 @@ export default function TrackingHealthPage() {
     search.set('offset', String(params.offset))
     search.set('event_name', params.event_name)
 
-    const res = await window.fetch(`/api/cart-tracking/admin-tracking-health?${search.toString()}`, {
-      headers: authHeaders(authAdapter),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw new MantaError('UNEXPECTED_STATE', body.message ?? 'Impossible de charger le tracking health')
+    const body = (await dataSource.fetch(`/api/cart-tracking/admin-tracking-health?${search.toString()}`)) as {
+      data?: TrackingHealthData
     }
-    const body = (await res.json()) as { data?: TrackingHealthData }
     if (!body.data) throw new MantaError('UNEXPECTED_STATE', 'Réponse tracking health invalide')
     return body.data
-  }, [authAdapter, params])
+  }, [dataSource, params])
 
   React.useEffect(() => {
     let cancelled = false
