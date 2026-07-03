@@ -1006,10 +1006,30 @@ function CodeSelector({
   )
 }
 
+function buildAnnouncementText(result: ReturnType<typeof evaluateMarketingExperience>): string {
+  const shipping = result.progress.milestones.find((milestone) => milestone.kind === 'shipping')
+  if (shipping) {
+    if (shipping.reached) return 'Livraison offerte debloquee'
+    return `Livraison offerte des ${formatMoney(shipping.amount, result.currencyCode)}`
+  }
+
+  const gift = result.progress.milestones.find((milestone) => milestone.kind === 'gift')
+  if (gift) {
+    if (gift.reached) return `${gift.label} offert debloque`
+    return `${gift.label} offert des ${formatMoney(gift.amount, result.currencyCode)}`
+  }
+
+  const discountRule = result.appliedRules.find((rule) => rule.kind === 'order_discount')
+  if (discountRule) return discountRule.impact
+
+  return 'Aucune offre automatique active pour ce scenario'
+}
+
 function SurfacePreview({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
   const next = result.progress.next
   const progressMax = result.progress.milestones.at(-1)?.amount ?? Math.max(result.subtotal, 1)
   const progressValue = Math.min(100, (result.progress.current / progressMax) * 100)
+  const announcementText = result.announcements[0] ?? buildAnnouncementText(result)
 
   return (
     <div className="grid gap-4">
@@ -1022,7 +1042,7 @@ function SurfacePreview({ result }: { result: ReturnType<typeof evaluateMarketin
         </CardHeader>
         <CardContent>
           <div className="rounded-md bg-foreground px-4 py-3 text-center text-sm font-medium text-background">
-            {result.announcements[0] ?? 'Livraison offerte selon votre pays'}
+            {announcementText}
           </div>
         </CardContent>
       </Card>
