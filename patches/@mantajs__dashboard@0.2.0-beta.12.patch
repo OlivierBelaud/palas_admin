@@ -1,0 +1,110 @@
+diff --git a/dist/manta-auth-adapter.js b/dist/manta-auth-adapter.js
+index ccc6a0edc8ece7bc2c3261f93d0bfb5df6193df9..9e48cbc06d85b0d336f1c90f3c920978756a9284 100644
+--- a/dist/manta-auth-adapter.js
++++ b/dist/manta-auth-adapter.js
+@@ -106,6 +106,7 @@ export class MantaAuthAdapter {
+             return true;
+         }
+         catch {
++            this._clearTokens();
+             return false;
+         }
+     }
+diff --git a/dist/manta-data-source.js b/dist/manta-data-source.js
+index 514d9b92b71b9ead33b51d35512ab323a918286d..1e3f7f36978d702344df32cf372e4703f824cfc3 100644
+--- a/dist/manta-data-source.js
++++ b/dist/manta-data-source.js
+@@ -47,7 +47,7 @@ export class MantaDataSource {
+         const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
+         const res = await this._authFetch(url, {});
+         if (!res.ok)
+-            throw new Error(`${res.status} ${res.statusText}`);
++            throw httpError(res);
+         return res.json();
+     }
+     async mutate(endpoint, method, body) {
+@@ -57,7 +57,7 @@ export class MantaDataSource {
+             ...(body ? { body: JSON.stringify(body) } : {}),
+         });
+         if (!res.ok)
+-            throw new Error(`${res.status} ${res.statusText}`);
++            throw httpError(res);
+         return res.json();
+     }
+     async query(body) {
+@@ -68,7 +68,7 @@ export class MantaDataSource {
+             body: JSON.stringify(params),
+         });
+         if (!res.ok)
+-            throw new Error(`${res.status} ${res.statusText}`);
++            throw httpError(res);
+         return res.json();
+     }
+     async command(name, body = {}) {
+@@ -78,7 +78,7 @@ export class MantaDataSource {
+             body: JSON.stringify(body),
+         });
+         if (!res.ok)
+-            throw new Error(`${res.status} ${res.statusText}`);
++            throw httpError(res);
+         return res.json();
+     }
+     entityToEndpoint(entity) {
+@@ -88,4 +88,10 @@ export class MantaDataSource {
+         return this.queryKeyMap[entity] || entity;
+     }
+ }
++function httpError(res) {
++    const err = new Error(`${res.status} ${res.statusText}`);
++    err.status = res.status;
++    err.statusText = res.statusText;
++    return err;
++}
+ //# sourceMappingURL=manta-data-source.js.map
+diff --git a/dist/shell/error-boundary.js b/dist/shell/error-boundary.js
+index e0ff424ffc640860fe1c974311e33dce17199e01..ff2e8859f894757c9c1de8239e4eaca18189ea9c 100644
+--- a/dist/shell/error-boundary.js
++++ b/dist/shell/error-boundary.js
+@@ -1,16 +1,35 @@
+ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+ import { AlertCircle } from 'lucide-react';
+ import { Navigate, useLocation, useRouteError } from 'react-router-dom';
++const AUTH_STATE_KEY = 'manta-auth-state';
++const LEGACY_TOKEN_KEY = 'manta-auth-token';
++const LEGACY_REFRESH_KEY = 'manta-refresh-token';
++function getErrorStatus(error) {
++    if (error && typeof error === 'object' && 'status' in error) {
++        const status = Number(error.status);
++        if (Number.isFinite(status))
++            return status;
++    }
++    if (error instanceof Error) {
++        const message = error.message.toLowerCase();
++        if (message.startsWith('401') || message.includes('not authenticated') || message.includes('authentication required')) {
++            return 401;
++        }
++    }
++    return null;
++}
++function clearAuthState() {
++    localStorage.removeItem(AUTH_STATE_KEY);
++    localStorage.removeItem(LEGACY_TOKEN_KEY);
++    localStorage.removeItem(LEGACY_REFRESH_KEY);
++}
+ export const ErrorBoundary = () => {
+     const error = useRouteError();
+     const location = useLocation();
+-    let code = null;
+-    if (error && typeof error === 'object' && 'status' in error) {
+-        const status = error.status;
+-        if (status === 401) {
+-            return _jsx(Navigate, { to: "/login", state: { from: location }, replace: true });
+-        }
+-        code = status ?? null;
++    const code = getErrorStatus(error);
++    if (code === 401) {
++        clearAuthState();
++        return _jsx(Navigate, { to: "/login", state: { from: location }, replace: true });
+     }
+     // Dev-only logging. Vite replaces import.meta.env.DEV at build time in the SPA.
+     if (import.meta.env?.DEV) {

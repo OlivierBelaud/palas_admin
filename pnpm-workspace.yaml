@@ -19,3 +19,6 @@ allowBuilds:
   simple-git-hooks: true
 minimumReleaseAgeExclude:
   - '@mantajs/*'
+patchedDependencies:
+  '@mantajs/core@0.2.0-beta.12': patches/@mantajs__core@0.2.0-beta.12.patch
+  '@mantajs/dashboard@0.2.0-beta.12': patches/@mantajs__dashboard@0.2.0-beta.12.patch

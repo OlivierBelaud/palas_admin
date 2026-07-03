@@ -1,0 +1,20 @@
+diff --git a/dist/user/auto-routes.js b/dist/user/auto-routes.js
+index 2d22a6ea7a732ece4042dcf2d1b02f718d98eaaa..acc0b99ede18c0c6ef19ce59319fc2a1698c3596 100644
+--- a/dist/user/auto-routes.js
++++ b/dist/user/auto-routes.js
+@@ -182,7 +182,14 @@ export function generateAuthRoutes(deps) {
+                 if (appMeta?.type !== 'refresh') {
+                     return Response.json({ type: 'UNAUTHORIZED', message: 'Invalid refresh token' }, { status: 401 });
+                 }
+-                const blacklisted = await cache.get(`auth:blacklist:${payload.auth_identity_id}`);
++                let blacklisted = null;
++                try {
++                    blacklisted = await cache.get(`auth:blacklist:${payload.auth_identity_id}`);
++                }
++                catch (err) {
++                    const message = err instanceof Error ? err.message : String(err);
++                    logger.warn(`[auth] Refresh token blacklist check failed: ${message}`);
++                }
+                 if (blacklisted) {
+                     return Response.json({ type: 'UNAUTHORIZED', message: 'Token has been revoked' }, { status: 401 });
+                 }
