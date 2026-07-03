@@ -364,7 +364,14 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
               selectedOffers={selectedPersonalOffers}
               onChange={setSelectedPersonalOffers}
             />
-            <CartBuilder products={products} cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
+            <CartBuilder
+              products={products}
+              market={market}
+              country={selectedMarket?.countries[0]?.code ?? 'FR'}
+              cart={cart}
+              currencyCode={currencyCode}
+              onCartChange={setCart}
+            />
             <AutomaticOffersList offers={automaticOffers} />
             <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
           </div>
@@ -492,26 +499,72 @@ function PersonalOfferSelector({
 
 function CartBuilder({
   products,
+  market,
+  country,
   cart,
   currencyCode,
   onCartChange,
 }: {
   products: MarketingProduct[]
+  market: string
+  country: string
   cart: MarketingCartLine[]
   currencyCode: string
   onCartChange: (cart: MarketingCartLine[]) => void
 }) {
-  const productMap = React.useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
   const [query, setQuery] = React.useState('')
-  const selectedProductId = React.useRef('')
+  const [after, setAfter] = React.useState<string | null>(null)
+  const [remoteProducts, setRemoteProducts] = React.useState<MarketingProduct[]>([])
+  const debouncedQuery = useDebouncedValue(query, 250)
+  const searchQuery = useQuery<{
+    items: SimulatorProduct[]
+    page_info: { hasNextPage: boolean; endCursor: string | null }
+  }>(
+    'marketing-product-search',
+    { search: debouncedQuery, country, market_key: market, after, limit: 20 },
+    { staleTime: 30_000 },
+  )
+  const productSearchResetKey = React.useMemo(
+    () => `${country}:${market}:${debouncedQuery}`,
+    [country, market, debouncedQuery],
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset Shopify pagination when the search context changes.
+  React.useEffect(() => {
+    setAfter(null)
+    setRemoteProducts([])
+  }, [productSearchResetKey])
+
+  React.useEffect(() => {
+    if (!searchQuery.data) return
+    const next = searchQuery.data.items.map(simulatorProductToMarketingProduct)
+    setRemoteProducts((previous) => mergeProducts(after ? previous : [], next))
+  }, [after, searchQuery.data])
+
+  const selectedProducts = React.useMemo(
+    () =>
+      cart
+        .map(
+          (line) =>
+            products.find((product) => product.id === line.productId) ??
+            remoteProducts.find((product) => product.id === line.productId),
+        )
+        .filter((product): product is MarketingProduct => Boolean(product)),
+    [cart, products, remoteProducts],
+  )
+  const productMap = React.useMemo(
+    () =>
+      new Map(
+        mergeProducts(products, [...remoteProducts, ...selectedProducts]).map((product) => [product.id, product]),
+      ),
+    [products, remoteProducts, selectedProducts],
+  )
   const filteredProducts = React.useMemo(() => {
-    const needle = query.trim().toLowerCase()
     const selected = new Set(cart.map((line) => line.productId))
-    return products
-      .filter((product) => !selected.has(product.id))
-      .filter((product) => !needle || product.title.toLowerCase().includes(needle))
-      .slice(0, 30)
-  }, [cart, products, query])
+    return remoteProducts.filter((product) => !selected.has(product.id)).slice(0, 60)
+  }, [cart, remoteProducts])
+  const pageInfo = searchQuery.data?.page_info
+  const canLoadMore = Boolean(pageInfo?.hasNextPage && pageInfo.endCursor && !searchQuery.isFetching)
   const subtotal = cart.reduce((sum, line) => sum + (productMap.get(line.productId)?.price ?? 0) * line.quantity, 0)
 
   return (
@@ -533,19 +586,26 @@ function CartBuilder({
               placeholder="Rechercher une bague, un charm, un cabas..."
             />
           </label>
-          <div className="grid gap-2">
-            {filteredProducts.length === 0 ? (
-              <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-                Aucun produit disponible pour cette recherche.
-              </div>
+          <div
+            className="max-h-72 overflow-y-auto rounded-md border"
+            onScroll={(event) => {
+              const element = event.currentTarget
+              const isNearBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 48
+              if (isNearBottom && canLoadMore) setAfter(pageInfo?.endCursor ?? null)
+            }}
+          >
+            {searchQuery.isFetching && filteredProducts.length === 0 ? (
+              <div className="p-3 text-xs text-muted-foreground">Recherche Shopify...</div>
             ) : null}
-            {filteredProducts.slice(0, 8).map((product) => (
+            {!searchQuery.isFetching && filteredProducts.length === 0 ? (
+              <div className="p-3 text-xs text-muted-foreground">Aucun produit disponible pour cette recherche.</div>
+            ) : null}
+            {filteredProducts.map((product) => (
               <button
                 key={product.id}
                 type="button"
-                className="flex items-center justify-between gap-3 rounded-md border p-2 text-left text-sm hover:bg-accent"
+                className="flex w-full items-center justify-between gap-3 border-b p-2 text-left text-sm last:border-b-0 hover:bg-accent"
                 onClick={() => {
-                  selectedProductId.current = product.id
                   updateQuantity(cart, product.id, 1, onCartChange)
                   setQuery('')
                 }}
@@ -556,12 +616,15 @@ function CartBuilder({
                 </span>
               </button>
             ))}
+            {canLoadMore ? (
+              <div className="p-2 text-center text-xs text-muted-foreground">Scroll pour charger plus</div>
+            ) : null}
           </div>
         </div>
         <div className="grid gap-2">
-          {products.length === 0 ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              Aucun produit Shopify contextualise trouve pour ce market.
+          {cart.length === 0 ? (
+            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              Aucun produit dans le panier simulé.
             </div>
           ) : null}
           {cart.map((cartLine) => {
@@ -1264,6 +1327,32 @@ function updateQuantity(
     return
   }
   onCartChange(cart.map((line) => (line.productId === productId ? { ...line, quantity } : line)))
+}
+
+function simulatorProductToMarketingProduct(product: SimulatorProduct): MarketingProduct {
+  return {
+    id: product.id,
+    title: product.title,
+    price: product.price,
+    category: product.category,
+    collectionIds: product.collectionIds,
+  }
+}
+
+function mergeProducts(base: MarketingProduct[], next: MarketingProduct[]): MarketingProduct[] {
+  const map = new Map<string, MarketingProduct>()
+  for (const product of base) map.set(product.id, product)
+  for (const product of next) map.set(product.id, product)
+  return Array.from(map.values())
+}
+
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = React.useState(value)
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(timer)
+  }, [delayMs, value])
+  return debounced
 }
 
 function resetScenario(
