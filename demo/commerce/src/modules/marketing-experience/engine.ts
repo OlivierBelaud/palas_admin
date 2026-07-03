@@ -1,6 +1,7 @@
 export type MarketCode = string
 export type CurrencyCode = string
 export type CustomerSegment = 'anonymous' | 'new_customer' | 'returning_customer' | 'vip'
+export type PersonalOfferType = 'welcome' | 'abandoned_cart' | 'birthday'
 export type RuleKind =
   | 'order_discount'
   | 'shipping_threshold'
@@ -53,7 +54,10 @@ interface BaseRule {
   markets?: MarketCode[]
   customerSegments?: CustomerSegment[]
   exclusiveGroup?: string
-  trigger?: { type: 'automatic' } | { type: 'code'; code: string }
+  trigger?:
+    | { type: 'automatic' }
+    | { type: 'code'; code: string }
+    | { type: 'personal_offer'; offer: PersonalOfferType }
 }
 
 export interface OrderDiscountRule extends BaseRule {
@@ -112,6 +116,7 @@ export interface MarketingExperienceInput {
   campaigns: MarketingCampaign[]
   products: MarketingProduct[]
   selectedCodes?: string[]
+  selectedPersonalOffers?: PersonalOfferType[]
 }
 
 export interface AppliedMarketingRule {
@@ -170,7 +175,15 @@ export function evaluateMarketingExperience(input: MarketingExperienceInput): Ma
     .sort((a, b) => b.priority - a.priority)
     .flatMap((campaign) =>
       campaign.rules
-        .filter((rule) => isRuleEligible(rule, input.market, input.customerSegment, input.selectedCodes ?? []))
+        .filter((rule) =>
+          isRuleEligible(
+            rule,
+            input.market,
+            input.customerSegment,
+            input.selectedCodes ?? [],
+            input.selectedPersonalOffers ?? [],
+          ),
+        )
         .map((rule) => ({ campaign, rule })),
     )
 
@@ -326,11 +339,13 @@ function isRuleEligible(
   market: MarketCode,
   customerSegment: CustomerSegment,
   selectedCodes: string[],
+  selectedPersonalOffers: PersonalOfferType[],
 ): boolean {
   if (!rule.enabled) return false
   if (rule.markets && !rule.markets.includes(market)) return false
   if (rule.customerSegments && !rule.customerSegments.includes(customerSegment)) return false
   if (rule.trigger?.type === 'code' && !selectedCodes.includes(rule.trigger.code)) return false
+  if (rule.trigger?.type === 'personal_offer' && !selectedPersonalOffers.includes(rule.trigger.offer)) return false
   return true
 }
 

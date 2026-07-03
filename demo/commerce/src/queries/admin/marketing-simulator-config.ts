@@ -190,6 +190,7 @@ interface NormalizedPalasRule {
   gift_product_id: string | null
   gift_title: string | null
   paid_rate: number | null
+  payload: Record<string, unknown> | null
   source: 'palas'
 }
 
@@ -336,6 +337,7 @@ function normalizePalasRule(row: Record<string, unknown>): NormalizedPalasRule {
     gift_product_id: nullableString(row.gift_product_id),
     gift_title: nullableString(row.gift_title),
     paid_rate: nullableNumber(row.paid_rate),
+    payload: typeof row.payload === 'object' && row.payload !== null ? (row.payload as Record<string, unknown>) : null,
     source: 'palas',
   }
 }
@@ -679,7 +681,7 @@ const DISCOUNTS_QUERY = `
 
 const PRODUCT_VARIANTS_QUERY = `
   query PalasMarketingSimulatorProducts($country: CountryCode!) {
-    productVariants(first: 30, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
+    productVariants(first: 250, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
       nodes {
         id
         title

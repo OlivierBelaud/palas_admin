@@ -1,14 +1,14 @@
 import { useCommand, useQuery } from '@mantajs/sdk'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Progress, Skeleton } from '@mantajs/ui'
-import { CalendarDays, Megaphone, PackagePlus, Play, RefreshCw, RotateCcw, Save, Tags, Truck } from 'lucide-react'
+import { CalendarDays, Megaphone, PackagePlus, RefreshCw, RotateCcw, Save, Tags, Truck } from 'lucide-react'
 import * as React from 'react'
 import {
-  type CustomerSegment,
   evaluateMarketingExperience,
   type MarketCode,
   type MarketingCampaign,
   type MarketingCartLine,
   type MarketingProduct,
+  type PersonalOfferType,
   type ShippingThresholdRule,
 } from '../../../modules/marketing-experience/engine'
 
@@ -97,6 +97,7 @@ interface PalasRule {
   gift_product_id: string | null
   gift_title: string | null
   paid_rate: number | null
+  payload?: Record<string, unknown> | null
   source: 'palas'
 }
 
@@ -122,6 +123,20 @@ interface AvailableCode {
   source: 'shopify' | 'palas'
 }
 
+interface AutomaticOffer {
+  id: string
+  title: string
+  summary: string
+  source: 'shopify' | 'palas' | 'shipping_profile'
+}
+
+interface PersonalOfferOption {
+  type: PersonalOfferType
+  title: string
+  value: number
+  value_type: 'percentage' | 'fixed_amount'
+}
+
 interface MarketingRuleFormState {
   id: string | null
   rule_type: PalasRuleType
@@ -139,13 +154,6 @@ interface MarketingRuleFormState {
   gift_product_id: string
   paid_rate: string
 }
-
-const CUSTOMER_OPTIONS: Array<{ value: CustomerSegment; label: string }> = [
-  { value: 'anonymous', label: 'Anonyme' },
-  { value: 'new_customer', label: 'Nouveau client' },
-  { value: 'returning_customer', label: 'Client existant' },
-  { value: 'vip', label: 'VIP' },
-]
 
 type UpsertMarketingRuleInput = {
   id?: string
@@ -185,11 +193,10 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const config = configQuery.data
   const [now, setNow] = React.useState(defaultDateTimeLocal)
   const [market, setMarket] = React.useState<MarketCode>('')
-  const [customerSegment, setCustomerSegment] = React.useState<CustomerSegment>('new_customer')
   const [cart, setCart] = React.useState<MarketingCartLine[]>([])
   const campaigns = React.useMemo(() => buildCampaigns(config), [config])
-  const [enabledCampaignIds, setEnabledCampaignIds] = React.useState<string[]>([])
   const [selectedCodes, setSelectedCodes] = React.useState<string[]>([])
+  const [selectedPersonalOffers, setSelectedPersonalOffers] = React.useState<PersonalOfferType[]>([])
   const [ruleForm, setRuleForm] = React.useState<MarketingRuleFormState>(() => initialRuleForm('', 'EUR'))
   const [ruleFormError, setRuleFormError] = React.useState<string | null>(null)
 
@@ -197,11 +204,6 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
     if (!config || market) return
     setMarket(defaultMarketKey(config.markets))
   }, [config, market])
-
-  React.useEffect(() => {
-    if (enabledCampaignIds.length > 0 || campaigns.length === 0) return
-    setEnabledCampaignIds(campaigns.map((campaign) => campaign.id))
-  }, [campaigns, enabledCampaignIds.length])
 
   const selectedMarket = config?.markets.find((item) => item.key === market) ?? null
   const selectedShippingThreshold = config?.shipping_thresholds.find((item) => item.market_key === market) ?? null
@@ -247,30 +249,26 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
     }
   }
 
-  const activeCampaigns = React.useMemo(
-    () =>
-      campaigns.map((campaign) => ({
-        ...campaign,
-        status: enabledCampaignIds.includes(campaign.id) ? campaign.status : ('paused' as const),
-      })),
-    [campaigns, enabledCampaignIds],
-  )
+  const scenarioDateIso = React.useMemo(() => new Date(now).toISOString(), [now])
   const result = React.useMemo(
     () =>
       evaluateMarketingExperience({
-        now: new Date(now).toISOString(),
+        now: scenarioDateIso,
         market,
         currencyCode,
-        customerSegment,
+        customerSegment: 'anonymous',
         cart,
-        campaigns: activeCampaigns,
+        campaigns,
         products,
         selectedCodes,
+        selectedPersonalOffers,
       }),
-    [activeCampaigns, cart, currencyCode, customerSegment, market, now, products, selectedCodes],
+    [campaigns, cart, currencyCode, market, products, scenarioDateIso, selectedCodes, selectedPersonalOffers],
   )
   const controlRules = React.useMemo(() => buildControlRules(config), [config])
-  const availableCodes = React.useMemo(() => buildAvailableCodes(config), [config])
+  const availableCodes = React.useMemo(() => buildAvailableCodes(config, scenarioDateIso), [config, scenarioDateIso])
+  const automaticOffers = React.useMemo(() => buildAutomaticOffers(config, scenarioDateIso), [config, scenarioDateIso])
+  const personalOffers = React.useMemo(() => buildPersonalOffers(config), [config])
 
   if (configQuery.isLoading) return <LoadingState />
   if (configQuery.isError) return <ErrorState message={configQuery.error.message} />
@@ -313,7 +311,15 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
                 setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
                 return
               }
-              resetScenario(setNow, setMarket, setCustomerSegment, setCart, config?.markets ?? [], products)
+              resetScenario(
+                setNow,
+                setMarket,
+                setCart,
+                setSelectedCodes,
+                setSelectedPersonalOffers,
+                config?.markets ?? [],
+                products,
+              )
             }}
           >
             <RotateCcw className="mr-2 size-3.5" />
@@ -343,31 +349,30 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
           />
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)_340px]">
           <div className="flex flex-col gap-4">
             <ScenarioCard
               now={now}
               market={market}
               markets={config?.markets ?? []}
-              customerSegment={customerSegment}
               shippingThreshold={selectedShippingThreshold}
               onNowChange={setNow}
               onMarketChange={setMarket}
-              onCustomerSegmentChange={setCustomerSegment}
+            />
+            <PersonalOfferSelector
+              offers={personalOffers}
+              selectedOffers={selectedPersonalOffers}
+              onChange={setSelectedPersonalOffers}
             />
             <CartBuilder products={products} cart={cart} currencyCode={currencyCode} onCartChange={setCart} />
+            <AutomaticOffersList offers={automaticOffers} />
             <CodeSelector codes={availableCodes} selectedCodes={selectedCodes} onChange={setSelectedCodes} />
-            <CampaignToggles
-              campaigns={campaigns}
-              enabledCampaignIds={enabledCampaignIds}
-              onChange={setEnabledCampaignIds}
-            />
           </div>
 
           <div className="flex flex-col gap-4">
-            <SurfacePreview result={result} />
             <DecisionGrid result={result} />
           </div>
+          <ImpactColumn result={result} />
         </div>
       )}
     </div>
@@ -378,20 +383,16 @@ function ScenarioCard({
   now,
   market,
   markets,
-  customerSegment,
   shippingThreshold,
   onNowChange,
   onMarketChange,
-  onCustomerSegmentChange,
 }: {
   now: string
   market: MarketCode
   markets: SimulatorMarket[]
-  customerSegment: CustomerSegment
   shippingThreshold: SimulatorShippingThreshold | null
   onNowChange: (value: string) => void
   onMarketChange: (value: MarketCode) => void
-  onCustomerSegmentChange: (value: CustomerSegment) => void
 }) {
   return (
     <Card className="border border-border/70 shadow-none">
@@ -439,12 +440,51 @@ function ScenarioCard({
             Aucun seuil livraison Shopify trouve pour ce market.
           </div>
         )}
-        <SegmentedControl
-          label="Client"
-          value={customerSegment}
-          options={CUSTOMER_OPTIONS}
-          onChange={(value) => onCustomerSegmentChange(value as CustomerSegment)}
-        />
+      </CardContent>
+    </Card>
+  )
+}
+
+function PersonalOfferSelector({
+  offers,
+  selectedOffers,
+  onChange,
+}: {
+  offers: PersonalOfferOption[]
+  selectedOffers: PersonalOfferType[]
+  onChange: (offers: PersonalOfferType[]) => void
+}) {
+  return (
+    <Card className="border border-border/70 shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold tracking-normal">Codes personnels simulés</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {offers.map((offer) => {
+          const selected = selectedOffers.includes(offer.type)
+          return (
+            <button
+              key={offer.type}
+              type="button"
+              onClick={() =>
+                onChange(
+                  selected ? selectedOffers.filter((item) => item !== offer.type) : [...selectedOffers, offer.type],
+                )
+              }
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                selected
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                  : 'border-input bg-background text-muted-foreground'
+              }`}
+            >
+              <div className="font-medium">{offer.title}</div>
+              <div className="mt-1 text-xs">
+                {offer.value_type === 'percentage' ? `${offer.value}%` : formatMoney(offer.value, 'EUR')} · code
+                individuel simulé
+              </div>
+            </button>
+          )
+        })}
       </CardContent>
     </Card>
   )
@@ -462,6 +502,16 @@ function CartBuilder({
   onCartChange: (cart: MarketingCartLine[]) => void
 }) {
   const productMap = React.useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
+  const [query, setQuery] = React.useState('')
+  const selectedProductId = React.useRef('')
+  const filteredProducts = React.useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    const selected = new Set(cart.map((line) => line.productId))
+    return products
+      .filter((product) => !selected.has(product.id))
+      .filter((product) => !needle || product.title.toLowerCase().includes(needle))
+      .slice(0, 30)
+  }, [cart, products, query])
   const subtotal = cart.reduce((sum, line) => sum + (productMap.get(line.productId)?.price ?? 0) * line.quantity, 0)
 
   return (
@@ -474,13 +524,49 @@ function CartBuilder({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="grid gap-2">
+          <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-product-search">
+            <span className="font-medium">Ajouter un produit Shopify</span>
+            <Input
+              id="marketing-product-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Rechercher une bague, un charm, un cabas..."
+            />
+          </label>
+          <div className="grid gap-2">
+            {filteredProducts.length === 0 ? (
+              <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                Aucun produit disponible pour cette recherche.
+              </div>
+            ) : null}
+            {filteredProducts.slice(0, 8).map((product) => (
+              <button
+                key={product.id}
+                type="button"
+                className="flex items-center justify-between gap-3 rounded-md border p-2 text-left text-sm hover:bg-accent"
+                onClick={() => {
+                  selectedProductId.current = product.id
+                  updateQuantity(cart, product.id, 1, onCartChange)
+                  setQuery('')
+                }}
+              >
+                <span className="min-w-0 truncate">{product.title}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {formatMoney(product.price, currencyCode)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-2">
           {products.length === 0 ? (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               Aucun produit Shopify contextualise trouve pour ce market.
             </div>
           ) : null}
-          {products.map((product) => {
-            const line = cart.find((item) => item.productId === product.id)
+          {cart.map((cartLine) => {
+            const product = productMap.get(cartLine.productId)
+            if (!product) return null
             return (
               <div key={product.id} className="flex items-center justify-between gap-3 rounded-md border p-2">
                 <div className="min-w-0">
@@ -491,15 +577,15 @@ function CartBuilder({
                   <button
                     type="button"
                     className="h-8 w-8 text-sm"
-                    onClick={() => updateQuantity(cart, product.id, (line?.quantity ?? 0) - 1, onCartChange)}
+                    onClick={() => updateQuantity(cart, product.id, cartLine.quantity - 1, onCartChange)}
                   >
                     -
                   </button>
-                  <span className="w-8 text-center text-sm">{line?.quantity ?? 0}</span>
+                  <span className="w-8 text-center text-sm">{cartLine.quantity}</span>
                   <button
                     type="button"
                     className="h-8 w-8 text-sm"
-                    onClick={() => updateQuantity(cart, product.id, (line?.quantity ?? 0) + 1, onCartChange)}
+                    onClick={() => updateQuantity(cart, product.id, cartLine.quantity + 1, onCartChange)}
                   >
                     +
                   </button>
@@ -512,6 +598,31 @@ function CartBuilder({
           <span className="text-muted-foreground">Subtotal</span>
           <span className="font-semibold">{formatMoney(subtotal, currencyCode)}</span>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AutomaticOffersList({ offers }: { offers: AutomaticOffer[] }) {
+  return (
+    <Card className="border border-border/70 shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold tracking-normal">Codes automatiques</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {offers.length === 0 ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+            Aucun code automatique actif à cette date.
+          </div>
+        ) : null}
+        {offers.map((offer) => (
+          <div key={offer.id} className="rounded-md border p-3 text-sm">
+            <div className="font-medium">{offer.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {offer.summary} · {offer.source}
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
   )
@@ -790,60 +901,13 @@ function CodeSelector({
   )
 }
 
-function CampaignToggles({
-  campaigns,
-  enabledCampaignIds,
-  onChange,
-}: {
-  campaigns: MarketingCampaign[]
-  enabledCampaignIds: string[]
-  onChange: (ids: string[]) => void
-}) {
-  return (
-    <Card className="border border-border/70 shadow-none">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-normal">
-          <Play className="size-4" />
-          Regles actives
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {campaigns.map((campaign) => {
-          const enabled = enabledCampaignIds.includes(campaign.id)
-          return (
-            <button
-              key={campaign.id}
-              type="button"
-              onClick={() =>
-                onChange(
-                  enabled
-                    ? enabledCampaignIds.filter((id) => id !== campaign.id)
-                    : [...enabledCampaignIds, campaign.id],
-                )
-              }
-              className={`rounded-md border p-3 text-left text-sm transition-colors ${
-                enabled
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'border-input bg-background text-muted-foreground'
-              }`}
-            >
-              <div className="font-medium">{campaign.title}</div>
-              <div className="mt-1 text-xs">{campaign.rules.map((rule) => rule.label).join(' · ')}</div>
-            </button>
-          )
-        })}
-      </CardContent>
-    </Card>
-  )
-}
-
 function SurfacePreview({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
   const next = result.progress.next
   const progressMax = result.progress.milestones.at(-1)?.amount ?? Math.max(result.subtotal, 1)
   const progressValue = Math.min(100, (result.progress.current / progressMax) * 100)
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4">
       <Card className="border border-border/70 shadow-none">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-normal">
@@ -901,7 +965,13 @@ function MarketingRulesDashboard({
   onEditPalasRule: (rule: PalasRule) => void
 }) {
   const shippingRules = rules.filter((rule) => rule.family === 'shipping')
-  const lifecycleRules = rules.filter((rule) => rule.family === 'email')
+  const welcomeRules = rules.filter((rule) => rule.family === 'email' && rule.title.toLowerCase().includes('bienvenue'))
+  const abandonedCartRules = rules.filter(
+    (rule) => rule.family === 'email' && rule.title.toLowerCase().includes('panier'),
+  )
+  const birthdayRules = rules.filter(
+    (rule) => rule.family === 'email' && rule.title.toLowerCase().includes('anniversaire'),
+  )
   const automaticRules = rules.filter(
     (rule) => rule.family !== 'shipping' && rule.family !== 'email' && rule.trigger !== 'code',
   )
@@ -953,10 +1023,24 @@ function MarketingRulesDashboard({
 
       <div className="grid gap-4 xl:grid-cols-2">
         <RuleSection
-          title="Offres bienvenue et paniers abandonnes"
-          description="Rules qui servent de source pour emails, popups et relances."
-          rules={lifecycleRules}
-          empty="Aucune rule lifecycle configuree."
+          title="Offre de bienvenue"
+          description="Source de vérité pour popup, email et code personnel de bienvenue."
+          rules={welcomeRules}
+          empty="Aucune offre de bienvenue configurée."
+          onEditPalasRule={onEditPalasRule}
+        />
+        <RuleSection
+          title="Panier abandonné"
+          description="Source de vérité pour les relances panier abandonné."
+          rules={abandonedCartRules}
+          empty="Aucune offre panier abandonné configurée."
+          onEditPalasRule={onEditPalasRule}
+        />
+        <RuleSection
+          title="Anniversaire"
+          description="Source de vérité pour le code personnel birthday."
+          rules={birthdayRules}
+          empty="Aucune offre anniversaire configurée."
           onEditPalasRule={onEditPalasRule}
         />
         <RuleSection
@@ -1047,52 +1131,60 @@ function RuleSection({
 
 function DecisionGrid({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <Card className="border border-border/70 shadow-none">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold tracking-normal">Decision engine</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="border-y bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Regle</th>
-                  <th className="px-4 py-3 font-medium">Type</th>
-                  <th className="px-4 py-3 font-medium">Impact</th>
-                  <th className="px-4 py-3 font-medium">Execution</th>
+    <Card className="border border-border/70 shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold tracking-normal">Decision engine</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-sm">
+            <thead className="border-y bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3 font-medium">Regle retenue</th>
+                <th className="px-4 py-3 font-medium">Type</th>
+                <th className="px-4 py-3 font-medium">Raisonnement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.appliedRules.map((rule) => (
+                <tr key={`${rule.campaignId}-${rule.ruleId}`} className="border-b align-top last:border-b-0">
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{rule.label}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{rule.campaignTitle}</div>
+                  </td>
+                  <td className="px-4 py-3">{kindLabel(rule.kind)}</td>
+                  <td className="px-4 py-3">{rule.impact}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {result.appliedRules.map((rule) => (
-                  <tr key={`${rule.campaignId}-${rule.ruleId}`} className="border-b align-top last:border-b-0">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{rule.label}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{rule.campaignTitle}</div>
-                    </td>
-                    <td className="px-4 py-3">{kindLabel(rule.kind)}</td>
-                    <td className="px-4 py-3">{rule.impact}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {rule.execution.map((channel) => (
-                          <Badge key={channel} variant="outline" className="text-[11px]">
-                            {channel}
-                          </Badge>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              ))}
+              {result.appliedRules.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={3}>
+                    Aucune règle applicable pour ce scénario.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        {result.warnings.length > 0 ? (
+          <div className="grid gap-2 border-t p-4 text-xs">
+            {result.warnings.map((warning) => (
+              <div key={warning} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">
+                {warning}
+              </div>
+            ))}
           </div>
-        </CardContent>
-      </Card>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
 
-      <div className="flex flex-col gap-4">
-        <SummaryCard result={result} />
-        <PlanCard result={result} />
-      </div>
+function ImpactColumn({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <SurfacePreview result={result} />
+      <SummaryCard result={result} />
     </div>
   )
 }
@@ -1108,29 +1200,6 @@ function SummaryCard({ result }: { result: ReturnType<typeof evaluateMarketingEx
         <SummaryRow label="Discounts" value={`-${formatMoney(result.discountTotal, result.currencyCode)}`} />
         <SummaryRow label="Livraison estimee" value={formatMoney(result.estimatedShipping, result.currencyCode)} />
         <SummaryRow label="Total avant taxes" value={formatMoney(result.totalBeforeTax, result.currencyCode)} strong />
-      </CardContent>
-    </Card>
-  )
-}
-
-function PlanCard({ result }: { result: ReturnType<typeof evaluateMarketingExperience> }) {
-  return (
-    <Card className="border border-border/70 shadow-none">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold tracking-normal">Plan backend</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-2 text-xs">
-        {result.shopifyPlan.map((step) => (
-          <div key={`${step.sourceRuleId}-${step.channel}`} className="rounded-md bg-muted p-2">
-            <div className="font-medium">{step.channel}</div>
-            <div className="mt-1 text-muted-foreground">{step.action}</div>
-          </div>
-        ))}
-        {result.warnings.map((warning) => (
-          <div key={warning} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">
-            {warning}
-          </div>
-        ))}
       </CardContent>
     </Card>
   )
@@ -1200,15 +1269,17 @@ function updateQuantity(
 function resetScenario(
   setNow: (value: string) => void,
   setMarket: (value: MarketCode) => void,
-  setCustomerSegment: (value: CustomerSegment) => void,
   setCart: (value: MarketingCartLine[]) => void,
+  setSelectedCodes: (value: string[]) => void,
+  setSelectedPersonalOffers: (value: PersonalOfferType[]) => void,
   markets: SimulatorMarket[],
   products: MarketingProduct[],
 ) {
   setNow(defaultDateTimeLocal())
   setMarket(defaultMarketKey(markets))
-  setCustomerSegment('new_customer')
   setCart(defaultCart(products))
+  setSelectedCodes([])
+  setSelectedPersonalOffers([])
 }
 
 function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
@@ -1252,7 +1323,7 @@ function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
     (rule): ControlRule => ({
       id: `palas-${rule.id}`,
       title: rule.title,
-      family: familyForPalasRule(rule.rule_type),
+      family: familyForPalasRule(rule),
       source: 'palas',
       trigger: triggerForPalasRule(rule),
       status: rule.status,
@@ -1267,14 +1338,15 @@ function buildControlRules(config: SimulatorConfig | undefined): ControlRule[] {
   return [...palasRules, ...shopifyDiscountRules, ...shippingRules].sort(compareControlRules)
 }
 
-function buildAvailableCodes(config: SimulatorConfig | undefined): AvailableCode[] {
+function buildAvailableCodes(config: SimulatorConfig | undefined, nowIso: string): AvailableCode[] {
   if (!config) return []
   const shopifyCodes = config.shopify_discounts
     .filter(
       (discount) =>
         discount.code &&
         isPublicShopifyCampaignDiscount(discount) &&
-        (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED'),
+        (discount.status === 'ACTIVE' || discount.status === 'SCHEDULED') &&
+        isDiscountActiveAt(discount, nowIso),
     )
     .map(
       (discount): AvailableCode => ({
@@ -1286,7 +1358,10 @@ function buildAvailableCodes(config: SimulatorConfig | undefined): AvailableCode
       }),
     )
   const palasCodes = config.palas_rules
-    .filter((rule) => rule.code && rule.status !== 'paused')
+    .filter(
+      (rule) =>
+        rule.code && rule.status !== 'paused' && !personalOfferTypeForRule(rule) && isRuleActiveAt(rule, nowIso),
+    )
     .map(
       (rule): AvailableCode => ({
         id: `palas-code-${rule.id}`,
@@ -1299,10 +1374,58 @@ function buildAvailableCodes(config: SimulatorConfig | undefined): AvailableCode
   return [...shopifyCodes, ...palasCodes]
 }
 
-function familyForPalasRule(type: PalasRuleType): ControlRule['family'] {
-  if (type === 'shipping_threshold') return 'shipping'
-  if (type === 'gift_threshold') return 'gift'
-  if (type === 'first_order_discount') return 'email'
+function buildAutomaticOffers(config: SimulatorConfig | undefined, nowIso: string): AutomaticOffer[] {
+  if (!config) return []
+  const shopify = config.shopify_discounts
+    .filter((discount) => !discount.code && isDiscountActiveAt(discount, nowIso))
+    .map(
+      (discount): AutomaticOffer => ({
+        id: `auto-shopify-${discount.id}`,
+        title: discount.title,
+        summary: discount.summary || `${discount.value}% automatique`,
+        source: 'shopify',
+      }),
+    )
+  const palas = config.palas_rules
+    .filter(
+      (rule) =>
+        rule.status === 'active' && !rule.code && !personalOfferTypeForRule(rule) && isRuleActiveAt(rule, nowIso),
+    )
+    .map(
+      (rule): AutomaticOffer => ({
+        id: `auto-palas-${rule.id}`,
+        title: rule.title,
+        summary: ruleSummary(rule),
+        source: rule.execution_kind === 'shipping_profile' ? 'shipping_profile' : 'palas',
+      }),
+    )
+  return [...shopify, ...palas]
+}
+
+function buildPersonalOffers(config: SimulatorConfig | undefined): PersonalOfferOption[] {
+  const rules = config?.palas_rules ?? []
+  const defaults: Record<PersonalOfferType, PersonalOfferOption> = {
+    welcome: { type: 'welcome', title: 'Offre de bienvenue', value: 10, value_type: 'percentage' },
+    abandoned_cart: { type: 'abandoned_cart', title: 'Panier abandonné', value: 10, value_type: 'percentage' },
+    birthday: { type: 'birthday', title: 'Anniversaire', value: 15, value_type: 'percentage' },
+  }
+  for (const rule of rules) {
+    const type = personalOfferTypeForRule(rule)
+    if (!type || !rule.value_type || rule.value == null) continue
+    defaults[type] = {
+      type,
+      title: rule.title,
+      value: rule.value,
+      value_type: rule.value_type,
+    }
+  }
+  return [defaults.welcome, defaults.abandoned_cart, defaults.birthday]
+}
+
+function familyForPalasRule(rule: PalasRule): ControlRule['family'] {
+  if (rule.rule_type === 'shipping_threshold') return 'shipping'
+  if (rule.rule_type === 'gift_threshold') return 'gift'
+  if (rule.rule_type === 'first_order_discount' || personalOfferTypeForRule(rule)) return 'email'
   return 'discount'
 }
 
@@ -1334,6 +1457,35 @@ function isPublicShopifyCampaignDiscount(discount: SimulatorDiscount): boolean {
   if (individualHints.some((hint) => haystack.includes(hint))) return false
   const compactCode = discount.code.replace(/[^a-zA-Z0-9]/g, '')
   return compactCode.length <= 18
+}
+
+function personalOfferTypeForRule(rule: PalasRule): PersonalOfferType | null {
+  const raw = rule.payload?.personal_offer
+  if (raw === 'welcome' || raw === 'abandoned_cart' || raw === 'birthday') return raw
+  const title = rule.title.toLowerCase()
+  if (rule.rule_type === 'first_order_discount' || title.includes('bienvenue')) return 'welcome'
+  if (title.includes('panier') || title.includes('abandon')) return 'abandoned_cart'
+  if (title.includes('anniversaire') || title.includes('birthday')) return 'birthday'
+  return null
+}
+
+function isDiscountActiveAt(discount: SimulatorDiscount, nowIso: string): boolean {
+  if (discount.status !== 'ACTIVE' && discount.status !== 'SCHEDULED') return false
+  return isWindowActive(discount.starts_at, discount.ends_at, nowIso)
+}
+
+function isRuleActiveAt(rule: PalasRule, nowIso: string): boolean {
+  if (rule.status !== 'active') return false
+  return isWindowActive(rule.starts_at, rule.ends_at, nowIso)
+}
+
+function isWindowActive(startsAt: string | null, endsAt: string | null, nowIso: string): boolean {
+  const now = new Date(nowIso).getTime()
+  const start = startsAt ? new Date(startsAt).getTime() : Number.NEGATIVE_INFINITY
+  const end = endsAt ? new Date(endsAt).getTime() : Number.POSITIVE_INFINITY
+  if (Number.isNaN(now)) return false
+  if (Number.isNaN(start) || Number.isNaN(end)) return false
+  return start <= now && now <= end
 }
 
 function compareControlRules(a: ControlRule, b: ControlRule): number {
@@ -1439,6 +1591,7 @@ function buildCampaigns(config: SimulatorConfig | undefined): MarketingCampaign[
 }
 
 function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign | null {
+  const personalOfferType = personalOfferTypeForRule(rule)
   const base = {
     id: `palas-rule-${rule.id}`,
     title: rule.title,
@@ -1448,7 +1601,7 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
     priority: rule.rule_type === 'shipping_threshold' ? 250 - index : 200 - index,
   } satisfies Omit<MarketingCampaign, 'rules'>
 
-  if (rule.rule_type === 'first_order_discount' && rule.value_type && rule.value != null) {
+  if ((rule.rule_type === 'first_order_discount' || personalOfferType) && rule.value_type && rule.value != null) {
     return {
       ...base,
       rules: [
@@ -1458,9 +1611,8 @@ function palasRuleToCampaign(rule: PalasRule, index: number): MarketingCampaign 
           label: rule.title,
           enabled: true,
           execution: ['email_copy', 'theme_surface'],
-          trigger: { type: 'automatic' },
-          customerSegments: ['new_customer'],
-          exclusiveGroup: 'first_order_discount',
+          trigger: personalOfferType ? { type: 'personal_offer', offer: personalOfferType } : { type: 'automatic' },
+          exclusiveGroup: personalOfferType ? 'personal_discount' : 'first_order_discount',
           valueType: rule.value_type,
           value: rule.value,
           target: { type: 'all' },
