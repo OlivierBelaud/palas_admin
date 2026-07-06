@@ -67,6 +67,7 @@ interface DeliveryProfileNode {
 interface MarketingRuleRow {
   id: string
   shopify_id?: string | null
+  gift_product_id?: string | null
   payload?: Record<string, unknown> | null
 }
 
@@ -125,8 +126,10 @@ export default defineCommand({
     const existing = input.id ? (await svc.marketingRule.list({ id: input.id }, { take: 1 }))[0] : null
     const existingShopifyId = existing?.shopify_id ?? null
     let shopifyId: string | null = existingShopifyId
-    let syncStatus: SyncStatus = executionKind === 'local_cart_rule' || input.status !== 'active' ? 'local_only' : 'pending'
+    let syncStatus: SyncStatus =
+      executionKind === 'local_cart_rule' || input.status !== 'active' ? 'local_only' : 'pending'
     let syncError: string | null = null
+    let payload = buildPayload(existing?.payload, input.personal_offer)
 
     if (executionKind === 'shopify_discount' && input.status === 'active') {
       try {
@@ -172,6 +175,32 @@ export default defineCommand({
       }
     }
 
+    if (input.rule_type === 'gift_threshold') {
+      try {
+        const existingGiftVariantId = existing?.gift_product_id ?? readGiftVariantId(existing?.payload)
+        if (existingGiftVariantId && existingGiftVariantId !== input.gift_product_id) {
+          await restoreShopifyGiftVariant(existingGiftVariantId, existing?.payload)
+          payload = clearGiftPayload(payload)
+        }
+
+        if (input.status === 'active') {
+          const result = await prepareShopifyGiftVariant(input.gift_product_id as string, payload)
+          payload = { ...payload, ...result.payload }
+          shopifyId = result.productId
+          syncStatus = 'synced'
+        } else if (existingGiftVariantId) {
+          await restoreShopifyGiftVariant(existingGiftVariantId, payload)
+          payload = clearGiftPayload(payload)
+          shopifyId = null
+          syncStatus = 'local_only'
+        }
+      } catch (err) {
+        syncStatus = 'error'
+        syncError = (err as Error).message
+        log.warn(`[upsertMarketingRule] Shopify gift sync failed: ${syncError}`)
+      }
+    }
+
     const data = {
       title: input.title,
       rule_type: input.rule_type,
@@ -191,7 +220,7 @@ export default defineCommand({
       gift_product_id: input.gift_product_id || null,
       gift_title: input.gift_title || null,
       paid_rate: input.paid_rate ?? null,
-      payload: buildPayload(existing?.payload, input.personal_offer),
+      payload,
     }
 
     const row = input.id ? await svc.marketingRule.update(input.id, data) : await svc.marketingRule.create(data)
@@ -216,6 +245,138 @@ function buildPayload(
   return payload
 }
 
+export function readGiftVariantId(payload: Record<string, unknown> | null | undefined): string | null {
+  const value = payload?.gift_variant_id
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function clearGiftPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...payload }
+  delete next.gift_variant_id
+  delete next.gift_product_id
+  delete next.gift_original_price
+  delete next.gift_original_compare_at_price
+  delete next.gift_currency_code
+  return next
+}
+
+interface GiftVariantNode {
+  id: string
+  price: string
+  compareAtPrice: string | null
+  product: {
+    id: string
+    metafield: { id: string; value: string } | null
+  }
+}
+
+async function prepareShopifyGiftVariant(
+  variantId: string,
+  payload: Record<string, unknown>,
+): Promise<{ productId: string; payload: Record<string, unknown> }> {
+  const client = new ShopifyAdminClient()
+  const variant = await readGiftVariant(client, variantId)
+  const originalPrice = readPayloadNumber(payload.gift_original_price) ?? Number(variant.price)
+  const originalCompareAtPrice =
+    readPayloadNumber(payload.gift_original_compare_at_price) ??
+    (variant.compareAtPrice == null ? null : Number(variant.compareAtPrice))
+
+  if (!Number.isFinite(originalPrice) || originalPrice <= 0) {
+    throw new MantaError('INVALID_DATA', 'Le produit cadeau doit avoir un prix original positif avant passage a zero.')
+  }
+
+  await updateGiftVariantPrice(client, variant.id, '0.00', String(originalPrice))
+  await setGiftOnlyMetafield(client, variant.product.id, true)
+
+  return {
+    productId: variant.product.id,
+    payload: {
+      gift_variant_id: variant.id,
+      gift_product_id: variant.product.id,
+      gift_original_price: originalPrice,
+      gift_original_compare_at_price: originalCompareAtPrice,
+    },
+  }
+}
+
+export async function restoreShopifyGiftVariant(
+  variantId: string,
+  payload: Record<string, unknown> | null | undefined,
+): Promise<void> {
+  const originalPrice = readPayloadNumber(payload?.gift_original_price)
+  if (!originalPrice || originalPrice <= 0) return
+
+  const client = new ShopifyAdminClient()
+  const variant = await readGiftVariant(client, variantId)
+  const originalCompareAtPrice = readPayloadNumber(payload?.gift_original_compare_at_price)
+
+  await updateGiftVariantPrice(
+    client,
+    variant.id,
+    String(originalPrice),
+    originalCompareAtPrice == null ? null : String(originalCompareAtPrice),
+  )
+  await setGiftOnlyMetafield(client, variant.product.id, false)
+}
+
+async function readGiftVariant(client: ShopifyAdminClient, variantId: string): Promise<GiftVariantNode> {
+  const data = await client.query<{
+    node: GiftVariantNode | null
+  }>(GIFT_VARIANT_QUERY, { id: variantId })
+  if (!data.node?.id) throw new MantaError('NOT_FOUND', `Variant Shopify introuvable: ${variantId}`)
+  return data.node
+}
+
+async function updateGiftVariantPrice(
+  client: ShopifyAdminClient,
+  variantId: string,
+  price: string,
+  compareAtPrice: string | null,
+): Promise<void> {
+  const data = await client.query<{
+    productVariantUpdate: {
+      productVariant: { id: string } | null
+      userErrors: Array<{ field?: string[] | null; message: string }>
+    }
+  }>(GIFT_VARIANT_UPDATE_MUTATION, {
+    input: {
+      id: variantId,
+      price,
+      compareAtPrice,
+    },
+  })
+  const errors = data.productVariantUpdate.userErrors
+  if (errors.length > 0) throw new MantaError('UNEXPECTED_STATE', errors.map((error) => error.message).join(' | '))
+}
+
+async function setGiftOnlyMetafield(client: ShopifyAdminClient, productId: string, value: boolean): Promise<void> {
+  const data = await client.query<{
+    metafieldsSet: {
+      metafields: Array<{ id: string }>
+      userErrors: Array<{ field?: string[] | null; message: string }>
+    }
+  }>(GIFT_ONLY_METAFIELD_MUTATION, {
+    metafields: [
+      {
+        ownerId: productId,
+        namespace: 'palas',
+        key: 'gift_only',
+        type: 'boolean',
+        value: value ? 'true' : 'false',
+      },
+    ],
+  })
+  const errors = data.metafieldsSet.userErrors
+  if (errors.length > 0) throw new MantaError('UNEXPECTED_STATE', errors.map((error) => error.message).join(' | '))
+}
+
+function readPayloadNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 function executionKindFor(ruleType: MarketingRuleType): ExecutionKind {
   if (ruleType === 'order_discount') return 'shopify_discount'
   if (ruleType === 'shipping_threshold') return 'shipping_profile'
@@ -229,8 +390,8 @@ function validateMarketingRule(input: MarketingRuleInput) {
     }
   }
   if (input.rule_type === 'gift_threshold') {
-    if (input.threshold == null || !input.gift_title) {
-      throw new MantaError('INVALID_DATA', 'Un cadeau doit avoir un seuil et un cadeau.')
+    if (input.threshold == null || !input.gift_title || !input.gift_product_id) {
+      throw new MantaError('INVALID_DATA', 'Un cadeau doit avoir un seuil, un libelle et un variant Shopify.')
     }
   }
   if (input.rule_type === 'shipping_threshold') {
@@ -428,6 +589,43 @@ function isMoneyV2(
 ): value is { __typename: 'MoneyV2' } & MoneyNode {
   return value?.__typename === 'MoneyV2'
 }
+
+const GIFT_VARIANT_QUERY = `
+  query PalasGiftVariant($id: ID!) {
+    node(id: $id) {
+      ... on ProductVariant {
+        id
+        price
+        compareAtPrice
+        product {
+          id
+          metafield(namespace: "palas", key: "gift_only") {
+            id
+            value
+          }
+        }
+      }
+    }
+  }
+`
+
+const GIFT_VARIANT_UPDATE_MUTATION = `
+  mutation PalasUpdateGiftVariant($input: ProductVariantInput!) {
+    productVariantUpdate(input: $input) {
+      productVariant { id }
+      userErrors { field message }
+    }
+  }
+`
+
+const GIFT_ONLY_METAFIELD_MUTATION = `
+  mutation PalasSetGiftOnlyMetafield($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id }
+      userErrors { field message }
+    }
+  }
+`
 
 const SHIPPING_MARKETS_QUERY = `
   query PalasShippingRuleMarkets {
