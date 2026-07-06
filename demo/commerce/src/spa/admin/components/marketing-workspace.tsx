@@ -1,6 +1,17 @@
 import { useCommand, useQuery } from '@mantajs/sdk'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Progress, Skeleton } from '@mantajs/ui'
-import { CalendarDays, Megaphone, PackagePlus, RefreshCw, RotateCcw, Save, Tags, Truck } from 'lucide-react'
+import {
+  Archive,
+  CalendarDays,
+  Megaphone,
+  PackagePlus,
+  PlusCircle,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Tags,
+  Truck,
+} from 'lucide-react'
 import * as React from 'react'
 import {
   evaluateMarketingExperience,
@@ -172,6 +183,7 @@ interface MarketingRuleFormState {
   gift_title: string
   gift_product_id: string
   paid_rate: string
+  personal_offer: PersonalOfferType | ''
 }
 
 type UpsertMarketingRuleInput = {
@@ -190,6 +202,20 @@ type UpsertMarketingRuleInput = {
   gift_product_id?: string | null
   gift_title?: string | null
   paid_rate?: number | null
+  personal_offer?: PersonalOfferType | null
+}
+
+type RulePreset =
+  | 'welcome'
+  | 'abandoned_cart'
+  | 'birthday'
+  | 'automatic_discount'
+  | 'public_code'
+  | 'gift_threshold'
+  | 'shipping_threshold'
+
+type ArchiveMarketingRuleInput = {
+  id: string
 }
 
 type MarketingPageMode = 'rules' | 'simulator'
@@ -209,6 +235,7 @@ export default function MarketingSimulatorPage() {
 function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const configQuery = useQuery<SimulatorConfig>('marketing-simulator-config', {}, { staleTime: 120_000 })
   const upsertMarketingRule = useCommand<UpsertMarketingRuleInput, PalasRule>('upsertMarketingRule')
+  const archiveMarketingRule = useCommand<ArchiveMarketingRuleInput, PalasRule>('archiveMarketingRule')
   const config = configQuery.data
   const [now, setNow] = React.useState(defaultDateTimeLocal)
   const [market, setMarket] = React.useState<MarketCode>('')
@@ -220,6 +247,7 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
   const [selectedPersonalOffers, setSelectedPersonalOffers] = React.useState<PersonalOfferType[]>([])
   const [ruleForm, setRuleForm] = React.useState<MarketingRuleFormState>(() => initialRuleForm('', 'EUR'))
   const [ruleFormError, setRuleFormError] = React.useState<string | null>(null)
+  const ruleBuilderRef = React.useRef<HTMLDivElement | null>(null)
   const handleResolvedCartProductsChange = React.useCallback((next: MarketingProduct[]) => {
     setResolvedCartProducts((previous) => (sameProductList(previous, next) ? previous : next))
   }, [])
@@ -288,6 +316,83 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
       setRuleFormError(err instanceof Error ? err.message : String(err))
     }
   }
+
+  const focusRuleBuilder = React.useCallback(() => {
+    window.setTimeout(() => {
+      ruleBuilderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
+  }, [])
+
+  const startRulePreset = React.useCallback(
+    (preset: RulePreset) => {
+      setRuleForm(
+        rulePresetToForm({
+          preset,
+          marketKey: ruleForm.market_key || selectedMarket?.key || defaultMarketKey(config?.markets ?? []),
+          currencyCode: ruleForm.currency_code || currencyCode,
+          shippingThreshold: selectedShippingThreshold,
+        }),
+      )
+      setRuleFormError(null)
+      focusRuleBuilder()
+    },
+    [
+      config?.markets,
+      currencyCode,
+      focusRuleBuilder,
+      ruleForm.currency_code,
+      ruleForm.market_key,
+      selectedMarket,
+      selectedShippingThreshold,
+    ],
+  )
+
+  const editPalasRule = React.useCallback(
+    (rule: PalasRule) => {
+      setRuleForm(ruleToForm(rule, currencyCode))
+      setRuleFormError(null)
+      focusRuleBuilder()
+    },
+    [currencyCode, focusRuleBuilder],
+  )
+
+  const togglePalasRuleStatus = React.useCallback(
+    async (rule: PalasRule) => {
+      setRuleFormError(null)
+      const form = ruleToForm(rule, currencyCode)
+      const nextStatus = rule.status === 'active' ? 'paused' : 'active'
+      try {
+        const result = await upsertMarketingRule.run(
+          toMarketingRuleInput({ ...form, status: nextStatus }, config?.meta.shop_currency_code ?? currencyCode),
+        )
+        if (result.status === 'succeeded') await configQuery.refetch()
+        else if (result.status !== 'running') setRuleFormError(result.error.message)
+      } catch (err) {
+        setRuleFormError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [config?.meta.shop_currency_code, configQuery, currencyCode, upsertMarketingRule],
+  )
+
+  const archivePalasRule = React.useCallback(
+    async (rule: PalasRule) => {
+      setRuleFormError(null)
+      try {
+        const result = await archiveMarketingRule.run({ id: rule.id })
+        if (result.status === 'succeeded') {
+          if (ruleForm.id === rule.id) {
+            setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
+          }
+          await configQuery.refetch()
+          return
+        }
+        if (result.status !== 'running') setRuleFormError(result.error.message)
+      } catch (err) {
+        setRuleFormError(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [archiveMarketingRule, configQuery, currencyCode, ruleForm.currency_code, ruleForm.id, ruleForm.market_key],
+  )
 
   const scenarioDateIso = React.useMemo(() => new Date(now).toISOString(), [now])
   const result = React.useMemo(
@@ -374,22 +479,30 @@ function MarketingWorkspacePage({ mode }: { mode: MarketingPageMode }) {
 
       {mode === 'rules' ? (
         <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <RuleBuilder
-            form={ruleForm}
-            markets={config?.markets ?? []}
-            isSaving={upsertMarketingRule.status === 'running'}
-            error={ruleFormError ?? upsertMarketingRule.error?.message ?? null}
-            onChange={setRuleForm}
-            onSubmit={submitMarketingRule}
-            onCancelEdit={() =>
-              setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
-            }
-          />
+          <div ref={ruleBuilderRef}>
+            <RuleBuilder
+              form={ruleForm}
+              markets={config?.markets ?? []}
+              isSaving={upsertMarketingRule.status === 'running'}
+              error={
+                ruleFormError ?? upsertMarketingRule.error?.message ?? archiveMarketingRule.error?.message ?? null
+              }
+              onChange={setRuleForm}
+              onSubmit={submitMarketingRule}
+              onCancelEdit={() =>
+                setRuleForm(initialRuleForm(ruleForm.market_key, ruleForm.currency_code || currencyCode))
+              }
+            />
+          </div>
           <MarketingRulesDashboard
             rules={controlRules}
             markets={config?.markets ?? []}
             shippingThresholds={config?.shipping_thresholds ?? []}
-            onEditPalasRule={(rule) => setRuleForm(ruleToForm(rule, currencyCode))}
+            onCreateRule={startRulePreset}
+            onEditPalasRule={editPalasRule}
+            onTogglePalasRule={togglePalasRuleStatus}
+            onArchivePalasRule={archivePalasRule}
+            isMutating={upsertMarketingRule.status === 'running' || archiveMarketingRule.status === 'running'}
           />
         </div>
       ) : (
@@ -793,6 +906,7 @@ function RuleBuilder({
   onCancelEdit: () => void
 }) {
   const selectedMarket = markets.find((market) => market.key === form.market_key)
+  const giftCountry = selectedMarket?.countries[0]?.code ?? 'FR'
 
   return (
     <Card className="border border-border/70 shadow-none">
@@ -808,11 +922,11 @@ function RuleBuilder({
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>
           ) : null}
           <SegmentedControl
-            label="Type"
+            label="Famille"
             value={form.rule_type}
             options={[
               { value: 'order_discount', label: 'Remise' },
-              { value: 'first_order_discount', label: '1ere commande' },
+              { value: 'first_order_discount', label: 'Code perso' },
               { value: 'gift_threshold', label: 'Cadeau' },
               { value: 'shipping_threshold', label: 'Livraison' },
             ]}
@@ -864,6 +978,24 @@ function RuleBuilder({
 
           {form.rule_type === 'order_discount' || form.rule_type === 'first_order_discount' ? (
             <div className="grid gap-3 md:grid-cols-2">
+              {form.rule_type === 'first_order_discount' ? (
+                <label className="flex flex-col gap-1 text-sm md:col-span-2" htmlFor="marketing-rule-personal-offer">
+                  <span className="font-medium">Usage marketing</span>
+                  <select
+                    id="marketing-rule-personal-offer"
+                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={form.personal_offer}
+                    onChange={(event) =>
+                      setRuleField(onChange, 'personal_offer', event.target.value as PersonalOfferType | '')
+                    }
+                  >
+                    <option value="">Code personnel generique</option>
+                    <option value="welcome">Offre de bienvenue</option>
+                    <option value="abandoned_cart">Panier abandonne</option>
+                    <option value="birthday">Anniversaire</option>
+                  </select>
+                </label>
+              ) : null}
               <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-value-type">
                 <span className="font-medium">Type remise</span>
                 <select
@@ -903,7 +1035,7 @@ function RuleBuilder({
           ) : null}
 
           {form.rule_type === 'gift_threshold' ? (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3">
               <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-gift-threshold">
                 <span className="font-medium">Seuil</span>
                 <Input
@@ -916,8 +1048,21 @@ function RuleBuilder({
                   required
                 />
               </label>
+              <ProductPickerField
+                market={form.market_key}
+                country={giftCountry}
+                currencyCode={form.currency_code || selectedMarket?.currency_code || 'EUR'}
+                selectedTitle={form.gift_title}
+                onSelect={(product) =>
+                  onChange((current) => ({
+                    ...current,
+                    gift_product_id: product.id,
+                    gift_title: product.title,
+                  }))
+                }
+              />
               <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-gift-title">
-                <span className="font-medium">Produit offert</span>
+                <span className="font-medium">Libelle cadeau</span>
                 <Input
                   id="marketing-rule-gift-title"
                   value={form.gift_title}
@@ -926,6 +1071,11 @@ function RuleBuilder({
                   required
                 />
               </label>
+              {form.gift_product_id ? (
+                <div className="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
+                  Produit Shopify: {form.gift_product_id}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -998,6 +1148,95 @@ function RuleBuilder({
         </form>
       </CardContent>
     </Card>
+  )
+}
+
+function ProductPickerField({
+  market,
+  country,
+  currencyCode,
+  selectedTitle,
+  onSelect,
+}: {
+  market: string
+  country: string
+  currencyCode: string
+  selectedTitle: string
+  onSelect: (product: MarketingProduct) => void
+}) {
+  const [query, setQuery] = React.useState('')
+  const [after, setAfter] = React.useState<string | null>(null)
+  const [products, setProducts] = React.useState<MarketingProduct[]>([])
+  const debouncedQuery = useDebouncedValue(query, 250)
+  const searchQuery = useQuery<{
+    items: SimulatorProduct[]
+    page_info: { hasNextPage: boolean; endCursor: string | null }
+  }>(
+    'marketing-product-search',
+    { search: debouncedQuery, country, market_key: market, after, limit: 20 },
+    { staleTime: 30_000 },
+  )
+  const resetKey = React.useMemo(() => `${country}:${market}:${debouncedQuery}`, [country, market, debouncedQuery])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset Shopify pagination when search context changes.
+  React.useEffect(() => {
+    setAfter(null)
+    setProducts([])
+  }, [resetKey])
+
+  React.useEffect(() => {
+    if (!searchQuery.data) return
+    const next = searchQuery.data.items.map(simulatorProductToMarketingProduct)
+    setProducts((previous) => mergeProducts(after ? previous : [], next))
+  }, [after, searchQuery.data])
+
+  const pageInfo = searchQuery.data?.page_info
+  const canLoadMore = Boolean(pageInfo?.hasNextPage && pageInfo.endCursor && !searchQuery.isFetching)
+
+  return (
+    <div className="grid gap-2">
+      <label className="flex flex-col gap-1 text-sm" htmlFor="marketing-rule-gift-product-search">
+        <span className="font-medium">Produit Shopify offert</span>
+        <Input
+          id="marketing-rule-gift-product-search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={selectedTitle || 'Rechercher un charm, tote bag, produit offert...'}
+        />
+      </label>
+      <div
+        className="max-h-56 overflow-y-auto rounded-md border"
+        onScroll={(event) => {
+          const element = event.currentTarget
+          const isNearBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 48
+          if (isNearBottom && canLoadMore) setAfter(pageInfo?.endCursor ?? null)
+        }}
+      >
+        {searchQuery.isFetching && products.length === 0 ? (
+          <div className="p-3 text-xs text-muted-foreground">Recherche Shopify...</div>
+        ) : null}
+        {!searchQuery.isFetching && products.length === 0 ? (
+          <div className="p-3 text-xs text-muted-foreground">Aucun produit trouve.</div>
+        ) : null}
+        {products.map((product) => (
+          <button
+            key={product.id}
+            type="button"
+            className="flex w-full items-center justify-between gap-3 border-b p-2 text-left text-sm last:border-b-0 hover:bg-accent"
+            onClick={() => {
+              onSelect(product)
+              setQuery('')
+            }}
+          >
+            <span className="min-w-0 truncate">{product.title}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{formatMoney(product.price, currencyCode)}</span>
+          </button>
+        ))}
+        {canLoadMore ? (
+          <div className="p-2 text-center text-xs text-muted-foreground">Scroll pour charger plus</div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -1129,15 +1368,25 @@ function MarketingRulesDashboard({
   rules,
   markets,
   shippingThresholds,
+  onCreateRule,
   onEditPalasRule,
+  onTogglePalasRule,
+  onArchivePalasRule,
+  isMutating,
 }: {
   rules: ControlRule[]
   markets: SimulatorMarket[]
   shippingThresholds: SimulatorShippingThreshold[]
+  onCreateRule: (preset: RulePreset) => void
   onEditPalasRule: (rule: PalasRule) => void
+  onTogglePalasRule: (rule: PalasRule) => void
+  onArchivePalasRule: (rule: PalasRule) => void
+  isMutating: boolean
 }) {
   const shippingRules = rules.filter((rule) => rule.family === 'shipping')
-  const welcomeRules = rules.filter((rule) => rule.family === 'email' && rule.title.toLowerCase().includes('bienvenue'))
+  const welcomeRules = rules.filter(
+    (rule) => rule.family === 'email' && rule.title.toLowerCase().includes('bienvenue'),
+  )
   const abandonedCartRules = rules.filter(
     (rule) => rule.family === 'email' && rule.title.toLowerCase().includes('panier'),
   )
@@ -1148,12 +1397,34 @@ function MarketingRulesDashboard({
     (rule) => rule.family !== 'shipping' && rule.family !== 'email' && rule.trigger !== 'code',
   )
   const codeRules = rules.filter((rule) => rule.trigger === 'code')
+  const palasCount = rules.filter((rule) => rule.source === 'palas').length
+  const shopifyCount = rules.filter((rule) => rule.source === 'shopify').length
+  const shippingCount = rules.filter((rule) => rule.source === 'shipping_profile').length
 
   return (
     <div className="flex flex-col gap-4">
       <Card className="border border-border/70 shadow-none">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold tracking-normal">Structure livraison par market</CardTitle>
+          <CardTitle className="text-base font-semibold tracking-normal">Centre de controle</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <ControlStat label="Rules Palas editables" value={palasCount} />
+          <ControlStat label="Discounts Shopify natifs" value={shopifyCount} />
+          <ControlStat label="Seuils livraison natifs" value={shippingCount} />
+        </CardContent>
+      </Card>
+      <Card className="border border-border/70 shadow-none">
+        <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-base font-semibold tracking-normal">Structure livraison par market</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Lecture Shopify native. Une rule Palas livraison peut pousser un nouveau seuil par market.
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="small" onClick={() => onCreateRule('shipping_threshold')}>
+            <PlusCircle className="mr-2 size-3.5" />
+            Modifier seuil
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1199,44 +1470,85 @@ function MarketingRulesDashboard({
           description="Source de vérité pour popup, email et code personnel de bienvenue."
           rules={welcomeRules}
           empty="Aucune offre de bienvenue configurée."
+          createLabel="Ajouter bienvenue"
+          onCreate={() => onCreateRule('welcome')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
         <RuleSection
           title="Panier abandonné"
           description="Source de vérité pour les relances panier abandonné."
           rules={abandonedCartRules}
           empty="Aucune offre panier abandonné configurée."
+          createLabel="Ajouter panier"
+          onCreate={() => onCreateRule('abandoned_cart')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
         <RuleSection
           title="Anniversaire"
           description="Source de vérité pour le code personnel birthday."
           rules={birthdayRules}
           empty="Aucune offre anniversaire configurée."
+          createLabel="Ajouter birthday"
+          onCreate={() => onCreateRule('birthday')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
         <RuleSection
           title="Offres automatiques"
           description="Promotions globales et cadeaux qui s'appliquent sans code."
           rules={automaticRules}
           empty="Aucune offre automatique configuree."
+          createLabel="Ajouter auto"
+          onCreate={() => onCreateRule('automatic_discount')}
+          secondaryCreateLabel="Ajouter cadeau"
+          onSecondaryCreate={() => onCreateRule('gift_threshold')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
         <RuleSection
           title="Offres avec code public"
           description="Codes publics utiles en campagne, hors coupons individuels."
           rules={codeRules}
           empty="Aucun code public configure."
+          createLabel="Ajouter code"
+          onCreate={() => onCreateRule('public_code')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
         <RuleSection
           title="Rules shipping"
           description="Rules Palas qui peuvent mettre a jour les profils livraison Shopify."
           rules={shippingRules}
           empty="Aucune rule shipping configuree."
+          createLabel="Ajouter shipping"
+          onCreate={() => onCreateRule('shipping_threshold')}
           onEditPalasRule={onEditPalasRule}
+          onTogglePalasRule={onTogglePalasRule}
+          onArchivePalasRule={onArchivePalasRule}
+          isMutating={isMutating}
         />
       </div>
+    </div>
+  )
+}
+
+function ControlStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border bg-muted/30 p-3">
+      <div className="text-2xl font-semibold tracking-normal">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{label}</div>
     </div>
   )
 }
@@ -1246,19 +1558,47 @@ function RuleSection({
   description,
   rules,
   empty,
+  createLabel,
+  secondaryCreateLabel,
+  onCreate,
+  onSecondaryCreate,
   onEditPalasRule,
+  onTogglePalasRule,
+  onArchivePalasRule,
+  isMutating,
 }: {
   title: string
   description: string
   rules: ControlRule[]
   empty: string
+  createLabel: string
+  secondaryCreateLabel?: string
+  onCreate: () => void
+  onSecondaryCreate?: () => void
   onEditPalasRule: (rule: PalasRule) => void
+  onTogglePalasRule: (rule: PalasRule) => void
+  onArchivePalasRule: (rule: PalasRule) => void
+  isMutating: boolean
 }) {
   return (
     <Card className="border border-border/70 shadow-none">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold tracking-normal">{title}</CardTitle>
-        <p className="text-xs text-muted-foreground">{description}</p>
+      <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle className="text-base font-semibold tracking-normal">{title}</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {onSecondaryCreate ? (
+            <Button type="button" variant="outline" size="small" onClick={onSecondaryCreate}>
+              <PlusCircle className="mr-2 size-3.5" />
+              {secondaryCreateLabel}
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" size="small" onClick={onCreate}>
+            <PlusCircle className="mr-2 size-3.5" />
+            {createLabel}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {rules.length === 0 ? <div className="rounded-md border bg-muted/40 p-3 text-sm">{empty}</div> : null}
@@ -1274,14 +1614,35 @@ function RuleSection({
                   {rule.status}
                 </Badge>
                 {rule.editablePalasRule ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="small"
-                    onClick={() => onEditPalasRule(rule.editablePalasRule as PalasRule)}
-                  >
-                    Editer
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="small"
+                      onClick={() => onEditPalasRule(rule.editablePalasRule as PalasRule)}
+                    >
+                      Editer
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="small"
+                      isLoading={isMutating}
+                      onClick={() => onTogglePalasRule(rule.editablePalasRule as PalasRule)}
+                    >
+                      {rule.editablePalasRule.status === 'active' ? 'Pause' : 'Activer'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="small"
+                      isLoading={isMutating}
+                      onClick={() => onArchivePalasRule(rule.editablePalasRule as PalasRule)}
+                    >
+                      <Archive className="mr-2 size-3.5" />
+                      Archiver
+                    </Button>
+                  </>
                 ) : (
                   <Badge variant="outline">{rule.source}</Badge>
                 )}
@@ -1291,6 +1652,13 @@ function RuleSection({
               <Badge variant="outline">{controlFamilyLabel(rule.family)}</Badge>
               <Badge variant="outline">{controlTriggerLabel(rule.trigger)}</Badge>
               <Badge variant="outline">{rule.execution}</Badge>
+              <Badge variant="outline">{rule.source === 'shopify' ? 'Shopify natif' : 'Palas source'}</Badge>
+              {rule.editablePalasRule ? (
+                <>
+                  <Badge variant="outline">{rule.editablePalasRule.sync_status}</Badge>
+                  {rule.editablePalasRule.shopify_id ? <span>Shopify lie</span> : null}
+                </>
+              ) : null}
               <span>{rule.starts_at ? formatDateTime(rule.starts_at) : 'Toujours'}</span>
               <span>{rule.ends_at ? `Fin ${formatDateTime(rule.ends_at)}` : 'Sans fin'}</span>
             </div>
@@ -1826,9 +2194,10 @@ function personalOfferTypeForRule(rule: PalasRule): PersonalOfferType | null {
   const raw = rule.payload?.personal_offer
   if (raw === 'welcome' || raw === 'abandoned_cart' || raw === 'birthday') return raw
   const title = rule.title.toLowerCase()
-  if (rule.rule_type === 'first_order_discount' || title.includes('bienvenue')) return 'welcome'
+  if (title.includes('bienvenue')) return 'welcome'
   if (title.includes('panier') || title.includes('abandon')) return 'abandoned_cart'
   if (title.includes('anniversaire') || title.includes('birthday')) return 'birthday'
+  if (rule.rule_type === 'first_order_discount') return 'welcome'
   return null
 }
 
@@ -2086,6 +2455,82 @@ function initialRuleForm(marketKey: string, currencyCode: string): MarketingRule
     gift_title: '',
     gift_product_id: '',
     paid_rate: '6',
+    personal_offer: '',
+  }
+}
+
+function rulePresetToForm({
+  preset,
+  marketKey,
+  currencyCode,
+  shippingThreshold,
+}: {
+  preset: RulePreset
+  marketKey: string
+  currencyCode: string
+  shippingThreshold: SimulatorShippingThreshold | null
+}): MarketingRuleFormState {
+  const base = initialRuleForm(marketKey, currencyCode)
+  if (preset === 'welcome') {
+    return {
+      ...base,
+      rule_type: 'first_order_discount',
+      title: 'Offre de bienvenue',
+      value: '10',
+      personal_offer: 'welcome',
+    }
+  }
+  if (preset === 'abandoned_cart') {
+    return {
+      ...base,
+      rule_type: 'first_order_discount',
+      title: 'Panier abandonne',
+      value: '10',
+      personal_offer: 'abandoned_cart',
+    }
+  }
+  if (preset === 'birthday') {
+    return {
+      ...base,
+      rule_type: 'first_order_discount',
+      title: 'Anniversaire',
+      value: '15',
+      personal_offer: 'birthday',
+    }
+  }
+  if (preset === 'automatic_discount') {
+    return {
+      ...base,
+      rule_type: 'order_discount',
+      title: 'Promotion automatique',
+      value: '15',
+      code: '',
+    }
+  }
+  if (preset === 'public_code') {
+    return {
+      ...base,
+      rule_type: 'order_discount',
+      title: 'Code public',
+      value: '10',
+      code: 'CODE',
+    }
+  }
+  if (preset === 'shipping_threshold') {
+    return {
+      ...base,
+      rule_type: 'shipping_threshold',
+      title: 'Livraison offerte',
+      threshold: String(shippingThreshold?.threshold ?? 70),
+      paid_rate: String(shippingThreshold?.paid_rate ?? 6),
+      currency_code: shippingThreshold?.currency_code ?? currencyCode,
+    }
+  }
+  return {
+    ...base,
+    rule_type: 'gift_threshold',
+    title: 'Cadeau offert',
+    threshold: '150',
   }
 }
 
@@ -2105,6 +2550,7 @@ function toMarketingRuleInput(form: MarketingRuleFormState, fallbackCurrencyCode
       value_type: form.value_type,
       value: readPositiveNumber(form.value, 'Valeur remise'),
       code: form.code || null,
+      personal_offer: form.personal_offer || null,
     }
   }
 
@@ -2143,6 +2589,7 @@ function ruleToForm(rule: PalasRule, fallbackCurrencyCode: string): MarketingRul
     gift_title: rule.gift_title ?? '',
     gift_product_id: rule.gift_product_id ?? '',
     paid_rate: String(rule.paid_rate ?? 6),
+    personal_offer: personalOfferTypeForRule(rule) ?? '',
   }
 }
 

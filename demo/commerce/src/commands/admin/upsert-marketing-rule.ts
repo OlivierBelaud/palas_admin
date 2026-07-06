@@ -67,11 +67,13 @@ interface DeliveryProfileNode {
 interface MarketingRuleRow {
   id: string
   shopify_id?: string | null
+  payload?: Record<string, unknown> | null
 }
 
 interface EntityCrud<Row> {
   create: (data: Record<string, unknown>) => Promise<Row>
   update: (id: string, data: Record<string, unknown>) => Promise<Row>
+  list: (filters: Record<string, unknown>, options?: Record<string, unknown>) => Promise<Row[]>
 }
 
 interface MarketingRuleInput {
@@ -90,6 +92,7 @@ interface MarketingRuleInput {
   gift_product_id?: string | null
   gift_title?: string | null
   paid_rate?: number | null
+  personal_offer?: 'welcome' | 'abandoned_cart' | 'birthday' | null
 }
 
 const inputSchema = z.object({
@@ -108,6 +111,7 @@ const inputSchema = z.object({
   gift_product_id: z.string().trim().nullable().optional(),
   gift_title: z.string().trim().nullable().optional(),
   paid_rate: z.number().min(0).nullable().optional(),
+  personal_offer: z.enum(['welcome', 'abandoned_cart', 'birthday']).nullable().optional(),
 })
 
 export default defineCommand({
@@ -118,17 +122,19 @@ export default defineCommand({
     validateMarketingRule(input)
     const executionKind = executionKindFor(input.rule_type)
     const svc = step.service as unknown as { marketingRule: EntityCrud<MarketingRuleRow> }
-    let shopifyId: string | null = null
-    let syncStatus: SyncStatus = executionKind === 'local_cart_rule' ? 'local_only' : 'pending'
+    const existing = input.id ? (await svc.marketingRule.list({ id: input.id }, { take: 1 }))[0] : null
+    const existingShopifyId = existing?.shopify_id ?? null
+    let shopifyId: string | null = existingShopifyId
+    let syncStatus: SyncStatus = executionKind === 'local_cart_rule' || input.status !== 'active' ? 'local_only' : 'pending'
     let syncError: string | null = null
 
-    if (executionKind === 'shopify_discount' && input.status !== 'draft') {
+    if (executionKind === 'shopify_discount' && input.status === 'active') {
       try {
         const commands = step.command as unknown as {
           upsertShopifyDiscount: (input: Record<string, unknown>) => Promise<{ id?: string }>
         }
         const result = await commands.upsertShopifyDiscount({
-          id: input.id ? undefined : undefined,
+          id: existingShopifyId ?? undefined,
           method: input.code ? 'code' : 'automatic',
           title: input.title,
           code: input.code ?? undefined,
@@ -154,7 +160,7 @@ export default defineCommand({
       }
     }
 
-    if (executionKind === 'shipping_profile' && input.status !== 'draft') {
+    if (executionKind === 'shipping_profile' && input.status === 'active') {
       try {
         const result = await syncShopifyShippingThreshold(input)
         shopifyId = result.shopifyId
@@ -185,7 +191,7 @@ export default defineCommand({
       gift_product_id: input.gift_product_id || null,
       gift_title: input.gift_title || null,
       paid_rate: input.paid_rate ?? null,
-      payload: { source: 'palas_admin' },
+      payload: buildPayload(existing?.payload, input.personal_offer),
     }
 
     const row = input.id ? await svc.marketingRule.update(input.id, data) : await svc.marketingRule.create(data)
@@ -199,6 +205,16 @@ export default defineCommand({
     return row
   },
 })
+
+function buildPayload(
+  existingPayload: Record<string, unknown> | null | undefined,
+  personalOffer: MarketingRuleInput['personal_offer'],
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...(existingPayload ?? {}), source: 'palas_admin' }
+  if (personalOffer) payload.personal_offer = personalOffer
+  if (!personalOffer && 'personal_offer' in payload) delete payload.personal_offer
+  return payload
+}
 
 function executionKindFor(ruleType: MarketingRuleType): ExecutionKind {
   if (ruleType === 'order_discount') return 'shopify_discount'
