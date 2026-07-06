@@ -15,6 +15,9 @@
 // cart endpoints. The theme must render the drawer from the returned cart and
 // send the buyer to `checkoutUrl`.
 
+import { resolvePalasCartMarketing } from '../../palas-cart-marketing'
+import type { PersonalOfferType } from '../../../marketing-experience/engine'
+
 type CartAction = 'sync' | 'add' | 'update' | 'remove' | 'discounts'
 
 interface PalasCartLineInput {
@@ -37,6 +40,7 @@ interface PalasCartBody {
   discountCodes?: unknown
   buyerIdentity?: PalasCartBuyerIdentityInput
   market?: unknown
+  personalOffers?: unknown
 }
 
 interface MarketingRuleRow {
@@ -145,6 +149,7 @@ export async function POST(req: Request) {
     const rules = await readMarketingRules(req, sanitize(body.market, 80))
     const normalizedLines = readLines(body.lines)
     const discountCodes = readStringArray(body.discountCodes, 250)
+    const personalOffers = readPersonalOffers(body.personalOffers)
     const buyerIdentity = readBuyerIdentity(body.buyerIdentity)
     let cart = body.cartId ? await fetchCart(client, sanitize(body.cartId, 512) as string) : null
 
@@ -167,19 +172,27 @@ export async function POST(req: Request) {
       if (lineIds.length > 0) cart = await removeLines(client, cart.id, lineIds)
     }
 
-    const codeSet = mergeDiscountCodes(discountCodes, rules)
+    const codeSet = mergeDiscountCodes(discountCodes, rules, personalOffers)
     if (action === 'discounts' || codeSet.length > 0) {
       cart = await updateDiscountCodes(client, cart.id, codeSet)
     }
 
-    const benefits = evaluateBenefits(cart, rules)
+    const normalizedCart = normalizeCart(cart)
+    const resolvedMarketing = resolvePalasCartMarketing({
+      cart: normalizedCart,
+      rules,
+      market: sanitize(body.market, 80),
+      selectedPersonalOffers: personalOffers,
+    })
 
     return Response.json(
       {
         ok: true,
-        cart: normalizeCart(cart),
-        benefits,
-        warnings: benefits.warnings,
+        cart: normalizedCart,
+        benefits: resolvedMarketing.benefits,
+        marketingExperience: resolvedMarketing.experience,
+        cartPlan: resolvedMarketing.cartPlan,
+        warnings: resolvedMarketing.benefits.warnings,
       },
       { headers },
     )
@@ -381,6 +394,20 @@ function readStringArray(value: unknown, limit: number): string[] {
   )
 }
 
+function readPersonalOffers(value: unknown): PersonalOfferType[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(
+    new Set(
+      value
+        .slice(0, 10)
+        .map((item) => sanitize(item, 40)?.toLowerCase())
+        .filter((item): item is PersonalOfferType =>
+          item === 'welcome' || item === 'abandoned_cart' || item === 'birthday',
+        ),
+    ),
+  )
+}
+
 function readBuyerIdentity(value: PalasCartBuyerIdentityInput | undefined): Record<string, string> | null {
   if (!value) return null
   const countryCode = sanitize(value.countryCode, 2)?.toUpperCase()
@@ -398,54 +425,30 @@ function sanitize(value: unknown, max = 255): string | null {
   return trimmed
 }
 
-function mergeDiscountCodes(inputCodes: string[], rules: MarketingRuleRow[]): string[] {
+function mergeDiscountCodes(
+  inputCodes: string[],
+  rules: MarketingRuleRow[],
+  personalOffers: PersonalOfferType[],
+): string[] {
   const automaticRuleCodes = rules
-    .filter((rule) => rule.rule_type === 'first_order_discount' && rule.code)
+    .filter((rule) => {
+      if (rule.rule_type !== 'first_order_discount' || !rule.code) return false
+      const offer = personalOfferTypeForRule(rule)
+      return offer ? personalOffers.includes(offer) : false
+    })
     .map((rule) => rule.code as string)
   return Array.from(new Set([...inputCodes, ...automaticRuleCodes].map((code) => code.toUpperCase())))
 }
 
-function evaluateBenefits(cart: StorefrontCart, rules: MarketingRuleRow[]) {
-  const subtotal = Number(cart.cost.subtotalAmount.amount)
-  const currencyCode = cart.cost.subtotalAmount.currencyCode
-  const reached: Array<Record<string, unknown>> = []
-  const pending: Array<Record<string, unknown>> = []
-  const warnings: string[] = []
-
-  for (const rule of rules) {
-    if (rule.rule_type === 'shipping_threshold' && rule.threshold != null) {
-      const row = {
-        id: rule.id,
-        type: 'shipping_threshold',
-        title: rule.title,
-        threshold: rule.threshold,
-        remaining: Math.max(0, rule.threshold - subtotal),
-        currencyCode: rule.currency_code ?? currencyCode,
-      }
-      ;(subtotal >= rule.threshold ? reached : pending).push(row)
-    }
-
-    if (rule.rule_type === 'gift_threshold' && rule.threshold != null) {
-      const row = {
-        id: rule.id,
-        type: 'gift_threshold',
-        title: rule.title,
-        threshold: rule.threshold,
-        remaining: Math.max(0, rule.threshold - subtotal),
-        giftTitle: rule.gift_title,
-        giftProductId: rule.gift_product_id,
-        currencyCode,
-      }
-      ;(subtotal >= rule.threshold ? reached : pending).push(row)
-      if (subtotal >= rule.threshold) {
-        warnings.push(
-          `Gift "${rule.gift_title ?? rule.title}" reached but not auto-added: Storefront API cannot force a line price to zero.`,
-        )
-      }
-    }
-  }
-
-  return { reached, pending, warnings }
+function personalOfferTypeForRule(rule: MarketingRuleRow): PersonalOfferType | null {
+  const raw = rule.payload?.personal_offer
+  if (raw === 'welcome' || raw === 'abandoned_cart' || raw === 'birthday') return raw
+  const title = rule.title.toLowerCase()
+  if (title.includes('bienvenue')) return 'welcome'
+  if (title.includes('panier') || title.includes('abandon')) return 'abandoned_cart'
+  if (title.includes('anniversaire') || title.includes('birthday')) return 'birthday'
+  if (rule.rule_type === 'first_order_discount') return 'welcome'
+  return null
 }
 
 async function readMarketingRules(req: Request, market: string | null): Promise<MarketingRuleRow[]> {
