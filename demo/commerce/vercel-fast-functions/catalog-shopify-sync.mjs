@@ -11,8 +11,18 @@ const CATALOG_METAFIELD_DEFINITIONS = [
   ['parent_handle', 'Palas catalog parent handle', 'single_line_text_field'],
   ['position', 'Palas catalog position', 'number_integer'],
   ['canonical_path', 'Palas catalog canonical path', 'json'],
+  ['direct_product_ids', 'Palas catalog direct product IDs', 'json'],
   ['translation_status', 'Palas catalog translation status', 'single_line_text_field'],
 ]
+const PINNED_CATALOG_METAFIELDS = new Set([
+  'label_fr',
+  'label_en',
+  'parent_handle',
+  'position',
+  'canonical_path',
+  'direct_product_ids',
+  'translation_status',
+])
 
 class CatalogShopifySyncError extends Error {}
 
@@ -77,32 +87,47 @@ async function ensureCatalogMetafieldDefinitions() {
   const data = await shopifyGraphql(
     `query CatalogMetafieldDefinitions {
       metafieldDefinitions(first: 100, ownerType: COLLECTION, namespace: "palas_catalog") {
-        nodes { key }
+        nodes { id key pinnedPosition }
       }
     }`,
   )
-  const existing = new Set(data.metafieldDefinitions.nodes.map((definition) => definition.key))
+  const existing = new Map(data.metafieldDefinitions.nodes.map((definition) => [definition.key, definition]))
   for (const [key, name, type] of CATALOG_METAFIELD_DEFINITIONS) {
-    if (existing.has(key)) continue
-    const created = await shopifyGraphql(
-      `mutation CatalogMetafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
-        metafieldDefinitionCreate(definition: $definition) {
-          createdDefinition { id key }
-          userErrors { field message }
-        }
-      }`,
-      {
-        definition: {
-          name,
-          namespace: 'palas_catalog',
-          key,
-          type,
-          ownerType: 'COLLECTION',
-          access: { storefront: 'PUBLIC_READ' },
+    let definition = existing.get(key)
+    if (!definition) {
+      const created = await shopifyGraphql(
+        `mutation CatalogMetafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
+          metafieldDefinitionCreate(definition: $definition) {
+            createdDefinition { id key pinnedPosition }
+            userErrors { field message }
+          }
+        }`,
+        {
+          definition: {
+            name,
+            namespace: 'palas_catalog',
+            key,
+            type,
+            ownerType: 'COLLECTION',
+            access: { storefront: 'PUBLIC_READ' },
+          },
         },
-      },
-    )
-    assertNoUserErrors(created.metafieldDefinitionCreate, 'metafieldDefinitionCreate')
+      )
+      assertNoUserErrors(created.metafieldDefinitionCreate, 'metafieldDefinitionCreate')
+      definition = created.metafieldDefinitionCreate.createdDefinition
+    }
+    if (PINNED_CATALOG_METAFIELDS.has(key) && !definition.pinnedPosition) {
+      const pinned = await shopifyGraphql(
+        `mutation CatalogMetafieldDefinitionPin($definitionId: ID!) {
+          metafieldDefinitionPin(definitionId: $definitionId) {
+            pinnedDefinition { id key pinnedPosition }
+            userErrors { field message }
+          }
+        }`,
+        { definitionId: definition.id },
+      )
+      assertNoUserErrors(pinned.metafieldDefinitionPin, 'metafieldDefinitionPin')
+    }
   }
 }
 
@@ -128,6 +153,12 @@ function collectionMetafields(spec) {
       key: 'canonical_path',
       type: 'json',
       value: JSON.stringify(spec.canonicalPath),
+    },
+    {
+      namespace: 'palas_catalog',
+      key: 'direct_product_ids',
+      type: 'json',
+      value: JSON.stringify(spec.directProductIds.map(productGid)),
     },
     {
       namespace: 'palas_catalog',
@@ -375,6 +406,9 @@ export function buildCatalogShopifySpecs(snapshot) {
           a.category_position - b.category_position ||
           a.title.localeCompare(b.title),
       )
+    const directProducts = products
+      .filter((product) => product.canonical_category_id === category.id)
+      .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
     const representative =
       categoryProducts.find((product) => product.shopify_product_id === category.representative_product_id) ??
       categoryProducts[0]
@@ -389,6 +423,7 @@ export function buildCatalogShopifySpecs(snapshot) {
       parentHandle: category.parent_id ? `${COLLECTION_HANDLE_PREFIX}${byId.get(category.parent_id)?.slug}` : null,
       position: category.position,
       canonicalPath: canonicalPath(category),
+      directProductIds: directProducts.map((product) => product.shopify_product_id),
       imageUrl: representative?.image_url ?? null,
       productIds: categoryProducts.map((product) => product.shopify_product_id),
     }
@@ -404,6 +439,9 @@ export function buildCatalogShopifySpecs(snapshot) {
     parentHandle: null,
     position: 999999,
     canonicalPath: [`${COLLECTION_HANDLE_PREFIX}unclassified`],
+    directProductIds: products
+      .filter((product) => !product.canonical_category_id)
+      .map((product) => product.shopify_product_id),
     imageUrl: null,
     productIds: products
       .filter((product) => !product.canonical_category_id)

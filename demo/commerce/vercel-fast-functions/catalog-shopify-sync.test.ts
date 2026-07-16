@@ -54,6 +54,7 @@ describe('catalog Shopify collection specs', () => {
       parentHandle: null,
       position: 0,
       canonicalPath: ['palas-cat-bijoux'],
+      directProductIds: [],
       translationStatus: 'complete',
       productIds: ['1'],
     })
@@ -63,6 +64,7 @@ describe('catalog Shopify collection specs', () => {
       labelEn: 'Necklaces',
       parentHandle: 'palas-cat-bijoux',
       canonicalPath: ['palas-cat-bijoux', 'palas-cat-colliers'],
+      directProductIds: ['1'],
       productIds: ['1'],
     })
     expect(specs.find((spec) => spec.syncKey === catalogShopifyConstants.UNCLASSIFIED_KEY)).toMatchObject({
