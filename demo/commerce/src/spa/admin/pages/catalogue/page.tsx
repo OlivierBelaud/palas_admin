@@ -34,6 +34,12 @@ function TreeItem({
   onToggle,
   onCategoryDragStart,
   onCategoryDrop,
+  addingParentId,
+  newTitle,
+  onAdd,
+  onCancelAdd,
+  onCreate,
+  onNewTitle,
   depth = 0,
 }: {
   node: CategoryNode
@@ -43,6 +49,12 @@ function TreeItem({
   onToggle: (id: string) => void
   onCategoryDragStart: (id: string) => void
   onCategoryDrop: (id: string) => void
+  addingParentId: string | null
+  newTitle: string
+  onAdd: (id: string) => void
+  onCancelAdd: () => void
+  onCreate: (event: React.FormEvent, parentId: string) => void
+  onNewTitle: (value: string) => void
   depth?: number
 }) {
   const isOpen = expanded.has(node.id)
@@ -78,7 +90,41 @@ function TreeItem({
             {node.direct_product_count}/{node.descendant_product_count}
           </span>
         </button>
+        <button
+          aria-label={`Ajouter une sous-catégorie à ${node.title_fr}`}
+          className="flex size-6 shrink-0 items-center justify-center rounded hover:bg-background/30"
+          onClick={(event) => {
+            event.stopPropagation()
+            onAdd(node.id)
+          }}
+          title="Ajouter une sous-catégorie"
+          type="button"
+        >
+          <Plus size={14} />
+        </button>
       </div>
+      {addingParentId === node.id ? (
+        <form
+          className="flex gap-2 py-2 pr-2"
+          onSubmit={(event) => onCreate(event, node.id)}
+          style={{ paddingLeft: `${36 + depth * 16}px` }}
+        >
+          <Input
+            autoFocus
+            className="h-8 min-w-0"
+            onChange={(event) => onNewTitle(event.target.value)}
+            placeholder="Nom de la catégorie"
+            required
+            value={newTitle}
+          />
+          <Button disabled={!newTitle.trim()} type="submit">
+            Ajouter
+          </Button>
+          <button className="px-1 text-xs text-muted-foreground" onClick={onCancelAdd} type="button">
+            Annuler
+          </button>
+        </form>
+      ) : null}
       {isOpen
         ? node.children.map((child) => (
             <TreeItem
@@ -90,6 +136,12 @@ function TreeItem({
               onToggle={onToggle}
               onCategoryDragStart={onCategoryDragStart}
               onCategoryDrop={onCategoryDrop}
+              addingParentId={addingParentId}
+              newTitle={newTitle}
+              onAdd={onAdd}
+              onCancelAdd={onCancelAdd}
+              onCreate={onCreate}
+              onNewTitle={onNewTitle}
               selected={selected}
             />
           ))
@@ -111,7 +163,7 @@ export default function CataloguePage() {
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
   const [newTitle, setNewTitle] = useState('')
-  const [newSlug, setNewSlug] = useState('')
+  const [addingParentId, setAddingParentId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -220,16 +272,16 @@ export default function CataloguePage() {
     })
   }
 
-  async function createCategory(event: React.FormEvent) {
+  async function createCategory(event: React.FormEvent, parentId: string) {
     event.preventDefault()
     await mutate({
       action: 'create_category',
       title_fr: newTitle,
-      slug: newSlug,
-      parent_id: selectedCategory?.id ?? null,
+      parent_id: parentId,
     })
     setNewTitle('')
-    setNewSlug('')
+    setAddingParentId(null)
+    setExpanded((current) => new Set(current).add(parentId))
   }
 
   async function saveCategory(event: React.FormEvent<HTMLFormElement>) {
@@ -333,32 +385,22 @@ export default function CataloguePage() {
                 }
                 onCategoryDragStart={setDraggedCategoryId}
                 onCategoryDrop={(id) => void reorderCategories(id)}
+                addingParentId={addingParentId}
+                newTitle={newTitle}
+                onAdd={(id) => {
+                  setAddingParentId(id)
+                  setNewTitle('')
+                }}
+                onCancelAdd={() => {
+                  setAddingParentId(null)
+                  setNewTitle('')
+                }}
+                onCreate={(event, parentId) => void createCategory(event, parentId)}
+                onNewTitle={setNewTitle}
                 selected={selected}
               />
             ))}
           </div>
-          <form className="mt-auto flex flex-col gap-2 border-t pt-3" onSubmit={createCategory}>
-            <div className="text-sm font-medium">Ajouter une catégorie</div>
-            <div className="text-xs text-muted-foreground">
-              Nouvelle sous-catégorie de « {selectedCategory?.title_fr ?? 'racine'} »
-            </div>
-            <Input
-              onChange={(event) => setNewTitle(event.target.value)}
-              placeholder="Nom français"
-              required
-              value={newTitle}
-            />
-            <Input
-              onChange={(event) => setNewSlug(event.target.value)}
-              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-              placeholder="slug-technique"
-              required
-              value={newSlug}
-            />
-            <Button disabled={busy} type="submit">
-              <Plus size={15} /> Ajouter
-            </Button>
-          </form>
         </aside>
 
         <main className="flex min-w-0 flex-col gap-3 rounded-md border bg-card p-4">

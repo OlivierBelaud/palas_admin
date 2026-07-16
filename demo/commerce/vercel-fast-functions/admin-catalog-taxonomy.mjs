@@ -153,11 +153,20 @@ async function mutate(sql, input) {
 
   if (input.action === 'create_category') {
     const title = String(input.title_fr ?? '').trim()
-    const slug = String(input.slug ?? '')
+    if (!title) throw new CatalogTaxonomyError('Nom français requis')
+    const requestedSlug = String(input.slug ?? '')
       .trim()
       .toLowerCase()
-    if (!title || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-      throw new CatalogTaxonomyError('Titre et slug valide requis')
+    const baseSlug = (requestedSlug || title.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+    if (!baseSlug) throw new CatalogTaxonomyError('Impossible de générer le slug de cette catégorie')
+    let slug = baseSlug
+    for (let suffix = 2; ; suffix += 1) {
+      const [existing] = await sql`SELECT id FROM catalog_categories WHERE slug = ${slug}`
+      if (!existing) break
+      slug = `${baseSlug}-${suffix}`
     }
     const parentId = input.parent_id || null
     const [position] = await sql`
