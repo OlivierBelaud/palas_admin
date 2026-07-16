@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildCategoryTree, type CatalogCategory, categoryBreadcrumb, descendantIds } from './catalog-taxonomy'
+import {
+  buildCategoryTree,
+  type CatalogCategory,
+  type CatalogProduct,
+  categoryBreadcrumb,
+  categoryRepresentativeProduct,
+  descendantIds,
+} from './catalog-taxonomy'
 
 const categories: CatalogCategory[] = [
   {
@@ -7,6 +14,7 @@ const categories: CatalogCategory[] = [
     slug: 'jewellery',
     title_fr: 'Bijoux',
     title_en: 'Jewellery',
+    representative_product_id: null,
     parent_id: null,
     position: 0,
     status: 'active',
@@ -18,6 +26,7 @@ const categories: CatalogCategory[] = [
     slug: 'necklaces',
     title_fr: 'Colliers',
     title_en: 'Necklaces',
+    representative_product_id: null,
     parent_id: 'root',
     position: 1,
     status: 'active',
@@ -29,6 +38,7 @@ const categories: CatalogCategory[] = [
     slug: 'necklaces-medallion-chain',
     title_fr: 'Médaillons sur chaîne',
     title_en: 'Medallions on chains',
+    representative_product_id: null,
     parent_id: 'necklaces',
     position: 0,
     status: 'active',
@@ -51,5 +61,26 @@ describe('catalog taxonomy helpers', () => {
 
   it('returns a category and all its descendants', () => {
     expect([...descendantIds('necklaces', categories)]).toEqual(['necklaces', 'medals'])
+  })
+
+  it('uses the selected representative, then falls back to the first ordered direct product', () => {
+    const products = [
+      { shopify_product_id: 'second', title: 'Second', canonical_category_id: 'medals', category_position: 1 },
+      { shopify_product_id: 'first', title: 'First', canonical_category_id: 'medals', category_position: 0 },
+    ].map((product) => ({
+      ...product,
+      handle: product.shopify_product_id,
+      product_type: null,
+      image_url: null,
+      visual_group: null,
+      visual_subtype: null,
+    })) satisfies CatalogProduct[]
+    const category = categories[2]
+    expect(
+      categoryRepresentativeProduct({ ...category, representative_product_id: 'second' }, products)?.shopify_product_id,
+    ).toBe('second')
+    expect(
+      categoryRepresentativeProduct({ ...category, representative_product_id: null }, products)?.shopify_product_id,
+    ).toBe('first')
   })
 })

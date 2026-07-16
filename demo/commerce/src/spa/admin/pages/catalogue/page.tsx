@@ -9,6 +9,7 @@ import {
   type CatalogProduct,
   type CategoryNode,
   categoryBreadcrumb,
+  categoryRepresentativeProduct,
   descendantIds,
 } from '../../catalog-taxonomy'
 
@@ -187,6 +188,28 @@ export default function CataloguePage() {
     setNewSlug('')
   }
 
+  async function saveCategory(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedCategory) return
+    const form = new FormData(event.currentTarget)
+    await mutate({
+      action: 'update_category',
+      category_id: selectedCategory.id,
+      title_fr: form.get('title_fr'),
+      title_en: form.get('title_en'),
+      representative_product_id: form.get('representative_product_id') || null,
+    })
+  }
+
+  const directCategoryProducts = selectedCategory
+    ? (data?.products ?? [])
+        .filter((product) => product.canonical_category_id === selectedCategory.id)
+        .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
+    : []
+  const representativeProduct = selectedCategory
+    ? categoryRepresentativeProduct(selectedCategory, data?.products ?? [])
+    : undefined
+
   const pageTitle =
     selected === ALL
       ? 'Tous les bijoux'
@@ -305,6 +328,66 @@ export default function CataloguePage() {
               </label>
             ) : null}
           </div>
+          {selectedCategory ? (
+            <form
+              className="grid gap-4 rounded-md border bg-muted/30 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px]"
+              key={`${selectedCategory.id}:${selectedCategory.title_fr}:${selectedCategory.title_en ?? ''}:${selectedCategory.representative_product_id ?? ''}`}
+              onSubmit={saveCategory}
+            >
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium" htmlFor="category-title-fr">
+                  Nom français
+                </label>
+                <Input defaultValue={selectedCategory.title_fr} id="category-title-fr" name="title_fr" required />
+                <label className="mt-1 text-xs font-medium" htmlFor="category-title-en">
+                  Nom anglais
+                </label>
+                <Input defaultValue={selectedCategory.title_en ?? ''} id="category-title-en" name="title_en" />
+                <div className="text-xs text-muted-foreground">Slug stable : {selectedCategory.slug}</div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium" htmlFor="representative-product">
+                  Produit représentatif
+                </label>
+                <select
+                  className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
+                  defaultValue={selectedCategory.representative_product_id ?? ''}
+                  id="representative-product"
+                  name="representative_product_id"
+                >
+                  <option value="">Automatique — premier produit ordonné</option>
+                  {directCategoryProducts.map((product) => (
+                    <option key={product.shopify_product_id} value={product.shopify_product_id}>
+                      {product.title}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Seuls les produits directement classés ici peuvent représenter cette catégorie.
+                </p>
+                <Button className="mt-auto self-start" disabled={busy} type="submit">
+                  Enregistrer la catégorie
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium">Aperçu actuel</span>
+                {representativeProduct?.image_url ? (
+                  <img
+                    alt={representativeProduct.title}
+                    className="aspect-square w-full rounded-md border object-cover"
+                    src={representativeProduct.image_url}
+                  />
+                ) : (
+                  <div className="flex aspect-square items-center justify-center rounded-md border bg-muted text-center text-xs text-muted-foreground">
+                    Aucun produit
+                  </div>
+                )}
+                <span className="line-clamp-2 text-xs text-muted-foreground">
+                  {representativeProduct?.title ?? '—'}
+                </span>
+              </div>
+            </form>
+          ) : null}
           <div className="relative">
             <Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} />
             <Input

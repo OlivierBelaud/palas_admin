@@ -3,6 +3,7 @@ export type CatalogCategory = {
   slug: string
   title_fr: string
   title_en: string | null
+  representative_product_id: string | null
   parent_id: string | null
   position: number
   status: 'draft' | 'active' | 'archived'
@@ -69,4 +70,11 @@ export function descendantIds(categoryId: string, categories: CatalogCategory[])
     }
   }
   return result
+}
+
+export function categoryRepresentativeProduct(category: CatalogCategory, products: CatalogProduct[]) {
+  const direct = products
+    .filter((product) => product.canonical_category_id === category.id)
+    .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
+  return direct.find((product) => product.shopify_product_id === category.representative_product_id) ?? direct[0]
 }

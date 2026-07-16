@@ -15,6 +15,7 @@ function serializeCategory(row) {
     slug: row.slug,
     title_fr: row.title_fr,
     title_en: row.title_en,
+    representative_product_id: row.representative_product_id,
     parent_id: row.parent_id,
     position: Number(row.position),
     status: row.status,
@@ -41,7 +42,8 @@ async function readCatalogue(sql) {
       LEFT JOIN catalog_products p ON p.canonical_category_id = d.descendant_id AND p.online_store_published = true
       GROUP BY d.ancestor_id
     )
-    SELECT c.id, c.slug, c.title_fr, c.title_en, c.parent_id, c.position, c.status,
+    SELECT c.id, c.slug, c.title_fr, c.title_en, c.representative_product_id,
+           c.parent_id, c.position, c.status,
            coalesce(dc.count, 0) AS direct_product_count,
            coalesce(tc.count, 0) AS descendant_product_count
     FROM catalog_categories c
@@ -122,6 +124,17 @@ async function syncShopifyProducts(sql) {
           AND product.canonical_category_id IS NULL
       `
     }
+    await tx`
+      UPDATE catalog_categories category
+      SET representative_product_id = NULL, updated_at = now()
+      WHERE representative_product_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM catalog_products product
+          WHERE product.shopify_product_id = category.representative_product_id
+            AND product.canonical_category_id = category.id
+            AND product.online_store_published = true
+        )
+    `
   })
   return products.length
 }
@@ -150,6 +163,34 @@ async function mutate(sql, input) {
     return { id: created.id }
   }
 
+  if (input.action === 'update_category') {
+    const categoryId = String(input.category_id ?? '')
+    const titleFr = String(input.title_fr ?? '').trim()
+    const titleEn = String(input.title_en ?? '').trim() || null
+    const representativeProductId = input.representative_product_id ? String(input.representative_product_id) : null
+    if (!categoryId || !titleFr) throw new CatalogTaxonomyError('Catégorie et nom français requis')
+    if (representativeProductId) {
+      const [representative] = await sql`
+        SELECT shopify_product_id FROM catalog_products
+        WHERE shopify_product_id = ${representativeProductId}
+          AND canonical_category_id = ${categoryId}
+          AND online_store_published = true
+      `
+      if (!representative) {
+        throw new CatalogTaxonomyError('Le produit représentatif doit appartenir directement à cette catégorie')
+      }
+    }
+    const [updated] = await sql`
+      UPDATE catalog_categories
+      SET title_fr = ${titleFr}, title_en = ${titleEn},
+          representative_product_id = ${representativeProductId}, updated_at = now()
+      WHERE id = ${categoryId} AND deleted_at IS NULL
+      RETURNING id
+    `
+    if (!updated) throw new CatalogTaxonomyError('Catégorie introuvable')
+    return { id: updated.id }
+  }
+
   if (input.action === 'assign_product') {
     const productId = String(input.product_id ?? '')
     const categoryId = input.category_id || null
@@ -164,6 +205,12 @@ async function mutate(sql, input) {
     await sql`
       UPDATE catalog_products SET canonical_category_id = ${categoryId}, category_position = ${position}, updated_at = now()
       WHERE shopify_product_id = ${productId}
+    `
+    await sql`
+      UPDATE catalog_categories
+      SET representative_product_id = NULL, updated_at = now()
+      WHERE representative_product_id = ${productId}
+        AND id IS DISTINCT FROM ${categoryId}
     `
     return { product_id: productId }
   }
