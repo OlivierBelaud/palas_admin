@@ -2,7 +2,7 @@ const COLLECTION_HANDLE_PREFIX = 'palas-cat-'
 const COLLECTION_TITLE_PREFIX = '[PALAS CAT]'
 const UNCLASSIFIED_KEY = 'unclassified'
 const SHOPIFY_API_VERSION = '2025-10'
-const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/253433971035'
+const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/234170581339'
 const CATALOG_METAFIELD_DEFINITIONS = [
   ['managed', 'Palas catalog managed', 'boolean'],
   ['sync_key', 'Palas catalog sync key', 'single_line_text_field'],
