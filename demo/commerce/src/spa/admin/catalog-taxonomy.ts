@@ -43,6 +43,16 @@ export function buildCategoryTree(categories: CatalogCategory[]): CategoryNode[]
   return roots
 }
 
+export function flattenCategoryTree(nodes: CategoryNode[]) {
+  const result: CatalogCategory[] = []
+  const visit = (node: CategoryNode) => {
+    result.push(node)
+    for (const child of node.children) visit(child)
+  }
+  for (const node of nodes) visit(node)
+  return result
+}
+
 export function categoryBreadcrumb(categoryId: string | null, categories: CatalogCategory[]) {
   if (!categoryId) return 'Non classé'
   const byId = new Map(categories.map((category) => [category.id, category]))

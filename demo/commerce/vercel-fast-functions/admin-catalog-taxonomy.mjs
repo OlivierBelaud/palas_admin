@@ -209,6 +209,58 @@ async function mutate(sql, input) {
     return { id: updated.id }
   }
 
+  if (input.action === 'delete_category') {
+    const categoryId = String(input.category_id ?? '')
+    const [usage] = await sql`
+      WITH RECURSIVE descendants AS (
+        SELECT id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
+        UNION ALL
+        SELECT child.id FROM catalog_categories child
+        JOIN descendants parent ON child.parent_id = parent.id
+        WHERE child.deleted_at IS NULL
+      )
+      SELECT
+        (SELECT count(*)::int FROM catalog_categories WHERE parent_id = ${categoryId} AND deleted_at IS NULL) AS children,
+        (SELECT count(*)::int FROM catalog_products product
+          JOIN descendants ON descendants.id = product.canonical_category_id
+          WHERE product.online_store_published = true) AS products
+    `
+    if (!usage) throw new CatalogTaxonomyError('Catégorie introuvable')
+    if (Number(usage.children) > 0) throw new CatalogTaxonomyError('Supprimez d’abord les sous-catégories')
+    if (Number(usage.products) > 0) throw new CatalogTaxonomyError('La catégorie doit être vide avant sa suppression')
+    const [deleted] = await sql`
+      UPDATE catalog_categories SET deleted_at = now(), updated_at = now()
+      WHERE id = ${categoryId} AND deleted_at IS NULL
+      RETURNING id
+    `
+    if (!deleted) throw new CatalogTaxonomyError('Catégorie introuvable')
+    return { id: deleted.id }
+  }
+
+  if (input.action === 'reorder_categories') {
+    const parentId = input.parent_id || null
+    const categoryIds = Array.isArray(input.category_ids) ? input.category_ids.map(String) : []
+    if (categoryIds.length === 0) throw new CatalogTaxonomyError('Catégories requises')
+    const siblings = await sql`
+      SELECT id::text FROM catalog_categories
+      WHERE parent_id IS NOT DISTINCT FROM ${parentId} AND deleted_at IS NULL
+      ORDER BY position, title_fr
+    `
+    const siblingIds = siblings.map((category) => category.id)
+    if (siblingIds.length !== categoryIds.length || siblingIds.some((id) => !categoryIds.includes(id))) {
+      throw new CatalogTaxonomyError('Le tri doit contenir toutes les catégories du même niveau')
+    }
+    await sql.begin(async (tx) => {
+      for (const [position, categoryId] of categoryIds.entries()) {
+        await tx`
+          UPDATE catalog_categories SET position = ${position}, updated_at = now()
+          WHERE id = ${categoryId} AND parent_id IS NOT DISTINCT FROM ${parentId}
+        `
+      }
+    })
+    return { reordered: categoryIds.length }
+  }
+
   if (input.action === 'assign_product') {
     const productId = String(input.product_id ?? '')
     const categoryId = input.category_id || null

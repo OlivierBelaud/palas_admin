@@ -1,6 +1,6 @@
 import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Badge, Button, Input } from '@mantajs/ui'
-import { ChevronDown, ChevronRight, GripVertical, Plus, RefreshCw, Search } from 'lucide-react'
+import { ChevronDown, ChevronRight, GripVertical, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -12,6 +12,7 @@ import {
   categoryProductCandidates,
   categoryRepresentativeProduct,
   descendantIds,
+  flattenCategoryTree,
 } from '../../catalog-taxonomy'
 
 const ENDPOINT = '/api/admin/catalog-taxonomy'
@@ -31,6 +32,8 @@ function TreeItem({
   expanded,
   onSelect,
   onToggle,
+  onCategoryDragStart,
+  onCategoryDrop,
   depth = 0,
 }: {
   node: CategoryNode
@@ -38,6 +41,8 @@ function TreeItem({
   expanded: Set<string>
   onSelect: (id: string) => void
   onToggle: (id: string) => void
+  onCategoryDragStart: (id: string) => void
+  onCategoryDrop: (id: string) => void
   depth?: number
 }) {
   const isOpen = expanded.has(node.id)
@@ -45,8 +50,15 @@ function TreeItem({
     <div>
       <div
         className={`flex items-center gap-1 rounded px-2 py-1.5 text-sm ${selected === node.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+        draggable
+        onDragOver={(event) => event.preventDefault()}
+        onDragStart={() => onCategoryDragStart(node.id)}
+        onDrop={() => onCategoryDrop(node.id)}
+        role="treeitem"
         style={{ paddingLeft: `${8 + depth * 16}px` }}
+        tabIndex={0}
       >
+        <GripVertical className="shrink-0 cursor-grab opacity-50" size={13} />
         <button
           aria-label={isOpen ? 'Replier' : 'Déplier'}
           className="flex size-5 shrink-0 items-center justify-center"
@@ -76,6 +88,8 @@ function TreeItem({
               node={child}
               onSelect={onSelect}
               onToggle={onToggle}
+              onCategoryDragStart={onCategoryDragStart}
+              onCategoryDrop={onCategoryDrop}
               selected={selected}
             />
           ))
@@ -95,6 +109,7 @@ export default function CataloguePage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
+  const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [newSlug, setNewSlug] = useState('')
 
@@ -139,6 +154,7 @@ export default function CataloguePage() {
   )
 
   const tree = useMemo(() => buildCategoryTree(data?.categories ?? []), [data?.categories])
+  const orderedCategories = useMemo(() => flattenCategoryTree(tree), [tree])
   const selectedCategory = data?.categories.find((category) => category.id === selected)
   const products = useMemo(() => {
     if (!data) return []
@@ -161,8 +177,10 @@ export default function CataloguePage() {
   }, [data, includeDescendants, search, selected])
 
   async function reorder(targetId: string) {
-    if (!data || !draggedId || draggedId === targetId || !selectedCategory || includeDescendants) return
-    const direct = products.filter((product) => product.canonical_category_id === selectedCategory.id)
+    if (!data || !draggedId || draggedId === targetId || !selectedCategory) return
+    const direct = data.products
+      .filter((product) => product.canonical_category_id === selectedCategory.id)
+      .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
     const from = direct.findIndex((product) => product.shopify_product_id === draggedId)
     const to = direct.findIndex((product) => product.shopify_product_id === targetId)
     if (from < 0 || to < 0) return
@@ -174,6 +192,31 @@ export default function CataloguePage() {
       action: 'reorder_products',
       category_id: selectedCategory.id,
       product_ids: next.map((product) => product.shopify_product_id),
+    })
+  }
+
+  async function reorderCategories(targetId: string) {
+    if (!data || !draggedCategoryId || draggedCategoryId === targetId) return
+    const dragged = data.categories.find((category) => category.id === draggedCategoryId)
+    const target = data.categories.find((category) => category.id === targetId)
+    if (!dragged || !target || dragged.parent_id !== target.parent_id) {
+      setError('Une catégorie peut être déplacée uniquement parmi les catégories du même niveau.')
+      setDraggedCategoryId(null)
+      return
+    }
+    const siblings = data.categories
+      .filter((category) => category.parent_id === target.parent_id)
+      .sort((a, b) => a.position - b.position || a.title_fr.localeCompare(b.title_fr))
+    const from = siblings.findIndex((category) => category.id === dragged.id)
+    const to = siblings.findIndex((category) => category.id === target.id)
+    const next = [...siblings]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    setDraggedCategoryId(null)
+    await mutate({
+      action: 'reorder_categories',
+      parent_id: target.parent_id,
+      category_ids: next.map((category) => category.id),
     })
   }
 
@@ -200,6 +243,15 @@ export default function CataloguePage() {
       title_en: form.get('title_en'),
       representative_product_id: form.get('representative_product_id') || null,
     })
+  }
+
+  async function deleteCategory() {
+    if (!selectedCategory) return
+    const hasChildren = data?.categories.some((category) => category.parent_id === selectedCategory.id)
+    if (hasChildren || selectedCategory.descendant_product_count > 0) return
+    if (!window.confirm(`Supprimer définitivement la catégorie « ${selectedCategory.title_fr} » ?`)) return
+    await mutate({ action: 'delete_category', category_id: selectedCategory.id })
+    setSelected(selectedCategory.parent_id ?? ALL)
   }
 
   const categoryProducts = selectedCategory
@@ -279,11 +331,14 @@ export default function CataloguePage() {
                     return next
                   })
                 }
+                onCategoryDragStart={setDraggedCategoryId}
+                onCategoryDrop={(id) => void reorderCategories(id)}
                 selected={selected}
               />
             ))}
           </div>
           <form className="mt-auto flex flex-col gap-2 border-t pt-3" onSubmit={createCategory}>
+            <div className="text-sm font-medium">Ajouter une catégorie</div>
             <div className="text-xs text-muted-foreground">
               Nouvelle sous-catégorie de « {selectedCategory?.title_fr ?? 'racine'} »
             </div>
@@ -367,6 +422,19 @@ export default function CataloguePage() {
                 <Button className="mt-auto self-start" disabled={busy} type="submit">
                   Enregistrer la catégorie
                 </Button>
+                <Button
+                  className="self-start"
+                  disabled={
+                    busy ||
+                    selectedCategory.descendant_product_count > 0 ||
+                    Boolean(data?.categories.some((category) => category.parent_id === selectedCategory.id))
+                  }
+                  onClick={() => void deleteCategory()}
+                  type="button"
+                  variant="destructive"
+                >
+                  <Trash2 size={15} /> Supprimer la catégorie
+                </Button>
               </div>
               <div className="flex flex-col gap-2">
                 <span className="text-xs font-medium">Aperçu actuel</span>
@@ -396,9 +464,9 @@ export default function CataloguePage() {
               value={search}
             />
           </div>
-          {selectedCategory && !includeDescendants ? (
+          {selectedCategory ? (
             <p className="text-xs text-muted-foreground">
-              Glissez les lignes avec la poignée pour définir leur ordre d’affichage dans cette catégorie.
+              Glissez les produits directement classés ici avec la poignée pour définir leur ordre d’affichage.
             </p>
           ) : null}
 
@@ -411,9 +479,7 @@ export default function CataloguePage() {
               products.map((product) => (
                 <li
                   className="grid grid-cols-[28px_56px_minmax(180px,1fr)_minmax(180px,280px)] items-center gap-3 border-b p-2 last:border-b-0"
-                  draggable={Boolean(
-                    selectedCategory && !includeDescendants && product.canonical_category_id === selectedCategory.id,
-                  )}
+                  draggable={Boolean(selectedCategory && product.canonical_category_id === selectedCategory.id)}
                   key={product.shopify_product_id}
                   onDragOver={(event) => event.preventDefault()}
                   onDragStart={() => setDraggedId(product.shopify_product_id)}
@@ -448,7 +514,7 @@ export default function CataloguePage() {
                     value={product.canonical_category_id ?? ''}
                   >
                     <option value="">Non classé</option>
-                    {(data?.categories ?? []).map((category) => (
+                    {orderedCategories.map((category) => (
                       <option key={category.id} value={category.id}>
                         {categoryBreadcrumb(category.id, data?.categories ?? [])}
                       </option>
