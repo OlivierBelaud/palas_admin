@@ -1,0 +1,202 @@
+import { readFile } from 'node:fs/promises'
+import { db, iso, json, requireAdmin, unauthorized } from './runtime.mjs'
+
+const SHOPIFY_PRODUCTS_URL = 'https://fancy-palas.myshopify.com/products.json'
+class CatalogTaxonomyError extends Error {}
+
+async function readClassificationSeed() {
+  const url = new URL('./catalog-classification-seed.json', import.meta.url)
+  return JSON.parse(await readFile(url, 'utf8'))
+}
+
+function serializeCategory(row) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title_fr: row.title_fr,
+    title_en: row.title_en,
+    parent_id: row.parent_id,
+    position: Number(row.position),
+    status: row.status,
+    direct_product_count: Number(row.direct_product_count),
+    descendant_product_count: Number(row.descendant_product_count),
+  }
+}
+
+async function readCatalogue(sql) {
+  const categories = await sql.unsafe(`
+    WITH RECURSIVE descendants AS (
+      SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
+      UNION ALL
+      SELECT d.ancestor_id, c.id
+      FROM descendants d
+      JOIN catalog_categories c ON c.parent_id = d.descendant_id AND c.deleted_at IS NULL
+    ), direct_counts AS (
+      SELECT canonical_category_id AS category_id, count(*)::int AS count
+      FROM catalog_products WHERE online_store_published = true AND canonical_category_id IS NOT NULL
+      GROUP BY canonical_category_id
+    ), descendant_counts AS (
+      SELECT d.ancestor_id AS category_id, count(p.shopify_product_id)::int AS count
+      FROM descendants d
+      LEFT JOIN catalog_products p ON p.canonical_category_id = d.descendant_id AND p.online_store_published = true
+      GROUP BY d.ancestor_id
+    )
+    SELECT c.id, c.slug, c.title_fr, c.title_en, c.parent_id, c.position, c.status,
+           coalesce(dc.count, 0) AS direct_product_count,
+           coalesce(tc.count, 0) AS descendant_product_count
+    FROM catalog_categories c
+    LEFT JOIN direct_counts dc ON dc.category_id = c.id
+    LEFT JOIN descendant_counts tc ON tc.category_id = c.id
+    WHERE c.deleted_at IS NULL
+    ORDER BY c.parent_id NULLS FIRST, c.position, c.title_fr
+  `)
+  const products = await sql.unsafe(`
+    SELECT shopify_product_id, handle, title, product_type, image_url, online_store_published,
+           canonical_category_id, category_position, visual_group, visual_subtype, shopify_updated_at
+    FROM catalog_products
+    WHERE online_store_published = true
+    ORDER BY canonical_category_id NULLS FIRST, category_position, title
+  `)
+  const classified = products.filter((product) => product.canonical_category_id).length
+  return {
+    categories: categories.map(serializeCategory),
+    products: products.map((product) => ({
+      ...product,
+      category_position: Number(product.category_position),
+      shopify_updated_at: product.shopify_updated_at ? iso(product.shopify_updated_at) : null,
+    })),
+    summary: {
+      products: products.length,
+      classified,
+      unclassified: products.length - classified,
+      categories: categories.length,
+    },
+  }
+}
+
+async function syncShopifyProducts(sql) {
+  const products = []
+  for (let page = 1; ; page += 1) {
+    const response = await fetch(`${SHOPIFY_PRODUCTS_URL}?limit=250&page=${page}`)
+    if (!response.ok) throw new CatalogTaxonomyError(`Shopify products request failed (${response.status})`)
+    const batch = (await response.json()).products ?? []
+    products.push(...batch)
+    if (batch.length < 250) break
+  }
+
+  await sql.begin(async (tx) => {
+    await tx`UPDATE catalog_products SET online_store_published = false, updated_at = now()`
+    for (const product of products) {
+      const imageUrl = product.images?.[0]?.src ?? product.image?.src ?? null
+      await tx`
+        INSERT INTO catalog_products (
+          shopify_product_id, handle, title, product_type, image_url, online_store_published,
+          shopify_updated_at, updated_at
+        ) VALUES (
+          ${String(product.id)}, ${product.handle}, ${product.title}, ${product.product_type || null},
+          ${imageUrl}, true, ${product.updated_at || null}, now()
+        )
+        ON CONFLICT (shopify_product_id) DO UPDATE SET
+          handle = EXCLUDED.handle,
+          title = EXCLUDED.title,
+          product_type = EXCLUDED.product_type,
+          image_url = EXCLUDED.image_url,
+          online_store_published = true,
+          shopify_updated_at = EXCLUDED.shopify_updated_at,
+          updated_at = now()
+      `
+    }
+
+    const classifications = await readClassificationSeed()
+    for (const classification of classifications) {
+      await tx`
+        UPDATE catalog_products product
+        SET canonical_category_id = category.id,
+            category_position = ${classification.category_position},
+            visual_group = ${classification.visual_group},
+            visual_subtype = ${classification.visual_subtype},
+            updated_at = now()
+        FROM catalog_categories category
+        WHERE product.shopify_product_id = ${classification.shopify_product_id}
+          AND category.slug = ${classification.category_slug}
+          AND product.canonical_category_id IS NULL
+      `
+    }
+  })
+  return products.length
+}
+
+async function mutate(sql, input) {
+  if (input.action === 'sync_products') return { synced: await syncShopifyProducts(sql) }
+
+  if (input.action === 'create_category') {
+    const title = String(input.title_fr ?? '').trim()
+    const slug = String(input.slug ?? '')
+      .trim()
+      .toLowerCase()
+    if (!title || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+      throw new CatalogTaxonomyError('Titre et slug valide requis')
+    }
+    const parentId = input.parent_id || null
+    const [position] = await sql`
+      SELECT coalesce(max(position), -1) + 1 AS value
+      FROM catalog_categories WHERE parent_id IS NOT DISTINCT FROM ${parentId} AND deleted_at IS NULL
+    `
+    const [created] = await sql`
+      INSERT INTO catalog_categories (slug, title_fr, title_en, parent_id, position, status)
+      VALUES (${slug}, ${title}, ${input.title_en || null}, ${parentId}, ${Number(position.value)}, 'active')
+      RETURNING id
+    `
+    return { id: created.id }
+  }
+
+  if (input.action === 'assign_product') {
+    const productId = String(input.product_id ?? '')
+    const categoryId = input.category_id || null
+    let position = 0
+    if (categoryId) {
+      const [row] = await sql`
+        SELECT coalesce(max(category_position), -1) + 1 AS value
+        FROM catalog_products WHERE canonical_category_id = ${categoryId}
+      `
+      position = Number(row.value)
+    }
+    await sql`
+      UPDATE catalog_products SET canonical_category_id = ${categoryId}, category_position = ${position}, updated_at = now()
+      WHERE shopify_product_id = ${productId}
+    `
+    return { product_id: productId }
+  }
+
+  if (input.action === 'reorder_products') {
+    const categoryId = String(input.category_id ?? '')
+    const productIds = Array.isArray(input.product_ids) ? input.product_ids.map(String) : []
+    if (!categoryId || productIds.length === 0) throw new CatalogTaxonomyError('Catégorie et produits requis')
+    await sql.begin(async (tx) => {
+      for (const [position, productId] of productIds.entries()) {
+        await tx`
+          UPDATE catalog_products SET category_position = ${position}, updated_at = now()
+          WHERE shopify_product_id = ${productId} AND canonical_category_id = ${categoryId}
+        `
+      }
+    })
+    return { reordered: productIds.length }
+  }
+
+  throw new CatalogTaxonomyError('Action inconnue')
+}
+
+export default {
+  async fetch(req) {
+    if (!requireAdmin(req)) return unauthorized()
+    const sql = db()
+    try {
+      if (req.method === 'GET') return json({ data: await readCatalogue(sql) })
+      if (req.method !== 'POST') return json({ message: 'Method not allowed' }, { status: 405 })
+      const result = await mutate(sql, await req.json())
+      return json({ data: { result, ...(await readCatalogue(sql)) } })
+    } catch (error) {
+      return json({ message: error instanceof Error ? error.message : 'Catalogue action failed' }, { status: 400 })
+    }
+  },
+}

@@ -27,6 +27,11 @@ export default defineSpa({
       to: '/orders',
     },
     {
+      icon: 'FolderTree',
+      label: 'Catalogue',
+      to: '/catalogue',
+    },
+    {
       icon: 'Megaphone',
       label: 'Marketing rules',
       to: '/marketing-rules',

@@ -209,6 +209,11 @@ function installFastFunctions() {
     route: 'api/admin/invitations',
   })
   installFastFunction({
+    source: 'admin-catalog-taxonomy.mjs',
+    route: 'api/admin/catalog-taxonomy',
+    extraSources: ['catalog-classification-seed.json'],
+  })
+  installFastFunction({
     source: 'admin-visitor-lifecycle-dashboard.mjs',
     route: 'api/admin/visitor-lifecycle-dashboard',
   })
