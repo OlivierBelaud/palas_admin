@@ -72,9 +72,44 @@ export function descendantIds(categoryId: string, categories: CatalogCategory[])
   return result
 }
 
-export function categoryRepresentativeProduct(category: CatalogCategory, products: CatalogProduct[]) {
-  const direct = products
-    .filter((product) => product.canonical_category_id === category.id)
-    .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
-  return direct.find((product) => product.shopify_product_id === category.representative_product_id) ?? direct[0]
+export function categoryRepresentativeProduct(
+  category: CatalogCategory,
+  categories: CatalogCategory[],
+  products: CatalogProduct[],
+) {
+  const candidates = categoryProductCandidates(category, categories, products)
+  return (
+    candidates.find((product) => product.shopify_product_id === category.representative_product_id) ?? candidates[0]
+  )
+}
+
+export function categoryProductCandidates(
+  category: CatalogCategory,
+  categories: CatalogCategory[],
+  products: CatalogProduct[],
+) {
+  const byParent = new Map<string, CatalogCategory[]>()
+  for (const child of categories) {
+    if (!child.parent_id) continue
+    const siblings = byParent.get(child.parent_id) ?? []
+    siblings.push(child)
+    byParent.set(child.parent_id, siblings)
+  }
+  for (const siblings of byParent.values()) {
+    siblings.sort((a, b) => a.position - b.position || a.title_fr.localeCompare(b.title_fr))
+  }
+  const categoryOrder: string[] = []
+  const visit = (categoryId: string) => {
+    categoryOrder.push(categoryId)
+    for (const child of byParent.get(categoryId) ?? []) visit(child.id)
+  }
+  visit(category.id)
+  const rank = new Map(categoryOrder.map((id, index) => [id, index]))
+  return products
+    .filter((product) => product.canonical_category_id && rank.has(product.canonical_category_id))
+    .sort((a, b) => {
+      const categoryRank =
+        (rank.get(a.canonical_category_id ?? '') ?? 0) - (rank.get(b.canonical_category_id ?? '') ?? 0)
+      return categoryRank || a.category_position - b.category_position || a.title.localeCompare(b.title)
+    })
 }

@@ -9,6 +9,7 @@ import {
   type CatalogProduct,
   type CategoryNode,
   categoryBreadcrumb,
+  categoryProductCandidates,
   categoryRepresentativeProduct,
   descendantIds,
 } from '../../catalog-taxonomy'
@@ -201,13 +202,11 @@ export default function CataloguePage() {
     })
   }
 
-  const directCategoryProducts = selectedCategory
-    ? (data?.products ?? [])
-        .filter((product) => product.canonical_category_id === selectedCategory.id)
-        .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
+  const categoryProducts = selectedCategory
+    ? categoryProductCandidates(selectedCategory, data?.categories ?? [], data?.products ?? [])
     : []
   const representativeProduct = selectedCategory
-    ? categoryRepresentativeProduct(selectedCategory, data?.products ?? [])
+    ? categoryRepresentativeProduct(selectedCategory, data?.categories ?? [], data?.products ?? [])
     : undefined
 
   const pageTitle =
@@ -356,14 +355,14 @@ export default function CataloguePage() {
                   name="representative_product_id"
                 >
                   <option value="">Automatique — premier produit ordonné</option>
-                  {directCategoryProducts.map((product) => (
+                  {categoryProducts.map((product) => (
                     <option key={product.shopify_product_id} value={product.shopify_product_id}>
                       {product.title}
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground">
-                  Seuls les produits directement classés ici peuvent représenter cette catégorie.
+                  Les produits de cette catégorie et de toutes ses sous-catégories sont disponibles.
                 </p>
                 <Button className="mt-auto self-start" disabled={busy} type="submit">
                   Enregistrer la catégorie

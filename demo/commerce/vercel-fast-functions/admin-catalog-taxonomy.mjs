@@ -125,13 +125,22 @@ async function syncShopifyProducts(sql) {
       `
     }
     await tx`
+      WITH RECURSIVE descendants AS (
+        SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT descendants.ancestor_id, child.id
+        FROM descendants
+        JOIN catalog_categories child ON child.parent_id = descendants.descendant_id AND child.deleted_at IS NULL
+      )
       UPDATE catalog_categories category
       SET representative_product_id = NULL, updated_at = now()
       WHERE representative_product_id IS NOT NULL
         AND NOT EXISTS (
-          SELECT 1 FROM catalog_products product
-          WHERE product.shopify_product_id = category.representative_product_id
-            AND product.canonical_category_id = category.id
+          SELECT 1
+          FROM catalog_products product
+          JOIN descendants ON descendants.descendant_id = product.canonical_category_id
+          WHERE descendants.ancestor_id = category.id
+            AND product.shopify_product_id = category.representative_product_id
             AND product.online_store_published = true
         )
     `
@@ -171,13 +180,22 @@ async function mutate(sql, input) {
     if (!categoryId || !titleFr) throw new CatalogTaxonomyError('Catégorie et nom français requis')
     if (representativeProductId) {
       const [representative] = await sql`
-        SELECT shopify_product_id FROM catalog_products
-        WHERE shopify_product_id = ${representativeProductId}
-          AND canonical_category_id = ${categoryId}
-          AND online_store_published = true
+        WITH RECURSIVE descendants AS (
+          SELECT id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
+          UNION ALL
+          SELECT child.id FROM catalog_categories child
+          JOIN descendants parent ON child.parent_id = parent.id
+          WHERE child.deleted_at IS NULL
+        )
+        SELECT product.shopify_product_id FROM catalog_products product
+        JOIN descendants ON descendants.id = product.canonical_category_id
+        WHERE product.shopify_product_id = ${representativeProductId}
+          AND product.online_store_published = true
       `
       if (!representative) {
-        throw new CatalogTaxonomyError('Le produit représentatif doit appartenir directement à cette catégorie')
+        throw new CatalogTaxonomyError(
+          'Le produit représentatif doit appartenir à cette catégorie ou à une sous-catégorie',
+        )
       }
     }
     const [updated] = await sql`
@@ -207,10 +225,21 @@ async function mutate(sql, input) {
       WHERE shopify_product_id = ${productId}
     `
     await sql`
+      WITH RECURSIVE descendants AS (
+        SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT descendants.ancestor_id, child.id
+        FROM descendants
+        JOIN catalog_categories child ON child.parent_id = descendants.descendant_id AND child.deleted_at IS NULL
+      )
       UPDATE catalog_categories
       SET representative_product_id = NULL, updated_at = now()
       WHERE representative_product_id = ${productId}
-        AND id IS DISTINCT FROM ${categoryId}
+        AND NOT EXISTS (
+          SELECT 1 FROM descendants
+          WHERE descendants.ancestor_id = catalog_categories.id
+            AND descendants.descendant_id = ${categoryId}
+        )
     `
     return { product_id: productId }
   }

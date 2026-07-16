@@ -4,6 +4,7 @@ import {
   type CatalogCategory,
   type CatalogProduct,
   categoryBreadcrumb,
+  categoryProductCandidates,
   categoryRepresentativeProduct,
   descendantIds,
 } from './catalog-taxonomy'
@@ -63,7 +64,7 @@ describe('catalog taxonomy helpers', () => {
     expect([...descendantIds('necklaces', categories)]).toEqual(['necklaces', 'medals'])
   })
 
-  it('uses the selected representative, then falls back to the first ordered direct product', () => {
+  it('uses the selected representative, then falls back to the first ordered product', () => {
     const products = [
       { shopify_product_id: 'second', title: 'Second', canonical_category_id: 'medals', category_position: 1 },
       { shopify_product_id: 'first', title: 'First', canonical_category_id: 'medals', category_position: 0 },
@@ -77,10 +78,28 @@ describe('catalog taxonomy helpers', () => {
     })) satisfies CatalogProduct[]
     const category = categories[2]
     expect(
-      categoryRepresentativeProduct({ ...category, representative_product_id: 'second' }, products)?.shopify_product_id,
+      categoryRepresentativeProduct({ ...category, representative_product_id: 'second' }, categories, products)
+        ?.shopify_product_id,
     ).toBe('second')
     expect(
-      categoryRepresentativeProduct({ ...category, representative_product_id: null }, products)?.shopify_product_id,
+      categoryRepresentativeProduct({ ...category, representative_product_id: null }, categories, products)
+        ?.shopify_product_id,
     ).toBe('first')
+  })
+
+  it('offers descendant products to parent categories', () => {
+    const products = [
+      { shopify_product_id: 'medal', title: 'Medal', canonical_category_id: 'medals', category_position: 0 },
+    ].map((product) => ({
+      ...product,
+      handle: product.shopify_product_id,
+      product_type: null,
+      image_url: 'https://example.com/image.jpg',
+      visual_group: null,
+      visual_subtype: null,
+    })) satisfies CatalogProduct[]
+    expect(
+      categoryProductCandidates(categories[0], categories, products).map((product) => product.shopify_product_id),
+    ).toEqual(['medal'])
   })
 })
