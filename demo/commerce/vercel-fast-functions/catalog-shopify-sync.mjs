@@ -2,6 +2,7 @@ const COLLECTION_HANDLE_PREFIX = 'palas-cat-'
 const COLLECTION_TITLE_PREFIX = '[PALAS CAT]'
 const UNCLASSIFIED_KEY = 'unclassified'
 const SHOPIFY_API_VERSION = '2025-10'
+const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/253433971035'
 
 class CatalogShopifySyncError extends Error {}
 
@@ -21,6 +22,7 @@ function shopifyConfig() {
   return {
     endpoint: `https://${process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'}/admin/api/${process.env.SHOPIFY_ADMIN_API_VERSION ?? SHOPIFY_API_VERSION}/graphql.json`,
     token,
+    publicationId: process.env.SHOPIFY_CATALOG_PUBLICATION_ID ?? DEFAULT_STOREFRONT_PUBLICATION_ID,
   }
 }
 
@@ -41,6 +43,23 @@ async function shopifyGraphql(query, variables = {}) {
 function assertNoUserErrors(payload, operation) {
   if (payload?.userErrors?.length) {
     throw new CatalogShopifySyncError(`${operation}: ${payload.userErrors.map((error) => error.message).join(' | ')}`)
+  }
+}
+
+async function publishCollection(collectionId) {
+  const { publicationId } = shopifyConfig()
+  const data = await shopifyGraphql(
+    `mutation CatalogCollectionPublish($id: ID!, $publicationId: ID!) {
+      publishablePublish(id: $id, input: { publicationId: $publicationId }) {
+        publishable { publishedOnPublication(publicationId: $publicationId) }
+        userErrors { field message }
+      }
+    }`,
+    { id: collectionId, publicationId },
+  )
+  assertNoUserErrors(data.publishablePublish, 'publishablePublish')
+  if (!data.publishablePublish.publishable?.publishedOnPublication) {
+    throw new CatalogShopifySyncError(`Collection was not published on ${publicationId}`)
   }
 }
 
@@ -183,6 +202,7 @@ async function upsertMirror(sql, spec) {
     let collection = await findCollection(spec.handle, mirror?.shopify_collection_id)
     if (!collection) collection = await createCollection(spec)
     else await updateCollection(collection.id, spec)
+    await publishCollection(collection.id)
 
     const currentIds = await readCollectionProductIds(collection.id)
     const desiredIds = spec.productIds.map(productGid)
@@ -359,4 +379,9 @@ export async function deleteCatalogMirror(sql, categoryId) {
   return collection?.id ?? null
 }
 
-export const catalogShopifyConstants = { COLLECTION_HANDLE_PREFIX, COLLECTION_TITLE_PREFIX, UNCLASSIFIED_KEY }
+export const catalogShopifyConstants = {
+  COLLECTION_HANDLE_PREFIX,
+  COLLECTION_TITLE_PREFIX,
+  UNCLASSIFIED_KEY,
+  DEFAULT_STOREFRONT_PUBLICATION_ID,
+}

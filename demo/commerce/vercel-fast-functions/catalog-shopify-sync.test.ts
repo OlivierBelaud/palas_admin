@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { buildCatalogShopifySpecs, catalogShopifyConstants } from './catalog-shopify-sync.mjs'
 
 describe('catalog Shopify collection specs', () => {
+  it('targets the FrontEnd publication, never the Online Store channel', () => {
+    expect(catalogShopifyConstants.DEFAULT_STOREFRONT_PUBLICATION_ID).toBe('gid://shopify/Publication/253433971035')
+  })
+
   it('isolates handles and rolls descendants into their parent collection', () => {
     const specs = buildCatalogShopifySpecs({
       categories: [
