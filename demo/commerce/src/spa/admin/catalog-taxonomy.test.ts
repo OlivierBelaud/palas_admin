@@ -7,6 +7,7 @@ import {
   categoryProductCandidates,
   categoryRepresentativeProduct,
   descendantIds,
+  moveItem,
 } from './catalog-taxonomy'
 
 const categories: CatalogCategory[] = [
@@ -101,5 +102,11 @@ describe('catalog taxonomy helpers', () => {
     expect(
       categoryProductCandidates(categories[0], categories, products).map((product) => product.shopify_product_id),
     ).toEqual(['medal'])
+  })
+
+  it('moves an item before or after the hovered target', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    expect(moveItem(items, 'a', 'c', 'before', (item) => item.id).map((item) => item.id)).toEqual(['b', 'a', 'c'])
+    expect(moveItem(items, 'a', 'c', 'after', (item) => item.id).map((item) => item.id)).toEqual(['b', 'c', 'a'])
   })
 })

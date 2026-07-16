@@ -53,6 +53,23 @@ export function flattenCategoryTree(nodes: CategoryNode[]) {
   return result
 }
 
+export function moveItem<T>(
+  items: T[],
+  draggedId: string,
+  targetId: string,
+  placement: 'before' | 'after',
+  getId: (item: T) => string,
+) {
+  const next = [...items]
+  const from = next.findIndex((item) => getId(item) === draggedId)
+  if (from < 0 || draggedId === targetId) return next
+  const [moved] = next.splice(from, 1)
+  const targetIndex = next.findIndex((item) => getId(item) === targetId)
+  if (targetIndex < 0) return items
+  next.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, moved)
+  return next
+}
+
 export function categoryBreadcrumb(categoryId: string | null, categories: CatalogCategory[]) {
   if (!categoryId) return 'Non classé'
   const byId = new Map(categories.map((category) => [category.id, category]))

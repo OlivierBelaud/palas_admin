@@ -13,6 +13,7 @@ import {
   categoryRepresentativeProduct,
   descendantIds,
   flattenCategoryTree,
+  moveItem,
 } from '../../catalog-taxonomy'
 
 const ENDPOINT = '/api/admin/catalog-taxonomy'
@@ -33,7 +34,10 @@ function TreeItem({
   onSelect,
   onToggle,
   onCategoryDragStart,
+  onCategoryDragOver,
   onCategoryDrop,
+  onCategoryDragEnd,
+  categoryDropTarget,
   addingParentId,
   newTitle,
   onAdd,
@@ -48,7 +52,10 @@ function TreeItem({
   onSelect: (id: string) => void
   onToggle: (id: string) => void
   onCategoryDragStart: (id: string) => void
-  onCategoryDrop: (id: string) => void
+  onCategoryDragOver: (id: string, placement: 'before' | 'after') => void
+  onCategoryDrop: (id: string, placement: 'before' | 'after') => void
+  onCategoryDragEnd: () => void
+  categoryDropTarget: { id: string; placement: 'before' | 'after'; valid: boolean } | null
   addingParentId: string | null
   newTitle: string
   onAdd: (id: string) => void
@@ -61,15 +68,25 @@ function TreeItem({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded px-2 py-1.5 text-sm ${selected === node.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+        className={`relative flex items-center gap-1 rounded px-2 py-1.5 text-sm ${selected === node.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
         draggable
-        onDragOver={(event) => event.preventDefault()}
+        onDragEnd={onCategoryDragEnd}
+        onDragOver={(event) => {
+          event.preventDefault()
+          const bounds = event.currentTarget.getBoundingClientRect()
+          onCategoryDragOver(node.id, event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after')
+        }}
         onDragStart={() => onCategoryDragStart(node.id)}
-        onDrop={() => onCategoryDrop(node.id)}
+        onDrop={() => onCategoryDrop(node.id, categoryDropTarget?.placement ?? 'before')}
         role="treeitem"
         style={{ paddingLeft: `${8 + depth * 16}px` }}
         tabIndex={0}
       >
+        {categoryDropTarget?.id === node.id ? (
+          <span
+            className={`pointer-events-none absolute left-2 right-1 z-10 h-0.5 rounded ${categoryDropTarget.valid ? 'bg-blue-500' : 'bg-red-500'} ${categoryDropTarget.placement === 'before' ? '-top-px' : '-bottom-px'}`}
+          />
+        ) : null}
         <GripVertical className="shrink-0 cursor-grab opacity-50" size={13} />
         <button
           aria-label={isOpen ? 'Replier' : 'Déplier'}
@@ -135,7 +152,10 @@ function TreeItem({
               onSelect={onSelect}
               onToggle={onToggle}
               onCategoryDragStart={onCategoryDragStart}
+              onCategoryDragOver={onCategoryDragOver}
               onCategoryDrop={onCategoryDrop}
+              onCategoryDragEnd={onCategoryDragEnd}
+              categoryDropTarget={categoryDropTarget}
               addingParentId={addingParentId}
               newTitle={newTitle}
               onAdd={onAdd}
@@ -162,6 +182,16 @@ export default function CataloguePage() {
   const [error, setError] = useState<string | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
+  const [productDropTarget, setProductDropTarget] = useState<{
+    id: string
+    placement: 'before' | 'after'
+    valid: boolean
+  } | null>(null)
+  const [categoryDropTarget, setCategoryDropTarget] = useState<{
+    id: string
+    placement: 'before' | 'after'
+    valid: boolean
+  } | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [addingParentId, setAddingParentId] = useState<string | null>(null)
 
@@ -228,43 +258,45 @@ export default function CataloguePage() {
     })
   }, [data, includeDescendants, search, selected])
 
-  async function reorder(targetId: string) {
-    if (!data || !draggedId || draggedId === targetId || !selectedCategory) return
+  async function reorder(targetId: string, placement: 'before' | 'after') {
+    if (!data || !draggedId || draggedId === targetId) return
+    const dragged = data.products.find((product) => product.shopify_product_id === draggedId)
+    const target = data.products.find((product) => product.shopify_product_id === targetId)
+    if (!dragged?.canonical_category_id || dragged.canonical_category_id !== target?.canonical_category_id) {
+      setError('Un produit peut être réordonné uniquement parmi les produits de sa catégorie canonique.')
+      setDraggedId(null)
+      setProductDropTarget(null)
+      return
+    }
     const direct = data.products
-      .filter((product) => product.canonical_category_id === selectedCategory.id)
+      .filter((product) => product.canonical_category_id === dragged.canonical_category_id)
       .sort((a, b) => a.category_position - b.category_position || a.title.localeCompare(b.title))
-    const from = direct.findIndex((product) => product.shopify_product_id === draggedId)
-    const to = direct.findIndex((product) => product.shopify_product_id === targetId)
-    if (from < 0 || to < 0) return
-    const next = [...direct]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
+    const next = moveItem(direct, draggedId, targetId, placement, (product) => product.shopify_product_id)
     setDraggedId(null)
+    setProductDropTarget(null)
     await mutate({
       action: 'reorder_products',
-      category_id: selectedCategory.id,
+      category_id: dragged.canonical_category_id,
       product_ids: next.map((product) => product.shopify_product_id),
     })
   }
 
-  async function reorderCategories(targetId: string) {
+  async function reorderCategories(targetId: string, placement: 'before' | 'after') {
     if (!data || !draggedCategoryId || draggedCategoryId === targetId) return
     const dragged = data.categories.find((category) => category.id === draggedCategoryId)
     const target = data.categories.find((category) => category.id === targetId)
     if (!dragged || !target || dragged.parent_id !== target.parent_id) {
       setError('Une catégorie peut être déplacée uniquement parmi les catégories du même niveau.')
       setDraggedCategoryId(null)
+      setCategoryDropTarget(null)
       return
     }
     const siblings = data.categories
       .filter((category) => category.parent_id === target.parent_id)
       .sort((a, b) => a.position - b.position || a.title_fr.localeCompare(b.title_fr))
-    const from = siblings.findIndex((category) => category.id === dragged.id)
-    const to = siblings.findIndex((category) => category.id === target.id)
-    const next = [...siblings]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
+    const next = moveItem(siblings, dragged.id, target.id, placement, (category) => category.id)
     setDraggedCategoryId(null)
+    setCategoryDropTarget(null)
     await mutate({
       action: 'reorder_categories',
       parent_id: target.parent_id,
@@ -384,7 +416,21 @@ export default function CataloguePage() {
                   })
                 }
                 onCategoryDragStart={setDraggedCategoryId}
-                onCategoryDrop={(id) => void reorderCategories(id)}
+                onCategoryDragOver={(id, placement) => {
+                  const dragged = data?.categories.find((category) => category.id === draggedCategoryId)
+                  const target = data?.categories.find((category) => category.id === id)
+                  setCategoryDropTarget({
+                    id,
+                    placement,
+                    valid: Boolean(dragged && target && dragged.parent_id === target.parent_id),
+                  })
+                }}
+                onCategoryDrop={(id, placement) => void reorderCategories(id, placement)}
+                onCategoryDragEnd={() => {
+                  setDraggedCategoryId(null)
+                  setCategoryDropTarget(null)
+                }}
+                categoryDropTarget={categoryDropTarget}
                 addingParentId={addingParentId}
                 newTitle={newTitle}
                 onAdd={(id) => {
@@ -520,13 +566,34 @@ export default function CataloguePage() {
             ) : (
               products.map((product) => (
                 <li
-                  className="grid grid-cols-[28px_56px_minmax(180px,1fr)_minmax(180px,280px)] items-center gap-3 border-b p-2 last:border-b-0"
-                  draggable={Boolean(selectedCategory && product.canonical_category_id === selectedCategory.id)}
+                  className="relative grid grid-cols-[28px_56px_minmax(180px,1fr)_minmax(180px,280px)] items-center gap-3 border-b p-2 last:border-b-0"
+                  draggable={Boolean(product.canonical_category_id)}
                   key={product.shopify_product_id}
-                  onDragOver={(event) => event.preventDefault()}
+                  onDragEnd={() => {
+                    setDraggedId(null)
+                    setProductDropTarget(null)
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    const bounds = event.currentTarget.getBoundingClientRect()
+                    setProductDropTarget({
+                      id: product.shopify_product_id,
+                      placement: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after',
+                      valid: Boolean(
+                        draggedId &&
+                          data?.products.find((candidate) => candidate.shopify_product_id === draggedId)
+                            ?.canonical_category_id === product.canonical_category_id,
+                      ),
+                    })
+                  }}
                   onDragStart={() => setDraggedId(product.shopify_product_id)}
-                  onDrop={() => void reorder(product.shopify_product_id)}
+                  onDrop={() => void reorder(product.shopify_product_id, productDropTarget?.placement ?? 'before')}
                 >
+                  {productDropTarget?.id === product.shopify_product_id ? (
+                    <span
+                      className={`pointer-events-none absolute left-0 right-0 z-10 h-0.5 rounded ${productDropTarget.valid ? 'bg-blue-500' : 'bg-red-500'} ${productDropTarget.placement === 'before' ? '-top-px' : '-bottom-px'}`}
+                    />
+                  ) : null}
                   <GripVertical className="cursor-grab text-muted-foreground" size={17} />
                   {product.image_url ? (
                     <img alt="" className="size-14 rounded object-cover" loading="lazy" src={product.image_url} />
