@@ -13,6 +13,7 @@ describe('catalog Shopify collection specs', () => {
           id: 'jewelry',
           slug: 'bijoux',
           title_fr: 'Bijoux',
+          title_en: 'Jewellery',
           parent_id: null,
           position: 0,
           representative_product_id: null,
@@ -21,6 +22,7 @@ describe('catalog Shopify collection specs', () => {
           id: 'necklaces',
           slug: 'colliers',
           title_fr: 'Colliers',
+          title_en: 'Necklaces',
           parent_id: 'jewelry',
           position: 0,
           representative_product_id: null,
@@ -47,10 +49,20 @@ describe('catalog Shopify collection specs', () => {
     expect(specs.find((spec) => spec.syncKey === 'category:jewelry')).toMatchObject({
       handle: 'palas-cat-bijoux',
       title: '[PALAS CAT] Bijoux',
+      labelFr: 'Bijoux',
+      labelEn: 'Jewellery',
+      parentHandle: null,
+      position: 0,
+      canonicalPath: ['palas-cat-bijoux'],
+      translationStatus: 'complete',
       productIds: ['1'],
     })
     expect(specs.find((spec) => spec.syncKey === 'category:necklaces')).toMatchObject({
       title: '[PALAS CAT] Bijoux › Colliers',
+      labelFr: 'Colliers',
+      labelEn: 'Necklaces',
+      parentHandle: 'palas-cat-bijoux',
+      canonicalPath: ['palas-cat-bijoux', 'palas-cat-colliers'],
       productIds: ['1'],
     })
     expect(specs.find((spec) => spec.syncKey === catalogShopifyConstants.UNCLASSIFIED_KEY)).toMatchObject({

@@ -3,6 +3,16 @@ const COLLECTION_TITLE_PREFIX = '[PALAS CAT]'
 const UNCLASSIFIED_KEY = 'unclassified'
 const SHOPIFY_API_VERSION = '2025-10'
 const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/253433971035'
+const CATALOG_METAFIELD_DEFINITIONS = [
+  ['managed', 'Palas catalog managed', 'boolean'],
+  ['sync_key', 'Palas catalog sync key', 'single_line_text_field'],
+  ['label_fr', 'Palas catalog French label', 'single_line_text_field'],
+  ['label_en', 'Palas catalog English label', 'single_line_text_field'],
+  ['parent_handle', 'Palas catalog parent handle', 'single_line_text_field'],
+  ['position', 'Palas catalog position', 'number_integer'],
+  ['canonical_path', 'Palas catalog canonical path', 'json'],
+  ['translation_status', 'Palas catalog translation status', 'single_line_text_field'],
+]
 
 class CatalogShopifySyncError extends Error {}
 
@@ -63,6 +73,71 @@ async function publishCollection(collectionId) {
   }
 }
 
+async function ensureCatalogMetafieldDefinitions() {
+  const data = await shopifyGraphql(
+    `query CatalogMetafieldDefinitions {
+      metafieldDefinitions(first: 100, ownerType: COLLECTION, namespace: "palas_catalog") {
+        nodes { key }
+      }
+    }`,
+  )
+  const existing = new Set(data.metafieldDefinitions.nodes.map((definition) => definition.key))
+  for (const [key, name, type] of CATALOG_METAFIELD_DEFINITIONS) {
+    if (existing.has(key)) continue
+    const created = await shopifyGraphql(
+      `mutation CatalogMetafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) {
+          createdDefinition { id key }
+          userErrors { field message }
+        }
+      }`,
+      {
+        definition: {
+          name,
+          namespace: 'palas_catalog',
+          key,
+          type,
+          ownerType: 'COLLECTION',
+          access: { storefront: 'PUBLIC_READ' },
+        },
+      },
+    )
+    assertNoUserErrors(created.metafieldDefinitionCreate, 'metafieldDefinitionCreate')
+  }
+}
+
+function collectionMetafields(spec) {
+  return [
+    { namespace: 'palas_catalog', key: 'managed', type: 'boolean', value: 'true' },
+    { namespace: 'palas_catalog', key: 'sync_key', type: 'single_line_text_field', value: spec.syncKey },
+    { namespace: 'palas_catalog', key: 'label_fr', type: 'single_line_text_field', value: spec.labelFr },
+    { namespace: 'palas_catalog', key: 'label_en', type: 'single_line_text_field', value: spec.labelEn },
+    ...(spec.parentHandle
+      ? [
+          {
+            namespace: 'palas_catalog',
+            key: 'parent_handle',
+            type: 'single_line_text_field',
+            value: spec.parentHandle,
+          },
+        ]
+      : []),
+    { namespace: 'palas_catalog', key: 'position', type: 'number_integer', value: String(spec.position) },
+    {
+      namespace: 'palas_catalog',
+      key: 'canonical_path',
+      type: 'json',
+      value: JSON.stringify(spec.canonicalPath),
+    },
+    {
+      namespace: 'palas_catalog',
+      key: 'translation_status',
+      type: 'single_line_text_field',
+      value: spec.translationStatus,
+    },
+  ]
+}
+
 async function findCollection(handle, knownId) {
   const data = knownId
     ? await shopifyGraphql(`query CatalogCollection($id: ID!) { collection(id: $id) { id handle title } }`, {
@@ -88,10 +163,7 @@ async function createCollection(spec) {
     descriptionHtml:
       '<p>Collection gérée automatiquement par le CRM Palas. Ne pas modifier ses produits manuellement.</p>',
     sortOrder: 'MANUAL',
-    metafields: [
-      { namespace: 'palas_catalog', key: 'managed', type: 'boolean', value: 'true' },
-      { namespace: 'palas_catalog', key: 'sync_key', type: 'single_line_text_field', value: spec.syncKey },
-    ],
+    metafields: collectionMetafields(spec),
     image: spec.imageUrl ? { src: spec.imageUrl, altText: spec.title } : null,
   }
   const data = await shopifyGraphql(
@@ -112,6 +184,7 @@ async function updateCollection(collectionId, spec) {
     descriptionHtml:
       '<p>Collection gérée automatiquement par le CRM Palas. Ne pas modifier ses produits manuellement.</p>',
     sortOrder: 'MANUAL',
+    metafields: collectionMetafields(spec),
     ...(spec.imageUrl ? { image: { src: spec.imageUrl, altText: spec.title } } : {}),
   }
   const data = await shopifyGraphql(
@@ -240,7 +313,7 @@ async function upsertMirror(sql, spec) {
 
 async function readSnapshot(sql) {
   const categories = await sql`
-    SELECT id, slug, title_fr, parent_id, position, representative_product_id
+    SELECT id, slug, title_fr, title_en, parent_id, position, representative_product_id
     FROM catalog_categories WHERE deleted_at IS NULL
     ORDER BY position, title_fr
   `
@@ -282,6 +355,15 @@ export function buildCatalogShopifySpecs(snapshot) {
     }
     return labels.join(' › ')
   }
+  const canonicalPath = (category) => {
+    const handles = []
+    let current = category
+    while (current) {
+      handles.unshift(`${COLLECTION_HANDLE_PREFIX}${current.slug}`)
+      current = current.parent_id ? byId.get(current.parent_id) : null
+    }
+    return handles
+  }
   const specs = categories.map((category) => {
     const branch = descendants(category.id)
     const rank = new Map(branch.map((id, index) => [id, index]))
@@ -301,6 +383,12 @@ export function buildCatalogShopifySpecs(snapshot) {
       categoryId: category.id,
       handle: `${COLLECTION_HANDLE_PREFIX}${category.slug}`,
       title: `${COLLECTION_TITLE_PREFIX} ${breadcrumb(category)}`,
+      labelFr: category.title_fr,
+      labelEn: category.title_en?.trim() || category.title_fr,
+      translationStatus: category.title_en?.trim() ? 'complete' : 'missing_en',
+      parentHandle: category.parent_id ? `${COLLECTION_HANDLE_PREFIX}${byId.get(category.parent_id)?.slug}` : null,
+      position: category.position,
+      canonicalPath: canonicalPath(category),
       imageUrl: representative?.image_url ?? null,
       productIds: categoryProducts.map((product) => product.shopify_product_id),
     }
@@ -310,6 +398,12 @@ export function buildCatalogShopifySpecs(snapshot) {
     categoryId: null,
     handle: `${COLLECTION_HANDLE_PREFIX}unclassified`,
     title: `${COLLECTION_TITLE_PREFIX} Non classés`,
+    labelFr: 'Non classés',
+    labelEn: 'Unclassified',
+    translationStatus: 'complete',
+    parentHandle: null,
+    position: 999999,
+    canonicalPath: [`${COLLECTION_HANDLE_PREFIX}unclassified`],
     imageUrl: null,
     productIds: products
       .filter((product) => !product.canonical_category_id)
@@ -319,6 +413,7 @@ export function buildCatalogShopifySpecs(snapshot) {
 }
 
 export async function syncCatalogToShopify(sql, syncKeys = null) {
+  await ensureCatalogMetafieldDefinitions()
   const specs = buildCatalogShopifySpecs(await readSnapshot(sql))
   const selected = syncKeys ? specs.filter((spec) => syncKeys.has(spec.syncKey)) : specs
   const results = []
