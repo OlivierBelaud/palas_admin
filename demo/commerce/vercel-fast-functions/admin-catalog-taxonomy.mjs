@@ -1,4 +1,10 @@
 import { readFile } from 'node:fs/promises'
+import {
+  catalogShopifyConstants,
+  catalogSyncKeys,
+  deleteCatalogMirror,
+  syncCatalogToShopify,
+} from './catalog-shopify-sync.mjs'
 import { db, iso, json, requireAdmin, unauthorized } from './runtime.mjs'
 
 const SHOPIFY_PRODUCTS_URL = 'https://fancy-palas.myshopify.com/products.json'
@@ -150,6 +156,7 @@ async function syncShopifyProducts(sql) {
 
 async function mutate(sql, input) {
   if (input.action === 'sync_products') return { synced: await syncShopifyProducts(sql) }
+  if (input.action === 'sync_shopify_collections') return { requested: 'all' }
 
   if (input.action === 'create_category') {
     const title = String(input.title_fr ?? '').trim()
@@ -178,7 +185,7 @@ async function mutate(sql, input) {
       VALUES (${slug}, ${title}, ${input.title_en || null}, ${parentId}, ${Number(position.value)}, 'active')
       RETURNING id
     `
-    return { id: created.id }
+    return { id: created.id, parent_id: parentId }
   }
 
   if (input.action === 'update_category') {
@@ -220,6 +227,10 @@ async function mutate(sql, input) {
 
   if (input.action === 'delete_category') {
     const categoryId = String(input.category_id ?? '')
+    const [category] = await sql`
+      SELECT parent_id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
+    `
+    if (!category) throw new CatalogTaxonomyError('Catégorie introuvable')
     const [usage] = await sql`
       WITH RECURSIVE descendants AS (
         SELECT id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
@@ -243,7 +254,7 @@ async function mutate(sql, input) {
       RETURNING id
     `
     if (!deleted) throw new CatalogTaxonomyError('Catégorie introuvable')
-    return { id: deleted.id }
+    return { id: deleted.id, parent_id: category.parent_id }
   }
 
   if (input.action === 'reorder_categories') {
@@ -267,12 +278,16 @@ async function mutate(sql, input) {
         `
       }
     })
-    return { reordered: categoryIds.length }
+    return { reordered: categoryIds.length, parent_id: parentId, category_ids: categoryIds }
   }
 
   if (input.action === 'assign_product') {
     const productId = String(input.product_id ?? '')
     const categoryId = input.category_id || null
+    const [existing] = await sql`
+      SELECT canonical_category_id FROM catalog_products WHERE shopify_product_id = ${productId}
+    `
+    if (!existing) throw new CatalogTaxonomyError('Produit introuvable')
     let position = 0
     if (categoryId) {
       const [row] = await sql`
@@ -302,7 +317,11 @@ async function mutate(sql, input) {
             AND descendants.descendant_id = ${categoryId}
         )
     `
-    return { product_id: productId }
+    return {
+      product_id: productId,
+      old_category_id: existing.canonical_category_id,
+      category_id: categoryId,
+    }
   }
 
   if (input.action === 'reorder_products') {
@@ -317,10 +336,46 @@ async function mutate(sql, input) {
         `
       }
     })
-    return { reordered: productIds.length }
+    return { reordered: productIds.length, category_id: categoryId }
   }
 
   throw new CatalogTaxonomyError('Action inconnue')
+}
+
+async function syncAfterMutation(sql, input, result) {
+  if (input.action === 'sync_shopify_collections') return syncCatalogToShopify(sql)
+  if (input.action === 'sync_products') {
+    return syncCatalogToShopify(sql, new Set([catalogShopifyConstants.UNCLASSIFIED_KEY]))
+  }
+  if (input.action === 'delete_category') {
+    await deleteCatalogMirror(sql, result.id)
+    if (!result.parent_id) return []
+    const keys = await catalogSyncKeys(sql, [result.parent_id])
+    return syncCatalogToShopify(sql, keys)
+  }
+  if (input.action === 'assign_product') {
+    const keys = await catalogSyncKeys(sql, [result.old_category_id, result.category_id], {
+      unclassified: true,
+    })
+    return syncCatalogToShopify(sql, keys)
+  }
+  if (input.action === 'update_category') {
+    const keys = await catalogSyncKeys(sql, [result.id], { includeDescendants: true })
+    return syncCatalogToShopify(sql, keys)
+  }
+  if (input.action === 'create_category') {
+    const keys = await catalogSyncKeys(sql, [result.id])
+    return syncCatalogToShopify(sql, keys)
+  }
+  if (input.action === 'reorder_products') {
+    const keys = await catalogSyncKeys(sql, [result.category_id])
+    return syncCatalogToShopify(sql, keys)
+  }
+  if (input.action === 'reorder_categories') {
+    const keys = await catalogSyncKeys(sql, result.category_ids)
+    return syncCatalogToShopify(sql, keys)
+  }
+  return []
 }
 
 export default {
@@ -330,8 +385,19 @@ export default {
     try {
       if (req.method === 'GET') return json({ data: await readCatalogue(sql) })
       if (req.method !== 'POST') return json({ message: 'Method not allowed' }, { status: 405 })
-      const result = await mutate(sql, await req.json())
-      return json({ data: { result, ...(await readCatalogue(sql)) } })
+      const input = await req.json()
+      const result = await mutate(sql, input)
+      let shopifySync
+      try {
+        const collections = await syncAfterMutation(sql, input, result)
+        shopifySync = { ok: true, collections: collections.length }
+      } catch (error) {
+        shopifySync = {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Shopify collection sync failed',
+        }
+      }
+      return json({ data: { result, shopify_sync: shopifySync, ...(await readCatalogue(sql)) } })
     } catch (error) {
       return json({ message: error instanceof Error ? error.message : 'Catalogue action failed' }, { status: 400 })
     }

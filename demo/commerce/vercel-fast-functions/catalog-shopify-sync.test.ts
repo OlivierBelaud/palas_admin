@@ -1,0 +1,58 @@
+import { describe, expect, it } from 'vitest'
+import { buildCatalogShopifySpecs, catalogShopifyConstants } from './catalog-shopify-sync.mjs'
+
+describe('catalog Shopify collection specs', () => {
+  it('isolates handles and rolls descendants into their parent collection', () => {
+    const specs = buildCatalogShopifySpecs({
+      categories: [
+        {
+          id: 'jewelry',
+          slug: 'bijoux',
+          title_fr: 'Bijoux',
+          parent_id: null,
+          position: 0,
+          representative_product_id: null,
+        },
+        {
+          id: 'necklaces',
+          slug: 'colliers',
+          title_fr: 'Colliers',
+          parent_id: 'jewelry',
+          position: 0,
+          representative_product_id: null,
+        },
+      ],
+      products: [
+        {
+          shopify_product_id: '1',
+          title: 'Collier A',
+          image_url: 'https://example.com/a.jpg',
+          canonical_category_id: 'necklaces',
+          category_position: 0,
+        },
+        {
+          shopify_product_id: '2',
+          title: 'Nouveau',
+          image_url: null,
+          canonical_category_id: null,
+          category_position: 0,
+        },
+      ],
+    })
+
+    expect(specs.find((spec) => spec.syncKey === 'category:jewelry')).toMatchObject({
+      handle: 'palas-cat-bijoux',
+      title: '[PALAS CAT] Bijoux',
+      productIds: ['1'],
+    })
+    expect(specs.find((spec) => spec.syncKey === 'category:necklaces')).toMatchObject({
+      title: '[PALAS CAT] Bijoux › Colliers',
+      productIds: ['1'],
+    })
+    expect(specs.find((spec) => spec.syncKey === catalogShopifyConstants.UNCLASSIFIED_KEY)).toMatchObject({
+      handle: 'palas-cat-unclassified',
+      productIds: ['2'],
+    })
+    expect(specs.every((spec) => spec.handle.startsWith('palas-cat-'))).toBe(true)
+  })
+})

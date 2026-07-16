@@ -2,7 +2,7 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Badge, Button, Input } from '@mantajs/ui'
 import { ChevronDown, ChevronRight, GripVertical, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildCategoryTree,
   type CatalogCategory,
@@ -25,6 +25,10 @@ type CatalogueData = {
   categories: CatalogCategory[]
   products: CatalogProduct[]
   summary: { products: number; classified: number; unclassified: number; categories: number }
+}
+
+type CatalogueMutationData = CatalogueData & {
+  shopify_sync?: { ok: boolean; collections?: number; error?: string }
 }
 
 function TreeItem({
@@ -180,6 +184,8 @@ export default function CataloguePage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const initialProductSyncStarted = useRef(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
   const [productDropTarget, setProductDropTarget] = useState<{
@@ -224,8 +230,15 @@ export default function CataloguePage() {
       setBusy(true)
       setError(null)
       try {
-        const body = (await dataSource.mutate(ENDPOINT, 'POST', input)) as { data?: CatalogueData }
-        if (body.data) setData(body.data)
+        const body = (await dataSource.mutate(ENDPOINT, 'POST', input)) as { data?: CatalogueMutationData }
+        if (body.data) {
+          setData(body.data)
+          if (body.data.shopify_sync?.ok) {
+            setSyncMessage(`${body.data.shopify_sync.collections ?? 0} collection(s) Shopify PALAS synchronisée(s).`)
+          } else if (body.data.shopify_sync?.error) {
+            setError(`Le catalogue CRM a été enregistré, mais Shopify n’a pas suivi : ${body.data.shopify_sync.error}`)
+          }
+        }
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : 'Action catalogue impossible')
       } finally {
@@ -234,6 +247,12 @@ export default function CataloguePage() {
     },
     [dataSource],
   )
+
+  useEffect(() => {
+    if (!data || initialProductSyncStarted.current) return
+    initialProductSyncStarted.current = true
+    void mutate({ action: 'sync_products' })
+  }, [data, mutate])
 
   const tree = useMemo(() => buildCategoryTree(data?.categories ?? []), [data?.categories])
   const orderedCategories = useMemo(() => flattenCategoryTree(tree), [tree])
@@ -361,12 +380,18 @@ export default function CataloguePage() {
             Une catégorie canonique par produit définit son breadcrumb. Shopify reste en lecture seule.
           </p>
         </div>
-        <Button isLoading={busy} onClick={() => mutate({ action: 'sync_products' })} type="button">
-          <RefreshCw size={16} /> Synchroniser les produits
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button isLoading={busy} onClick={() => mutate({ action: 'sync_products' })} type="button" variant="outline">
+            <RefreshCw size={16} /> Actualiser les produits
+          </Button>
+          <Button isLoading={busy} onClick={() => mutate({ action: 'sync_shopify_collections' })} type="button">
+            <RefreshCw size={16} /> Reconstruire les collections Shopify
+          </Button>
+        </div>
       </div>
 
       {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {syncMessage && !error ? <Alert>{syncMessage}</Alert> : null}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[

@@ -137,7 +137,7 @@ function patchOutputConfig() {
   writeJson(path, config)
 }
 
-function installFastFunction({ source, route, extraSources = [] }) {
+function installFastFunction({ source, route, extraSources = [], maxDuration }) {
   const sourceDir = 'vercel-fast-functions'
   const functionDir = `.vercel/output/functions/${route}.func`
   rmSync(functionDir, { recursive: true, force: true })
@@ -155,6 +155,7 @@ function installFastFunction({ source, route, extraSources = [] }) {
     supportsResponseStreaming: true,
     runtime: 'nodejs24.x',
     regions: functionRegions,
+    ...(maxDuration ? { maxDuration } : {}),
   })
 
   const postgresDir = resolvePackageRoot('postgres')
@@ -211,7 +212,8 @@ function installFastFunctions() {
   installFastFunction({
     source: 'admin-catalog-taxonomy.mjs',
     route: 'api/admin/catalog-taxonomy',
-    extraSources: ['catalog-classification-seed.json'],
+    extraSources: ['catalog-classification-seed.json', 'catalog-shopify-sync.mjs'],
+    maxDuration: 300,
   })
   installFastFunction({
     source: 'admin-visitor-lifecycle-dashboard.mjs',
