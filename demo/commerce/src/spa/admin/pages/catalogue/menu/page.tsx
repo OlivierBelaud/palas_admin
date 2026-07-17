@@ -2,7 +2,7 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Button, Input } from '@mantajs/ui'
 import { Plus, Save, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { CatalogContentData, CatalogMenuItem } from '../../../catalog-content'
+import { shopifyImageThumbnail, type CatalogContentData, type CatalogMenuItem } from '../../../catalog-content'
 import { CollectionImagePicker } from '../../../components/collection-image-picker'
 
 const ENDPOINT = '/api/admin/catalog-content'
@@ -151,7 +151,11 @@ export default function CatalogueMenuPage() {
               </select>
             </label>
             {draft.image_url ? (
-              <img alt="" className="h-36 w-28 rounded object-cover" src={draft.image_url} />
+              <img
+                alt=""
+                className="h-36 w-28 rounded object-cover"
+                src={shopifyImageThumbnail(draft.image_url, 320)}
+              />
             ) : null}
             <CollectionImagePicker
               collectionId={draft.shopify_collection_id}

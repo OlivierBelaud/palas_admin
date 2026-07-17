@@ -3,6 +3,7 @@ import { Alert, Button, Input } from '@mantajs/ui'
 import { ArrowDown, ArrowUp, GripVertical, Plus, Save, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CollectionImagePicker } from '../../../components/collection-image-picker'
+import { shopifyImageThumbnail } from '../../../catalog-content'
 import type {
   CatalogContentData,
   HomepageTile,
@@ -58,7 +59,7 @@ function TileEditor({
   return (
     <article className="grid gap-4 rounded-md border bg-card p-4 lg:grid-cols-[180px_minmax(0,1fr)]">
       <div className="aspect-[4/5] overflow-hidden rounded bg-muted">
-        {preview ? <img alt="" className="size-full object-cover" src={preview} /> : null}
+        {preview ? <img alt="" className="size-full object-cover" src={shopifyImageThumbnail(preview, 320)} /> : null}
       </div>
       <div className="grid content-start gap-4">
         <label className="grid gap-1 text-sm font-medium">

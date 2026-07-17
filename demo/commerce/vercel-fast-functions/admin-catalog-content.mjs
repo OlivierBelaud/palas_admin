@@ -106,6 +106,7 @@ async function readCollectionMedia(collectionId) {
         altText: collection.image.altText,
         source: 'collection',
         productId: null,
+        productTitle: null,
         label: `Collection — ${collectionTitle}`,
       })
     }
@@ -117,6 +118,7 @@ async function readCollectionMedia(collectionId) {
           altText: image.altText,
           source: 'product',
           productId: product.id,
+          productTitle: product.title,
           label: `${product.title} — image ${index + 1}`,
         })
       }

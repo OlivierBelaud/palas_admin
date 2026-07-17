@@ -18,6 +18,7 @@ export type ShopifyCollectionMedia = {
   altText: string | null
   source: 'collection' | 'product'
   productId: string | null
+  productTitle: string | null
   label: string
 }
 
@@ -48,4 +49,20 @@ export type CatalogContentData = {
   collections: ShopifyCollectionChoice[]
   homepage: HomepageTile[]
   menu: CatalogMenuItem[]
+}
+
+export function shouldLoadCollectionMedia(open: boolean, collectionId: string | null, loadedCollectionId: string | null) {
+  return open && Boolean(collectionId) && loadedCollectionId !== collectionId
+}
+
+export function shopifyImageThumbnail(url: string, width: number) {
+  try {
+    const image = new URL(url)
+    image.searchParams.set('width', String(width))
+    image.searchParams.set('height', String(width))
+    image.searchParams.set('crop', 'center')
+    return image.toString()
+  } catch {
+    return url
+  }
 }
