@@ -30,6 +30,11 @@ export default defineSpa({
       icon: 'FolderTree',
       label: 'Catalogue',
       to: '/catalogue',
+      items: [
+        { label: 'Catégories', to: '/catalogue' },
+        { label: 'Homepage', to: '/catalogue/homepage' },
+        { label: 'Menu', to: '/catalogue/menu' },
+      ],
     },
     {
       icon: 'Megaphone',

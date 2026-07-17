@@ -111,7 +111,6 @@ function patchOutputConfig() {
   if (!existsSync(path)) return
 
   const config = readJson(path)
-  const vercelConfig = existsSync('vercel.json') ? readJson('vercel.json') : {}
   const routes = Array.isArray(config.routes) ? config.routes : []
   const filteredRoutes = routes.filter((route) => {
     if (!route?.src) return true
@@ -133,11 +132,10 @@ function patchOutputConfig() {
     { src: '^/(?!api(?:/|$)).*', dest: '/index.html', status: 200 },
     { src: '/(.*)', dest: '/__server' },
   ]
-  delete config.crons
   writeJson(path, config)
 }
 
-function installFastFunction({ source, route, extraSources = [], maxDuration }) {
+function installFastFunction({ source, route, extraSources = [] }) {
   const sourceDir = 'vercel-fast-functions'
   const functionDir = `.vercel/output/functions/${route}.func`
   rmSync(functionDir, { recursive: true, force: true })
@@ -155,7 +153,6 @@ function installFastFunction({ source, route, extraSources = [], maxDuration }) 
     supportsResponseStreaming: true,
     runtime: 'nodejs24.x',
     regions: functionRegions,
-    ...(maxDuration ? { maxDuration } : {}),
   })
 
   const postgresDir = resolvePackageRoot('postgres')
@@ -212,8 +209,11 @@ function installFastFunctions() {
   installFastFunction({
     source: 'admin-catalog-taxonomy.mjs',
     route: 'api/admin/catalog-taxonomy',
-    extraSources: ['catalog-classification-seed.json', 'catalog-shopify-sync.mjs'],
-    maxDuration: 300,
+    extraSources: ['catalog-classification-seed.json'],
+  })
+  installFastFunction({
+    source: 'admin-catalog-content.mjs',
+    route: 'api/admin/catalog-content',
   })
   installFastFunction({
     source: 'admin-visitor-lifecycle-dashboard.mjs',
