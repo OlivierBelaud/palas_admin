@@ -3,6 +3,7 @@ import { Alert, Button, Input } from '@mantajs/ui'
 import { Plus, Save, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CatalogContentData, CatalogMenuItem } from '../../../catalog-content'
+import { CollectionImagePicker } from '../../../components/collection-image-picker'
 
 const ENDPOINT = '/api/admin/catalog-content'
 
@@ -17,6 +18,8 @@ function editorDraft(item?: CatalogMenuItem): MenuDraft {
         label_fr: '',
         label_en: '',
         url: '',
+        image_url: null,
+        shopify_product_id: null,
       }
 }
 
@@ -133,6 +136,8 @@ export default function CatalogueMenuPage() {
                     label_fr: current.label_fr || next?.title || '',
                     label_en: current.label_en || next?.title || '',
                     url: next ? `/collections/${next.handle}` : current.url,
+                    image_url: next?.image?.url || null,
+                    shopify_product_id: null,
                   }))
                 }}
                 value={draft.shopify_collection_id || ''}
@@ -145,13 +150,20 @@ export default function CatalogueMenuPage() {
                 ))}
               </select>
             </label>
-            {collection?.image ? (
-              <img
-                alt=""
-                className="h-28 w-24 rounded object-cover"
-                src={collection.image.url}
-              />
+            {draft.image_url ? (
+              <img alt="" className="h-36 w-28 rounded object-cover" src={draft.image_url} />
             ) : null}
+            <CollectionImagePicker
+              collectionId={draft.shopify_collection_id}
+              onSelect={(image) =>
+                setDraft((current) => ({
+                  ...current,
+                  image_url: image.url,
+                  shopify_product_id: image.productId,
+                }))
+              }
+              selectedUrl={draft.image_url}
+            />
             <div className="grid gap-3 md:grid-cols-2">
               <label className="grid gap-1 text-sm font-medium">
                 Libellé français

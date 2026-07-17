@@ -2,6 +2,7 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Button, Input } from '@mantajs/ui'
 import { ArrowDown, ArrowUp, GripVertical, Plus, Save, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { CollectionImagePicker } from '../../../components/collection-image-picker'
 import type {
   CatalogContentData,
   HomepageTile,
@@ -41,31 +42,16 @@ function TileEditor({
     () => collections.find((candidate) => candidate.id === tile.shopify_collection_id),
     [collections, tile.shopify_collection_id],
   )
-  const productsWithImages = collection?.products.nodes.filter((product) => product.featuredImage) || []
-  const preview =
-    tile.image_source === 'product'
-      ? productsWithImages.find((product) => product.id === tile.shopify_product_id)?.featuredImage?.url
-      : collection?.image?.url || productsWithImages[0]?.featuredImage?.url
+  const preview = tile.image_url || collection?.image?.url || null
 
   function selectCollection(collectionId: string) {
     const next = collections.find((candidate) => candidate.id === collectionId)
     setTile((current) => ({
       ...current,
       shopify_collection_id: collectionId,
-      image_source: next?.image ? 'collection' : 'product',
-      shopify_product_id: next?.image ? null : (next?.products.nodes.find((product) => product.featuredImage)?.id ?? null),
-      image_url:
-        next?.image?.url || next?.products.nodes.find((product) => product.featuredImage)?.featuredImage?.url || null,
-    }))
-  }
-
-  function selectProduct(productId: string) {
-    const product = productsWithImages.find((candidate) => candidate.id === productId)
-    setTile((current) => ({
-      ...current,
-      image_source: 'product',
-      shopify_product_id: productId,
-      image_url: product?.featuredImage?.url || null,
+      image_source: 'collection',
+      shopify_product_id: null,
+      image_url: next?.image?.url || null,
     }))
   }
 
@@ -108,30 +94,18 @@ function TileEditor({
             />
           </label>
         </div>
-        <label className="grid gap-1 text-sm font-medium">
-          Image représentative
-          <select
-            className="h-10 rounded-md border bg-background px-3 text-sm"
-            onChange={(event) => {
-              if (event.target.value === '__collection__') {
-                setTile((current) => ({
-                  ...current,
-                  image_source: 'collection',
-                  shopify_product_id: null,
-                  image_url: collection?.image?.url || null,
-                }))
-              } else selectProduct(event.target.value)
-            }}
-            value={tile.image_source === 'collection' ? '__collection__' : tile.shopify_product_id || ''}
-          >
-            {collection?.image ? <option value="__collection__">Image de la collection (par défaut)</option> : null}
-            {productsWithImages.map((product) => (
-              <option key={product.id} value={product.id}>
-                Produit — {product.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <CollectionImagePicker
+          collectionId={tile.shopify_collection_id || null}
+          onSelect={(image) =>
+            setTile((current) => ({
+              ...current,
+              image_source: image.source,
+              shopify_product_id: image.productId,
+              image_url: image.url,
+            }))
+          }
+          selectedUrl={preview}
+        />
         <p className="text-xs text-muted-foreground">
           Sans intitulé personnalisé, le nom Shopify de la collection sera utilisé.
         </p>

@@ -10,14 +10,15 @@ export type ShopifyCollectionChoice = {
   handle: string
   title: string
   image: ShopifyImage | null
-  products: {
-    nodes: Array<{
-      id: string
-      handle: string
-      title: string
-      featuredImage: ShopifyImage | null
-    }>
-  }
+}
+
+export type ShopifyCollectionMedia = {
+  key: string
+  url: string
+  altText: string | null
+  source: 'collection' | 'product'
+  productId: string | null
+  label: string
 }
 
 export type HomepageTile = {
@@ -38,6 +39,8 @@ export type CatalogMenuItem = {
   label_fr: string
   label_en: string | null
   url: string | null
+  image_url: string | null
+  shopify_product_id: string | null
   position: number
 }
 

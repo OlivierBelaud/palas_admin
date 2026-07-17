@@ -27,10 +27,14 @@ async function ensureSchema(sql) {
       label_fr text NOT NULL,
       label_en text,
       url text,
+      image_url text,
+      shopify_product_id text,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE catalog_menu_items ADD COLUMN IF NOT EXISTS image_url text;
+    ALTER TABLE catalog_menu_items ADD COLUMN IF NOT EXISTS shopify_product_id text;
   `)
 }
 
@@ -59,9 +63,6 @@ async function readCollections() {
           nodes {
             id handle title
             image { url altText width height }
-            products(first: 50, sortKey: MANUAL) {
-              nodes { id handle title featuredImage { url altText width height } }
-            }
           }
           pageInfo { hasNextPage endCursor }
         }
@@ -72,6 +73,63 @@ async function readCollections() {
     after = data.collections.pageInfo.hasNextPage ? data.collections.pageInfo.endCursor : null
   } while (after)
   return collections
+}
+
+async function readCollectionMedia(collectionId) {
+  const media = []
+  let after = null
+  let collectionTitle = ''
+  do {
+    const data = await shopify(
+      `query CatalogContentMedia($id: ID!, $after: String) {
+        collection(id: $id) {
+          title
+          image { url altText }
+          products(first: 100, after: $after) {
+            nodes {
+              id title
+              images(first: 100) { nodes { url altText } }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: collectionId, after },
+    )
+    const collection = data.collection
+    if (!collection) throw new CatalogContentError('Collection Shopify introuvable')
+    collectionTitle = collection.title
+    if (!after && collection.image?.url) {
+      media.push({
+        key: `collection:${collection.image.url}`,
+        url: collection.image.url,
+        altText: collection.image.altText,
+        source: 'collection',
+        productId: null,
+        label: `Collection — ${collectionTitle}`,
+      })
+    }
+    for (const product of collection.products.nodes) {
+      for (const [index, image] of product.images.nodes.entries()) {
+        media.push({
+          key: `${product.id}:${index}:${image.url}`,
+          url: image.url,
+          altText: image.altText,
+          source: 'product',
+          productId: product.id,
+          label: `${product.title} — image ${index + 1}`,
+        })
+      }
+    }
+    after = collection.products.pageInfo.hasNextPage ? collection.products.pageInfo.endCursor : null
+  } while (after)
+
+  const seen = new Set()
+  return media.filter((image) => {
+    if (seen.has(image.url)) return false
+    seen.add(image.url)
+    return true
+  })
 }
 
 async function readContent(sql) {
@@ -162,6 +220,8 @@ async function mutate(sql, input) {
           label_fr = ${labelFr},
           label_en = ${input.label_en || null},
           url = ${input.url || null},
+          image_url = ${input.image_url || null},
+          shopify_product_id = ${input.shopify_product_id || null},
           position = ${position},
           updated_at = now()
         WHERE id = ${id}
@@ -170,10 +230,12 @@ async function mutate(sql, input) {
     }
     const [created] = await sql`
       INSERT INTO catalog_menu_items (
-        parent_id, shopify_collection_id, label_fr, label_en, url, position
+        parent_id, shopify_collection_id, label_fr, label_en, url,
+        image_url, shopify_product_id, position
       ) VALUES (
         ${parentId}, ${input.shopify_collection_id || null}, ${labelFr},
-        ${input.label_en || null}, ${input.url || null}, ${position}
+        ${input.label_en || null}, ${input.url || null}, ${input.image_url || null},
+        ${input.shopify_product_id || null}, ${position}
       ) RETURNING id
     `
     return { id: created.id }
@@ -195,7 +257,11 @@ export default {
     const sql = db()
     try {
       await ensureSchema(sql)
-      if (req.method === 'GET') return json({ data: await readContent(sql) })
+      if (req.method === 'GET') {
+        const collectionId = new URL(req.url).searchParams.get('collection_id')
+        if (collectionId) return json({ data: { media: await readCollectionMedia(collectionId) } })
+        return json({ data: await readContent(sql) })
+      }
       if (req.method !== 'POST') return json({ message: 'Method not allowed' }, { status: 405 })
       const result = await mutate(sql, await req.json())
       return json({ data: { result, ...(await readContent(sql)) } })
