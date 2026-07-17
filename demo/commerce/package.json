@@ -4,11 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "manta dev",
-    "build": "manta generate && node scripts/prepare-root-spa-public.mjs && manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
-    "build:vercel": "manta generate && node scripts/prepare-root-spa-public.mjs && manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
-    "build:node": "manta generate && manta build --preset node",
+    "build": "pnpm build:vercel",
+    "build:vercel": "node scripts/run-manta-strict.mjs build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
+    "build:node": "node scripts/run-manta-strict.mjs build --preset node --no-migrate",
     "start": "manta start",
-    "generate": "manta generate",
+    "generate": "node scripts/run-manta-strict.mjs generate",
     "db:generate": "manta db generate",
     "db:migrate": "manta db migrate",
     "smoke:meta-capi": "node scripts/smoke-meta-capi.mjs",
@@ -49,6 +49,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "^4.0.0",
+    "typescript": "^6.0.3",
     "vite": "^8.0.1"
   }
 }
