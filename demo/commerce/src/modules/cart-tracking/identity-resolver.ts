@@ -96,6 +96,9 @@ export async function resolveEmailByDistinctId(
     else metrics.misses += 1
     return email
   } catch {
+    // A failed PostHog lookup did not recover an identity and must be
+    // accounted for consistently with an empty successful response.
+    metrics.misses += 1
     return null
   }
 }

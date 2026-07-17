@@ -9,14 +9,10 @@ if (args.length === 0) {
   process.exit(2)
 }
 
-const child = spawn(
-  process.execPath,
-  [`--import=${registerLoader.href}`, mantaCli.pathname, ...args],
-  {
-    env: process.env,
-    stdio: ['inherit', 'pipe', 'pipe'],
-  },
-)
+const child = spawn(process.execPath, [`--import=${registerLoader.href}`, mantaCli.pathname, ...args], {
+  env: process.env,
+  stdio: ['inherit', 'pipe', 'pipe'],
+})
 
 let output = ''
 

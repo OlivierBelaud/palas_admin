@@ -1,3 +1,4 @@
+// biome-ignore lint/style/noRestrictedImports: CodeGen loads graph.ts as standalone ESM before Manta globals exist.
 import { defineCommandGraph } from '@mantajs/core'
 
 // Admin has full access to all module commands (CRUD auto-generated from DML entities)
