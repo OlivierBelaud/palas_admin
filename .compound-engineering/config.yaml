@@ -13,8 +13,10 @@ execution:
   cross_repo_parent_label: cross-repo
 verification:
   commands:
-    - pnpm check:fast
+    - pnpm lint
+    - pnpm typecheck
     - pnpm test
+    - pnpm build
 deployment:
   git_driven: true
   direct_cli_deploy_allowed: false
