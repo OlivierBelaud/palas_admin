@@ -96,6 +96,8 @@ export async function resolveEmailByDistinctId(
     else metrics.misses += 1
     return email
   } catch {
+    cache.set(distinctId, { email: null, expires_at: now + TTL_MS })
+    metrics.misses += 1
     return null
   }
 }

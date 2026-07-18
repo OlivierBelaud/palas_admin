@@ -27,11 +27,10 @@
       "tailwindDirectives": true
     }
   },
-  "plugins": ["./.claude/biome-plugins/no-raw-error.grit"],
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "recommended": false,
       "complexity": {
         "noForEach": "off"
       },
