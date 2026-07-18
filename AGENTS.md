@@ -1,5 +1,24 @@
 # Palas Commerce CRM — Codex Instructions
 
+## Compound Engineering context
+
+This repository is the executable `admin` scope of the Palas multi-repository
+workspace. Cross-repository strategy, baseline and integration contracts live
+in `../platform` in the canonical workspace; this repository owns only its
+implementation plans, code, tests and deployment evidence.
+
+- Linear project: `PALAS_WORKSPACE`
+- Linear label: `repo:admin`
+- Canonical manifest: `../platform/workspace.manifest.json`
+- One executable Linear issue = one Admin branch = one isolated worktree = one
+  PR.
+- If a feature also changes B2B, storefront B2C or Mantajs, work from a
+  `cross-repo` parent and create a separate executable child for every repo.
+- A framework gap is implemented and released in Mantajs first; Admin adopts
+  the released contract in its own child issue and PR.
+- Never put product implementation or multi-repo coordination commits in the
+  workspace root.
+
 This repo is an application workspace for the Palas commerce CRM pilot.
 
 Manta framework code does not live here anymore. The single source of truth for

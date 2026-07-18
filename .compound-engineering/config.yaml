@@ -1,0 +1,20 @@
+schema_version: 1
+repository: admin
+role: product
+platform_manifest: ../platform/workspace.manifest.json
+project_tracker:
+  provider: linear
+  team: OlivierBelaud
+  project: PALAS_WORKSPACE
+  label: repo:admin
+execution:
+  isolated_worktree_required: true
+  one_executable_ticket_per_repo: true
+  cross_repo_parent_label: cross-repo
+verification:
+  commands:
+    - pnpm check:fast
+    - pnpm test
+deployment:
+  git_driven: true
+  direct_cli_deploy_allowed: false
