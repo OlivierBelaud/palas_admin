@@ -1,0 +1,38 @@
+# Compound Engineering -- local config
+# Copy to .compound-engineering/config.local.yaml in your project root.
+# All settings are optional. Invalid values fall through to defaults.
+
+# --- Work delegation (Codex) ---
+# work_delegate: codex
+# work_delegate_consent: true
+# work_delegate_sandbox: yolo
+# work_delegate_decision: auto
+# work_delegate_model: gpt-5.4
+# work_delegate_effort: high
+
+# --- Product pulse ---
+# pulse_product_name: "Palas Admin"
+# pulse_lookback_default: 24h
+# pulse_primary_event: "session_started"
+# pulse_value_event: "task_completed"
+# pulse_completion_events: "onboarded,first_purchase"
+# pulse_quality_scoring: false
+# pulse_quality_dimension: "answer accuracy"
+# pulse_analytics_source: posthog
+# pulse_tracing_source: sentry
+# pulse_payments_source: stripe
+# pulse_db_enabled: false
+# pulse_metric_sources: "retention_d7=posthog,nps=delighted"
+# pulse_pending_metrics: "retention_d7,nps"
+# pulse_excluded_metrics: "north_star"
+
+# --- Output format ---
+# plan_output: html
+# brainstorm_output: html
+# ideate_output: md
+
+# --- ce-plan scoping confirmation ---
+# plan_skip_scoping_confirm: true
+
+# --- ce-promote ---
+# ce_promote_spiral_optout: true

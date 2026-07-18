@@ -88,6 +88,9 @@ coverage/
 .codex/
 .gstack/
 
+# Compound Engineering machine-local preferences
+.compound-engineering/*.local.yaml
+
 # ── Provider local state ──
 **/.wrangler/
 .env*.local
