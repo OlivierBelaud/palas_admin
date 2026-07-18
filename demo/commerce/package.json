@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "manta dev",
     "build": "manta generate && node scripts/prepare-root-spa-public.mjs && manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
+    "build:ci": "manta build --preset node --no-migrate",
     "build:vercel": "manta generate && node scripts/prepare-root-spa-public.mjs && manta build --preset vercel --no-migrate && node scripts/patch-root-spa-vercel.mjs",
     "build:node": "manta generate && manta build --preset node",
     "start": "manta start",
