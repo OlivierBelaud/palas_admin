@@ -256,6 +256,24 @@ describe('normalizeCartEvent — identity + filtering', () => {
     expect(n?.cart_has_payload).toBe(false)
   })
 
+  it('passes the cart payload presence flag to the live ingest command', () => {
+    const input = toIngestInput({ event: 'checkout:started', properties: { checkout: { token: 'checkout_1' } } })
+    expect(input?.cart_has_payload).toBe(false)
+    expect(input?.items_has_payload).toBe(false)
+    expect(input?.total_price_has_payload).toBe(false)
+  })
+
+  it('keeps partial checkout payload presence granular', () => {
+    const input = toIngestInput({
+      event: 'checkout:completed',
+      properties: { checkout: { token: 'checkout_1', total_price: 49, currency: 'EUR' } },
+    })
+    expect(input?.cart_has_payload).toBe(true)
+    expect(input?.items_has_payload).toBe(false)
+    expect(input?.total_price_has_payload).toBe(true)
+    expect(input?.currency_has_payload).toBe(true)
+  })
+
   it('captures raw_properties for downstream snapshot storage', () => {
     const props = { cart: { token: 't' }, $set: { email: 'x@y.z' }, custom: 'value' }
     const n = normalizeCartEvent({ event: 'cart:viewed', properties: props })

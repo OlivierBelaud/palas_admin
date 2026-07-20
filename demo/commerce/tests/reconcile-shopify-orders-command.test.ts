@@ -118,6 +118,8 @@ describe('reconcileShopifyOrders command', () => {
         action: 'checkout:completed',
         shopify_order_id: '9001',
         cart_token: 'cart-token-that-is-long-enough',
+        items_has_payload: false,
+        total_price_has_payload: true,
       }),
     ])
     expect(fetchMock).toHaveBeenCalledOnce()

@@ -60,6 +60,10 @@ export default defineSubscriber({
           log.error(
             `[posthog-cart-tracker] ingestCartEvent failed for ${evt.event}: ${err instanceof Error ? err.message : String(err)}`,
           )
+          // The proxy event is durable and cart ingestion is idempotent. Let
+          // the event transport retry the batch instead of acknowledging a
+          // partially projected cart history.
+          throw err
         }
       }
 

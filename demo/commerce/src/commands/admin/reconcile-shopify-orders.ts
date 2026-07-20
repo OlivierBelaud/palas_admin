@@ -215,6 +215,10 @@ export default defineCommand({
                 total_price:
                   typeof order.total_price === 'string' ? Number(order.total_price) : (order.total_price ?? 0),
                 currency: order.currency ?? 'EUR',
+                cart_has_payload: true,
+                items_has_payload: false,
+                total_price_has_payload: true,
+                currency_has_payload: true,
               })
               dispatched += 1
             } catch (err) {

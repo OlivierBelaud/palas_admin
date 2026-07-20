@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runAbandonedCartCampaign } from '../src/utils/abandoned-cart-campaign'
+import { reconcileAbandonedCartRecoveries, runAbandonedCartCampaign } from '../src/utils/abandoned-cart-campaign'
 import type { RuntimeNotificationPort, RuntimeSql } from '../src/utils/manta-runtime'
 
 const resolveWelcomeDiscountForEmailMock = vi.hoisted(() =>
@@ -331,5 +331,168 @@ describe('runAbandonedCartCampaign guard checks', () => {
     expect(sent[0].tags ?? []).not.toEqual(expect.arrayContaining([{ name: 'discount_source', value: 'shopify_generated' }]))
     expect(writes).toContain('message')
     expect(writes).toContain('cart')
+  })
+})
+
+describe('runAbandonedCartCampaign retries', () => {
+  it('retries transient Shopify and email-provider failures with one durable message', async () => {
+    vi.stubEnv('SHOPIFY_ADMIN_ACCESS_TOKEN', 'test_token')
+    vi.stubEnv('SHOPIFY_SHOP_DOMAIN', 'fancy-palas.myshopify.com')
+    let shopifyAttempt = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        shopifyAttempt += 1
+        if (shopifyAttempt === 1) throw new Error('Shopify timeout')
+        return {
+          ok: true,
+          json: async () => ({ data: { orders: { edges: [] } } }),
+        }
+      }),
+    )
+
+    type StoredMessage = {
+      id: string
+      message_type: 'abandoned_cart_1'
+      sequence_version: number
+      sequence_started_at: Date
+      status: 'pending' | 'sent' | 'skipped' | 'failed'
+      sent_at: Date | null
+      scheduled_for: Date
+    }
+    let storedMessage: StoredMessage | null = null
+    const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
+      const query = strings.join('?')
+      if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) {
+        return [
+          {
+            id: 'cart_retry',
+            cart_token: 'tok_retry',
+            checkout_token: null,
+            distinct_id: 'anonymous_retry',
+            email: 'retry@test.com',
+            first_name: 'Alice',
+            country_code: 'FR',
+            browser_locale: null,
+            items: [{ id: 'v1', title: 'Bracelet', quantity: 1 }],
+            total_price: 49,
+            currency: 'EUR',
+            last_action_at: new Date('2026-07-20T10:00:00Z'),
+            highest_stage: 'cart',
+            contact_id: null,
+            contact_locale: null,
+            live_orders_count: 1,
+            email_marketing_opt_out_at: null,
+            klaviyo_suppressed: false,
+          },
+        ]
+      }
+      if (query.includes('last_cart_action_at >') || query.includes('last_action_at >')) return []
+      if (query.includes('UPDATE abandoned_cart_cases acc')) {
+        return [
+          {
+            id: 'case_retry',
+            status: 'open',
+            current_sequence_version: 1,
+            sequence_started_at: new Date('2026-07-20T10:00:00Z'),
+          },
+        ]
+      }
+      if (query.includes('SELECT MAX(sent_at) AS last_sent_at')) {
+        return [{ last_sent_at: storedMessage?.status === 'sent' ? storedMessage.sent_at : null }]
+      }
+      if (query.includes('SELECT id, message_type') && query.includes('FROM abandoned_cart_messages')) {
+        return storedMessage ? [storedMessage] : []
+      }
+      if (query.includes('INSERT INTO abandoned_cart_messages')) {
+        storedMessage = {
+          id: 'message_retry',
+          message_type: 'abandoned_cart_1',
+          sequence_version: 1,
+          sequence_started_at: new Date('2026-07-20T10:00:00Z'),
+          status: 'pending',
+          sent_at: null,
+          scheduled_for: new Date('2026-07-20T12:00:00Z'),
+        }
+        return [storedMessage]
+      }
+      if (query.includes('FROM orders') && query.includes('placed_at >=')) return []
+      if (query.includes('FROM klaviyo_events')) return []
+      if (query.includes('INSERT INTO abandoned_cart_checks')) return []
+      if (query.includes('UPDATE abandoned_cart_messages') && query.includes('WHERE id =')) {
+        if (!storedMessage) throw new Error('message was not created')
+        if (query.includes("status = 'sent'")) {
+          storedMessage = { ...storedMessage, status: 'sent', sent_at: new Date() }
+        } else if (query.includes("status = 'failed'")) {
+          storedMessage = { ...storedMessage, status: 'failed' }
+        } else if (query.includes("status = 'skipped'")) {
+          storedMessage = { ...storedMessage, status: 'skipped' }
+        }
+        return []
+      }
+      if (
+        query.includes('UPDATE abandoned_cart_messages m') ||
+        query.includes('UPDATE abandoned_cart_cases') ||
+        query.includes('UPDATE carts')
+      ) {
+        return []
+      }
+      if (query.includes('WITH recovered AS')) return [{ recovered: '0' }]
+      throw new Error(`Unexpected SQL: ${query}`)
+    }) as RuntimeSql
+    sql.unsafe = async <T = unknown>() => [] as T
+
+    const deliveries: Array<{ idempotency_key?: string }> = []
+    let attempt = 0
+    const notification: RuntimeNotificationPort = {
+      async send(payload) {
+        deliveries.push(payload)
+        attempt += 1
+        return attempt === 1
+          ? { status: 'FAILURE', error: new Error('Resend timeout') }
+          : { status: 'SUCCESS', id: 'provider_message_retry' }
+      },
+    }
+    const options = {
+      sql,
+      notification,
+      adminBase: 'https://admin.fancypalas.com',
+      fromEmail: 'Fancy Palas <hello@fancypalas.com>',
+      batchLimit: 10,
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+    }
+
+    const shopifyUnavailable = await runAbandonedCartCampaign(options)
+    const providerUnavailable = await runAbandonedCartCampaign(options)
+    const recoveredRetry = await runAbandonedCartCampaign(options)
+
+    expect(shopifyUnavailable.skipped_shopify_unavailable).toBe(1)
+    expect(providerUnavailable.errors).toBe(1)
+    expect(recoveredRetry.sent).toBe(1)
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[0]?.idempotency_key).toBe('abandoned-cart:abandoned_cart_1:s1:cart_retry')
+    expect(deliveries[1]?.idempotency_key).toBe(deliveries[0]?.idempotency_key)
+    expect(storedMessage).toMatchObject({ id: 'message_retry', status: 'sent' })
+  })
+})
+
+describe('reconcileAbandonedCartRecoveries', () => {
+  it('only converts open cases and becomes a no-op after the first successful projection', async () => {
+    const queries: string[] = []
+    let invocation = 0
+    const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
+      queries.push(strings.join('?'))
+      invocation += 1
+      return [{ recovered: invocation === 1 ? '1' : '0' }]
+    }) as RuntimeSql
+    sql.unsafe = async <T = unknown>() => [] as T
+
+    await expect(reconcileAbandonedCartRecoveries(sql)).resolves.toBe(1)
+    await expect(reconcileAbandonedCartRecoveries(sql)).resolves.toBe(0)
+
+    expect(queries).toHaveLength(2)
+    expect(queries[0]).toContain("WHERE acc.status = 'open'")
+    expect(queries[0]).toContain('SELECT DISTINCT ON (acc.id)')
+    expect(queries[0]).toContain("o.status IN ('paid', 'fulfilled')")
   })
 })

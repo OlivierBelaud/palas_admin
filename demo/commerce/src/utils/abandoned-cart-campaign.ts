@@ -196,27 +196,28 @@ function nextMessage(
   now: Date,
 ): { type: MessageType; scheduledFor: Date } | null {
   const sent = new Map(messages.filter((m) => m.status === 'sent').map((m) => [m.message_type, m]))
-  const hasAny = (type: MessageType) => messages.some((m) => m.message_type === type)
+  const hasActiveOrTerminalAttempt = (type: MessageType) =>
+    messages.some((m) => m.message_type === type && m.status !== 'failed')
 
   if (c.highest_stage === 'payment_attempted') {
     const scheduledFor = dueAt(c.last_action_at, PAYMENT_HELP_AFTER_HOURS * HOUR_MS)
-    if (!hasAny('payment_help_1') && scheduledFor.getTime() <= now.getTime())
+    if (!hasActiveOrTerminalAttempt('payment_help_1') && scheduledFor.getTime() <= now.getTime())
       return { type: 'payment_help_1', scheduledFor }
     return null
   }
 
   const firstScheduledFor = dueAt(c.last_action_at, FIRST_ABANDONED_AFTER_HOURS * HOUR_MS)
-  if (!hasAny('abandoned_cart_1') && firstScheduledFor.getTime() <= now.getTime()) {
+  if (!hasActiveOrTerminalAttempt('abandoned_cart_1') && firstScheduledFor.getTime() <= now.getTime()) {
     return { type: 'abandoned_cart_1', scheduledFor: firstScheduledFor }
   }
 
   const first = sent.get('abandoned_cart_1')
   const second = sent.get('abandoned_cart_2')
-  if (first && !hasAny('abandoned_cart_2')) {
+  if (first && !hasActiveOrTerminalAttempt('abandoned_cart_2')) {
     const scheduledFor = dueAt(first.sent_at ?? first.scheduled_for, NEXT_EMAIL_AFTER_DAYS * DAY_MS)
     if (scheduledFor.getTime() <= now.getTime()) return { type: 'abandoned_cart_2', scheduledFor }
   }
-  if (second && !hasAny('abandoned_cart_3')) {
+  if (second && !hasActiveOrTerminalAttempt('abandoned_cart_3')) {
     const scheduledFor = dueAt(second.sent_at ?? second.scheduled_for, NEXT_EMAIL_AFTER_DAYS * DAY_MS)
     if (scheduledFor.getTime() <= now.getTime()) return { type: 'abandoned_cart_3', scheduledFor }
   }
@@ -336,8 +337,11 @@ async function createPendingMessage(
     ON CONFLICT (case_id, sequence_version, message_type) DO UPDATE SET
       scheduled_for = EXCLUDED.scheduled_for,
       sequence_started_at = EXCLUDED.sequence_started_at,
+      status = 'pending',
+      skip_reason = NULL,
+      error_message = NULL,
       updated_at = NOW()
-    WHERE abandoned_cart_messages.status = 'pending'
+    WHERE abandoned_cart_messages.status IN ('pending', 'failed')
     RETURNING id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for`
   if (rows[0]) return rows[0]
   const existing = await sql<MessageRow[]>`
@@ -390,6 +394,22 @@ async function markSkipped(
       SET status = 'closed_unsubscribed', updated_at = NOW()
       WHERE id = ${caseId} AND status = 'open'`
   }
+}
+
+async function markFailed(
+  sql: RuntimeSql,
+  messageId: string,
+  reason: 'shopify_check_unavailable' | 'send_error',
+  errorMessage: string,
+): Promise<void> {
+  await sql`
+    UPDATE abandoned_cart_messages
+    SET status = 'failed',
+        skip_reason = ${reason},
+        error_message = ${errorMessage},
+        updated_at = NOW()
+    WHERE id = ${messageId}
+      AND status <> 'sent'`
 }
 
 async function findNewerActiveCartForEmail(
@@ -933,7 +953,7 @@ export async function runAbandonedCartCampaign(
     if (shopifyOrder.status === 'unavailable') {
       if (!dryRun && messageId) {
         await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'error', shopifyOrder.error)
-        await markSkipped(sql, cartCase.id, messageId, 'shopify_check_unavailable', shopifyOrder.error)
+        await markFailed(sql, messageId, 'shopify_check_unavailable', shopifyOrder.error)
       }
       result.skipped++
       result.skipped_shopify_unavailable++
@@ -1033,7 +1053,7 @@ export async function runAbandonedCartCampaign(
       })
 
       if (sendResult.status !== 'SUCCESS') {
-        await markSkipped(sql, cartCase.id, messageId, 'send_error', sendResult.error?.message ?? sendResult.status)
+        await markFailed(sql, messageId, 'send_error', sendResult.error?.message ?? sendResult.status)
         result.errors++
         continue
       }
@@ -1067,7 +1087,7 @@ export async function runAbandonedCartCampaign(
         log.warn(`[abandoned-cart-campaign] posthog capture failed cart=${c.id}: ${(err as Error).message}`)
       }
     } catch (err) {
-      await markSkipped(sql, cartCase.id, messageId, 'send_error', (err as Error).message)
+      await markFailed(sql, messageId, 'send_error', (err as Error).message)
       result.errors++
       log.error(`[abandoned-cart-campaign] send threw cart=${c.id}: ${(err as Error).message}`)
     }
