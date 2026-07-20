@@ -1,8 +1,27 @@
-const COLLECTION_HANDLE_PREFIX = 'palas-cat-'
+import { randomUUID } from 'node:crypto'
+import {
+  CATALOG_COLLECTION_HANDLE_PREFIX,
+  CATALOG_PUBLICATION_ERROR_CODES,
+  CatalogAuthorityConflictError,
+  CatalogDesiredStateChangedError,
+  CatalogPublicationBusyError,
+  CatalogPublicationClaimLostError,
+  assertCatalogPublicationAllowed,
+  assertCatalogRemoteAuthority,
+  catalogDesiredRevisionIsCurrent,
+  catalogSpecFingerprint,
+  catalogProductGid,
+  shouldReplayCatalogPublication,
+  planCatalogPublication,
+} from './catalog-publication-governance.mjs'
+
 const COLLECTION_TITLE_PREFIX = '[PALAS CAT]'
 const UNCLASSIFIED_KEY = 'unclassified'
 const SHOPIFY_API_VERSION = '2025-10'
+const PRODUCTION_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
 const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/234170581339'
+const PUBLICATION_CLAIM_HEARTBEAT_MS = 60_000
+const SHOPIFY_REQUEST_TIMEOUT_MS = 30_000
 const CATALOG_METAFIELD_DEFINITIONS = [
   ['managed', 'Palas catalog managed', 'boolean'],
   ['sync_key', 'Palas catalog sync key', 'single_line_text_field'],
@@ -26,30 +45,33 @@ const PINNED_CATALOG_METAFIELDS = new Set([
 
 class CatalogShopifySyncError extends Error {}
 
-function productGid(id) {
-  return `gid://shopify/Product/${id}`
-}
-
 function chunks(items, size = 250) {
   const result = []
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size))
   return result
 }
 
-function shopifyConfig() {
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
+function shopifyConfig(env = process.env) {
+  assertCatalogPublicationAllowed(env)
+  const token = env.SHOPIFY_ADMIN_ACCESS_TOKEN
   if (!token) throw new CatalogShopifySyncError('SHOPIFY_ADMIN_ACCESS_TOKEN is not configured')
+  const domain = env.SHOPIFY_SHOP_DOMAIN || PRODUCTION_SHOP_DOMAIN
+  const publicationId = env.SHOPIFY_CATALOG_PUBLICATION_ID || DEFAULT_STOREFRONT_PUBLICATION_ID
+  if (domain !== PRODUCTION_SHOP_DOMAIN || publicationId !== DEFAULT_STOREFRONT_PUBLICATION_ID) {
+    throw new CatalogShopifySyncError(`Catalog production target is not approved (${domain}, ${publicationId})`)
+  }
   return {
-    endpoint: `https://${process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'}/admin/api/${process.env.SHOPIFY_ADMIN_API_VERSION ?? SHOPIFY_API_VERSION}/graphql.json`,
+    endpoint: `https://${domain}/admin/api/${env.SHOPIFY_ADMIN_API_VERSION ?? SHOPIFY_API_VERSION}/graphql.json`,
     token,
-    publicationId: process.env.SHOPIFY_CATALOG_PUBLICATION_ID ?? DEFAULT_STOREFRONT_PUBLICATION_ID,
+    publicationId,
   }
 }
 
-async function shopifyGraphql(query, variables = {}) {
-  const { endpoint, token } = shopifyConfig()
+async function shopifyGraphql(config, query, variables = {}) {
+  const { endpoint, token } = config
   const response = await fetch(endpoint, {
     method: 'POST',
+    signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
     headers: { 'content-type': 'application/json', 'x-shopify-access-token': token },
     body: JSON.stringify({ query, variables }),
   })
@@ -66,9 +88,10 @@ function assertNoUserErrors(payload, operation) {
   }
 }
 
-async function publishCollection(collectionId) {
-  const { publicationId } = shopifyConfig()
+async function publishCollection(config, collectionId) {
+  const { publicationId } = config
   const data = await shopifyGraphql(
+    config,
     `mutation CatalogCollectionPublish($id: ID!, $publicationId: ID!) {
       publishablePublish(id: $id, input: { publicationId: $publicationId }) {
         publishable { publishedOnPublication(publicationId: $publicationId) }
@@ -83,8 +106,10 @@ async function publishCollection(collectionId) {
   }
 }
 
-async function ensureCatalogMetafieldDefinitions() {
+async function ensureCatalogMetafieldDefinitions(config, heartbeat) {
+  await heartbeat()
   const data = await shopifyGraphql(
+    config,
     `query CatalogMetafieldDefinitions {
       metafieldDefinitions(first: 100, ownerType: COLLECTION, namespace: "palas_catalog") {
         nodes { id key pinnedPosition }
@@ -93,9 +118,11 @@ async function ensureCatalogMetafieldDefinitions() {
   )
   const existing = new Map(data.metafieldDefinitions.nodes.map((definition) => [definition.key, definition]))
   for (const [key, name, type] of CATALOG_METAFIELD_DEFINITIONS) {
+    await heartbeat()
     let definition = existing.get(key)
     if (!definition) {
       const created = await shopifyGraphql(
+        config,
         `mutation CatalogMetafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
           metafieldDefinitionCreate(definition: $definition) {
             createdDefinition { id key pinnedPosition }
@@ -117,7 +144,9 @@ async function ensureCatalogMetafieldDefinitions() {
       definition = created.metafieldDefinitionCreate.createdDefinition
     }
     if (PINNED_CATALOG_METAFIELDS.has(key) && !definition.pinnedPosition) {
+      await heartbeat()
       const pinned = await shopifyGraphql(
+        config,
         `mutation CatalogMetafieldDefinitionPin($definitionId: ID!) {
           metafieldDefinitionPin(definitionId: $definitionId) {
             pinnedDefinition { id key pinnedPosition }
@@ -158,7 +187,7 @@ function collectionMetafields(spec) {
       namespace: 'palas_catalog',
       key: 'direct_product_ids',
       type: 'json',
-      value: JSON.stringify(spec.directProductIds.map(productGid)),
+      value: JSON.stringify(spec.directProductIds.map(catalogProductGid)),
     },
     {
       namespace: 'palas_catalog',
@@ -169,25 +198,44 @@ function collectionMetafields(spec) {
   ]
 }
 
-async function findCollection(handle, knownId) {
+async function findCollection(config, spec, knownId) {
   const data = knownId
-    ? await shopifyGraphql(`query CatalogCollection($id: ID!) { collection(id: $id) { id handle title } }`, {
-        id: knownId,
-      })
-    : await shopifyGraphql(
-        `query CatalogCollection($query: String!) {
-          collections(first: 2, query: $query) { nodes { id handle title } }
+    ? await shopifyGraphql(
+        config,
+        `query CatalogCollection($id: ID!) {
+          collection(id: $id) {
+            id handle title
+            managed: metafield(namespace: "palas_catalog", key: "managed") { value }
+            syncKey: metafield(namespace: "palas_catalog", key: "sync_key") { value }
+          }
         }`,
-        { query: `handle:${handle}` },
+        { id: knownId },
       )
-  const collection = knownId ? data.collection : data.collections.nodes.find((node) => node.handle === handle)
-  if (collection && !collection.handle.startsWith(COLLECTION_HANDLE_PREFIX)) {
-    throw new CatalogShopifySyncError(`Refusing to touch non-Palas collection ${collection.handle}`)
+    : await shopifyGraphql(
+        config,
+        `query CatalogCollection($query: String!) {
+          collections(first: 2, query: $query) {
+            nodes {
+              id handle title
+              managed: metafield(namespace: "palas_catalog", key: "managed") { value }
+              syncKey: metafield(namespace: "palas_catalog", key: "sync_key") { value }
+            }
+          }
+        }`,
+        { query: `handle:${spec.handle}` },
+      )
+  const collection = knownId ? data.collection : data.collections.nodes.find((node) => node.handle === spec.handle)
+  if (!collection) return null
+  const remote = {
+    ...collection,
+    managed: collection.managed?.value === 'true',
+    syncKey: collection.syncKey?.value ?? null,
   }
-  return collection ?? null
+  assertCatalogRemoteAuthority(remote, spec)
+  return remote
 }
 
-async function createCollection(spec) {
+async function createCollection(config, spec) {
   const input = {
     handle: spec.handle,
     title: spec.title,
@@ -198,6 +246,7 @@ async function createCollection(spec) {
     image: spec.imageUrl ? { src: spec.imageUrl, altText: spec.title } : null,
   }
   const data = await shopifyGraphql(
+    config,
     `mutation CatalogCollectionCreate($input: CollectionInput!) {
       collectionCreate(input: $input) { collection { id handle title } userErrors { field message } }
     }`,
@@ -208,7 +257,7 @@ async function createCollection(spec) {
   return data.collectionCreate.collection
 }
 
-async function updateCollection(collectionId, spec) {
+async function updateCollection(config, collectionId, spec) {
   const input = {
     id: collectionId,
     title: spec.title,
@@ -219,6 +268,7 @@ async function updateCollection(collectionId, spec) {
     ...(spec.imageUrl ? { image: { src: spec.imageUrl, altText: spec.title } } : {}),
   }
   const data = await shopifyGraphql(
+    config,
     `mutation CatalogCollectionUpdate($input: CollectionInput!) {
       collectionUpdate(input: $input) { collection { id handle title } userErrors { field message } }
     }`,
@@ -227,11 +277,13 @@ async function updateCollection(collectionId, spec) {
   assertNoUserErrors(data.collectionUpdate, 'collectionUpdate')
 }
 
-async function readCollectionProductIds(collectionId) {
+async function readCollectionProductIds(config, collectionId, heartbeat) {
   const ids = []
   let cursor = null
   do {
+    await heartbeat()
     const data = await shopifyGraphql(
+      config,
       `query CatalogCollectionProducts($id: ID!, $cursor: String) {
         collection(id: $id) {
           products(first: 250, after: $cursor) {
@@ -249,9 +301,11 @@ async function readCollectionProductIds(collectionId) {
   return ids
 }
 
-async function addProducts(collectionId, productIds) {
+async function addProducts(config, collectionId, productIds, heartbeat) {
   for (const batch of chunks(productIds)) {
+    await heartbeat()
     const data = await shopifyGraphql(
+      config,
       `mutation CatalogCollectionAdd($id: ID!, $productIds: [ID!]!) {
         collectionAddProducts(id: $id, productIds: $productIds) { userErrors { field message } }
       }`,
@@ -261,9 +315,11 @@ async function addProducts(collectionId, productIds) {
   }
 }
 
-async function removeProducts(collectionId, productIds) {
+async function removeProducts(config, collectionId, productIds, heartbeat) {
   for (const batch of chunks(productIds)) {
+    await heartbeat()
     const data = await shopifyGraphql(
+      config,
       `mutation CatalogCollectionRemove($id: ID!, $productIds: [ID!]!) {
         collectionRemoveProducts(id: $id, productIds: $productIds) { userErrors { field message } }
       }`,
@@ -273,9 +329,11 @@ async function removeProducts(collectionId, productIds) {
   }
 }
 
-async function reorderProducts(collectionId, desiredIds) {
+async function reorderProducts(config, collectionId, desiredIds, heartbeat) {
   for (const batch of chunks(desiredIds.map((id, index) => ({ id, newPosition: String(index) })))) {
+    await heartbeat()
     const data = await shopifyGraphql(
+      config,
       `mutation CatalogCollectionReorder($id: ID!, $moves: [MoveInput!]!) {
         collectionReorderProducts(id: $id, moves: $moves) { job { id done } userErrors { field message } }
       }`,
@@ -283,61 +341,247 @@ async function reorderProducts(collectionId, desiredIds) {
     )
     assertNoUserErrors(data.collectionReorderProducts, 'collectionReorderProducts')
     const job = data.collectionReorderProducts.job
-    if (job && !job.done) await waitForJob(job.id)
+    if (job && !job.done) await waitForJob(config, job.id, heartbeat)
   }
 }
 
-async function waitForJob(jobId) {
+async function waitForJob(config, jobId, heartbeat) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const data = await shopifyGraphql(`query CatalogSyncJob($id: ID!) { job(id: $id) { done } }`, {
-      id: jobId,
-    })
+    await heartbeat()
+    const data = await shopifyGraphql(config, `query CatalogSyncJob($id: ID!) { job(id: $id) { done } }`, { id: jobId })
     if (data.job?.done) return
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   throw new CatalogShopifySyncError('Shopify product reorder timed out')
 }
 
-async function upsertMirror(sql, spec) {
-  const [mirror] = await sql`
-    SELECT shopify_collection_id FROM catalog_shopify_mirrors WHERE sync_key = ${spec.syncKey}
-  `
-  try {
-    let collection = await findCollection(spec.handle, mirror?.shopify_collection_id)
-    if (!collection) collection = await createCollection(spec)
-    else await updateCollection(collection.id, spec)
-    await publishCollection(collection.id)
-
-    const currentIds = await readCollectionProductIds(collection.id)
-    const desiredIds = spec.productIds.map(productGid)
-    const current = new Set(currentIds)
-    const desired = new Set(desiredIds)
-    const removedIds = currentIds.filter((id) => !desired.has(id))
-    const addedIds = desiredIds.filter((id) => !current.has(id))
-    const orderChanged =
-      currentIds.length !== desiredIds.length || currentIds.some((id, index) => id !== desiredIds[index])
-    await removeProducts(collection.id, removedIds)
-    await addProducts(collection.id, addedIds)
-    if (desiredIds.length > 1 && orderChanged) await reorderProducts(collection.id, desiredIds)
-
-    await sql`
+async function beginPublicationAttempt(sql, context, { force = false } = {}) {
+  const claimToken = randomUUID()
+  return sql.begin(async (tx) => {
+    const [state] = await tx`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true FOR SHARE
+    `
+    if (!catalogDesiredRevisionIsCurrent(context.desiredRevision, state?.revision)) {
+      throw new CatalogDesiredStateChangedError(context.spec.syncKey)
+    }
+    await tx`
       INSERT INTO catalog_shopify_mirrors (
-        sync_key, category_id, shopify_collection_id, handle, last_synced_at, last_error, updated_at
-      ) VALUES (${spec.syncKey}, ${spec.categoryId}, ${collection.id}, ${spec.handle}, now(), NULL, now())
-      ON CONFLICT (sync_key) DO UPDATE SET
-        category_id = EXCLUDED.category_id,
-        shopify_collection_id = EXCLUDED.shopify_collection_id,
-        handle = EXCLUDED.handle,
-        last_synced_at = now(), last_error = NULL, updated_at = now()
+        sync_key, category_id, handle, publication_status, updated_at
+      ) VALUES (
+        ${context.spec.syncKey}, ${context.spec.categoryId}, ${context.spec.handle}, 'never', now()
+      )
+      ON CONFLICT (sync_key) DO NOTHING
     `
-    return { syncKey: spec.syncKey, collectionId: collection.id, products: desiredIds.length }
+    const [mirror] = await tx`
+      SELECT
+        shopify_collection_id, published_fingerprint, publication_status,
+        claim_token, claim_expires_at,
+        (claim_token IS NULL OR claim_expires_at IS NULL OR claim_expires_at <= now()) AS claim_available
+      FROM catalog_shopify_mirrors
+      WHERE sync_key = ${context.spec.syncKey}
+      FOR UPDATE
+    `
+    if (!mirror) throw new CatalogAuthorityConflictError(`Catalog mirror missing for ${context.spec.syncKey}`)
+    if (!mirror.claim_available) {
+      throw new CatalogPublicationBusyError(context.spec.syncKey)
+    }
+    if (shouldReplayCatalogPublication(mirror, context.desiredFingerprint, { force })) {
+      return {
+        ...context,
+        replayed: true,
+        collectionId: mirror.shopify_collection_id,
+      }
+    }
+    await tx`
+      UPDATE catalog_publication_attempts
+      SET status = 'superseded',
+          error_code = 'CATALOG_PUBLICATION_LEASE_EXPIRED',
+          error_message = 'Superseded by a successor after the publication lease expired',
+          completed_at = now()
+      WHERE sync_key = ${context.spec.syncKey} AND status = 'pending'
+    `
+    await tx`
+      UPDATE catalog_shopify_mirrors
+      SET category_id = ${context.spec.categoryId},
+          handle = ${context.spec.handle},
+          desired_fingerprint = ${context.desiredFingerprint},
+          desired_revision = ${context.desiredRevision},
+          publication_status = 'pending',
+          claim_token = ${claimToken},
+          claim_expires_at = now() + interval '5 minutes',
+          last_attempted_at = now(),
+          last_error = NULL,
+          updated_at = now()
+      WHERE sync_key = ${context.spec.syncKey}
+    `
+    const [attempt] = await tx`
+      INSERT INTO catalog_publication_attempts (
+        sync_key, target, publication_id, desired_fingerprint, desired_revision, status
+      )
+      VALUES (
+        ${context.spec.syncKey}, 'shopify-production', ${context.publicationId},
+        ${context.desiredFingerprint}, ${context.desiredRevision}, 'pending'
+      )
+      RETURNING id
+    `
+    return {
+      ...context,
+      id: attempt.id,
+      claimToken,
+      collectionId: mirror.shopify_collection_id ?? null,
+      nextHeartbeatAt: 0,
+      replayed: false,
+    }
+  })
+}
+
+async function heartbeatPublicationClaim(sql, attempt, { force = false } = {}) {
+  if (attempt.replayed || (!force && Date.now() < attempt.nextHeartbeatAt)) return
+  const [claim] = await sql`
+    UPDATE catalog_shopify_mirrors
+    SET claim_expires_at = now() + interval '5 minutes', updated_at = now()
+    WHERE sync_key = ${attempt.spec.syncKey} AND claim_token = ${attempt.claimToken}
+    RETURNING sync_key
+  `
+  if (!claim) throw new CatalogPublicationClaimLostError(attempt.spec.syncKey)
+  attempt.nextHeartbeatAt = Date.now() + PUBLICATION_CLAIM_HEARTBEAT_MS
+}
+
+async function completePublicationAttempt(sql, attempt, collectionId) {
+  await sql.begin(async (tx) => {
+    const [state] = await tx`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true FOR SHARE
+    `
+    if (!catalogDesiredRevisionIsCurrent(attempt.desiredRevision, state?.revision)) {
+      throw new CatalogDesiredStateChangedError(attempt.spec.syncKey)
+    }
+    const [mirror] = await tx`
+      UPDATE catalog_shopify_mirrors
+      SET category_id = ${attempt.spec.categoryId},
+          shopify_collection_id = ${collectionId},
+          handle = ${attempt.spec.handle},
+          desired_fingerprint = ${attempt.desiredFingerprint},
+          published_fingerprint = ${attempt.desiredFingerprint},
+          desired_revision = ${attempt.desiredRevision},
+          published_revision = ${attempt.desiredRevision},
+          publication_status = 'synced',
+          last_synced_at = now(),
+          last_attempted_at = now(),
+          last_error = NULL,
+          claim_token = NULL,
+          claim_expires_at = NULL,
+          updated_at = now()
+      WHERE sync_key = ${attempt.spec.syncKey} AND claim_token = ${attempt.claimToken}
+      RETURNING sync_key
+    `
+    if (!mirror) throw new CatalogPublicationClaimLostError(attempt.spec.syncKey)
+    const [completedAttempt] = await tx`
+      UPDATE catalog_publication_attempts
+      SET status = 'published', provider_collection_id = ${collectionId}, completed_at = now()
+      WHERE id = ${attempt.id} AND status = 'pending'
+      RETURNING id
+    `
+    if (!completedAttempt) throw new CatalogPublicationClaimLostError(attempt.spec.syncKey)
+  })
+}
+
+async function failPublicationAttempt(sql, attempt, error) {
+  const message = error instanceof Error ? error.message.slice(0, 1000) : 'Unknown Shopify sync error'
+  const code = typeof error?.code === 'string' ? error.code : CATALOG_PUBLICATION_ERROR_CODES.providerFailure
+  const status = code === CATALOG_PUBLICATION_ERROR_CODES.authorityConflict ? 'conflict' : 'failed'
+  await sql.begin(async (tx) => {
+    await tx`
+      UPDATE catalog_shopify_mirrors
+      SET desired_fingerprint = ${attempt.desiredFingerprint},
+          publication_status = ${status},
+          last_error = ${message},
+          claim_token = NULL,
+          claim_expires_at = NULL,
+          updated_at = now()
+      WHERE sync_key = ${attempt.spec.syncKey} AND claim_token = ${attempt.claimToken}
+    `
+    await tx`
+      UPDATE catalog_publication_attempts
+      SET status = ${status}, error_code = ${code}, error_message = ${message}, completed_at = now()
+      WHERE id = ${attempt.id} AND status = 'pending'
+    `
+  })
+}
+
+async function completeMirrorDeletion(sql, attempt, collectionId) {
+  await sql.begin(async (tx) => {
+    const [state] = await tx`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true FOR SHARE
+    `
+    if (!catalogDesiredRevisionIsCurrent(attempt.desiredRevision, state?.revision)) {
+      throw new CatalogDesiredStateChangedError(attempt.spec.syncKey)
+    }
+    const deleted = await tx`
+      DELETE FROM catalog_shopify_mirrors
+      WHERE sync_key = ${attempt.spec.syncKey} AND claim_token = ${attempt.claimToken}
+      RETURNING sync_key
+    `
+    if (!deleted[0]) throw new CatalogPublicationClaimLostError(attempt.spec.syncKey)
+    const [completedAttempt] = await tx`
+      UPDATE catalog_publication_attempts
+      SET status = 'published', provider_collection_id = ${collectionId}, completed_at = now()
+      WHERE id = ${attempt.id} AND status = 'pending'
+      RETURNING id
+    `
+    if (!completedAttempt) throw new CatalogPublicationClaimLostError(attempt.spec.syncKey)
+  })
+}
+
+async function upsertMirror(sql, config, spec, desiredRevision, { force = false, ensureDefinitions } = {}) {
+  const { publicationId } = config
+  const desiredFingerprint = catalogSpecFingerprint({ ...spec, publicationId })
+  const attempt = await beginPublicationAttempt(
+    sql,
+    { spec, desiredFingerprint, desiredRevision, publicationId },
+    { force },
+  )
+  if (attempt.replayed) {
+    return {
+      syncKey: spec.syncKey,
+      collectionId: attempt.collectionId,
+      products: spec.productIds.length,
+      replayed: true,
+    }
+  }
+  const heartbeat = () => heartbeatPublicationClaim(sql, attempt)
+  try {
+    await heartbeatPublicationClaim(sql, attempt, { force: true })
+    await ensureDefinitions(heartbeat)
+    await heartbeat()
+    let collection = await findCollection(config, spec, attempt.collectionId)
+    await heartbeat()
+    if (!collection) {
+      const created = await createCollection(config, spec)
+      collection = await findCollection(config, spec, created.id)
+      if (!collection) throw new CatalogShopifySyncError('Created Shopify collection could not be verified')
+    } else {
+      await updateCollection(config, collection.id, spec)
+    }
+    await heartbeat()
+    await publishCollection(config, collection.id)
+
+    const currentIds = await readCollectionProductIds(config, collection.id, heartbeat)
+    const plan = planCatalogPublication(
+      { ...collection, productIds: currentIds },
+      { ...spec, publicationId },
+      { desiredFingerprint },
+    )
+    await removeProducts(config, collection.id, plan.reconciliation.remove, heartbeat)
+    await addProducts(config, collection.id, plan.reconciliation.add, heartbeat)
+    if (plan.desiredProductIds.length > 1 && plan.reconciliation.reorder) {
+      await reorderProducts(config, collection.id, plan.desiredProductIds, heartbeat)
+    }
+
+    await heartbeatPublicationClaim(sql, attempt, { force: true })
+    await completePublicationAttempt(sql, attempt, collection.id)
+    return { syncKey: spec.syncKey, collectionId: collection.id, products: plan.desiredProductIds.length }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown Shopify sync error'
-    await sql`
-      INSERT INTO catalog_shopify_mirrors (sync_key, category_id, handle, last_error, updated_at)
-      VALUES (${spec.syncKey}, ${spec.categoryId}, ${spec.handle}, ${message}, now())
-      ON CONFLICT (sync_key) DO UPDATE SET last_error = ${message}, updated_at = now()
-    `
+    await failPublicationAttempt(sql, attempt, error)
     throw error
   }
 }
@@ -354,6 +598,16 @@ async function readSnapshot(sql) {
     ORDER BY category_position, title
   `
   return { categories, products }
+}
+
+async function readVersionedSnapshot(sql) {
+  return sql.begin(async (tx) => {
+    const [state] = await tx`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true FOR SHARE
+    `
+    const snapshot = await readSnapshot(tx)
+    return { ...snapshot, revision: Number(state?.revision ?? 0) }
+  })
 }
 
 export function buildCatalogShopifySpecs(snapshot) {
@@ -390,7 +644,7 @@ export function buildCatalogShopifySpecs(snapshot) {
     const handles = []
     let current = category
     while (current) {
-      handles.unshift(`${COLLECTION_HANDLE_PREFIX}${current.slug}`)
+      handles.unshift(`${CATALOG_COLLECTION_HANDLE_PREFIX}${current.slug}`)
       current = current.parent_id ? byId.get(current.parent_id) : null
     }
     return handles
@@ -415,12 +669,14 @@ export function buildCatalogShopifySpecs(snapshot) {
     return {
       syncKey: `category:${category.id}`,
       categoryId: category.id,
-      handle: `${COLLECTION_HANDLE_PREFIX}${category.slug}`,
+      handle: `${CATALOG_COLLECTION_HANDLE_PREFIX}${category.slug}`,
       title: `${COLLECTION_TITLE_PREFIX} ${breadcrumb(category)}`,
       labelFr: category.title_fr,
       labelEn: category.title_en?.trim() || category.title_fr,
       translationStatus: category.title_en?.trim() ? 'complete' : 'missing_en',
-      parentHandle: category.parent_id ? `${COLLECTION_HANDLE_PREFIX}${byId.get(category.parent_id)?.slug}` : null,
+      parentHandle: category.parent_id
+        ? `${CATALOG_COLLECTION_HANDLE_PREFIX}${byId.get(category.parent_id)?.slug}`
+        : null,
       position: category.position,
       canonicalPath: canonicalPath(category),
       directProductIds: directProducts.map((product) => product.shopify_product_id),
@@ -431,14 +687,14 @@ export function buildCatalogShopifySpecs(snapshot) {
   specs.push({
     syncKey: UNCLASSIFIED_KEY,
     categoryId: null,
-    handle: `${COLLECTION_HANDLE_PREFIX}unclassified`,
+    handle: `${CATALOG_COLLECTION_HANDLE_PREFIX}unclassified`,
     title: `${COLLECTION_TITLE_PREFIX} Non classés`,
     labelFr: 'Non classés',
     labelEn: 'Unclassified',
     translationStatus: 'complete',
     parentHandle: null,
     position: 999999,
-    canonicalPath: [`${COLLECTION_HANDLE_PREFIX}unclassified`],
+    canonicalPath: [`${CATALOG_COLLECTION_HANDLE_PREFIX}unclassified`],
     directProductIds: products
       .filter((product) => !product.canonical_category_id)
       .map((product) => product.shopify_product_id),
@@ -450,12 +706,49 @@ export function buildCatalogShopifySpecs(snapshot) {
   return specs
 }
 
-export async function syncCatalogToShopify(sql, syncKeys = null) {
-  await ensureCatalogMetafieldDefinitions()
-  const specs = buildCatalogShopifySpecs(await readSnapshot(sql))
-  const selected = syncKeys ? specs.filter((spec) => syncKeys.has(spec.syncKey)) : specs
+export async function syncCatalogToShopify(sql, syncKeys = null, { env = process.env, force = false } = {}) {
+  const config = shopifyConfig(env)
+  const initialSnapshot = await readVersionedSnapshot(sql)
+  const initialSpecs = buildCatalogShopifySpecs(initialSnapshot)
+  const selectedKeys = syncKeys ? [...syncKeys] : initialSpecs.map((spec) => spec.syncKey)
+  let definitionsPromise
+  const ensureDefinitions = (heartbeat) => {
+    definitionsPromise ??= ensureCatalogMetafieldDefinitions(config, heartbeat)
+    return definitionsPromise
+  }
   const results = []
-  for (const spec of selected) results.push(await upsertMirror(sql, spec))
+  if (!syncKeys) {
+    const retired = await sql`
+      SELECT category_id FROM catalog_shopify_mirrors
+      WHERE retirement_pending = true AND category_id IS NOT NULL
+      ORDER BY updated_at
+    `
+    for (const mirror of retired) {
+      await deleteCatalogMirror(sql, mirror.category_id, { env })
+    }
+  }
+  for (const syncKey of selectedKeys) {
+    let completed = false
+    for (let retry = 0; retry < 5 && !completed; retry += 1) {
+      const snapshot = await readVersionedSnapshot(sql)
+      const spec = buildCatalogShopifySpecs(snapshot).find((candidate) => candidate.syncKey === syncKey)
+      if (!spec) {
+        const [retired] = await sql`
+          SELECT category_id FROM catalog_shopify_mirrors
+          WHERE sync_key = ${syncKey} AND retirement_pending = true
+        `
+        if (retired?.category_id) await deleteCatalogMirror(sql, retired.category_id, { env })
+        completed = true
+        continue
+      }
+      try {
+        results.push(await upsertMirror(sql, config, spec, snapshot.revision, { force, ensureDefinitions }))
+        completed = true
+      } catch (error) {
+        if (error?.code !== CATALOG_PUBLICATION_ERROR_CODES.desiredStateChanged || retry === 4) throw error
+      }
+    }
+  }
   return results
 }
 
@@ -493,27 +786,63 @@ export async function catalogSyncKeys(
   return keys
 }
 
-export async function deleteCatalogMirror(sql, categoryId) {
+export async function deleteCatalogMirror(sql, categoryId, { env = process.env } = {}) {
+  const config = shopifyConfig(env)
   const syncKey = `category:${categoryId}`
   const [mirror] =
     await sql`SELECT shopify_collection_id, handle FROM catalog_shopify_mirrors WHERE sync_key = ${syncKey}`
   if (!mirror) return null
-  const collection = await findCollection(mirror.handle, mirror.shopify_collection_id)
-  if (collection) {
-    const data = await shopifyGraphql(
-      `mutation CatalogCollectionDelete($input: CollectionDeleteInput!) {
-        collectionDelete(input: $input) { deletedCollectionId userErrors { field message } }
-      }`,
-      { input: { id: collection.id } },
-    )
-    assertNoUserErrors(data.collectionDelete, 'collectionDelete')
+  const [state] = await sql`
+    SELECT revision FROM catalog_publication_state WHERE singleton = true
+  `
+  const desiredRevision = Number(state?.revision ?? 0)
+  const { publicationId } = config
+  const spec = {
+    syncKey,
+    categoryId,
+    handle: mirror.handle,
+    title: '__delete__',
+    labelFr: '',
+    labelEn: '',
+    translationStatus: 'retired',
+    parentHandle: null,
+    position: 0,
+    canonicalPath: [],
+    directProductIds: [],
+    imageUrl: null,
+    productIds: [],
   }
-  await sql`DELETE FROM catalog_shopify_mirrors WHERE sync_key = ${syncKey}`
-  return collection?.id ?? null
+  const desiredFingerprint = catalogSpecFingerprint({ ...spec, publicationId })
+  const attempt = await beginPublicationAttempt(
+    sql,
+    { spec, desiredFingerprint, desiredRevision, publicationId },
+    { force: true },
+  )
+  try {
+    await heartbeatPublicationClaim(sql, attempt, { force: true })
+    const collection = await findCollection(config, spec, attempt.collectionId)
+    if (collection) {
+      await heartbeatPublicationClaim(sql, attempt, { force: true })
+      const data = await shopifyGraphql(
+        config,
+        `mutation CatalogCollectionDelete($input: CollectionDeleteInput!) {
+          collectionDelete(input: $input) { deletedCollectionId userErrors { field message } }
+        }`,
+        { input: { id: collection.id } },
+      )
+      assertNoUserErrors(data.collectionDelete, 'collectionDelete')
+    }
+    await heartbeatPublicationClaim(sql, attempt, { force: true })
+    await completeMirrorDeletion(sql, attempt, collection?.id ?? attempt.collectionId)
+    return collection?.id ?? null
+  } catch (error) {
+    await failPublicationAttempt(sql, attempt, error)
+    throw error
+  }
 }
 
 export const catalogShopifyConstants = {
-  COLLECTION_HANDLE_PREFIX,
+  COLLECTION_HANDLE_PREFIX: CATALOG_COLLECTION_HANDLE_PREFIX,
   COLLECTION_TITLE_PREFIX,
   UNCLASSIFIED_KEY,
   DEFAULT_STOREFRONT_PUBLICATION_ID,
