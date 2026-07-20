@@ -1,5 +1,9 @@
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
-import { getGoogleAdsConfig, googleAdsDestinationConnector } from '../../modules/event-hub/google-ads-connector'
+import {
+  ensureMissingGoogleAdsDispatchLogs,
+  getGoogleAdsConfig,
+  googleAdsDestinationConnector,
+} from '../../modules/event-hub/google-ads-connector'
 
 export default defineCommand({
   name: 'flushGoogleAdsDispatches',
@@ -13,6 +17,7 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
+        const reconciliation = await ensureMissingGoogleAdsDispatchLogs(db)
         const result = await flushDestinationDispatches({
           db,
           connector: googleAdsDestinationConnector,
@@ -26,10 +31,11 @@ export default defineCommand({
         }
 
         log.info(
-          `[flushGoogleAdsDispatches] scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} validate_only=${config.validateOnly}`,
+          `[flushGoogleAdsDispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} claim_conflict=${result.claim_conflict} validate_only=${config.validateOnly}`,
         )
 
         return {
+          reconciled: reconciliation.inserted,
           ...result,
           validate_only: config.validateOnly,
         }

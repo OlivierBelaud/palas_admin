@@ -26,7 +26,7 @@ export default defineCommand({
         }
 
         log.info(
-          `[flushGa4Dispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured}`,
+          `[flushGa4Dispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} claim_conflict=${result.claim_conflict}`,
         )
 
         return { reconciled: reconciliation.inserted, ...result }

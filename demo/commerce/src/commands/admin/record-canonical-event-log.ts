@@ -25,7 +25,7 @@ function toDate(value: string): Date {
 
 function isDuplicateError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
-  return /duplicate key|unique constraint|event_id/i.test(message)
+  return /duplicate key|unique constraint|\b23505\b/i.test(message)
 }
 
 export default defineCommand({
@@ -59,6 +59,7 @@ export default defineCommand({
       return { ok: true, skipped: true, reason: 'not_canonical_business_event' }
     }
 
+    let duplicate = false
     try {
       await services.eventLog.create({
         event_id: canonical.event_id,
@@ -76,9 +77,10 @@ export default defineCommand({
       })
     } catch (err) {
       if (isDuplicateError(err)) {
-        return { ok: true, duplicate: true, event_id: canonical.event_id, event_name: canonical.event_name }
+        duplicate = true
+      } else {
+        throw err
       }
-      throw err
     }
 
     if (isGa4CanonicalEventName(canonical.event_name)) {
@@ -192,6 +194,7 @@ export default defineCommand({
       raw_event_name: canonical.raw_event_name,
       valid: canonical.valid,
       event_time: toDate(canonical.event_time).toISOString(),
+      duplicate,
     }
   },
 })

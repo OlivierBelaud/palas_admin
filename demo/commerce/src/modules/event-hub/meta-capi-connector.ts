@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
+import {
+  ensureMissingDestinationDispatchLogs,
+  type EnsureMissingDestinationDispatchLogsResult,
+  type RawDispatchDb,
+} from './dispatch-runner'
 
 export type MetaCapiDispatchStatus = DispatchStatus
 
@@ -34,6 +39,7 @@ export type MetaCapiMapResult =
     }
 
 export type MetaCapiSendResult = DispatchSendResult
+export type EnsureMissingMetaCapiDispatchLogsResult = EnsureMissingDestinationDispatchLogsResult
 
 const META_EVENT_NAMES: Record<string, string> = {
   page_view: 'PageView',
@@ -303,6 +309,18 @@ export const metaCapiDestinationConnector: DestinationConnector = {
   notConfiguredMessage: 'Set META_PIXEL_ID and META_ACCESS_TOKEN to enable dispatch',
   isConfigured: () => isMetaCapiConfigured(getMetaCapiConfig()),
   send: (payload, signal) => sendMetaCapiPayload(payload, getMetaCapiConfig(), signal),
+}
+
+export function ensureMissingMetaCapiDispatchLogs(
+  db: RawDispatchDb,
+  options: { lookbackHours?: number; limit?: number } = {},
+): Promise<EnsureMissingMetaCapiDispatchLogsResult> {
+  return ensureMissingDestinationDispatchLogs({
+    db,
+    destination: 'meta_capi',
+    map: (eventName, payload) => mapCanonicalToMetaCapi(eventName, payload),
+    ...options,
+  })
 }
 
 function safeJson(text: string): Record<string, unknown> | null {

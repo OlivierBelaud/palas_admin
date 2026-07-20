@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { POST } from '../src/modules/event-hub/api/ingest/route'
 
 function sha256(value: string) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function makeReq(body: Record<string, unknown>, unsafeCalls: Array<{ query: string; params?: unknown[] }>) {
+function makeReq(
+  body: Record<string, unknown>,
+  unsafeCalls: Array<{ query: string; params?: unknown[] }>,
+  options: { browserOrigin?: boolean; token?: string } = {},
+) {
   const sql = Object.assign(async () => [], {
     unsafe: async (query: string, params?: unknown[]) => {
       unsafeCalls.push({ query, params })
@@ -16,7 +20,8 @@ function makeReq(body: Record<string, unknown>, unsafeCalls: Array<{ query: stri
   const req = new Request('https://admin.fancypalas.com/api/event-hub/ingest', {
     method: 'POST',
     headers: {
-      origin: 'https://fancypalas.com',
+      ...(options.browserOrigin === false ? {} : { origin: 'https://fancypalas.com' }),
+      ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
       'content-type': 'application/json',
       'user-agent': 'Vitest Browser',
       'x-forwarded-for': '203.0.113.10, 10.0.0.1',
@@ -40,6 +45,14 @@ function makeReq(body: Record<string, unknown>, unsafeCalls: Array<{ query: stri
 }
 
 describe('Event Hub ingest consent logging', () => {
+  beforeEach(() => {
+    process.env.EVENT_HUB_INGEST_TOKEN = 'test-event-hub-token'
+  })
+
+  afterEach(() => {
+    delete process.env.EVENT_HUB_INGEST_TOKEN
+  })
+
   it('rejects legacy browser direct ingest before persistence', async () => {
     const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
     const res = await POST(
@@ -64,6 +77,51 @@ describe('Event Hub ingest consent logging', () => {
     expect(unsafeCalls).toHaveLength(0)
   })
 
+  it('rejects a browser request that spoofs the trusted PostHog proxy source', async () => {
+    const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
+    const res = await POST(
+      makeReq(
+        {
+          event_id: 'evt_spoofed_proxy',
+          event_name: 'page_view',
+          event_time: '2026-06-11T23:00:00.000Z',
+          source: 'posthog_proxy',
+          context: { url: 'https://fancypalas.com/', page_type: 'home' },
+        },
+        unsafeCalls,
+      ),
+    )
+
+    expect(res.status).toBe(410)
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      error: 'DIRECT_EVENT_HUB_INGEST_DISABLED',
+      source: 'posthog_proxy',
+    })
+    expect(unsafeCalls).toHaveLength(0)
+  })
+
+  it('rejects an internal replay without the server-to-server token', async () => {
+    const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
+    const res = await POST(
+      makeReq(
+        {
+          event_id: 'evt_unauthorized_replay',
+          event_name: 'page_view',
+          event_time: '2026-06-11T23:00:00.000Z',
+          source: 'event_hub_replay',
+          context: { url: 'https://fancypalas.com/', page_type: 'home' },
+        },
+        unsafeCalls,
+        { browserOrigin: false },
+      ),
+    )
+
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ ok: false, error: 'UNAUTHORIZED_INGEST' })
+    expect(unsafeCalls).toHaveLength(0)
+  })
+
   it('logs denied consent without blocking identity capture during observation phase', async () => {
     const unsafeCalls: Array<{ query: string; params?: unknown[] }> = []
     const res = await POST(
@@ -72,7 +130,7 @@ describe('Event Hub ingest consent logging', () => {
           event_id: 'evt_contact_email_without_analytics_consent',
           event_name: 'add_contact_info',
           event_time: '2026-06-11T23:00:00.000Z',
-          source: 'posthog_proxy',
+          source: 'event_hub_replay',
           consent: {
             analytics_storage: false,
             ad_storage: false,
@@ -84,6 +142,7 @@ describe('Event Hub ingest consent logging', () => {
           properties: { checkout: { email: ' Client@Example.com ' } },
         },
         unsafeCalls,
+        { browserOrigin: false, token: 'test-event-hub-token' },
       ),
     )
 
@@ -110,7 +169,7 @@ describe('Event Hub ingest consent logging', () => {
           event_id: 'evt_purchase_with_event_hub_client_id',
           event_name: 'purchase',
           event_time: '2026-06-12T12:00:00.000Z',
-          source: 'posthog_proxy',
+          source: 'event_hub_replay',
           consent: {
             analytics_storage: true,
             ad_storage: true,
@@ -131,6 +190,7 @@ describe('Event Hub ingest consent logging', () => {
           },
         },
         unsafeCalls,
+        { browserOrigin: false, token: 'test-event-hub-token' },
       ),
     )
 
@@ -143,6 +203,7 @@ describe('Event Hub ingest consent logging', () => {
     const ga4Call = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:ga4')
     expect(ga4Call?.params?.[4]).toBe('pending')
     expect(ga4Call?.params?.[8]).toBeNull()
+    expect(ga4Call?.query).toContain('ON CONFLICT (event_destination_key) DO NOTHING')
 
     const metaCall = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:meta_capi')
     expect(metaCall?.params?.[4]).toBe('pending')
