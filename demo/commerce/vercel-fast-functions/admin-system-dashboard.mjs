@@ -61,14 +61,32 @@ export default {
     if (!auth) return unauthorized()
     const authDone = nowMs()
 
-    const [auditRuns, businessRows] = await Promise.all([loadLatestAudit(), loadBusinessKpis()])
+    const [auditRuns, staleRunningAudits, businessRows] = await Promise.all([
+      loadLatestAudit(),
+      loadLatestStaleRunningAudit(),
+      loadBusinessKpis(),
+    ])
     const latestRun = auditRuns[0] ?? null
-    const findings = latestRun ? await loadFindings(latestRun.id) : []
+    const staleRunningAudit = unresolvedStaleRunningAudit(staleRunningAudits[0] ?? null, latestRun)
+    const persistedFindings = latestRun ? await loadFindings(latestRun.id) : []
     const queryDone = nowMs()
 
     const health = latestRun?.summary?.health?.length ? latestRun.summary.health : DEFAULT_HEALTH
     const auditStatus = latestRun?.overall_status ?? 'unknown'
-    const status = latestRun?.status === 'failed' ? 'critical' : auditStatus
+    const status = latestRun?.status === 'failed' || staleRunningAudit ? 'critical' : auditStatus
+    const findings = persistedFindings.map((finding) => ({
+      id: finding.id,
+      source: finding.source,
+      key: finding.key,
+      severity: finding.severity,
+      title: finding.title,
+      summary: finding.summary,
+      count: finding.count,
+      href: finding.href ?? '/',
+      details: finding.details ?? [],
+      observed_at: iso(finding.observed_at),
+    }))
+    if (staleRunningAudit) findings.unshift(staleRunningAuditFinding(staleRunningAudit))
     const data = {
       meta: {
         generated_at: new Date().toISOString(),
@@ -87,18 +105,7 @@ export default {
       status,
       business: normalizeBusiness(businessRows[0]),
       health,
-      findings: findings.map((finding) => ({
-        id: finding.id,
-        source: finding.source,
-        key: finding.key,
-        severity: finding.severity,
-        title: finding.title,
-        summary: finding.summary,
-        count: finding.count,
-        href: finding.href ?? '/',
-        details: finding.details ?? [],
-        observed_at: iso(finding.observed_at),
-      })),
+      findings,
       audits: health.map((item) => ({
         key: item.key,
         label: item.label,
@@ -129,6 +136,17 @@ async function loadLatestAudit() {
   return db().unsafe(`SELECT id, trigger, status, overall_status, started_at, finished_at, summary, error_message
        FROM system_audit_runs
       WHERE deleted_at IS NULL
+        AND status IN ('completed', 'failed')
+      ORDER BY started_at DESC
+      LIMIT 1`)
+}
+
+async function loadLatestStaleRunningAudit() {
+  return db().unsafe(`SELECT id, started_at
+       FROM system_audit_runs
+      WHERE deleted_at IS NULL
+        AND status = 'running'
+        AND started_at < NOW() - INTERVAL '30 minutes'
       ORDER BY started_at DESC
       LIMIT 1`)
 }
@@ -144,6 +162,29 @@ async function loadFindings(runId) {
       LIMIT 50`,
     [runId],
   )
+}
+
+function staleRunningAuditFinding(audit) {
+  const startedAt = iso(audit.started_at)
+  return {
+    id: `stale-audit:${audit.id}`,
+    source: 'system',
+    key: 'audit_stuck',
+    severity: 'critical',
+    title: 'Audit système bloqué',
+    summary: `Le run ${audit.id} est encore en cours plus de 30 minutes après son démarrage.`,
+    count: 1,
+    href: '/',
+    details: [`Démarré à ${startedAt}`],
+    observed_at: new Date().toISOString(),
+  }
+}
+
+function unresolvedStaleRunningAudit(staleRunningAudit, latestTerminalAudit) {
+  if (!staleRunningAudit || !latestTerminalAudit) return staleRunningAudit
+  return new Date(staleRunningAudit.started_at).getTime() > new Date(latestTerminalAudit.started_at).getTime()
+    ? staleRunningAudit
+    : null
 }
 
 async function loadBusinessKpis() {

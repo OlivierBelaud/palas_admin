@@ -26,6 +26,11 @@ type AuditFindingRow = {
   observed_at: string | Date
 }
 
+type RunningAuditRow = {
+  id: string
+  started_at: string | Date
+}
+
 type BusinessKpiRow = {
   carts_30d: string | number
   active_carts_30d: string | number
@@ -92,12 +97,30 @@ export default defineQuery({
 
 export async function loadSystemDashboardData(db: RawDb) {
   const now = new Date()
-  const [auditRuns, business] = await Promise.all([loadLatestAudit(db), loadBusinessKpis(db)])
+  const [auditRuns, staleRunningAudits, business] = await Promise.all([
+    loadLatestAudit(db),
+    loadLatestStaleRunningAudit(db),
+    loadBusinessKpis(db),
+  ])
   const latestRun = auditRuns[0] ?? null
-  const findings = latestRun ? await loadFindings(db, latestRun.id) : []
+  const staleRunningAudit = unresolvedStaleRunningAudit(staleRunningAudits[0] ?? null, latestRun)
+  const persistedFindings = latestRun ? await loadFindings(db, latestRun.id) : []
   const health = latestRun?.summary?.health?.length ? latestRun.summary.health : DEFAULT_HEALTH
   const auditStatus = latestRun?.overall_status ?? 'unknown'
-  const status = latestRun?.status === 'failed' ? 'critical' : auditStatus
+  const status = latestRun?.status === 'failed' || staleRunningAudit ? 'critical' : auditStatus
+  const findings = persistedFindings.map((finding) => ({
+    id: finding.id,
+    source: finding.source,
+    key: finding.key,
+    severity: finding.severity,
+    title: finding.title,
+    summary: finding.summary,
+    count: finding.count,
+    href: finding.href ?? '/',
+    details: finding.details ?? [],
+    observed_at: iso(finding.observed_at),
+  }))
+  if (staleRunningAudit) findings.unshift(staleRunningAuditFinding(staleRunningAudit, now))
 
   return {
     meta: {
@@ -117,18 +140,7 @@ export async function loadSystemDashboardData(db: RawDb) {
     status,
     business,
     health,
-    findings: findings.map((finding) => ({
-      id: finding.id,
-      source: finding.source,
-      key: finding.key,
-      severity: finding.severity,
-      title: finding.title,
-      summary: finding.summary,
-      count: finding.count,
-      href: finding.href ?? '/',
-      details: finding.details ?? [],
-      observed_at: iso(finding.observed_at),
-    })),
+    findings,
     audits: health.map((item) => ({
       key: item.key,
       label: item.label,
@@ -144,6 +156,19 @@ async function loadLatestAudit(db: RawDb): Promise<AuditRunRow[]> {
     `SELECT id, trigger, status, overall_status, started_at, finished_at, summary, error_message
        FROM system_audit_runs
       WHERE deleted_at IS NULL
+        AND status IN ('completed', 'failed')
+      ORDER BY started_at DESC
+      LIMIT 1`,
+  )
+}
+
+async function loadLatestStaleRunningAudit(db: RawDb): Promise<RunningAuditRow[]> {
+  return db.raw<RunningAuditRow>(
+    `SELECT id, started_at
+       FROM system_audit_runs
+      WHERE deleted_at IS NULL
+        AND status = 'running'
+        AND started_at < NOW() - INTERVAL '30 minutes'
       ORDER BY started_at DESC
       LIMIT 1`,
   )
@@ -227,6 +252,32 @@ async function loadBusinessKpis(db: RawDb) {
 
 function iso(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
+}
+
+function staleRunningAuditFinding(audit: RunningAuditRow, observedAt: Date) {
+  const startedAt = iso(audit.started_at)
+  return {
+    id: `stale-audit:${audit.id}`,
+    source: 'system',
+    key: 'audit_stuck',
+    severity: 'critical' as const,
+    title: 'Audit système bloqué',
+    summary: `Le run ${audit.id} est encore en cours plus de 30 minutes après son démarrage.`,
+    count: 1,
+    href: '/',
+    details: [`Démarré à ${startedAt}`],
+    observed_at: observedAt.toISOString(),
+  }
+}
+
+function unresolvedStaleRunningAudit(
+  staleRunningAudit: RunningAuditRow | null,
+  latestTerminalAudit: AuditRunRow | null,
+): RunningAuditRow | null {
+  if (!staleRunningAudit || !latestTerminalAudit) return staleRunningAudit
+  return new Date(staleRunningAudit.started_at).getTime() > new Date(latestTerminalAudit.started_at).getTime()
+    ? staleRunningAudit
+    : null
 }
 
 function toNumber(value: number | string | null | undefined): number {
