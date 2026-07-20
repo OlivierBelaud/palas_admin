@@ -1,4 +1,9 @@
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
+import {
+  ensureMissingDestinationDispatchLogs,
+  type EnsureMissingDestinationDispatchLogsResult,
+  type RawDispatchDb,
+} from './dispatch-runner'
 
 export type GoogleAdsDispatchStatus = DispatchStatus
 
@@ -44,6 +49,7 @@ export type GoogleAdsMapResult =
     }
 
 export type GoogleAdsSendResult = DispatchSendResult
+export type EnsureMissingGoogleAdsDispatchLogsResult = EnsureMissingDestinationDispatchLogsResult
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -423,6 +429,18 @@ export const googleAdsDestinationConnector: DestinationConnector = {
   notConfiguredMessage: 'Set Google Ads API credentials and at least one conversion action id to enable dispatch',
   isConfigured: () => isGoogleAdsConfigured(getGoogleAdsConfig()),
   send: (payload, signal) => sendGoogleAdsPurchasePayload(payload, getGoogleAdsConfig(), signal),
+}
+
+export function ensureMissingGoogleAdsDispatchLogs(
+  db: RawDispatchDb,
+  options: { lookbackHours?: number; limit?: number } = {},
+): Promise<EnsureMissingGoogleAdsDispatchLogsResult> {
+  return ensureMissingDestinationDispatchLogs({
+    db,
+    destination: 'google_ads',
+    map: (eventName, payload) => mapCanonicalToGoogleAds(eventName, payload),
+    ...options,
+  })
 }
 
 function safeJson(text: string): Record<string, unknown> | null {

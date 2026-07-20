@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { type RuntimeApp, resolveSql } from '../../../../utils/manta-runtime'
 import { stableMuidForEmail, verifyContactToken } from '../../../../utils/manta-uid'
 import {
@@ -194,6 +194,17 @@ function pickSource(body: JsonRecord): string {
 
 function isAllowedDirectIngestSource(source: string): boolean {
   return ALLOWED_DIRECT_INGEST_SOURCES.has(source)
+}
+
+function hasTrustedIngestToken(req: Request): boolean {
+  const expected = process.env.EVENT_HUB_INGEST_TOKEN?.trim()
+  const authorization = req.headers.get('authorization')
+  const received = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : ''
+  if (!expected || !received) return false
+
+  const expectedBytes = Buffer.from(expected)
+  const receivedBytes = Buffer.from(received)
+  return expectedBytes.length === receivedBytes.length && timingSafeEqual(expectedBytes, receivedBytes)
 }
 
 function pickEventId(body: JsonRecord, eventName: string): { value: string; generated: boolean } {
@@ -455,7 +466,7 @@ export async function POST(req: Request) {
     'Content-Type': 'application/json',
   }
 
-  if (!headers['Access-Control-Allow-Origin']) {
+  if (origin && !headers['Access-Control-Allow-Origin']) {
     return Response.json({ ok: false, error: 'FORBIDDEN' }, { status: 403, headers })
   }
 
@@ -465,7 +476,7 @@ export async function POST(req: Request) {
   }
 
   const source = pickSource(body)
-  if (!isAllowedDirectIngestSource(source)) {
+  if (origin || !isAllowedDirectIngestSource(source)) {
     return Response.json(
       {
         ok: false,
@@ -475,6 +486,10 @@ export async function POST(req: Request) {
       },
       { status: 410, headers },
     )
+  }
+
+  if (!hasTrustedIngestToken(req)) {
+    return Response.json({ ok: false, error: 'UNAUTHORIZED_INGEST' }, { status: 401, headers })
   }
 
   const app = (req as Request & { app?: RuntimeApp }).app
@@ -522,19 +537,7 @@ export async function POST(req: Request) {
        $6, $7, $8, $9,
        $10::jsonb, $11::jsonb, NOW(), NOW()
      )
-     ON CONFLICT (event_id) DO UPDATE SET
-       event_name = EXCLUDED.event_name,
-       source = EXCLUDED.source,
-       received_at = EXCLUDED.received_at,
-       page_type = EXCLUDED.page_type,
-       market = EXCLUDED.market,
-       identity_muid = EXCLUDED.identity_muid,
-       identity_email_sha256 = EXCLUDED.identity_email_sha256,
-       distinct_id = EXCLUDED.distinct_id,
-       valid = EXCLUDED.valid,
-       validation_errors = EXCLUDED.validation_errors,
-       payload_normalized = EXCLUDED.payload_normalized,
-       updated_at = NOW()`,
+     ON CONFLICT (event_id) DO NOTHING`,
     [
       eventId,
       eventName,
@@ -563,17 +566,7 @@ export async function POST(req: Request) {
          $7, NULL, 0, NULL, $8,
          $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
        )
-       ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+       ON CONFLICT (event_destination_key) DO NOTHING`,
       [
         `${eventId}:ga4`,
         eventId,
@@ -603,17 +596,7 @@ export async function POST(req: Request) {
          $7, NULL, 0, NULL, $8,
          $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
        )
-       ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+       ON CONFLICT (event_destination_key) DO NOTHING`,
       [
         `${eventId}:google_ads`,
         eventId,
@@ -643,17 +626,7 @@ export async function POST(req: Request) {
          $7, NULL, 0, NULL, $8,
          $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
        )
-       ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+       ON CONFLICT (event_destination_key) DO NOTHING`,
       [
         `${eventId}:meta_capi`,
         eventId,

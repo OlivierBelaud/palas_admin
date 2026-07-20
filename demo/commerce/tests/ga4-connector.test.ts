@@ -209,7 +209,7 @@ describe('GA4 connector mapping', () => {
           ] as T[]
         }
         writes.push({ query, params })
-        return [] as T[]
+        return [{ id: 'dispatch_1' }] as T[]
       },
     }
 
@@ -217,18 +217,19 @@ describe('GA4 connector mapping', () => {
 
     expect(result).toEqual({ scanned: 1, inserted: 1, invalid: 0 })
     expect(writes).toHaveLength(1)
-    expect(writes[0].params?.slice(0, 9)).toEqual([
+    expect(writes[0].params?.slice(0, 10)).toEqual([
       'evt_1:ga4',
       'evt_1',
       'page_view',
       'page_view',
+      'ga4',
       'pending',
       '2026-06-18T08:30:00.000Z',
       expect.any(Date),
       null,
       null,
     ])
-    expect(JSON.parse(String(writes[0].params?.[9]))).toMatchObject({
+    expect(JSON.parse(String(writes[0].params?.[10]))).toMatchObject({
       client_id: 'muid_1',
       events: [{ name: 'page_view' }],
     })

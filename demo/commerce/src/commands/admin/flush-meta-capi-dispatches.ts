@@ -1,5 +1,9 @@
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
-import { getMetaCapiConfig, metaCapiDestinationConnector } from '../../modules/event-hub/meta-capi-connector'
+import {
+  ensureMissingMetaCapiDispatchLogs,
+  getMetaCapiConfig,
+  metaCapiDestinationConnector,
+} from '../../modules/event-hub/meta-capi-connector'
 
 export default defineCommand({
   name: 'flushMetaCapiDispatches',
@@ -14,6 +18,7 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
+        const reconciliation = await ensureMissingMetaCapiDispatchLogs(db)
         const result = await flushDestinationDispatches({
           db,
           connector: metaCapiDestinationConnector,
@@ -26,10 +31,10 @@ export default defineCommand({
         }
 
         log.info(
-          `[flushMetaCapiDispatches] scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} test_event_code=${Boolean(config.testEventCode)}`,
+          `[flushMetaCapiDispatches] reconciled=${reconciliation.inserted} scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} claim_conflict=${result.claim_conflict} test_event_code=${Boolean(config.testEventCode)}`,
         )
 
-        return result
+        return { reconciled: reconciliation.inserted, ...result }
       },
       compensate: async () => {
         // Dispatch rows are idempotent by event_destination_key. Partial

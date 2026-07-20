@@ -1,6 +1,10 @@
 import { GA4_CANONICAL_EVENT_NAMES } from './canonical-contract'
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
-import type { RawDispatchDb } from './dispatch-runner'
+import {
+  ensureMissingDestinationDispatchLogs,
+  type EnsureMissingDestinationDispatchLogsResult,
+  type RawDispatchDb,
+} from './dispatch-runner'
 
 export type Ga4DispatchStatus = DispatchStatus
 
@@ -17,19 +21,7 @@ export type Ga4MapResult =
 
 export type Ga4SendResult = DispatchSendResult
 
-type MissingGa4DispatchRow = {
-  event_id: string
-  event_name: string
-  source_event_name: string | null
-  received_at: Date | string
-  payload_normalized: Record<string, unknown> | string | null
-}
-
-export type EnsureMissingGa4DispatchLogsResult = {
-  scanned: number
-  inserted: number
-  invalid: number
-}
+export type EnsureMissingGa4DispatchLogsResult = EnsureMissingDestinationDispatchLogsResult
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -324,64 +316,12 @@ export async function ensureMissingGa4DispatchLogs(
   db: RawDispatchDb,
   options: { lookbackHours?: number; limit?: number } = {},
 ): Promise<EnsureMissingGa4DispatchLogsResult> {
-  const lookbackHours = Math.max(1, Math.min(72, Math.trunc(options.lookbackHours ?? 24)))
-  const limit = Math.max(1, Math.min(1000, Math.trunc(options.limit ?? 500)))
-  const rows = await db.raw<MissingGa4DispatchRow>(
-    `SELECT e.event_id,
-            e.event_name,
-            e.event_name AS source_event_name,
-            e.received_at,
-            e.payload_normalized
-       FROM event_logs e
-       LEFT JOIN dispatch_logs d
-         ON d.event_id = e.event_id
-        AND d.destination = 'ga4'
-      WHERE e.received_at >= NOW() - ($1::int * INTERVAL '1 hour')
-        AND e.payload_normalized #>> '{validation,destinations,ga4,supported}' = 'true'
-        AND d.event_id IS NULL
-      ORDER BY e.received_at ASC
-      LIMIT $2`,
-    [lookbackHours, limit],
-  )
-
-  let inserted = 0
-  let invalid = 0
-  for (const row of rows) {
-    const normalized = parseNormalizedPayload(row.payload_normalized)
-    const mapped = mapCanonicalToGa4(row.event_name, normalized)
-    if (!mapped.ok) invalid += 1
-
-    await db.raw(
-      `INSERT INTO dispatch_logs (
-         id, event_destination_key, event_id, canonical_event_name, source_event_name,
-         destination, status, event_received_at, first_attempt_at, last_attempt_at,
-         next_attempt_at, sent_at, attempt_count, http_status, error_code,
-         error_message, request_payload, response_payload, metadata, created_at, updated_at
-       ) VALUES (
-         gen_random_uuid(), $1, $2, $3, $4,
-         'ga4', $5, $6::timestamptz, NULL, NULL,
-         $7::timestamptz, NULL, 0, NULL, $8,
-         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
-       )
-       ON CONFLICT (event_destination_key) DO NOTHING`,
-      [
-        `${row.event_id}:ga4`,
-        row.event_id,
-        row.event_name,
-        row.source_event_name,
-        mapped.ok ? 'pending' : 'invalid',
-        row.received_at,
-        mapped.ok ? new Date() : null,
-        mapped.ok ? null : (mapped.errors[0] ?? 'ga4_invalid_payload'),
-        mapped.ok ? null : mapped.errors.join(', '),
-        JSON.stringify(mapped.payload),
-        JSON.stringify({ ...mapped.metadata, ready: mapped.ok, errors: mapped.ok ? [] : mapped.errors }),
-      ],
-    )
-    inserted += 1
-  }
-
-  return { scanned: rows.length, inserted, invalid }
+  return ensureMissingDestinationDispatchLogs({
+    db,
+    destination: 'ga4',
+    map: mapCanonicalToGa4,
+    ...options,
+  })
 }
 
 export const ga4DestinationConnector: DestinationConnector = {
@@ -391,19 +331,6 @@ export const ga4DestinationConnector: DestinationConnector = {
   notConfiguredMessage: 'Set GA4_MEASUREMENT_ID and GA4_API_SECRET to enable dispatch',
   isConfigured: () => isGa4Configured(getGa4Config()),
   send: (payload, signal) => sendGa4Payload(payload, getGa4Config(), signal),
-}
-
-function parseNormalizedPayload(value: MissingGa4DispatchRow['payload_normalized']): Record<string, unknown> {
-  if (!value) return {}
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value)
-      return obj(parsed)
-    } catch {
-      return {}
-    }
-  }
-  return obj(value)
 }
 
 function safeJson(text: string): Record<string, unknown> | null {

@@ -13,6 +13,7 @@ export default defineSubscriber({
       | undefined
     const events = extractPosthogEvents(data?.body)
     const posthog = data?.posthog ?? {}
+    const failures: unknown[] = []
 
     for (const evt of events) {
       try {
@@ -24,12 +25,18 @@ export default defineSubscriber({
           source_context: data?.context ?? {},
         })
       } catch (err) {
+        failures.push(err)
         log.error(
           `[canonical-event-log-shadow] recordCanonicalEventLog failed for ${evt.event ?? 'unknown'}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         )
       }
+    }
+
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(failures, `${failures.length} canonical Event Hub projections failed`)
     }
   },
 })
