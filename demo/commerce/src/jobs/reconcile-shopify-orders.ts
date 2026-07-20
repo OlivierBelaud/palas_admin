@@ -19,6 +19,11 @@ interface ReconcileResult {
   already_completed: number
   no_local_cart: number
   errors: number
+  order_refresh_requested: number
+  inserted_cart_order_links: number
+  inserted_order_contact_links: number
+  deleted_duplicate_links: number
+  remaining_projection_issues: number
   duration_ms: number
 }
 
@@ -28,6 +33,11 @@ const EMPTY: ReconcileResult = {
   already_completed: 0,
   no_local_cart: 0,
   errors: 0,
+  order_refresh_requested: 0,
+  inserted_cart_order_links: 0,
+  inserted_order_contact_links: 0,
+  deleted_duplicate_links: 0,
+  remaining_projection_issues: 0,
   duration_ms: 0,
 }
 
@@ -42,7 +52,7 @@ export default defineJob('reconcile-shopify-orders', '*/15 * * * *', async ({ co
   }
   const result = await commands.reconcileShopifyOrders({})
   log.info(
-    `[reconcile-shopify-orders] scanned=${result.scanned} dispatched=${result.dispatched} already_completed=${result.already_completed} no_local_cart=${result.no_local_cart} errors=${result.errors} duration_ms=${result.duration_ms}`,
+    `[reconcile-shopify-orders] scanned=${result.scanned} dispatched=${result.dispatched} already_completed=${result.already_completed} no_local_cart=${result.no_local_cart} order_refresh_requested=${result.order_refresh_requested} inserted_cart_order_links=${result.inserted_cart_order_links} inserted_order_contact_links=${result.inserted_order_contact_links} deleted_duplicate_links=${result.deleted_duplicate_links} remaining_projection_issues=${result.remaining_projection_issues} errors=${result.errors} duration_ms=${result.duration_ms}`,
   )
   return result
 })

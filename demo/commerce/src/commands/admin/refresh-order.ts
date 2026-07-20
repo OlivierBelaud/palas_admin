@@ -74,9 +74,18 @@ export default defineCommand({
               `INSERT INTO order_contact (id, order_id, contact_id, created_at, updated_at)
                SELECT gen_random_uuid(), $1, c.id::text, NOW(), NOW()
                  FROM contacts c
-                WHERE ($2::text IS NOT NULL AND LOWER(c.email) = LOWER($2))
-                   OR ($3::text IS NOT NULL AND c.shopify_customer_id = $3)
-                ORDER BY c.updated_at DESC NULLS LAST
+                WHERE c.deleted_at IS NULL
+                  AND (
+                    ($3::text IS NOT NULL AND c.shopify_customer_id = $3)
+                    OR (
+                      $3::text IS NULL
+                      AND $2::text IS NOT NULL
+                      AND LOWER(c.email) = LOWER($2)
+                    )
+                  )
+                ORDER BY
+                  CASE WHEN c.shopify_customer_id = $3 THEN 0 ELSE 1 END,
+                  c.updated_at DESC NULLS LAST
                 LIMIT 1
                ON CONFLICT DO NOTHING`,
               [orderId, snapshot.email, snapshot.shopify_customer_id],

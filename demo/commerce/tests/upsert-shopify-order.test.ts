@@ -6,7 +6,10 @@
 
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { verifyShopifyHmac } from '../src/modules/cart-tracking/upsert-shopify-order'
+import {
+  deriveOrderStatus,
+  verifyShopifyHmac,
+} from '../src/modules/cart-tracking/upsert-shopify-order'
 
 const SECRET = '287428e44d0d3e929d5d1149aa6a52032c36424a711b11a69d1d2b49a72c490b'
 const BODY = JSON.stringify({ id: 12345, cart_token: 'abc', email: 'jane@example.com' })
@@ -51,5 +54,28 @@ describe('verifyShopifyHmac', () => {
   it('rejects signatures of different length (no timingSafeEqual throw)', () => {
     // shorter than a valid base64 SHA-256 digest (44 chars) — must not throw.
     expect(verifyShopifyHmac(BODY, 'too-short', SECRET)).toBe(false)
+  })
+})
+
+describe('deriveOrderStatus', () => {
+  it('keeps partially paid and partially refunded Shopify orders in the paid projection', () => {
+    expect(deriveOrderStatus({ financial_status: 'partially_paid' })).toBe('paid')
+    expect(deriveOrderStatus({ financial_status: 'partially_refunded' })).toBe('paid')
+  })
+
+  it('does not let fulfillment override a canonical refund or cancellation', () => {
+    expect(
+      deriveOrderStatus({
+        financial_status: 'refunded',
+        fulfillment_status: 'fulfilled',
+      }),
+    ).toBe('refunded')
+    expect(
+      deriveOrderStatus({
+        financial_status: 'paid',
+        fulfillment_status: 'fulfilled',
+        cancelled_at: '2026-07-20T10:00:00.000Z',
+      }),
+    ).toBe('cancelled')
   })
 })

@@ -18,6 +18,7 @@ export default defineSubscriber({
       })
     } catch (err) {
       log.error(`[order-refresh] refreshOrder failed for ${shopifyOrderId}: ${(err as Error).message}`)
+      throw err
     }
   },
 })

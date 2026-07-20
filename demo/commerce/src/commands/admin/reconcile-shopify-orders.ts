@@ -92,6 +92,10 @@ export default defineCommand({
         no_local_cart: number
         errors: number
         order_refresh_requested: number
+        inserted_cart_order_links: number
+        inserted_order_contact_links: number
+        deleted_duplicate_links: number
+        remaining_projection_issues: number
         duration_ms: number
       }> => {
         const startedAt = Date.now()
@@ -105,6 +109,11 @@ export default defineCommand({
         // `WHERE LEFT(cart_token, 24) = $1` cheap.
         const db = ctx.app.infra.db as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
+        const { reconcileOrderProjectionLinks } = await import('../../modules/order/reconcile-order-projection.js')
+        const localProjection = await reconcileOrderProjectionLinks(db)
+        log.info(
+          `[reconcileShopifyOrders] local_projection dry_run=${localProjection.dry_run} inserted_cart_order_links=${localProjection.inserted_cart_order_links} inserted_order_contact_links=${localProjection.inserted_order_contact_links} deleted_duplicate_links=${localProjection.deleted_duplicate_links} remaining_missing_cart_order_links=${localProjection.after.missing_cart_order_links} remaining_missing_order_contact_links=${localProjection.after.missing_order_contact_links}`,
+        )
 
         // biome-ignore lint/suspicious/noExplicitAny: step.command is dynamically dispatched
         const cmd = step.command as any
@@ -231,13 +240,22 @@ export default defineCommand({
           no_local_cart: noLocalCart,
           errors,
           order_refresh_requested: orderRefreshRequested,
+          inserted_cart_order_links: localProjection.inserted_cart_order_links,
+          inserted_order_contact_links: localProjection.inserted_order_contact_links,
+          deleted_duplicate_links: localProjection.deleted_duplicate_links,
+          remaining_projection_issues:
+            localProjection.after.missing_cart_order_links +
+            localProjection.after.missing_order_contact_links +
+            localProjection.after.duplicate_order_contact_pairs +
+            localProjection.after.orphan_cart_order_links +
+            localProjection.after.orphan_order_contact_links,
           duration_ms: durationMs,
         }
       },
       compensate: async () => {
-        // Read-only on Shopify; the dispatched ingestCartEvent calls are
-        // themselves idempotent (the `completed_at` guard short-circuits
-        // replays). Nothing to undo on cancel.
+        // Shopify is read-only here. Local projection repairs and
+        // ingestCartEvent dispatches are idempotent, so replay is the
+        // recovery path after cancellation.
       },
     })({})
   },

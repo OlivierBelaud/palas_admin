@@ -195,13 +195,15 @@ export interface UpsertOptions {
   dryRun?: boolean
 }
 
-function deriveOrderStatus(payload: ShopifyOrderPayload): 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded' {
+export function deriveOrderStatus(
+  payload: Pick<ShopifyOrderPayload, 'cancelled_at' | 'financial_status' | 'fulfillment_status'>,
+): 'pending' | 'paid' | 'fulfilled' | 'cancelled' | 'refunded' {
   if (payload.cancelled_at) return 'cancelled'
   const fin = (payload.financial_status ?? '').toLowerCase()
   const ful = (payload.fulfillment_status ?? '').toLowerCase()
   if (fin === 'refunded') return 'refunded'
   if (ful === 'fulfilled') return 'fulfilled'
-  if (fin === 'paid') return 'paid'
+  if (fin === 'paid' || fin === 'partially_paid' || fin === 'partially_refunded') return 'paid'
   return 'pending'
 }
 

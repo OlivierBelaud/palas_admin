@@ -4,11 +4,25 @@ import { computeSystemAudit, type RawDb, runSystemAudit } from '../src/utils/sys
 type Fixtures = {
   posthog?: Record<string, unknown>
   eventHub?: Record<string, unknown>
+  orderProjection?: Record<string, unknown>
 }
 
 function makeDb(fixtures: Fixtures): RawDb {
   return {
     raw: async <T = Record<string, unknown>>(query: string): Promise<T[]> => {
+      if (query.includes('projected_orders')) {
+        return [
+          {
+            projected_orders: 5,
+            missing_cart_order_links: 0,
+            missing_order_contact_links: 0,
+            duplicate_order_contact_pairs: 0,
+            orphan_cart_order_links: 0,
+            orphan_order_contact_links: 0,
+            ...fixtures.orderProjection,
+          },
+        ] as T[]
+      }
       if (query.includes('FROM contacts')) {
         return [
           {
@@ -96,6 +110,24 @@ describe('system audit', () => {
       count: 2,
     })
     expect(result.summary.health.find((item) => item.key === 'event_hub')).toMatchObject({ status: 'critical' })
+  })
+
+  it('reports order projection drift without exposing order or customer payloads', async () => {
+    const result = await computeSystemAudit(
+      makeDb({
+        orderProjection: {
+          missing_cart_order_links: 1,
+          missing_order_contact_links: 2,
+        },
+      }),
+    )
+
+    expect(result.findings.find((finding) => finding.key === 'shopify_order_projection_inconsistent')).toMatchObject({
+      severity: 'critical',
+      count: 3,
+    })
+    expect(result.summary.health.find((item) => item.key === 'shopify')).toMatchObject({ status: 'critical' })
+    expect(JSON.stringify(result.findings)).not.toContain('buyer@example.com')
   })
 
   it('persists a terminal completed run after all health boundaries are computed', async () => {
