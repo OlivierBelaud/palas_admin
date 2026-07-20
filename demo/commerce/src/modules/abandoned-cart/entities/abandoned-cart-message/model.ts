@@ -14,6 +14,12 @@ export default defineModel('AbandonedCartMessage', {
 
   provider: field.text().nullable(),
   provider_message_id: field.text().nullable(),
+  provider_status: field.enum(['SUCCESS', 'FAILURE', 'PENDING']).nullable().index(),
+  provider_error: field.text().nullable(),
+  provider_observed_at: field.dateTime().nullable().index(),
+  delivery_claim_token: field.text().nullable().index(),
+  delivery_claimed_at: field.dateTime().nullable().index(),
+  delivery_attempt_count: field.number().default(0),
   template_key: field.text().nullable(),
   locale: field.text().nullable(),
   subject: field.text().nullable(),

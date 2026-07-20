@@ -46,6 +46,7 @@ export interface AbandonedCartCampaignResult {
   skipped_klaviyo: number
   recovered: number
   errors: number
+  claim_conflicts: number
 }
 
 interface CandidateRow {
@@ -121,6 +122,9 @@ const PAYMENT_HELP_AFTER_HOURS = 1
 const NEXT_EMAIL_AFTER_DAYS = 2
 const DEFAULT_MAX_CASE_AGE_DAYS = 14
 const DEFAULT_RECOVERY_WINDOW_DAYS = 7
+const DELIVERY_CLAIM_LEASE_MS = 2 * 60 * 1000
+const DELIVERY_CLAIM_HEARTBEAT_MS = 30 * 1000
+const NOTIFICATION_PROVIDER_TIMEOUT_MS = 90 * 1000
 const KLAVIYO_ABANDON_METRICS = ['Shopify_Checkout_Abandonned', 'Checkout Abandoned']
 const GWP_TITLE_RX = /\b(?:gift|offert|free|charm offert)\b/i
 
@@ -196,28 +200,28 @@ function nextMessage(
   now: Date,
 ): { type: MessageType; scheduledFor: Date } | null {
   const sent = new Map(messages.filter((m) => m.status === 'sent').map((m) => [m.message_type, m]))
-  const hasActiveOrTerminalAttempt = (type: MessageType) =>
-    messages.some((m) => m.message_type === type && m.status !== 'failed')
+  const hasTerminalAttempt = (type: MessageType) =>
+    messages.some((m) => m.message_type === type && (m.status === 'sent' || m.status === 'skipped'))
 
   if (c.highest_stage === 'payment_attempted') {
     const scheduledFor = dueAt(c.last_action_at, PAYMENT_HELP_AFTER_HOURS * HOUR_MS)
-    if (!hasActiveOrTerminalAttempt('payment_help_1') && scheduledFor.getTime() <= now.getTime())
+    if (!hasTerminalAttempt('payment_help_1') && scheduledFor.getTime() <= now.getTime())
       return { type: 'payment_help_1', scheduledFor }
     return null
   }
 
   const firstScheduledFor = dueAt(c.last_action_at, FIRST_ABANDONED_AFTER_HOURS * HOUR_MS)
-  if (!hasActiveOrTerminalAttempt('abandoned_cart_1') && firstScheduledFor.getTime() <= now.getTime()) {
+  if (!hasTerminalAttempt('abandoned_cart_1') && firstScheduledFor.getTime() <= now.getTime()) {
     return { type: 'abandoned_cart_1', scheduledFor: firstScheduledFor }
   }
 
   const first = sent.get('abandoned_cart_1')
   const second = sent.get('abandoned_cart_2')
-  if (first && !hasActiveOrTerminalAttempt('abandoned_cart_2')) {
+  if (first && !hasTerminalAttempt('abandoned_cart_2')) {
     const scheduledFor = dueAt(first.sent_at ?? first.scheduled_for, NEXT_EMAIL_AFTER_DAYS * DAY_MS)
     if (scheduledFor.getTime() <= now.getTime()) return { type: 'abandoned_cart_2', scheduledFor }
   }
-  if (second && !hasActiveOrTerminalAttempt('abandoned_cart_3')) {
+  if (second && !hasTerminalAttempt('abandoned_cart_3')) {
     const scheduledFor = dueAt(second.sent_at ?? second.scheduled_for, NEXT_EMAIL_AFTER_DAYS * DAY_MS)
     if (scheduledFor.getTime() <= now.getTime()) return { type: 'abandoned_cart_3', scheduledFor }
   }
@@ -310,6 +314,23 @@ async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
   return rows[0]
 }
 
+async function loadCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow | null> {
+  const rows = await sql<CaseRow[]>`
+    SELECT id, status, current_sequence_version, sequence_started_at
+    FROM abandoned_cart_cases
+    WHERE cart_token = ${c.cart_token}
+      AND deleted_at IS NULL
+    ORDER BY
+      CASE
+        WHEN cart_id = ${c.id} THEN 0
+        WHEN status = 'open' THEN 1
+        ELSE 2
+      END,
+      opened_at DESC
+    LIMIT 1`
+  return rows[0] ?? null
+}
+
 async function loadMessages(sql: RuntimeSql, caseId: string): Promise<MessageRow[]> {
   return await sql<MessageRow[]>`
     SELECT id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for
@@ -325,23 +346,18 @@ async function createPendingMessage(
   type: MessageType,
   scheduledFor: Date,
   sequence: ActiveSequence,
+  idempotencyKey: string,
 ): Promise<MessageRow> {
   const rows = await sql<MessageRow[]>`
     INSERT INTO abandoned_cart_messages (
-      id, case_id, cart_id, email, message_type, sequence_version, sequence_started_at, status, scheduled_for, created_at, updated_at
+      id, case_id, cart_id, email, message_type, sequence_version, sequence_started_at,
+      status, scheduled_for, idempotency_key, created_at, updated_at
     )
     VALUES (
       ${newId('acm')}, ${caseId}, ${c.id}, ${c.email.toLowerCase()}, ${type},
-      ${sequence.version}, ${sequence.startedAt}, 'pending', ${scheduledFor}, NOW(), NOW()
+      ${sequence.version}, ${sequence.startedAt}, 'pending', ${scheduledFor}, ${idempotencyKey}, NOW(), NOW()
     )
-    ON CONFLICT (case_id, sequence_version, message_type) DO UPDATE SET
-      scheduled_for = EXCLUDED.scheduled_for,
-      sequence_started_at = EXCLUDED.sequence_started_at,
-      status = 'pending',
-      skip_reason = NULL,
-      error_message = NULL,
-      updated_at = NOW()
-    WHERE abandoned_cart_messages.status IN ('pending', 'failed')
+    ON CONFLICT (case_id, sequence_version, message_type) DO NOTHING
     RETURNING id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for`
   if (rows[0]) return rows[0]
   const existing = await sql<MessageRow[]>`
@@ -350,6 +366,123 @@ async function createPendingMessage(
     WHERE case_id = ${caseId} AND sequence_version = ${sequence.version} AND message_type = ${type}
     LIMIT 1`
   return existing[0]
+}
+
+async function claimMessageForDelivery(
+  sql: RuntimeSql,
+  messageId: string,
+  idempotencyKey: string,
+): Promise<{ messageId: string; claimToken: string } | null> {
+  const claimToken = newId('acm_claim')
+  const staleBefore = new Date(Date.now() - DELIVERY_CLAIM_LEASE_MS)
+  const rows = await sql<Array<{ id: string }>>`
+    UPDATE abandoned_cart_messages
+    SET status = 'pending',
+        skip_reason = NULL,
+        error_message = NULL,
+        idempotency_key = COALESCE(idempotency_key, ${idempotencyKey}),
+        delivery_claim_token = ${claimToken},
+        delivery_claimed_at = NOW(),
+        delivery_attempt_count = COALESCE(delivery_attempt_count, 0) + 1,
+        updated_at = NOW()
+    WHERE id = ${messageId}
+      AND status IN ('pending', 'failed')
+      AND (
+        delivery_claim_token IS NULL
+        OR delivery_claimed_at IS NULL
+        OR delivery_claimed_at <= ${staleBefore}
+      )
+    RETURNING id`
+  return rows[0] ? { messageId: rows[0].id, claimToken } : null
+}
+
+function startDeliveryClaimHeartbeat(
+  sql: RuntimeSql,
+  claim: { messageId: string; claimToken: string },
+  log: AbandonedCartCampaignOptions['log'],
+): () => void {
+  let updateInFlight = false
+  const timer = setInterval(async () => {
+    if (updateInFlight) return
+    updateInFlight = true
+    try {
+      await sql`
+        UPDATE abandoned_cart_messages
+        SET delivery_claimed_at = NOW(), updated_at = NOW()
+        WHERE id = ${claim.messageId}
+          AND delivery_claim_token = ${claim.claimToken}
+          AND status IN ('pending', 'failed')`
+    } catch (err) {
+      log.warn(
+        `[abandoned-cart-campaign] delivery claim heartbeat failed message=${claim.messageId}: ${(err as Error).message}`,
+      )
+    } finally {
+      updateInFlight = false
+    }
+  }, DELIVERY_CLAIM_HEARTBEAT_MS)
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+  return () => clearInterval(timer)
+}
+
+async function refreshDeliveryClaim(
+  sql: RuntimeSql,
+  claim: { messageId: string; claimToken: string },
+): Promise<boolean> {
+  const rows = await sql<Array<{ id: string }>>`
+    UPDATE abandoned_cart_messages
+    SET delivery_claimed_at = NOW(), updated_at = NOW()
+    WHERE id = ${claim.messageId}
+      AND delivery_claim_token = ${claim.claimToken}
+      AND status IN ('pending', 'failed')
+    RETURNING id`
+  return rows.length > 0
+}
+
+async function sendNotificationBeforeLeaseExpiry(
+  notification: RuntimeNotificationPort,
+  payload: Parameters<RuntimeNotificationPort['send']>[0],
+): ReturnType<RuntimeNotificationPort['send']> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const providerTimeout = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error('Notification provider request exceeded delivery lease')),
+      NOTIFICATION_PROVIDER_TIMEOUT_MS,
+    )
+    if (typeof timeout === 'object' && 'unref' in timeout) timeout.unref()
+  })
+  try {
+    return await Promise.race([notification.send(payload), providerTimeout])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function isCurrentlyOptedOut(sql: RuntimeSql, c: CandidateRow): Promise<boolean> {
+  const rows = await sql<Array<{ opted_out: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM contacts contact
+      WHERE contact.deleted_at IS NULL
+        AND (
+          LOWER(contact.email) = LOWER(${c.email})
+          OR (
+            ${c.contact_id} IS NOT NULL
+            AND contact.id = ${c.contact_id}
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM cart_contact cc
+            WHERE cc.deleted_at IS NULL
+              AND cc.cart_id = ${c.id}::text
+              AND cc.contact_id = contact.id::text
+          )
+        )
+        AND (
+          contact.email_marketing_opt_out_at IS NOT NULL
+          OR contact.klaviyo_suppressed = TRUE
+        )
+    ) AS opted_out`
+  return rows[0]?.opted_out === true
 }
 
 async function logCheck(
@@ -372,15 +505,21 @@ async function markSkipped(
   caseId: string,
   messageId: string,
   reason: SkipReason,
+  claimToken: string,
   errorMessage?: string | null,
-): Promise<void> {
-  await sql`
+): Promise<boolean> {
+  const updated = await sql<Array<{ id: string }>>`
     UPDATE abandoned_cart_messages
     SET status = 'skipped',
         skip_reason = ${reason},
         error_message = ${errorMessage ?? null},
+        delivery_claim_token = NULL,
+        delivery_claimed_at = NULL,
         updated_at = NOW()
-    WHERE id = ${messageId}`
+    WHERE id = ${messageId}
+      AND delivery_claim_token = ${claimToken}
+    RETURNING id`
+  if (updated.length === 0) return false
 
   if (reason === 'shopify_order_found') {
     await sql`
@@ -394,6 +533,7 @@ async function markSkipped(
       SET status = 'closed_unsubscribed', updated_at = NOW()
       WHERE id = ${caseId} AND status = 'open'`
   }
+  return true
 }
 
 async function markFailed(
@@ -401,15 +541,62 @@ async function markFailed(
   messageId: string,
   reason: 'shopify_check_unavailable' | 'send_error',
   errorMessage: string,
+  claimToken: string,
+  providerResult?: { status: 'FAILURE'; id?: string; error?: Error },
 ): Promise<void> {
+  if (providerResult) {
+    await sql`
+      UPDATE abandoned_cart_messages
+      SET status = 'failed',
+          skip_reason = ${reason},
+          error_message = ${errorMessage},
+          provider = 'resend',
+          provider_message_id = COALESCE(${providerResult.id ?? null}, provider_message_id),
+          provider_status = 'FAILURE',
+          provider_error = ${providerResult.error?.message ?? errorMessage},
+          provider_observed_at = NOW(),
+          delivery_claim_token = NULL,
+          delivery_claimed_at = NULL,
+          updated_at = NOW()
+      WHERE id = ${messageId}
+        AND status <> 'sent'
+        AND delivery_claim_token = ${claimToken}`
+    return
+  }
+
   await sql`
     UPDATE abandoned_cart_messages
     SET status = 'failed',
         skip_reason = ${reason},
         error_message = ${errorMessage},
+        delivery_claim_token = NULL,
+        delivery_claimed_at = NULL,
         updated_at = NOW()
     WHERE id = ${messageId}
-      AND status <> 'sent'`
+      AND status <> 'sent'
+      AND delivery_claim_token = ${claimToken}`
+}
+
+async function markProviderPending(
+  sql: RuntimeSql,
+  messageId: string,
+  claimToken: string,
+  providerMessageId: string | undefined,
+  providerError: Error | undefined,
+): Promise<void> {
+  await sql`
+    UPDATE abandoned_cart_messages
+    SET status = 'pending',
+        provider = 'resend',
+        provider_message_id = COALESCE(${providerMessageId ?? null}, provider_message_id),
+        provider_status = 'PENDING',
+        provider_error = ${providerError?.message ?? null},
+        provider_observed_at = NOW(),
+        error_message = ${providerError?.message ?? 'Provider delivery remains pending'},
+        updated_at = NOW()
+    WHERE id = ${messageId}
+      AND delivery_claim_token = ${claimToken}
+      AND status = 'pending'`
 }
 
 async function findNewerActiveCartForEmail(
@@ -511,13 +698,17 @@ async function markSent(
   providerMessageId: string | undefined,
   idempotencyKey: string,
   snapshot: EmailSnapshotResult | null,
-): Promise<void> {
-  await sql`
+  claimToken: string,
+): Promise<boolean> {
+  const finalized = await sql<Array<{ id: string }>>`
     UPDATE abandoned_cart_messages
     SET status = 'sent',
         sent_at = NOW(),
         provider = 'resend',
         provider_message_id = ${providerMessageId ?? null},
+        provider_status = 'SUCCESS',
+        provider_error = NULL,
+        provider_observed_at = NOW(),
         template_key = ${messageType === 'payment_help_1' ? 'payment_help' : 'abandoned_cart'},
         locale = ${rendered.locale},
         subject = ${rendered.subject},
@@ -533,8 +724,15 @@ async function markSent(
         snapshot_sha256 = ${snapshot?.sha256 ?? null},
         snapshot_saved_at = ${snapshot?.saved_at ?? null},
         snapshot_error = ${snapshot?.error ?? null},
+        delivery_claim_token = NULL,
+        delivery_claimed_at = NULL,
         updated_at = NOW()
-    WHERE id = ${messageId}`
+    WHERE id = ${messageId}
+      AND delivery_claim_token = ${claimToken}
+      AND status = 'pending'
+    RETURNING id`
+
+  if (finalized.length === 0) return false
 
   await sql`
     UPDATE carts
@@ -552,6 +750,7 @@ async function markSent(
         abandon_notified_source = 'manta',
         updated_at = NOW()
     WHERE id = ${c.id}`
+  return true
 }
 
 async function findLocalOrderAfter(sql: RuntimeSql, email: string, since: Date): Promise<ShopifyOrderMatch | null> {
@@ -878,6 +1077,7 @@ export async function runAbandonedCartCampaign(
     skipped_klaviyo: 0,
     recovered: 0,
     errors: 0,
+    claim_conflicts: 0,
   }
 
   for (const c of candidates) {
@@ -887,12 +1087,19 @@ export async function runAbandonedCartCampaign(
     if (newerCart) {
       await closeCaseSupersededByNewerCart(sql, c.id, newerCart.id, !dryRun)
       result.skipped++
-      log.info(`[abandoned-cart-campaign] skip cart=${c.id} email=${c.email} superseded_by=${newerCart.id}`)
+      log.info(`[abandoned-cart-campaign] skip cart=${c.id} superseded_by=${newerCart.id}`)
       continue
     }
     await closeOlderOpenCasesForEmail(sql, c, !dryRun)
 
-    const cartCase = await ensureCase(sql, c)
+    const cartCase = dryRun
+      ? ((await loadCase(sql, c)) ?? {
+          id: `dry_case_${c.id}`,
+          status: 'open',
+          current_sequence_version: 1,
+          sequence_started_at: toDate(c.last_action_at),
+        })
+      : await ensureCase(sql, c)
     if (cartCase.status !== 'open') continue
     const messages = await loadMessages(sql, cartCase.id)
     const sequence = await maybeRestartSequence(sql, cartCase, c, !dryRun)
@@ -901,11 +1108,25 @@ export async function runAbandonedCartCampaign(
     if (!next) continue
 
     result.due += 1
+    const idempotencyKey = `abandoned-cart:${next.type}:s${sequence.version}:${c.id}`
     const items = coerceItems(c.items)
     if (items.length === 0) {
       if (!dryRun) {
-        const msg = await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor, sequence)
-        await markSkipped(sql, cartCase.id, msg.id, 'no_products')
+        const msg = await createPendingMessage(
+          sql,
+          c,
+          cartCase.id,
+          next.type,
+          next.scheduledFor,
+          sequence,
+          idempotencyKey,
+        )
+        const noProductsClaim = await claimMessageForDelivery(sql, msg.id, idempotencyKey)
+        if (!noProductsClaim) {
+          result.claim_conflicts++
+          continue
+        }
+        await markSkipped(sql, cartCase.id, msg.id, 'no_products', noProductsClaim.claimToken)
       }
       result.skipped++
       result.skipped_no_products++
@@ -914,185 +1135,252 @@ export async function runAbandonedCartCampaign(
 
     const message = dryRun
       ? null
-      : await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor, sequence)
+      : await createPendingMessage(sql, c, cartCase.id, next.type, next.scheduledFor, sequence, idempotencyKey)
     const messageId = message?.id ?? null
-
-    if (c.email_marketing_opt_out_at || c.klaviyo_suppressed === true) {
-      if (!dryRun && messageId) {
-        await logCheck(sql, cartCase.id, messageId, 'opt_out', 'blocked', 'contact opted out or suppressed')
-        await markSkipped(sql, cartCase.id, messageId, 'opt_out')
-      }
-      result.skipped++
-      result.skipped_optout++
+    const claim = messageId ? await claimMessageForDelivery(sql, messageId, idempotencyKey) : null
+    if (!dryRun && !claim) {
+      result.claim_conflicts++
       continue
     }
-    if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'opt_out', 'passed')
-
-    const since = toDate(c.last_action_at)
-    const localOrder = await findLocalOrderAfter(sql, c.email, since)
-    const shopifyOrder = localOrder
-      ? { status: 'found' as const, order: localOrder }
-      : await findShopifyOrderAfter(c.email, since, signal)
-
-    if (shopifyOrder.status === 'found') {
-      if (!dryRun && messageId) {
-        await logCheck(
-          sql,
-          cartCase.id,
-          messageId,
-          'shopify_order',
-          'blocked',
-          `${shopifyOrder.order.name ?? shopifyOrder.order.id} at ${shopifyOrder.order.createdAt}`,
-        )
-        await markSkipped(sql, cartCase.id, messageId, 'shopify_order_found')
-      }
-      result.skipped++
-      result.skipped_shopify_order++
-      continue
-    }
-    if (shopifyOrder.status === 'unavailable') {
-      if (!dryRun && messageId) {
-        await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'error', shopifyOrder.error)
-        await markFailed(sql, messageId, 'shopify_check_unavailable', shopifyOrder.error)
-      }
-      result.skipped++
-      result.skipped_shopify_unavailable++
-      continue
-    }
-    if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'passed')
-
-    const klaviyoAt = await hasRecentKlaviyoAbandon(sql, c.email, since)
-    if (klaviyoAt) {
-      if (!dryRun && messageId) {
-        await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'blocked', klaviyoAt.toISOString())
-        await markSkipped(sql, cartCase.id, messageId, 'klaviyo_email_found')
-      }
-      result.skipped++
-      result.skipped_klaviyo++
-      continue
-    }
-    if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
-
-    const knownOrderCount = Number(c.live_orders_count ?? 0)
-    const discountGrant =
-      dryRun || next.type === 'payment_help_1' || knownOrderCount > 0
-        ? null
-        : await resolveWelcomeDiscountForEmail({
-            email: c.email,
-            numberOfOrders: knownOrderCount,
-            log,
-            signal,
-          })
-    const rendered = await renderMessage({
-      cart: c,
-      messageType: next.type,
-      messageId,
-      caseId: cartCase.id,
-      sequence,
-      adminBase,
-      discountGrant,
-    })
-    if (dryRun) {
-      log.info(
-        `[abandoned-cart-campaign] dry cart=${c.id} email=${c.email} type=${next.type} sequence=${sequence.version}`,
-      )
-      result.skipped++
-      continue
-    }
-
-    // Persist the navigation language back onto the contact fiche, so the
-    // contact's locale reflects their last browse. Only when we actually have
-    // a navigation signal (`browser_locale`) — never overwrite from a
-    // country/default-derived guess, which would clobber a real signal.
-    if (c.contact_id && c.browser_locale) {
-      await sql`
-        UPDATE contacts
-        SET locale = ${rendered.locale}, updated_at = NOW()
-        WHERE id = ${c.contact_id}
-          AND lower(split_part(COALESCE(locale, ''), '-', 1)) IS DISTINCT FROM ${rendered.locale}`
-    }
-
-    if (!messageId) {
-      result.errors++
-      continue
-    }
-
-    const idempotencyKey = `abandoned-cart:${next.type}:s${sequence.version}:${c.id}`
-    const snapshot = await archiveEmailSnapshot(file, {
-      messageId,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-    })
-    if (snapshot.error) {
-      log.warn(`[abandoned-cart-campaign] snapshot failed message=${messageId}: ${snapshot.error}`)
-    }
+    const stopHeartbeat = claim ? startDeliveryClaimHeartbeat(sql, claim, log) : () => {}
 
     try {
-      const sendResult = await notification.send({
-        to: c.email,
-        channel: 'email',
-        from: fromEmail,
-        replyTo,
-        subject: rendered.subject,
-        html: rendered.html,
-        text: rendered.text,
-        headers: {
-          'List-Unsubscribe': `<${rendered.unsubscribeUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        },
-        tags: [
-          { name: 'category', value: next.type === 'payment_help_1' ? 'payment-help' : 'abandoned-cart' },
-          { name: 'cart_id', value: c.id },
-          { name: 'message_type', value: next.type },
-          { name: 'sequence_version', value: String(sequence.version) },
-          { name: 'locale', value: rendered.locale },
-          ...(rendered.discountGrant ? [{ name: 'discount_source', value: rendered.discountGrant.source }] : []),
-        ],
-        idempotency_key: idempotencyKey,
-      })
+      if (c.email_marketing_opt_out_at || c.klaviyo_suppressed === true) {
+        if (!dryRun && messageId && claim) {
+          await logCheck(sql, cartCase.id, messageId, 'opt_out', 'blocked', 'contact opted out or suppressed')
+          await markSkipped(sql, cartCase.id, messageId, 'opt_out', claim.claimToken)
+        }
+        result.skipped++
+        result.skipped_optout++
+        continue
+      }
+      if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'opt_out', 'passed')
 
-      if (sendResult.status !== 'SUCCESS') {
-        await markFailed(sql, messageId, 'send_error', sendResult.error?.message ?? sendResult.status)
+      const since = toDate(c.last_action_at)
+      const localOrder = await findLocalOrderAfter(sql, c.email, since)
+      const shopifyOrder = localOrder
+        ? { status: 'found' as const, order: localOrder }
+        : await findShopifyOrderAfter(c.email, since, signal)
+
+      if (shopifyOrder.status === 'found') {
+        if (!dryRun && messageId && claim) {
+          await logCheck(
+            sql,
+            cartCase.id,
+            messageId,
+            'shopify_order',
+            'blocked',
+            `${shopifyOrder.order.name ?? shopifyOrder.order.id} at ${shopifyOrder.order.createdAt}`,
+          )
+          await markSkipped(sql, cartCase.id, messageId, 'shopify_order_found', claim.claimToken)
+        }
+        result.skipped++
+        result.skipped_shopify_order++
+        continue
+      }
+      if (shopifyOrder.status === 'unavailable') {
+        if (!dryRun && messageId && claim) {
+          await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'error', shopifyOrder.error)
+          await markFailed(sql, messageId, 'shopify_check_unavailable', shopifyOrder.error, claim.claimToken)
+        }
+        result.skipped++
+        result.skipped_shopify_unavailable++
+        continue
+      }
+      if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'shopify_order', 'passed')
+
+      const klaviyoAt = await hasRecentKlaviyoAbandon(sql, c.email, since)
+      if (klaviyoAt) {
+        if (!dryRun && messageId && claim) {
+          await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'blocked', klaviyoAt.toISOString())
+          await markSkipped(sql, cartCase.id, messageId, 'klaviyo_email_found', claim.claimToken)
+        }
+        result.skipped++
+        result.skipped_klaviyo++
+        continue
+      }
+      if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
+
+      if (dryRun) {
+        await renderMessage({
+          cart: c,
+          messageType: next.type,
+          messageId,
+          caseId: cartCase.id,
+          sequence,
+          adminBase,
+          discountGrant: null,
+        })
+        log.info(`[abandoned-cart-campaign] dry cart=${c.id} type=${next.type} sequence=${sequence.version}`)
+        result.skipped++
+        continue
+      }
+
+      if (!messageId || !claim) {
         result.errors++
         continue
       }
 
-      await markSent(sql, c, messageId, next.type, rendered, sendResult.id, idempotencyKey, snapshot)
-      result.sent++
-      log.info(
-        `[abandoned-cart-campaign] sent cart=${c.id} email=${c.email} type=${next.type} sequence=${sequence.version}`,
-      )
+      let providerCallStarted = false
 
       try {
-        await sendPosthogEvent({
-          event: 'manta_abandoned_cart_message_sent',
-          distinctId: c.distinct_id ?? c.email.toLowerCase(),
-          email: c.email,
-          properties: {
-            cart_id: c.id,
-            cart_token: c.cart_token,
-            message_type: next.type,
-            sequence_version: sequence.version,
-            sequence_started_at: sequence.startedAt.toISOString(),
-            locale: rendered.locale,
-            total_price: c.total_price ?? 0,
-            currency: c.currency ?? 'EUR',
-            discount_code: rendered.discountGrant?.code ?? null,
-            discount_source: rendered.discountGrant?.source ?? null,
-            sent_at: new Date().toISOString(),
-          },
+        if (await isCurrentlyOptedOut(sql, c)) {
+          await logCheck(sql, cartCase.id, messageId, 'opt_out', 'blocked', 'contact opted out or suppressed')
+          const skipped = await markSkipped(sql, cartCase.id, messageId, 'opt_out', claim.claimToken)
+          if (!skipped) {
+            result.claim_conflicts++
+            continue
+          }
+          result.skipped++
+          result.skipped_optout++
+          continue
+        }
+
+        const knownOrderCount = Number(c.live_orders_count ?? 0)
+        const discountGrant =
+          next.type === 'payment_help_1' || knownOrderCount > 0
+            ? null
+            : await resolveWelcomeDiscountForEmail({
+                email: c.email,
+                numberOfOrders: knownOrderCount,
+                log,
+                signal,
+              })
+        const rendered = await renderMessage({
+          cart: c,
+          messageType: next.type,
+          messageId,
+          caseId: cartCase.id,
+          sequence,
+          adminBase,
+          discountGrant,
         })
+
+        // Persist the navigation language back onto the contact fiche, so the
+        // contact's locale reflects their last browse. Only when we actually have
+        // a navigation signal (`browser_locale`) — never overwrite from a
+        // country/default-derived guess, which would clobber a real signal.
+        if (c.contact_id && c.browser_locale) {
+          await sql`
+          UPDATE contacts
+          SET locale = ${rendered.locale}, updated_at = NOW()
+          WHERE id = ${c.contact_id}
+            AND lower(split_part(COALESCE(locale, ''), '-', 1)) IS DISTINCT FROM ${rendered.locale}`
+        }
+
+        const snapshot = await archiveEmailSnapshot(file, {
+          messageId,
+          subject: rendered.subject,
+          html: rendered.html,
+          text: rendered.text,
+        })
+        if (snapshot.error) {
+          log.warn(`[abandoned-cart-campaign] snapshot failed message=${messageId}: ${snapshot.error}`)
+        }
+
+        // A successor may have reclaimed a stale lease while rendering or
+        // archiving. Refresh ownership immediately before the irreversible call.
+        if (!(await refreshDeliveryClaim(sql, claim))) {
+          result.claim_conflicts++
+          continue
+        }
+
+        providerCallStarted = true
+        const sendResult = await sendNotificationBeforeLeaseExpiry(notification, {
+          to: c.email,
+          channel: 'email',
+          from: fromEmail,
+          replyTo,
+          subject: rendered.subject,
+          html: rendered.html,
+          text: rendered.text,
+          headers: {
+            'List-Unsubscribe': `<${rendered.unsubscribeUrl}>`,
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          },
+          tags: [
+            { name: 'category', value: next.type === 'payment_help_1' ? 'payment-help' : 'abandoned-cart' },
+            { name: 'cart_id', value: c.id },
+            { name: 'message_type', value: next.type },
+            { name: 'sequence_version', value: String(sequence.version) },
+            { name: 'locale', value: rendered.locale },
+            ...(rendered.discountGrant ? [{ name: 'discount_source', value: rendered.discountGrant.source }] : []),
+          ],
+          idempotency_key: idempotencyKey,
+        })
+
+        if (sendResult.status === 'PENDING') {
+          await markProviderPending(sql, messageId, claim.claimToken, sendResult.id, sendResult.error)
+          result.errors++
+          continue
+        }
+        if (sendResult.status === 'FAILURE') {
+          await markFailed(
+            sql,
+            messageId,
+            'send_error',
+            sendResult.error?.message ?? sendResult.status,
+            claim.claimToken,
+            { ...sendResult, status: 'FAILURE' },
+          )
+          result.errors++
+          continue
+        }
+
+        const finalized = await markSent(
+          sql,
+          c,
+          messageId,
+          next.type,
+          rendered,
+          sendResult.id,
+          idempotencyKey,
+          snapshot,
+          claim.claimToken,
+        )
+        if (!finalized) {
+          result.claim_conflicts++
+          continue
+        }
+        result.sent++
+        log.info(`[abandoned-cart-campaign] sent cart=${c.id} type=${next.type} sequence=${sequence.version}`)
+
+        try {
+          await sendPosthogEvent({
+            event: 'manta_abandoned_cart_message_sent',
+            distinctId: c.distinct_id ?? c.email.toLowerCase(),
+            email: c.email,
+            properties: {
+              cart_id: c.id,
+              cart_token: c.cart_token,
+              message_type: next.type,
+              sequence_version: sequence.version,
+              sequence_started_at: sequence.startedAt.toISOString(),
+              locale: rendered.locale,
+              total_price: c.total_price ?? 0,
+              currency: c.currency ?? 'EUR',
+              discount_code: rendered.discountGrant?.code ?? null,
+              discount_source: rendered.discountGrant?.source ?? null,
+              sent_at: new Date().toISOString(),
+            },
+          })
+        } catch (err) {
+          log.warn(`[abandoned-cart-campaign] posthog capture failed cart=${c.id}: ${(err as Error).message}`)
+        }
       } catch (err) {
-        log.warn(`[abandoned-cart-campaign] posthog capture failed cart=${c.id}: ${(err as Error).message}`)
+        if (providerCallStarted) {
+          await markProviderPending(sql, messageId, claim.claimToken, undefined, err as Error)
+        } else {
+          await markFailed(sql, messageId, 'send_error', (err as Error).message, claim.claimToken)
+        }
+        result.errors++
+        log.error(`[abandoned-cart-campaign] send threw cart=${c.id}: ${(err as Error).message}`)
       }
-    } catch (err) {
-      await markFailed(sql, messageId, 'send_error', (err as Error).message)
-      result.errors++
-      log.error(`[abandoned-cart-campaign] send threw cart=${c.id}: ${(err as Error).message}`)
+    } finally {
+      stopHeartbeat()
     }
   }
 
-  result.recovered = await reconcileAbandonedCartRecoveries(sql, recoveryWindowDays)
+  if (!dryRun) result.recovered = await reconcileAbandonedCartRecoveries(sql, recoveryWindowDays)
   return result
 }
