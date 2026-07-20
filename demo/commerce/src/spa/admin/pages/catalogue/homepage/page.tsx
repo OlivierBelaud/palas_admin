@@ -3,6 +3,7 @@ import { Alert, Button, Input } from '@mantajs/ui'
 import { ArrowDown, ArrowUp, GripVertical, Plus, Save, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CollectionImagePicker } from '../../../components/collection-image-picker'
+import { CatalogProviderAlert } from '../../../components/catalog-provider-alert'
 import { shopifyImageThumbnail } from '../../../catalog-content'
 import type {
   CatalogContentData,
@@ -194,6 +195,7 @@ export default function CatalogueHomepagePage() {
       </header>
 
       {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {data ? <CatalogProviderAlert label="Contenu local disponible" provider={data.provider} /> : null}
       {!data ? <div className="rounded-md border bg-card p-8 text-center">Chargement…</div> : null}
 
       {adding && data ? (

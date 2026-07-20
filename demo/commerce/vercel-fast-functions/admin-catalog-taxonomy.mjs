@@ -5,6 +5,11 @@ import {
   deleteCatalogMirror,
   syncCatalogToShopify,
 } from './catalog-shopify-sync.mjs'
+import {
+  CATALOG_PUBLICATION_ERROR_CODES,
+  assertCatalogPublicationAllowed,
+  catalogPublicationPolicy,
+} from './catalog-publication-governance.mjs'
 import { db, iso, json, requireAdmin, unauthorized } from './runtime.mjs'
 
 const SHOPIFY_PRODUCTS_URL = 'https://fancy-palas.myshopify.com/products.json'
@@ -31,40 +36,52 @@ function serializeCategory(row) {
 }
 
 async function readCatalogue(sql) {
-  const categories = await sql.unsafe(`
-    WITH RECURSIVE descendants AS (
-      SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
-      UNION ALL
-      SELECT d.ancestor_id, c.id
-      FROM descendants d
-      JOIN catalog_categories c ON c.parent_id = d.descendant_id AND c.deleted_at IS NULL
-    ), direct_counts AS (
-      SELECT canonical_category_id AS category_id, count(*)::int AS count
-      FROM catalog_products WHERE online_store_published = true AND canonical_category_id IS NOT NULL
-      GROUP BY canonical_category_id
-    ), descendant_counts AS (
-      SELECT d.ancestor_id AS category_id, count(p.shopify_product_id)::int AS count
-      FROM descendants d
-      LEFT JOIN catalog_products p ON p.canonical_category_id = d.descendant_id AND p.online_store_published = true
-      GROUP BY d.ancestor_id
-    )
-    SELECT c.id, c.slug, c.title_fr, c.title_en, c.representative_product_id,
-           c.parent_id, c.position, c.status,
-           coalesce(dc.count, 0) AS direct_product_count,
-           coalesce(tc.count, 0) AS descendant_product_count
-    FROM catalog_categories c
-    LEFT JOIN direct_counts dc ON dc.category_id = c.id
-    LEFT JOIN descendant_counts tc ON tc.category_id = c.id
-    WHERE c.deleted_at IS NULL
-    ORDER BY c.parent_id NULLS FIRST, c.position, c.title_fr
-  `)
-  const products = await sql.unsafe(`
-    SELECT shopify_product_id, handle, title, product_type, image_url, online_store_published,
-           canonical_category_id, category_position, visual_group, visual_subtype, shopify_updated_at
-    FROM catalog_products
-    WHERE online_store_published = true
-    ORDER BY canonical_category_id NULLS FIRST, category_position, title
-  `)
+  const [categories, products, publicationRows] = await Promise.all([
+    sql.unsafe(`
+      WITH RECURSIVE descendants AS (
+        SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT d.ancestor_id, c.id
+        FROM descendants d
+        JOIN catalog_categories c ON c.parent_id = d.descendant_id AND c.deleted_at IS NULL
+      ), direct_counts AS (
+        SELECT canonical_category_id AS category_id, count(*)::int AS count
+        FROM catalog_products WHERE online_store_published = true AND canonical_category_id IS NOT NULL
+        GROUP BY canonical_category_id
+      ), descendant_counts AS (
+        SELECT d.ancestor_id AS category_id, count(p.shopify_product_id)::int AS count
+        FROM descendants d
+        LEFT JOIN catalog_products p ON p.canonical_category_id = d.descendant_id AND p.online_store_published = true
+        GROUP BY d.ancestor_id
+      )
+      SELECT c.id, c.slug, c.title_fr, c.title_en, c.representative_product_id,
+             c.parent_id, c.position, c.status,
+             coalesce(dc.count, 0) AS direct_product_count,
+             coalesce(tc.count, 0) AS descendant_product_count
+      FROM catalog_categories c
+      LEFT JOIN direct_counts dc ON dc.category_id = c.id
+      LEFT JOIN descendant_counts tc ON tc.category_id = c.id
+      WHERE c.deleted_at IS NULL
+      ORDER BY c.parent_id NULLS FIRST, c.position, c.title_fr
+    `),
+    sql.unsafe(`
+      SELECT shopify_product_id, handle, title, product_type, image_url, online_store_published,
+             canonical_category_id, category_position, visual_group, visual_subtype, shopify_updated_at
+      FROM catalog_products
+      WHERE online_store_published = true
+      ORDER BY canonical_category_id NULLS FIRST, category_position, title
+    `),
+    sql`
+      SELECT
+        count(*) FILTER (WHERE publication_status = 'pending')::int AS pending,
+        count(*) FILTER (WHERE publication_status = 'synced')::int AS synced,
+        count(*) FILTER (WHERE publication_status = 'failed')::int AS failed,
+        count(*) FILTER (WHERE publication_status = 'conflict')::int AS conflicts,
+        count(*) FILTER (WHERE retirement_pending = true)::int AS retirements
+      FROM catalog_shopify_mirrors
+    `,
+  ])
+  const [publicationState] = publicationRows
   const classified = products.filter((product) => product.canonical_category_id).length
   return {
     categories: categories.map(serializeCategory),
@@ -79,10 +96,18 @@ async function readCatalogue(sql) {
       unclassified: products.length - classified,
       categories: categories.length,
     },
+    publication: {
+      ...catalogPublicationPolicy(),
+      pending: Number(publicationState?.pending ?? 0),
+      synced: Number(publicationState?.synced ?? 0),
+      failed: Number(publicationState?.failed ?? 0),
+      conflicts: Number(publicationState?.conflicts ?? 0),
+      retirements: Number(publicationState?.retirements ?? 0),
+    },
   }
 }
 
-async function syncShopifyProducts(sql) {
+async function fetchShopifyProducts() {
   const products = []
   for (let page = 1; ; page += 1) {
     const response = await fetch(`${SHOPIFY_PRODUCTS_URL}?limit=250&page=${page}`)
@@ -91,12 +116,14 @@ async function syncShopifyProducts(sql) {
     products.push(...batch)
     if (batch.length < 250) break
   }
+  return products
+}
 
-  await sql.begin(async (tx) => {
-    await tx`UPDATE catalog_products SET online_store_published = false, updated_at = now()`
-    for (const product of products) {
-      const imageUrl = product.images?.[0]?.src ?? product.image?.src ?? null
-      await tx`
+async function syncShopifyProducts(sql, products) {
+  await sql`UPDATE catalog_products SET online_store_published = false, updated_at = now()`
+  for (const product of products) {
+    const imageUrl = product.images?.[0]?.src ?? product.image?.src ?? null
+    await sql`
         INSERT INTO catalog_products (
           shopify_product_id, handle, title, product_type, image_url, online_store_published,
           shopify_updated_at, updated_at
@@ -113,11 +140,11 @@ async function syncShopifyProducts(sql) {
           shopify_updated_at = EXCLUDED.shopify_updated_at,
           updated_at = now()
       `
-    }
+  }
 
-    const classifications = await readClassificationSeed()
-    for (const classification of classifications) {
-      await tx`
+  const classifications = await readClassificationSeed()
+  for (const classification of classifications) {
+    await sql`
         UPDATE catalog_products product
         SET canonical_category_id = category.id,
             category_position = ${classification.category_position},
@@ -129,8 +156,8 @@ async function syncShopifyProducts(sql) {
           AND category.slug = ${classification.category_slug}
           AND product.canonical_category_id IS NULL
       `
-    }
-    await tx`
+  }
+  await sql`
       WITH RECURSIVE descendants AS (
         SELECT id AS ancestor_id, id AS descendant_id FROM catalog_categories WHERE deleted_at IS NULL
         UNION ALL
@@ -149,13 +176,12 @@ async function syncShopifyProducts(sql) {
             AND product.shopify_product_id = category.representative_product_id
             AND product.online_store_published = true
         )
-    `
-  })
+  `
   return products.length
 }
 
 async function mutate(sql, input) {
-  if (input.action === 'sync_products') return { synced: await syncShopifyProducts(sql) }
+  if (input.action === 'sync_products') return { synced: await syncShopifyProducts(sql, input.products) }
   if (input.action === 'sync_shopify_collections') return { requested: 'all' }
 
   if (input.action === 'create_category') {
@@ -228,9 +254,12 @@ async function mutate(sql, input) {
   if (input.action === 'delete_category') {
     const categoryId = String(input.category_id ?? '')
     const [category] = await sql`
-      SELECT parent_id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
+      SELECT parent_id, slug, deleted_at FROM catalog_categories WHERE id = ${categoryId}
     `
     if (!category) throw new CatalogTaxonomyError('Catégorie introuvable')
+    if (category.deleted_at) {
+      return { id: categoryId, parent_id: category.parent_id, already_deleted: true }
+    }
     const [usage] = await sql`
       WITH RECURSIVE descendants AS (
         SELECT id FROM catalog_categories WHERE id = ${categoryId} AND deleted_at IS NULL
@@ -254,6 +283,26 @@ async function mutate(sql, input) {
       RETURNING id
     `
     if (!deleted) throw new CatalogTaxonomyError('Catégorie introuvable')
+    const [publicationState] = await sql`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true
+    `
+    const desiredRevision = Number(publicationState?.revision ?? 0) + 1
+    const syncKey = `category:${categoryId}`
+    const handle = `${catalogShopifyConstants.COLLECTION_HANDLE_PREFIX}${category.slug}`
+    await sql`
+      INSERT INTO catalog_shopify_mirrors (
+        sync_key, category_id, handle, publication_status, retirement_pending,
+        desired_revision, updated_at
+      )
+      VALUES (${syncKey}, ${categoryId}, ${handle}, 'retired', true, ${desiredRevision}, now())
+      ON CONFLICT (sync_key) DO UPDATE SET
+        category_id = EXCLUDED.category_id,
+        handle = EXCLUDED.handle,
+        publication_status = 'retired',
+        retirement_pending = true,
+        desired_revision = EXCLUDED.desired_revision,
+        updated_at = now()
+    `
     return { id: deleted.id, parent_id: category.parent_id }
   }
 
@@ -270,14 +319,12 @@ async function mutate(sql, input) {
     if (siblingIds.length !== categoryIds.length || siblingIds.some((id) => !categoryIds.includes(id))) {
       throw new CatalogTaxonomyError('Le tri doit contenir toutes les catégories du même niveau')
     }
-    await sql.begin(async (tx) => {
-      for (const [position, categoryId] of categoryIds.entries()) {
-        await tx`
+    for (const [position, categoryId] of categoryIds.entries()) {
+      await sql`
           UPDATE catalog_categories SET position = ${position}, updated_at = now()
           WHERE id = ${categoryId} AND parent_id IS NOT DISTINCT FROM ${parentId}
         `
-      }
-    })
+    }
     return { reordered: categoryIds.length, parent_id: parentId, category_ids: categoryIds }
   }
 
@@ -328,22 +375,38 @@ async function mutate(sql, input) {
     const categoryId = String(input.category_id ?? '')
     const productIds = Array.isArray(input.product_ids) ? input.product_ids.map(String) : []
     if (!categoryId || productIds.length === 0) throw new CatalogTaxonomyError('Catégorie et produits requis')
-    await sql.begin(async (tx) => {
-      for (const [position, productId] of productIds.entries()) {
-        await tx`
+    for (const [position, productId] of productIds.entries()) {
+      await sql`
           UPDATE catalog_products SET category_position = ${position}, updated_at = now()
           WHERE shopify_product_id = ${productId} AND canonical_category_id = ${categoryId}
         `
-      }
-    })
+    }
     return { reordered: productIds.length, category_id: categoryId }
   }
 
   throw new CatalogTaxonomyError('Action inconnue')
 }
 
+async function mutateWithRevision(sql, input) {
+  if (input.action === 'sync_shopify_collections') return mutate(sql, input)
+  const preparedInput = input.action === 'sync_products' ? { ...input, products: await fetchShopifyProducts() } : input
+  return sql.begin(async (tx) => {
+    await tx`
+      SELECT revision FROM catalog_publication_state WHERE singleton = true FOR UPDATE
+    `
+    const result = await mutate(tx, preparedInput)
+    await tx`
+      UPDATE catalog_publication_state
+      SET revision = revision + 1, updated_at = now()
+      WHERE singleton = true
+    `
+    return result
+  })
+}
+
 async function syncAfterMutation(sql, input, result) {
-  if (input.action === 'sync_shopify_collections') return syncCatalogToShopify(sql)
+  assertCatalogPublicationAllowed()
+  if (input.action === 'sync_shopify_collections') return syncCatalogToShopify(sql, null, { force: true })
   if (input.action === 'sync_products') {
     return syncCatalogToShopify(sql, new Set([catalogShopifyConstants.UNCLASSIFIED_KEY]))
   }
@@ -386,7 +449,7 @@ export default {
       if (req.method === 'GET') return json({ data: await readCatalogue(sql) })
       if (req.method !== 'POST') return json({ message: 'Method not allowed' }, { status: 405 })
       const input = await req.json()
-      const result = await mutate(sql, input)
+      const result = await mutateWithRevision(sql, input)
       let shopifySync
       try {
         const collections = await syncAfterMutation(sql, input, result)
@@ -394,6 +457,7 @@ export default {
       } catch (error) {
         shopifySync = {
           ok: false,
+          blocked: error?.code === CATALOG_PUBLICATION_ERROR_CODES.blocked,
           error: error instanceof Error ? error.message : 'Shopify collection sync failed',
         }
       }

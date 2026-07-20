@@ -49,6 +49,10 @@ export type CatalogContentData = {
   collections: ShopifyCollectionChoice[]
   homepage: HomepageTile[]
   menu: CatalogMenuItem[]
+  provider: {
+    ok: boolean
+    error: string | null
+  }
 }
 
 export function shouldLoadCollectionMedia(open: boolean, collectionId: string | null, loadedCollectionId: string | null) {
