@@ -24,9 +24,18 @@ vi.mock('postgres', () => {
 
 // Mock the upsert helper to record the call without doing DB work.
 const upsertCalls: unknown[] = []
+const emittedEvents: string[] = []
 vi.mock('../src/modules/contact/upsert-shopify-customer', () => ({
   upsertShopifyCustomer: vi.fn(async (_sql: unknown, customer: unknown) => {
     upsertCalls.push(customer)
+    if ((customer as { email?: string }).email === 'conflict@example.com') {
+      return {
+        matched_via: 'identity_conflict',
+        contact_id: 'c-conflict',
+        created: false,
+        carts_reattached: 0,
+      }
+    }
     return { matched_via: 'inserted', contact_id: 'c-1', created: true, carts_reattached: 0 }
   }),
 }))
@@ -38,6 +47,7 @@ const SHOPIFY_REAL_ID = '1234567890'
 
 beforeEach(() => {
   upsertCalls.length = 0
+  emittedEvents.length = 0
   // Force DATABASE_URL on so the route's getSql() returns a value.
   process.env.DATABASE_URL = 'postgres://test:test@localhost/test'
   process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = 'test-token'
@@ -57,7 +67,9 @@ function withRuntimeApp(req: Request): Request {
           raw: () => Promise.resolve([]),
         }
       },
-      emit: async () => {},
+      emit: async (event: string) => {
+        emittedEvents.push(event)
+      },
     },
     enumerable: true,
     configurable: true,
@@ -112,6 +124,38 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     const res = await POST(req)
     expect(res.status).toBe(401)
     expect(upsertCalls.length).toBe(0)
+  })
+
+  it('returns 409 and emits nothing when the email belongs to another Shopify identity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            customer: {
+              id: SHOPIFY_REAL_ID,
+              email: 'conflict@example.com',
+              first_name: 'Jane',
+              last_name: 'Doe',
+              phone: null,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+    })
+    const res = await POST(withRuntimeApp(req))
+
+    expect(res.status).toBe(409)
+    expect(await res.text()).toBe('Identity Conflict')
+    expect(emittedEvents).toEqual([])
   })
 
   it('returns 400 on malformed JSON body', async () => {

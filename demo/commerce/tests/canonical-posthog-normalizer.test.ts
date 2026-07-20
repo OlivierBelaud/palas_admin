@@ -25,7 +25,6 @@ function comparison(overrides: Partial<IdentityShadowComparison> = {}): Identity
     matched_v1: true,
     status: 'anonymous',
     aliases_seen: {},
-    evidence: {},
     ...overrides,
   }
 }

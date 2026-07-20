@@ -104,6 +104,7 @@ describe('identity shadow resolver', () => {
     expect(result.status).toBe('diverged')
     expect(result.v1.email).toBeNull()
     expect(result.v2).toEqual({ email: 'alice@test.com', contact_id: 'contact_1', source: 'manta_uid_token' })
+    expect(result.aliases_seen).toMatchObject({ has_current_url: true, has_manta_uid_token: true })
   })
 
   it('resolves V2 from local aliases before any external lookup', async () => {
@@ -147,5 +148,54 @@ describe('identity shadow resolver', () => {
         svc,
       ),
     ).resolves.toEqual({ email: 'distinct@test.com', contact_id: 'contact_distinct', source: 'contact_distinct_id' })
+  })
+
+  it('allowlists persisted audit evidence at the command boundary', async () => {
+    vi.stubGlobal('defineCommand', (definition: unknown) => definition)
+    vi.stubGlobal('z', {
+      object: vi.fn(() => ({})),
+      record: vi.fn(() => ({})),
+      unknown: vi.fn(() => ({})),
+    })
+
+    process.env.MANTA_UID_SECRET = 'test-secret-for-identity-shadow-resolver'
+    const token = signContactToken('alice@test.com')
+    const create = vi.fn(async (_data: Record<string, unknown>) => undefined)
+    const command = (await import('../src/commands/admin/record-identity-resolution')).default as unknown as {
+      workflow: (
+        input: { event: Record<string, unknown> },
+        context: { step: { service: IdentityServiceLike & { identityResolutionLog: { create: typeof create } } } },
+      ) => Promise<unknown>
+    }
+
+    await command.workflow(
+      {
+        event: {
+          event: '$pageview',
+          properties: { $current_url: `https://fancypalas.com/products/x?u=${encodeURIComponent(token)}` },
+        },
+      },
+      {
+        step: {
+          service: {
+            ...services([
+              {
+                id: 'contact_1',
+                email: 'alice@test.com',
+                distinct_id: null,
+                shopify_customer_id: null,
+                klaviyo_profile_id: null,
+              },
+            ]),
+            identityResolutionLog: { create },
+          },
+        },
+      },
+    )
+
+    const persisted = create.mock.calls[0]?.[0]
+    expect(persisted?.evidence).toEqual({ v1_source: null, v2_source: 'manta_uid_token' })
+    expect(JSON.stringify(persisted)).not.toContain(token)
+    expect(JSON.stringify(persisted)).not.toContain('$current_url')
   })
 })
