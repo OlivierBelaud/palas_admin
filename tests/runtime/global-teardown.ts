@@ -11,6 +11,7 @@ interface State {
   reason?: string
   port?: number
   pid?: number
+  cachePid?: number
   tempDir?: string
   dbName?: string
   baseUrl?: string
@@ -33,21 +34,22 @@ async function globalTeardown(): Promise<void> {
   try {
     if (state.skipped) return
 
-    if (state.pid) {
+    for (const pid of [state.pid, state.cachePid]) {
+      if (!pid) continue
       try {
-        process.kill(state.pid, 'SIGTERM')
+        process.kill(pid, 'SIGTERM')
       } catch {
         /* already gone */
       }
 
       const killDeadline = Date.now() + 5_000
       while (Date.now() < killDeadline) {
-        if (!(await isAlive(state.pid))) break
+        if (!(await isAlive(pid))) break
         await new Promise((r) => setTimeout(r, 100))
       }
-      if (await isAlive(state.pid)) {
+      if (await isAlive(pid)) {
         try {
-          process.kill(state.pid, 'SIGKILL')
+          process.kill(pid, 'SIGKILL')
         } catch {
           /* ignore */
         }

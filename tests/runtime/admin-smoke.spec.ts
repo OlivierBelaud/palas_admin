@@ -11,7 +11,13 @@ const state = JSON.parse(readFileSync('tests/runtime/.state.json', 'utf8')) as {
 function adminToken() {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
   const payload = Buffer.from(
-    JSON.stringify({ sub: 'runtime-admin', type: 'admin', exp: Math.floor(Date.now() / 1000) + 300 }),
+    JSON.stringify({
+      id: 'runtime-admin',
+      actor_id: 'runtime-admin',
+      auth_identity_id: 'runtime-admin-auth',
+      type: 'admin',
+      exp: Math.floor(Date.now() / 1000) + 300,
+    }),
   ).toString('base64url')
   const signature = createHmac('sha256', 'test-secret-for-runtime-smoke')
     .update(`${header}.${payload}`)
@@ -35,11 +41,25 @@ test.describe('admin-smoke', () => {
       }
     })
 
-    const response = await page.goto(`${state.baseUrl}/admin/`, { waitUntil: 'networkidle', timeout: 30_000 })
+    await page.context().addCookies([
+      {
+        name: 'manta.admin.access',
+        value: adminToken(),
+        url: state.baseUrl,
+      },
+    ])
+    await page.addInitScript(() => localStorage.setItem('manta-auth-state', 'authenticated'))
+    await page.route('**/api/admin/me', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        json: { data: { id: 'runtime-admin', email: 'runtime@example.com' } },
+      }),
+    )
+    const response = await page.goto(`${state.baseUrl}/`, { waitUntil: 'networkidle', timeout: 30_000 })
     expect(response?.status()).toBe(200)
     await expect(page).toHaveTitle('Admin')
     await expect(page.locator('#root')).not.toBeEmpty()
-    await expect(page.getByText('Commerce Admin', { exact: false })).toBeVisible()
+    await expect(page.getByText('Catalogue', { exact: true }).first()).toBeVisible()
 
     expect(pageErrors).toEqual([])
     expect(successfulResponses.length).toBeGreaterThan(0)
@@ -57,15 +77,18 @@ test.describe('admin-smoke', () => {
     expect(readyBody.checks.db).toBe('ok')
   })
 
-  test('catalog publication stays disabled until the production write gate is explicitly armed', async ({
-    request,
-  }) => {
-    const response = await request.post(`${state.baseUrl}/api/admin/catalog-taxonomy`, {
-      data: { action: 'sync_shopify_collections' },
-      headers: { authorization: `Bearer ${adminToken()}` },
-    })
+  test('catalog publication stays disabled until the production write gate is explicitly armed', async () => {
+    const modulePath = '../../demo/commerce/vercel-fast-functions/admin-catalog-taxonomy.mjs'
+    const { default: handler } = await import(modulePath)
+    const response = await handler.fetch(
+      new Request('http://runtime.local/api/admin/catalog-taxonomy', {
+        body: JSON.stringify({ action: 'sync_shopify_collections' }),
+        headers: { authorization: `Bearer ${adminToken()}`, 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    )
 
-    expect(response.status()).toBe(200)
+    expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.data.shopify_sync).toMatchObject({
       ok: false,
@@ -74,27 +97,27 @@ test.describe('admin-smoke', () => {
     })
   })
 
-  test('catalog deletion remains replayable after the local soft-delete commits', async ({ request }) => {
-    const headers = { authorization: `Bearer ${adminToken()}` }
-    const create = await request.post(`${state.baseUrl}/api/admin/catalog-taxonomy`, {
-      data: { action: 'create_category', title_fr: 'Runtime retirement test' },
-      headers,
-    })
-    expect(create.status()).toBe(200)
+  test('catalog deletion remains replayable after the local soft-delete commits', async () => {
+    const modulePath = '../../demo/commerce/vercel-fast-functions/admin-catalog-taxonomy.mjs'
+    const { default: handler } = await import(modulePath)
+    const invoke = (data: Record<string, unknown>) =>
+      handler.fetch(
+        new Request('http://runtime.local/api/admin/catalog-taxonomy', {
+          body: JSON.stringify(data),
+          headers: { authorization: `Bearer ${adminToken()}`, 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+      )
+    const create = await invoke({ action: 'create_category', title_fr: 'Runtime retirement test' })
+    expect(create.status).toBe(200)
     const categoryId = (await create.json()).data.result.id
 
-    const firstDelete = await request.post(`${state.baseUrl}/api/admin/catalog-taxonomy`, {
-      data: { action: 'delete_category', category_id: categoryId },
-      headers,
-    })
-    expect(firstDelete.status()).toBe(200)
+    const firstDelete = await invoke({ action: 'delete_category', category_id: categoryId })
+    expect(firstDelete.status).toBe(200)
     expect((await firstDelete.json()).data.result).toMatchObject({ id: categoryId })
 
-    const replayedDelete = await request.post(`${state.baseUrl}/api/admin/catalog-taxonomy`, {
-      data: { action: 'delete_category', category_id: categoryId },
-      headers,
-    })
-    expect(replayedDelete.status()).toBe(200)
+    const replayedDelete = await invoke({ action: 'delete_category', category_id: categoryId })
+    expect(replayedDelete.status).toBe(200)
     expect((await replayedDelete.json()).data.result).toMatchObject({
       id: categoryId,
       already_deleted: true,
@@ -109,6 +132,13 @@ test.describe('admin-smoke', () => {
         url: state.baseUrl,
       },
     ])
+    await page.addInitScript(() => localStorage.setItem('manta-auth-state', 'authenticated'))
+    await page.route('**/api/admin/me', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        json: { data: { id: 'runtime-admin', email: 'runtime@example.com' } },
+      }),
+    )
     const mutations: string[] = []
     await page.route('**/api/admin/catalog-taxonomy', async (route) => {
       if (route.request().method() !== 'GET') {
@@ -139,7 +169,7 @@ test.describe('admin-smoke', () => {
       })
     })
 
-    await page.goto(`${state.baseUrl}/admin/catalogue`, { waitUntil: 'networkidle' })
+    await page.goto(`${state.baseUrl}/catalogue`, { waitUntil: 'networkidle' })
 
     await expect(page.getByText('Shopify reste la source des données produit', { exact: false })).toBeVisible()
     await expect(page.getByText('Publication Shopify désactivée par défaut', { exact: false })).toBeVisible()
