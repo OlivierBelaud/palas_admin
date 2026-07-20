@@ -279,7 +279,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
     if (dryRun) {
       counters.skipped++
       counters.skipped_dry_run++
-      log.info(`[abandoned-cart] dry cart=${c.id} email=${c.email} locale=${locale}`)
+      log.info(`[abandoned-cart] dry cart=${c.id} locale=${locale}`)
       continue
     }
     if (!notification && !resend) {
@@ -357,7 +357,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
       }
 
       counters.sent++
-      log.info(`[abandoned-cart] sent cart=${c.id} email=${c.email} msg=${messageId ?? '-'}`)
+      log.info(`[abandoned-cart] sent cart=${c.id} msg=${messageId ?? '-'}`)
     } catch (err) {
       counters.errors++
       log.error(`[abandoned-cart] threw cart=${c.id}: ${(err as Error).message}`)

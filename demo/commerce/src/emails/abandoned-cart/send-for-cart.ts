@@ -53,6 +53,8 @@ interface CartLike {
 
 interface ContactLike {
   locale?: string | null
+  email_marketing_opt_out_at?: Date | string | null
+  klaviyo_suppressed?: boolean | null
 }
 
 interface BasicLogger {
@@ -78,7 +80,7 @@ export interface SendAbandonedCartEmailResult {
   subject: string
   html: string
   text: string
-  skipped?: 'no-email' | 'no-products' | 'dry-run'
+  skipped?: 'no-email' | 'no-products' | 'dry-run' | 'opt-out'
   error?: string
 }
 
@@ -153,6 +155,19 @@ export async function sendAbandonedCartEmailForCart(
       skipped: 'no-email',
       locale: 'fr',
       to: null,
+      subject: '',
+      html: '',
+      text: '',
+    }
+  }
+
+  if (contact?.email_marketing_opt_out_at || contact?.klaviyo_suppressed === true) {
+    log.info(`[abandoned-cart] cart=${cart.id} contact opted out — skipping`)
+    return {
+      sent: false,
+      skipped: 'opt-out',
+      locale: 'fr',
+      to: cart.email,
       subject: '',
       html: '',
       text: '',

@@ -28,6 +28,8 @@ interface CartRow {
 interface ContactRow {
   id: string
   locale?: string | null
+  email_marketing_opt_out_at?: Date | string | null
+  klaviyo_suppressed?: boolean | null
 }
 
 export default defineCommand({

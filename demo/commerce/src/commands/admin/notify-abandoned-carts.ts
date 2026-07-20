@@ -46,7 +46,7 @@ export default defineCommand({
     })({})
 
     log.info(
-      `[notifyAbandonedCarts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors}`,
+      `[notifyAbandonedCarts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors} claim_conflicts=${result.claim_conflicts}`,
     )
     return result
   },

@@ -205,6 +205,23 @@ describe('sendAbandonedCartEmailForCart', () => {
     expect(notification.getSent()).toHaveLength(0)
   })
 
+  it('does not send a manual test email to an opted-out contact', async () => {
+    const out = await sendAbandonedCartEmailForCart({
+      cart: baseCart,
+      contact: {
+        locale: 'fr-FR',
+        email_marketing_opt_out_at: new Date('2026-07-20T10:00:00Z'),
+      },
+      notification,
+      dryRun: false,
+      log,
+    })
+
+    expect(out.sent).toBe(false)
+    expect(out.skipped).toBe('opt-out')
+    expect(notification.getSent()).toHaveLength(0)
+  })
+
   it('default idempotency key includes cart id and notified count', async () => {
     await sendAbandonedCartEmailForCart({
       cart: { ...baseCart, abandon_notified_count: 2 },

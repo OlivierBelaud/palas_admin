@@ -30,6 +30,7 @@ const EMPTY: AbandonedCartCampaignResult = {
   skipped_klaviyo: 0,
   recovered: 0,
   errors: 0,
+  claim_conflicts: 0,
 }
 
 export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db, notification, log }) => {
@@ -59,7 +60,7 @@ export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db
     log,
   })
   log.info(
-    `[detect-abandoned-carts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors} skipped_shopify_order=${result.skipped_shopify_order} skipped_shopify_unavailable=${result.skipped_shopify_unavailable}`,
+    `[detect-abandoned-carts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors} claim_conflicts=${result.claim_conflicts} skipped_shopify_order=${result.skipped_shopify_order} skipped_shopify_unavailable=${result.skipped_shopify_unavailable}`,
   )
   return result
 })
