@@ -2,7 +2,7 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Badge, Button, Input } from '@mantajs/ui'
 import { ChevronDown, ChevronRight, GripVertical, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   buildCategoryTree,
   type CatalogCategory,
@@ -25,10 +25,21 @@ type CatalogueData = {
   categories: CatalogCategory[]
   products: CatalogProduct[]
   summary: { products: number; classified: number; unclassified: number; categories: number }
+  publication: {
+    allowed: boolean
+    runtime: string
+    target: string
+    reason: string | null
+    pending: number
+    synced: number
+    failed: number
+    conflicts: number
+    retirements: number
+  }
 }
 
 type CatalogueMutationData = CatalogueData & {
-  shopify_sync?: { ok: boolean; collections?: number; error?: string }
+  shopify_sync?: { ok: boolean; blocked?: boolean; collections?: number; error?: string }
 }
 
 function TreeItem({
@@ -185,7 +196,6 @@ export default function CataloguePage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
-  const initialProductSyncStarted = useRef(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null)
   const [productDropTarget, setProductDropTarget] = useState<{
@@ -247,12 +257,6 @@ export default function CataloguePage() {
     },
     [dataSource],
   )
-
-  useEffect(() => {
-    if (!data || initialProductSyncStarted.current) return
-    initialProductSyncStarted.current = true
-    void mutate({ action: 'sync_products' })
-  }, [data, mutate])
 
   const tree = useMemo(() => buildCategoryTree(data?.categories ?? []), [data?.categories])
   const orderedCategories = useMemo(() => flattenCategoryTree(tree), [tree])
@@ -377,7 +381,7 @@ export default function CataloguePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Architecture du catalogue</h1>
           <p className="text-sm text-muted-foreground">
-            Une catégorie canonique par produit définit son breadcrumb. Shopify reste en lecture seule.
+            Shopify reste la source des données produit. Admin possède la taxonomie, l’ordre et les miroirs PALAS.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -392,6 +396,23 @@ export default function CataloguePage() {
 
       {error ? <Alert variant="destructive">{error}</Alert> : null}
       {syncMessage && !error ? <Alert>{syncMessage}</Alert> : null}
+      {data && !data.publication.allowed ? (
+        <Alert>
+          Publication Shopify désactivée par défaut ({data.publication.runtime}) :{' '}
+          {data.publication.reason ?? 'activation explicite requise'}.
+        </Alert>
+      ) : null}
+      {data &&
+      (data.publication.pending > 0 ||
+        data.publication.failed > 0 ||
+        data.publication.conflicts > 0 ||
+        data.publication.retirements > 0) ? (
+        <Alert variant={data.publication.failed > 0 || data.publication.conflicts > 0 ? 'destructive' : 'default'}>
+          Réconciliation catalogue : {data.publication.pending} en attente, {data.publication.failed} en échec,{' '}
+          {data.publication.conflicts} conflit(s) d’autorité, {data.publication.retirements} suppression(s) à reprendre,{' '}
+          {data.publication.synced} synchronisé(s).
+        </Alert>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[

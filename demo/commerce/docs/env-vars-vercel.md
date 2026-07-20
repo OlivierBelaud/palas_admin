@@ -91,9 +91,11 @@ Si les deux paires sont absentes, le cache visitor passe en no-op (la route rép
 | Variable | Rôle |
 |----------|------|
 | `SHOPIFY_ADMIN_STORE` | Sous-domaine `*.myshopify.com` du store. |
-| `SHOPIFY_SHOP_DOMAIN` | Domaine d'affichage (souvent `fancypalas.com`). |
+| `SHOPIFY_SHOP_DOMAIN` | Domaine Admin API approuvé pour la publication catalogue : `fancy-palas.myshopify.com`. Une autre cible est refusée. |
 | `SHOPIFY_ADMIN_ACCESS_TOKEN` | Admin API access token (custom app). |
 | `SHOPIFY_ADMIN_API_VERSION` | (Optionnel) Version API Shopify, ex : `2025-01`. Default codé dans les helpers. |
+| `SHOPIFY_CATALOG_WRITES_ENABLED` | Kill switch catalogue. Les écritures sont bloquées sauf si la valeur est exactement `true` **et** que le runtime est Production. Ne jamais activer sur Preview. |
+| `SHOPIFY_CATALOG_PUBLICATION_ID` | Publication Shopify approuvée des collections miroir PALAS : `gid://shopify/Publication/234170581339`. L’ID fait partie du fingerprint d’audit et une autre cible est refusée. |
 
 ---
 

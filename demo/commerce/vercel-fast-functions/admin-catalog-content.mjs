@@ -1,4 +1,5 @@
 import { db, json, requireAdmin, unauthorized } from './runtime.mjs'
+import { observeCatalogProvider } from './catalog-publication-governance.mjs'
 
 class CatalogContentError extends Error {}
 
@@ -135,15 +136,19 @@ async function readCollectionMedia(collectionId) {
 }
 
 async function readContent(sql) {
-  const [tiles, menuItems, collections] = await Promise.all([
+  const [tiles, menuItems, provider] = await Promise.all([
     sql`SELECT * FROM catalog_homepage_tiles ORDER BY position, created_at`,
     sql`SELECT * FROM catalog_menu_items ORDER BY parent_id NULLS FIRST, position, created_at`,
-    readCollections(),
+    observeCatalogProvider(readCollections),
   ])
   return {
-    collections,
+    collections: provider.data,
     homepage: tiles.map((tile) => ({ ...tile, position: Number(tile.position) })),
     menu: menuItems.map((item) => ({ ...item, position: Number(item.position) })),
+    provider: {
+      ok: provider.ok,
+      error: provider.error,
+    },
   }
 }
 

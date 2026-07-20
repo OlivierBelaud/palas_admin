@@ -1,0 +1,2 @@
+-- Intentionally non-destructive: publication attempts and fingerprints are
+-- operational evidence required to reconcile or roll back a catalog cutover.

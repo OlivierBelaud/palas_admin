@@ -1,9 +1,10 @@
 import { useDashboardContext } from '@mantajs/dashboard'
 import { Alert, Button, Input } from '@mantajs/ui'
 import { Plus, Save, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { shopifyImageThumbnail, type CatalogContentData, type CatalogMenuItem } from '../../../catalog-content'
 import { CollectionImagePicker } from '../../../components/collection-image-picker'
+import { CatalogProviderAlert } from '../../../components/catalog-provider-alert'
 
 const ENDPOINT = '/api/admin/catalog-content'
 
@@ -61,10 +62,6 @@ export default function CatalogueMenuPage() {
     [dataSource],
   )
 
-  const collection = useMemo(
-    () => data?.collections.find((candidate) => candidate.id === draft.shopify_collection_id),
-    [data?.collections, draft.shopify_collection_id],
-  )
   const roots = data?.menu.filter((item) => !item.parent_id) || []
 
   function select(item?: CatalogMenuItem) {
@@ -108,6 +105,7 @@ export default function CatalogueMenuPage() {
       </header>
 
       {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {data ? <CatalogProviderAlert label="Menu local disponible" provider={data.provider} /> : null}
 
       <div className="grid min-h-[560px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside className="rounded-md border bg-card p-3">
