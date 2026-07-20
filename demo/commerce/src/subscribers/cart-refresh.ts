@@ -31,6 +31,7 @@ export default defineSubscriber({
       })
     } catch (err) {
       log.error(`[cart-refresh] refreshCart failed: ${(err as Error).message}`)
+      throw err
     }
   },
 })

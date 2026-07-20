@@ -1,3 +1,5 @@
+import { auditOrderProjection } from '../modules/order/reconcile-order-projection'
+
 export interface RawDb {
   raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
 }
@@ -156,16 +158,26 @@ async function auditShopify(
 
   const contactsAge = ageMs(now, row?.contacts_latest)
   const ordersAge = ageMs(now, row?.orders_latest)
+  const projection = await auditOrderProjection(db)
   metrics.shopify_contacts_synced = num(row?.contacts_synced)
   metrics.shopify_orders_synced = num(row?.orders_synced)
   metrics.shopify_contacts_latest_at = isoOrNull(row?.contacts_latest)
   metrics.shopify_orders_latest_at = isoOrNull(row?.orders_latest)
+  metrics.shopify_missing_cart_order_links = projection.missing_cart_order_links
+  metrics.shopify_missing_order_contact_links = projection.missing_order_contact_links
+  metrics.shopify_duplicate_order_contact_pairs = projection.duplicate_order_contact_pairs
+  metrics.shopify_orphan_cart_order_links = projection.orphan_cart_order_links
+  metrics.shopify_orphan_order_contact_links = projection.orphan_order_contact_links
 
   const details = [
     `Contacts Shopify: ${formatAge(contactsAge)}`,
     `Orders Shopify: ${formatAge(ordersAge)}`,
     `${metrics.shopify_contacts_synced} contacts avec shopify_customer_id`,
     `${metrics.shopify_orders_synced} orders locales`,
+    `${projection.missing_cart_order_links} liens cart/order manquants`,
+    `${projection.missing_order_contact_links} liens order/contact manquants`,
+    `${projection.duplicate_order_contact_pairs} doublons order/contact`,
+    `${projection.orphan_cart_order_links + projection.orphan_order_contact_links} liens orphelins`,
   ]
   let status: SystemStatus = 'ok'
   const worstAge = Math.max(contactsAge ?? Number.POSITIVE_INFINITY, ordersAge ?? Number.POSITIVE_INFINITY)
@@ -202,6 +214,25 @@ async function auditShopify(
       title: 'Sync Shopify en retard',
       summary: `Le miroir Shopify le plus ancien a ${formatAge(worstAge)}.`,
       count: 1,
+      href: '/orders',
+      details,
+    })
+  }
+  const projectionIssues =
+    projection.missing_cart_order_links +
+    projection.missing_order_contact_links +
+    projection.duplicate_order_contact_pairs +
+    projection.orphan_cart_order_links +
+    projection.orphan_order_contact_links
+  if (projectionIssues > 0) {
+    status = 'critical'
+    addFinding(findings, {
+      source: 'shopify',
+      key: 'shopify_order_projection_inconsistent',
+      severity: 'critical',
+      title: 'Projection commandes Shopify incohérente',
+      summary: `${projectionIssues} anomalie(s) de liaison commande détectée(s).`,
+      count: projectionIssues,
       href: '/orders',
       details,
     })

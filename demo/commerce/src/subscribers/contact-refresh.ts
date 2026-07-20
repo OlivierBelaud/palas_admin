@@ -18,6 +18,7 @@ export default defineSubscriber({
       })
     } catch (err) {
       log.error(`[contact-refresh] refreshContact failed for ${email}: ${(err as Error).message}`)
+      throw err
     }
   },
 })
