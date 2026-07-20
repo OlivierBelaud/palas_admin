@@ -71,6 +71,9 @@ export interface NormalizedCartEvent {
   currency: string
   item_count: number
   cart_has_payload: boolean
+  items_has_payload: boolean
+  total_price_has_payload: boolean
+  currency_has_payload: boolean
   total_discount: number | null
   cart_level_discounts: unknown[] | null
 
@@ -191,6 +194,9 @@ export function normalizeCartEvent(evt: PosthogEvent): NormalizedCartEvent | nul
     // @legacy-schema-v1
     legacyItems != null ||
     legacyTotalPrice != null
+  const itemsHasPayload = cartItems != null || checkoutItems != null || legacyItems != null
+  const totalPriceHasPayload = checkoutTotalPrice != null || cartTotalPrice != null || legacyTotalPrice != null
+  const currencyHasPayload = cartCurrency != null || checkoutCurrency != null || legacyCurrency != null
 
   // ── Identity ──────────────────────────────────────────────────────
   // $set is the canonical place for person properties (all schemas).
@@ -230,6 +236,9 @@ export function normalizeCartEvent(evt: PosthogEvent): NormalizedCartEvent | nul
     currency,
     item_count: items.length,
     cart_has_payload: cartHasPayload,
+    items_has_payload: itemsHasPayload,
+    total_price_has_payload: totalPriceHasPayload,
+    currency_has_payload: currencyHasPayload,
     total_discount: cartTotalDiscount,
     cart_level_discounts: cartLevelDiscounts,
 
@@ -271,6 +280,10 @@ export function toIngestInput(evt: PosthogEvent): Record<string, unknown> | null
     browser_locale: n.browser_locale,
     shopify_customer_id: n.shopify_customer_id,
     items: n.items,
+    cart_has_payload: n.cart_has_payload,
+    items_has_payload: n.items_has_payload,
+    total_price_has_payload: n.total_price_has_payload,
+    currency_has_payload: n.currency_has_payload,
     changed_items: n.changed_items,
     total_price: n.total_price,
     subtotal_price: n.subtotal_price,

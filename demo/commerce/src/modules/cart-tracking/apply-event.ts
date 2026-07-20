@@ -46,10 +46,10 @@ export async function applyEvent(
   // Only events that carry cart state should overwrite snapshot totals.
   // `checkout:*` + `cart:closed` can fire without re-embedding the cart —
   // we preserve the existing snapshot instead of zeroing it out.
-  const items = n.cart_has_payload ? n.items : null
-  const totalPrice = n.cart_has_payload ? n.total_price : null
-  const currency = n.cart_has_payload ? n.currency : null
-  const itemCount = n.cart_has_payload ? n.item_count : null
+  const items = n.items_has_payload ? n.items : null
+  const totalPrice = n.total_price_has_payload ? n.total_price : null
+  const currency = n.currency_has_payload ? n.currency : null
+  const itemCount = n.items_has_payload ? n.item_count : null
   const newStage = actionToStage(n.event)
 
   try {
@@ -94,7 +94,8 @@ export async function applyEvent(
     // status is derived: only 'active' or 'completed'. All abandonment
     // variants are derived at read time from highest_stage + last_action_at.
     const status = highestStage === 'completed' ? 'completed' : 'active'
-    const merge = (next: unknown, prev: unknown) => next ?? prev ?? null
+    const preserve = (prev: unknown, next: unknown) => prev ?? next ?? null
+    const latest = (next: unknown, prev: unknown) => next ?? prev ?? null
 
     const hasPurchaseSignal = n.items.length > 0 || n.total_price > 0
     if (existing.length === 0 && !hasPurchaseSignal) {
@@ -103,10 +104,18 @@ export async function applyEvent(
 
     if (existing.length > 0) {
       const ex = existing[0]
-      const nextItems = items ?? coerceStoredItems(ex.items)
-      const nextTotalPrice = totalPrice ?? (ex.total_price as number | null) ?? 0
-      const nextItemCount = itemCount ?? (ex.item_count as number | null) ?? 0
-      const nextCurrency = currency ?? (ex.currency as string | null) ?? 'EUR'
+      const existingActionMs = ex.last_action_at ? new Date(ex.last_action_at as string | Date).getTime() : Number.NaN
+      const incomingActionMs = new Date(n.occurred_at).getTime()
+      const refreshCurrentState = !Number.isFinite(existingActionMs) || incomingActionMs >= existingActionMs
+      const nextItems = refreshCurrentState ? (items ?? coerceStoredItems(ex.items)) : coerceStoredItems(ex.items)
+      const nextTotalPrice =
+        refreshCurrentState && totalPrice !== null ? totalPrice : ((ex.total_price as number | null) ?? 0)
+      const nextItemCount =
+        refreshCurrentState && itemCount !== null ? itemCount : ((ex.item_count as number | null) ?? 0)
+      const nextCurrency =
+        refreshCurrentState && currency !== null ? currency : ((ex.currency as string | null) ?? 'EUR')
+      const progressive = (next: unknown, prev: unknown) =>
+        refreshCurrentState ? latest(next, prev) : preserve(prev, next)
       // `completed_at` is the exact moment the payment succeeded — written
       // ONLY on the cart→completed transition, never overwritten. This is
       // distinct from `last_action_at` (refreshed on every event) and from
@@ -118,28 +127,28 @@ export async function applyEvent(
         newStage === 'completed' && (ex.highest_stage as string) !== 'completed' && ex.completed_at == null
       const completedAtSql = shouldSetCompletedAt ? ', completed_at=$24' : ''
       const updateParams: unknown[] = [
-        merge(n.distinct_id, ex.distinct_id),
-        merge(n.email, ex.email),
-        merge(n.first_name, ex.first_name),
-        merge(n.last_name, ex.last_name),
-        merge(n.phone, ex.phone),
-        merge(n.city, ex.city),
-        merge(n.country_code, ex.country_code),
+        preserve(ex.distinct_id, n.distinct_id),
+        preserve(ex.email, n.email),
+        preserve(ex.first_name, n.first_name),
+        preserve(ex.last_name, n.last_name),
+        preserve(ex.phone, n.phone),
+        preserve(ex.city, n.city),
+        preserve(ex.country_code, n.country_code),
         nextItems,
         nextTotalPrice,
         nextItemCount,
         nextCurrency,
-        n.event,
-        n.occurred_at,
+        refreshCurrentState ? n.event : (ex.last_action as string),
+        refreshCurrentState ? n.occurred_at : ex.last_action_at,
         highestStage,
         status,
-        merge(n.checkout_token, ex.checkout_token),
-        merge(n.shopify_order_id, ex.shopify_order_id),
-        n.shipping_price ?? (ex.shipping_price as number | null),
-        n.discounts_amount ?? (ex.discounts_amount as number | null),
-        n.subtotal_price ?? (ex.subtotal_price as number | null),
-        n.total_tax ?? (ex.total_tax as number | null),
-        merge(n.browser_locale, ex.browser_locale as string | null),
+        preserve(ex.checkout_token, n.checkout_token),
+        preserve(ex.shopify_order_id, n.shopify_order_id),
+        progressive(n.shipping_price, ex.shipping_price),
+        progressive(n.discounts_amount, ex.discounts_amount),
+        progressive(n.subtotal_price, ex.subtotal_price),
+        progressive(n.total_tax, ex.total_tax),
+        progressive(n.browser_locale, ex.browser_locale),
         ex.id,
       ]
       if (shouldSetCompletedAt) updateParams.push(n.occurred_at)

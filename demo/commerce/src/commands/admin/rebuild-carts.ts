@@ -450,10 +450,10 @@ function foldCartEvent(
       city: n.city ?? null,
       country_code: n.country_code ?? null,
       shopify_customer_id: n.shopify_customer_id ?? null,
-      items: n.cart_has_payload ? n.items : [],
-      total_price: n.cart_has_payload ? n.total_price : 0,
-      item_count: n.cart_has_payload ? n.item_count : 0,
-      currency: n.cart_has_payload ? n.currency : 'EUR',
+      items: n.items_has_payload ? n.items : [],
+      total_price: n.total_price_has_payload ? n.total_price : 0,
+      item_count: n.items_has_payload ? n.item_count : 0,
+      currency: n.currency_has_payload ? n.currency : 'EUR',
       last_action: n.event,
       last_action_at: n.occurred_at,
       highest_stage: newStage,
@@ -494,10 +494,14 @@ function foldCartEvent(
   existing.shopify_customer_id = firstNonNull(existing.shopify_customer_id, n.shopify_customer_id)
 
   // Cart state — only events that carry a payload overwrite totals/items.
-  if (n.cart_has_payload) {
+  if (n.items_has_payload) {
     existing.items = n.items
-    existing.total_price = n.total_price
     existing.item_count = n.item_count
+  }
+  if (n.total_price_has_payload) {
+    existing.total_price = n.total_price
+  }
+  if (n.currency_has_payload) {
     existing.currency = n.currency
   }
 

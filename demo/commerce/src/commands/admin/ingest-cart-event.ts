@@ -99,6 +99,12 @@ export default defineCommand({
     browser_locale: z.string().nullable().optional(),
     shopify_customer_id: z.string().nullable().optional(),
     items: z.array(CartItemSchema).default([]),
+    // Checkout pixels may omit the cart snapshot entirely. This flag
+    // distinguishes that from an explicit empty cart (`cart:cleared`).
+    cart_has_payload: z.boolean().default(true),
+    items_has_payload: z.boolean().default(true),
+    total_price_has_payload: z.boolean().default(true),
+    currency_has_payload: z.boolean().default(true),
     changed_items: z.array(ChangedItemSchema).nullable().optional(),
     total_price: z.number().default(0),
     currency: z.string().default('EUR'),
@@ -146,9 +152,14 @@ export default defineCommand({
       discounts?: unknown
       subtotal_price?: number | null
       total_tax?: number | null
+      last_action?: string | null
       completed_at?: Date | string | null
       cart_birth_at?: Date | string | null
       last_action_at?: Date | string | null
+      items?: unknown[] | null
+      total_price?: number | null
+      item_count?: number | null
+      currency?: string | null
     }
     type EntityCrud<Row> = {
       list: (filters: Record<string, unknown>) => Promise<Row[]>
@@ -200,7 +211,8 @@ export default defineCommand({
     // legitimate noise (cart:viewed on an empty cart page). Existing carts are
     // still updated below so their history is preserved (e.g. `cart:cleared`
     // on a real cart correctly sets items to []).
-    const hasPurchaseSignal = input.items.length > 0 || input.total_price > 0
+    const hasCartPayload = input.cart_has_payload !== false
+    const hasPurchaseSignal = hasCartPayload && (input.items.length > 0 || input.total_price > 0)
     if (!existing && !hasPurchaseSignal) {
       return { cart_id: null, skipped: 'signal-free' as const }
     }
@@ -214,8 +226,26 @@ export default defineCommand({
     // (abandonment is detected later by a scheduled job based on inactivity)
     const status = input.action === 'checkout:completed' ? 'completed' : (existing?.status ?? 'active')
 
-    // Merge identity: keep existing values, fill in new ones progressively
-    const merge = <A, B>(newVal: A, existingVal: B): A | B | null => newVal ?? existingVal ?? null
+    // Durable identity is first-write-wins on a cart. Late events may fill an
+    // empty field, but must not replace the anonymous distinct_id that anchors
+    // earlier browsing history or an already-bound Shopify customer.
+    const preserve = <T>(existingVal: T | null | undefined, newVal: T | null | undefined): T | null =>
+      existingVal ?? newVal ?? null
+    const latest = <T>(newVal: T | null | undefined, existingVal: T | null | undefined): T | null =>
+      newVal ?? existingVal ?? null
+    const occurredAt = new Date(input.occurred_at)
+    const existingActionMs = existing?.last_action_at ? new Date(existing.last_action_at).getTime() : Number.NaN
+    const refreshCurrentState = !Number.isFinite(existingActionMs) || occurredAt.getTime() >= existingActionMs
+    const refreshSnapshot = hasCartPayload && refreshCurrentState
+    const refreshItems = refreshSnapshot && input.items_has_payload !== false
+    const refreshTotal = refreshSnapshot && input.total_price_has_payload !== false
+    const refreshCurrency = refreshSnapshot && input.currency_has_payload !== false
+    const snapshotItems = refreshItems ? input.items : (existing?.items ?? [])
+    const snapshotTotal = refreshTotal ? input.total_price : (existing?.total_price ?? 0)
+    const snapshotItemCount = refreshItems ? input.items.length : (existing?.item_count ?? snapshotItems.length)
+    const snapshotCurrency = refreshCurrency ? input.currency : (existing?.currency ?? 'EUR')
+    const progressive = <T>(newVal: T | null | undefined, existingVal: T | null | undefined): T | null =>
+      refreshCurrentState ? latest(newVal, existingVal) : preserve(existingVal, newVal)
 
     // Base payload — shared between create and update. `cart_birth_at` and
     // `completed_at` are deliberately omitted here: they have asymmetric
@@ -223,35 +253,35 @@ export default defineCommand({
     // handled below.
     const cartData = {
       cart_token: existing?.cart_token ?? input.cart_token,
-      distinct_id: merge(input.distinct_id, existing?.distinct_id),
-      email: merge(input.email, existing?.email),
-      first_name: merge(input.first_name, existing?.first_name),
-      last_name: merge(input.last_name, existing?.last_name),
-      phone: merge(input.phone, existing?.phone),
-      city: merge(input.city, existing?.city),
-      country_code: merge(input.country_code, existing?.country_code),
+      distinct_id: preserve(existing?.distinct_id, input.distinct_id),
+      email: preserve(existing?.email, input.email),
+      first_name: preserve(existing?.first_name, input.first_name),
+      last_name: preserve(existing?.last_name, input.last_name),
+      phone: preserve(existing?.phone, input.phone),
+      city: preserve(existing?.city, input.city),
+      country_code: preserve(existing?.country_code, input.country_code),
       // Navigation language: refresh whenever a new event carries one (latest
       // browse wins), else keep the previously captured value.
-      browser_locale: merge(input.browser_locale, existing?.browser_locale),
-      shopify_customer_id: merge(input.shopify_customer_id, existing?.shopify_customer_id),
-      checkout_token: merge(input.checkout_token, existing?.checkout_token),
-      items: input.items,
-      total_price: input.total_price,
-      item_count: input.items.length,
-      currency: input.currency,
-      last_action: input.action,
-      last_action_at: new Date(input.occurred_at),
+      browser_locale: progressive(input.browser_locale, existing?.browser_locale),
+      shopify_customer_id: preserve(existing?.shopify_customer_id, input.shopify_customer_id),
+      checkout_token: preserve(existing?.checkout_token, input.checkout_token),
+      items: snapshotItems,
+      total_price: snapshotTotal,
+      item_count: snapshotItemCount,
+      currency: snapshotCurrency,
+      last_action: refreshCurrentState ? input.action : (existing?.last_action ?? input.action),
+      last_action_at: refreshCurrentState ? occurredAt : new Date(existing?.last_action_at ?? input.occurred_at),
       highest_stage: highestStage,
       status,
-      order_id: merge(input.order_id, existing?.order_id),
-      shopify_order_id: merge(input.shopify_order_id, existing?.shopify_order_id),
-      is_first_order: input.is_first_order ?? existing?.is_first_order ?? null,
-      shipping_method: merge(input.shipping_method, existing?.shipping_method),
-      shipping_price: input.shipping_price ?? existing?.shipping_price ?? null,
-      discounts_amount: input.discounts_amount ?? existing?.discounts_amount ?? null,
-      discounts: input.discounts ?? existing?.discounts ?? null,
-      subtotal_price: input.subtotal_price ?? existing?.subtotal_price ?? null,
-      total_tax: input.total_tax ?? existing?.total_tax ?? null,
+      order_id: preserve(existing?.order_id, input.order_id),
+      shopify_order_id: preserve(existing?.shopify_order_id, input.shopify_order_id),
+      is_first_order: progressive(input.is_first_order, existing?.is_first_order),
+      shipping_method: progressive(input.shipping_method, existing?.shipping_method),
+      shipping_price: progressive(input.shipping_price, existing?.shipping_price),
+      discounts_amount: progressive(input.discounts_amount, existing?.discounts_amount),
+      discounts: progressive(input.discounts, existing?.discounts),
+      subtotal_price: progressive(input.subtotal_price, existing?.subtotal_price),
+      total_tax: progressive(input.total_tax, existing?.total_tax),
     }
 
     let cartId: string
@@ -293,18 +323,18 @@ export default defineCommand({
     //    truth, the contact mirror is best-effort enrichment.
     const commands = step.command as unknown as IngestCartEventCommands
 
-    if (input.email) {
+    if (cartData.email) {
       try {
         await commands.upsertContactFromCartSignal({
           cart_id: cartId,
-          email: input.email,
-          first_name: input.first_name ?? null,
-          last_name: input.last_name ?? null,
-          phone: input.phone ?? null,
-          city: input.city ?? null,
-          country_code: input.country_code ?? null,
-          distinct_id: input.distinct_id ?? null,
-          shopify_customer_id: input.shopify_customer_id ?? null,
+          email: cartData.email,
+          first_name: cartData.first_name,
+          last_name: cartData.last_name,
+          phone: cartData.phone,
+          city: cartData.city,
+          country_code: cartData.country_code,
+          distinct_id: cartData.distinct_id,
+          shopify_customer_id: cartData.shopify_customer_id,
         })
       } catch (err) {
         // Swallow — the contact will be retried on the next event for the
@@ -312,7 +342,7 @@ export default defineCommand({
         // up later if needed.
         await step.emit('contact.upsert_failed', {
           cart_id: cartId,
-          email: input.email,
+          email: cartData.email,
           message: (err as Error).message,
         })
       }
@@ -331,9 +361,9 @@ export default defineCommand({
             cart_id: cartId,
             cart_birth_at: cartBirth instanceof Date ? cartBirth.toISOString() : cartBirth,
             conversion_at: input.occurred_at,
-            distinct_id: input.distinct_id ?? existing?.distinct_id ?? null,
-            email: input.email ?? existing?.email ?? null,
-            order_id: input.shopify_order_id ?? null,
+            distinct_id: cartData.distinct_id,
+            email: cartData.email,
+            order_id: cartData.shopify_order_id,
           })
         } catch (err) {
           await step.emit('visitor_session.attribution_failed', {
@@ -346,10 +376,10 @@ export default defineCommand({
 
     await step.emit('cart.refresh-requested', {
       cart_id: cartId,
-      cart_token: input.cart_token,
-      checkout_token: input.checkout_token ?? null,
-      shopify_order_id: input.shopify_order_id ?? null,
-      email: input.email?.trim().toLowerCase() ?? null,
+      cart_token: cartData.cart_token,
+      checkout_token: cartData.checkout_token,
+      shopify_order_id: cartData.shopify_order_id,
+      email: cartData.email?.trim().toLowerCase() ?? null,
       reason: 'cart_event_ingested',
       source: 'ingestCartEvent',
       requested_at: new Date().toISOString(),

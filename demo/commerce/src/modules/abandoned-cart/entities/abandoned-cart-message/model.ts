@@ -39,6 +39,7 @@ export default defineModel('AbandonedCartMessage', {
       'already_recovered',
       'shopify_check_unavailable',
       'send_error',
+      'superseded_by_new_cart',
     ])
     .nullable()
     .index(),
