@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeSystemAudit, type RawDb } from '../src/utils/system-audit'
+import { computeSystemAudit, type RawDb, runSystemAudit } from '../src/utils/system-audit'
 
 type Fixtures = {
   posthog?: Record<string, unknown>
@@ -96,5 +96,60 @@ describe('system audit', () => {
       count: 2,
     })
     expect(result.summary.health.find((item) => item.key === 'event_hub')).toMatchObject({ status: 'critical' })
+  })
+
+  it('persists a terminal completed run after all health boundaries are computed', async () => {
+    const writes: Array<{ query: string; params?: unknown[] }> = []
+    const healthy = makeDb({})
+    const db: RawDb = {
+      raw: async <T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> => {
+        if (query.includes('INSERT INTO system_audit_runs')) return [{ id: 'audit_123' }] as T[]
+        if (query.includes('UPDATE system_audit_runs')) {
+          writes.push({ query, params })
+          return [] as T[]
+        }
+        return healthy.raw<T>(query, params)
+      },
+    }
+
+    const result = await runSystemAudit(db, 'manual')
+
+    expect(result.run_id).toBe('audit_123')
+    expect(result.summary.overall_status).toBe('ok')
+    expect(result.findings).toEqual([])
+    expect(writes).toHaveLength(1)
+    expect(writes[0]?.query).toContain("status = 'completed'")
+    expect(writes[0]?.params?.slice(0, 2)).toEqual(['audit_123', 'ok'])
+  })
+
+  it('persists a failed run and an actionable system finding when a boundary query fails', async () => {
+    const writes: Array<{ query: string; params?: unknown[] }> = []
+    const healthy = makeDb({})
+    const db: RawDb = {
+      raw: async <T = Record<string, unknown>>(query: string, params?: unknown[]): Promise<T[]> => {
+        if (query.includes('INSERT INTO system_audit_runs')) return [{ id: 'run_failed_123' }] as T[]
+        if (query.includes('FROM event_logs')) throw new Error('event projection unavailable')
+        if (query.includes('UPDATE system_audit_runs') || query.includes('INSERT INTO system_audit_findings')) {
+          writes.push({ query, params })
+          return [] as T[]
+        }
+        return healthy.raw<T>(query, params)
+      },
+    }
+
+    await expect(runSystemAudit(db, 'nightly')).rejects.toThrow('event projection unavailable')
+
+    expect(writes).toHaveLength(2)
+    expect(writes[0]?.query).toContain("status = 'failed'")
+    expect(writes[0]?.params).toMatchObject(['run_failed_123', expect.any(String), 'event projection unavailable'])
+    expect(writes[1]?.query).toContain('INSERT INTO system_audit_findings')
+    expect(writes[1]?.params?.slice(0, 6)).toEqual([
+      'run_failed_123',
+      'system',
+      'audit_failed',
+      'critical',
+      'Audit système échoué',
+      'event projection unavailable',
+    ])
   })
 })
