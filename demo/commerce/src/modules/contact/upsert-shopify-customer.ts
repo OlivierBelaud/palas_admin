@@ -42,7 +42,7 @@ export interface ShopifyCustomerPayload {
 
 export interface UpsertContactOutcome {
   /** How we located the row (or 'inserted' if none matched). */
-  matched_via: 'shopify_customer_id' | 'email' | 'inserted' | 'noop'
+  matched_via: 'shopify_customer_id' | 'email' | 'inserted' | 'noop' | 'identity_conflict'
   contact_id: string | null
   /** Whether a brand-new contact row was created. */
   created: boolean
@@ -121,6 +121,19 @@ export async function upsertShopifyCustomer(
     if (existing) matchedVia = 'email'
   }
 
+  if (
+    matchedVia === 'email' &&
+    existing?.shopify_customer_id &&
+    existing.shopify_customer_id !== shopifyCustomerId
+  ) {
+    return {
+      matched_via: 'identity_conflict',
+      contact_id: existing.id,
+      created: false,
+      carts_reattached: 0,
+    }
+  }
+
   let contactId: string | null = null
   let created = false
 
@@ -131,7 +144,7 @@ export async function upsertShopifyCustomer(
     // First-write-wins on identity (email never overwritten; names/phone/locale
     // preserved if already set). Refresh shopify_customer_id, which may have
     // been null on a pixel-seeded contact.
-    await sql`
+    const updated = (await sql`
       UPDATE contacts
          SET shopify_customer_id = COALESCE(shopify_customer_id, ${shopifyCustomerId}),
              phone = COALESCE(phone, ${phone}),
@@ -146,7 +159,17 @@ export async function upsertShopifyCustomer(
              shopify_synced_at = ${now},
              last_activity_at = ${now},
              updated_at = ${now}
-       WHERE id = ${existing.id}`
+       WHERE id = ${existing.id}
+         AND (shopify_customer_id IS NULL OR shopify_customer_id = ${shopifyCustomerId})
+       RETURNING id`) as Array<{ id: string }>
+    if (updated.length === 0) {
+      return {
+        matched_via: 'identity_conflict',
+        contact_id: existing.id,
+        created: false,
+        carts_reattached: 0,
+      }
+    }
     contactId = existing.id
   } else {
     if (dryRun) {
@@ -170,26 +193,32 @@ export async function upsertShopifyCustomer(
         shopify_synced_at = EXCLUDED.shopify_synced_at,
         last_activity_at = EXCLUDED.last_activity_at,
         updated_at = EXCLUDED.updated_at
+      WHERE contacts.shopify_customer_id IS NULL
+         OR contacts.shopify_customer_id = EXCLUDED.shopify_customer_id
       RETURNING id`) as Array<{ id: string }>
+    if (inserted.length === 0) {
+      const conflicted = await findByEmail(sql, email)
+      return {
+        matched_via: 'identity_conflict',
+        contact_id: conflicted?.id ?? null,
+        created: false,
+        carts_reattached: 0,
+      }
+    }
     contactId = inserted[0]?.id ?? null
     created = inserted.length > 0 && matchedVia !== 'email'
     matchedVia = 'inserted'
   }
 
-  // Retro-attach any historical carts that match by email — first-write-wins
-  // on cart.shopify_customer_id. Wraps a try because reattach is best-effort
-  // enrichment; the contact upsert is the source of truth.
+  // Retro-attach any historical carts that match by email. Failures propagate
+  // so the webhook or reconciliation workflow can retry the idempotent repair.
   let cartsReattached = 0
   if (contactId && !dryRun) {
-    try {
-      const outcome = await reattachHistoryForContact(
-        { raw: <T>(text: string, params?: unknown[]) => sql.unsafe(text, params as never) as unknown as Promise<T[]> },
-        { email, shopify_customer_id: shopifyCustomerId },
-      )
-      cartsReattached = outcome.carts_attached
-    } catch {
-      // best-effort
-    }
+    const outcome = await reattachHistoryForContact(
+      { raw: <T>(text: string, params?: unknown[]) => sql.unsafe(text, params as never) as unknown as Promise<T[]> },
+      { email, shopify_customer_id: shopifyCustomerId },
+    )
+    cartsReattached = outcome.carts_attached
   }
 
   return { matched_via: matchedVia, contact_id: contactId, created, carts_reattached: cartsReattached }

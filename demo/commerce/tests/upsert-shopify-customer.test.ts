@@ -8,7 +8,7 @@
 // Three cases covered (per spec):
 //   1. new — no row matches shopify_id or email → INSERT
 //   2. existing match by shopify_customer_id → UPDATE first-write-wins
-//   3. existing match by email (different shopify_id) → UPDATE,
+//   3. existing match by email (missing shopify_id) → UPDATE,
 //      shopify_customer_id is set on the row, first-write-wins on identity
 
 import { describe, expect, it } from 'vitest'
@@ -26,7 +26,7 @@ interface SqlCall {
 interface FakeSql {
   sql: SqlClient
   calls: SqlCall[]
-  setNext: (rows: unknown[]) => void
+  setNext: (rows: unknown[] | Error) => void
 }
 
 /**
@@ -34,15 +34,20 @@ interface FakeSql {
  * (so tests can assert on keywords) and the params. The caller may queue up
  * a per-call result by pushing to `nextResults`.
  */
-function makeFakeSql(queue: unknown[][]): FakeSql {
+function makeFakeSql(queue: Array<unknown[] | Error>): FakeSql {
   const calls: SqlCall[] = []
   const localQueue = [...queue]
+
+  function nextResult(): unknown[] {
+    const next = localQueue.shift() ?? []
+    if (next instanceof Error) throw next
+    return next
+  }
 
   function tagged(strings: TemplateStringsArray, ...params: unknown[]): Promise<unknown[]> {
     const text = strings.join('?')
     calls.push({ text, params })
-    const next = localQueue.shift() ?? []
-    return Promise.resolve(next)
+    return Promise.resolve(nextResult())
   }
   // postgres-js exposes .json + .unsafe on the tagged function. We provide
   // stubs sufficient for the code paths we exercise.
@@ -51,14 +56,13 @@ function makeFakeSql(queue: unknown[][]): FakeSql {
   // biome-ignore lint/suspicious/noExplicitAny: shim for postgres-js Sql surface
   ;(tagged as any).unsafe = (text: string, params: unknown[] = []) => {
     calls.push({ text, params })
-    const next = localQueue.shift() ?? []
-    return Promise.resolve(next)
+    return Promise.resolve(nextResult())
   }
 
   return {
     sql: tagged as unknown as SqlClient,
     calls,
-    setNext: (rows: unknown[]) => localQueue.push(rows),
+    setNext: (rows: unknown[] | Error) => localQueue.push(rows),
   }
 }
 
@@ -78,8 +82,10 @@ describe('upsertShopifyCustomer', () => {
       [], // findByShopifyId → none
       [], // findByEmail → none
       [{ id: 'contact-new-1' }], // INSERT RETURNING
-      // reattachHistoryForContact uses sql.unsafe — returns IDs
-      [],
+      [], // reattach: carts stamped
+      [{ id: 'contact-new-1' }], // reattach: contact lookup
+      [], // reattach: cart links
+      [], // reattach: order links
     ])
 
     const out = await upsertShopifyCustomer(fake.sql, BASE)
@@ -113,8 +119,11 @@ describe('upsertShopifyCustomer', () => {
           city: 'Lyon',
         },
       ],
-      [], // UPDATE — no rows returned
-      [], // reattach — no rows
+      [{ id: 'contact-1' }], // UPDATE RETURNING
+      [], // reattach: carts stamped
+      [{ id: 'contact-1' }], // reattach: contact lookup
+      [], // reattach: cart links
+      [], // reattach: order links
     ])
 
     const out = await upsertShopifyCustomer(fake.sql, BASE)
@@ -128,7 +137,7 @@ describe('upsertShopifyCustomer', () => {
     expect(fake.calls[1].text).toMatch(/COALESCE\(first_name, /)
   })
 
-  it('case 3 (existing by email, different shopify_id): matches by email and stamps shopify_id', async () => {
+  it('case 3 (existing by email, missing shopify_id): matches by email and stamps shopify_id', async () => {
     const fake = makeFakeSql([
       [], // findByShopifyId → none
       // findByEmail → existing row but with NULL shopify_customer_id (pixel-seeded contact)
@@ -145,8 +154,11 @@ describe('upsertShopifyCustomer', () => {
           city: null,
         },
       ],
-      [], // UPDATE
-      [], // reattach
+      [{ id: 'contact-2' }], // UPDATE RETURNING
+      [], // reattach: carts stamped
+      [{ id: 'contact-2' }], // reattach: contact lookup
+      [], // reattach: cart links
+      [], // reattach: order links
     ])
 
     const out = await upsertShopifyCustomer(fake.sql, BASE)
@@ -157,6 +169,114 @@ describe('upsertShopifyCustomer', () => {
     expect(fake.calls[2].text).toMatch(/UPDATE contacts/i)
     // COALESCE preserves NULL → fills from payload
     expect(fake.calls[2].text).toMatch(/COALESCE\(shopify_customer_id,/)
+  })
+
+  it('surfaces a Shopify identity conflict without mutating or reattaching history', async () => {
+    const fake = makeFakeSql([
+      [],
+      [
+        {
+          id: 'contact-2',
+          email: 'jane@example.com',
+          shopify_customer_id: 'already-linked-shopify-id',
+          phone: null,
+          first_name: null,
+          last_name: null,
+          locale: 'fr-FR',
+          country_code: null,
+          city: null,
+        },
+      ],
+    ])
+
+    const out = await upsertShopifyCustomer(fake.sql, BASE)
+
+    expect(out).toMatchObject({
+      matched_via: 'identity_conflict',
+      contact_id: 'contact-2',
+      created: false,
+      carts_reattached: 0,
+    })
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('propagates a history reattachment failure so the webhook can be retried', async () => {
+    const fake = makeFakeSql([
+      [
+        {
+          id: 'contact-1',
+          email: 'jane@example.com',
+          shopify_customer_id: '1234567890',
+          phone: null,
+          first_name: null,
+          last_name: null,
+          locale: 'fr-FR',
+          country_code: null,
+          city: null,
+        },
+      ],
+      [{ id: 'contact-1' }],
+      new Error('history unavailable'),
+    ])
+
+    await expect(upsertShopifyCustomer(fake.sql, BASE)).rejects.toThrow('history unavailable')
+  })
+
+  it('surfaces a concurrent identity bind that wins after the initial email lookup', async () => {
+    const fake = makeFakeSql([
+      [],
+      [
+        {
+          id: 'contact-2',
+          email: 'jane@example.com',
+          shopify_customer_id: null,
+          phone: null,
+          first_name: null,
+          last_name: null,
+          locale: 'fr-FR',
+          country_code: null,
+          city: null,
+        },
+      ],
+      [], // conditional UPDATE lost the race
+    ])
+
+    await expect(upsertShopifyCustomer(fake.sql, BASE)).resolves.toMatchObject({
+      matched_via: 'identity_conflict',
+      contact_id: 'contact-2',
+      carts_reattached: 0,
+    })
+    expect(fake.calls[2].text).toMatch(/shopify_customer_id IS NULL OR shopify_customer_id =/)
+    expect(fake.calls).toHaveLength(3)
+  })
+
+  it('surfaces a concurrent insert conflict without reattaching the losing Shopify id', async () => {
+    const fake = makeFakeSql([
+      [],
+      [],
+      [], // INSERT lost the email conflict to another Shopify id
+      [
+        {
+          id: 'contact-winner',
+          email: 'jane@example.com',
+          shopify_customer_id: 'other-shopify-id',
+          phone: null,
+          first_name: null,
+          last_name: null,
+          locale: 'fr-FR',
+          country_code: null,
+          city: null,
+        },
+      ],
+    ])
+
+    await expect(upsertShopifyCustomer(fake.sql, BASE)).resolves.toMatchObject({
+      matched_via: 'identity_conflict',
+      contact_id: 'contact-winner',
+      carts_reattached: 0,
+    })
+    expect(fake.calls[2].text).toMatch(/WHERE contacts.shopify_customer_id IS NULL/)
+    expect(fake.calls).toHaveLength(4)
   })
 
   it('returns noop and writes nothing when payload has no email', async () => {

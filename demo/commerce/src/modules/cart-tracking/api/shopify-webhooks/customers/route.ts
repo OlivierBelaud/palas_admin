@@ -58,6 +58,12 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const outcome = await upsertShopifyCustomer(sql, customer)
+    if (outcome.matched_via === 'identity_conflict') {
+      console.error(
+        `[shopify-webhook customers] identity conflict for customer=${customer.id} contact_id=${outcome.contact_id ?? 'null'}`,
+      )
+      return new Response('Identity Conflict', { status: 409 })
+    }
     const email = customer.email?.trim().toLowerCase()
     if (email && app?.emit) {
       app

@@ -18,6 +18,7 @@ export interface ReattachInput {
 
 export interface ReattachOutcome {
   carts_attached: number
+  cart_links_attached: number
   orders_attached: number
 }
 
@@ -29,7 +30,7 @@ export interface ReattachOutcome {
 export async function reattachHistoryForContact(db: RawDb, input: ReattachInput): Promise<ReattachOutcome> {
   const email = input.email.trim().toLowerCase()
   const cust = input.shopify_customer_id.trim()
-  if (!email || !cust) return { carts_attached: 0, orders_attached: 0 }
+  if (!email || !cust) return { carts_attached: 0, cart_links_attached: 0, orders_attached: 0 }
 
   const cartsUpdated = await db.raw<{ id: string }>(
     `UPDATE carts
@@ -46,26 +47,32 @@ export async function reattachHistoryForContact(db: RawDb, input: ReattachInput)
     [email],
   )
   const contactId = contactRows[0]?.id ?? null
-
-  // Pivot rows: cart_contact + order_contact. Idempotent via ON CONFLICT
-  // DO NOTHING; relies on the pivot tables having a UNIQUE constraint on
-  // (left_id, right_id) — same shape as cart_order_cart_id_order_id_key.
-  if (contactId) {
-    for (const c of cartsUpdated) {
-      await db
-        .raw(
-          `INSERT INTO cart_contact (id, cart_id, contact_id, created_at, updated_at)
-           VALUES (gen_random_uuid(), $1, $2, NOW(), NOW())
-           ON CONFLICT DO NOTHING`,
-          [c.id, contactId],
-        )
-        .catch(() => {})
-    }
+  if (!contactId) {
+    throw new Error('Cannot reattach contact history: contact not found')
   }
 
-  const ordersUpdated: Array<{ id: string }> = contactId
-    ? await db.raw<{ id: string }>(
-        `WITH ins AS (
+  // Select all matching carts, not only rows updated above. If a previous
+  // attempt stamped shopify_customer_id but failed before inserting the
+  // pivot, a retry can still repair the missing relationship.
+  const cartLinksInserted = await db.raw<{ cart_id: string }>(
+    `INSERT INTO cart_contact (id, cart_id, contact_id, created_at, updated_at)
+         SELECT gen_random_uuid(), c.id::text, $1, NOW(), NOW()
+           FROM carts c
+          WHERE LOWER(c.email) = $2
+            AND c.shopify_customer_id = $3
+            AND NOT EXISTS (
+              SELECT 1
+                FROM cart_contact existing
+               WHERE existing.cart_id = c.id::text
+                 AND existing.contact_id = $1
+            )
+         ON CONFLICT DO NOTHING
+         RETURNING cart_id`,
+    [contactId, email, cust],
+  )
+
+  const ordersUpdated = await db.raw<{ id: string }>(
+    `WITH ins AS (
            INSERT INTO order_contact (id, order_id, contact_id, created_at, updated_at)
            SELECT gen_random_uuid(), o.id::text, $1, NOW(), NOW()
              FROM orders o
@@ -75,12 +82,30 @@ export async function reattachHistoryForContact(db: RawDb, input: ReattachInput)
            RETURNING order_id
          )
          SELECT order_id AS id FROM ins`,
-        [contactId, email],
-      )
-    : []
+    [contactId, email],
+  )
 
   return {
     carts_attached: cartsUpdated.length,
+    cart_links_attached: cartLinksInserted.length,
     orders_attached: ordersUpdated.length,
   }
+}
+
+export async function reattachShopifyCustomerHistory(
+  db: RawDb,
+  customers: ReattachInput[],
+): Promise<ReattachOutcome> {
+  const total: ReattachOutcome = {
+    carts_attached: 0,
+    cart_links_attached: 0,
+    orders_attached: 0,
+  }
+  for (const customer of customers) {
+    const outcome = await reattachHistoryForContact(db, customer)
+    total.carts_attached += outcome.carts_attached
+    total.cart_links_attached += outcome.cart_links_attached
+    total.orders_attached += outcome.orders_attached
+  }
+  return total
 }

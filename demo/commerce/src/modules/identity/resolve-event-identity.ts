@@ -61,7 +61,6 @@ export interface IdentityShadowComparison {
   matched_v1: boolean
   status: IdentityResolutionStatus
   aliases_seen: Record<string, unknown>
-  evidence: Record<string, unknown>
 }
 
 function sha256(value: string): string {
@@ -70,6 +69,16 @@ function sha256(value: string): string {
 
 export function emailSha256(email: string | null): string | null {
   return email ? sha256(email.trim().toLowerCase()) : null
+}
+
+export function buildIdentityAuditEvidence(
+  v1Source: string | null,
+  v2Source: string | null,
+): Record<string, string | null> {
+  return {
+    v1_source: v1Source,
+    v2_source: v2Source,
+  }
 }
 
 function str(value: unknown, max = 1024): string | null {
@@ -263,6 +272,7 @@ export async function compareIdentityResolvers(
     status: matchedV1 ? (identified ? 'identified' : 'anonymous') : 'diverged',
     aliases_seen: {
       has_email: Boolean(signals.email),
+      has_current_url: Boolean(signals.current_url),
       has_manta_uid_token: Boolean(signals.manta_uid_token),
       has_posthog_distinct_id: Boolean(signals.posthog_distinct_id),
       has_session_id: Boolean(signals.session_id),
@@ -271,11 +281,6 @@ export async function compareIdentityResolvers(
       has_shopify_customer_id: Boolean(signals.shopify_customer_id),
       has_cart_token: Boolean(signals.cart_token),
       has_checkout_token: Boolean(signals.checkout_token),
-    },
-    evidence: {
-      current_url: signals.current_url,
-      v1_source: v1.source,
-      v2_source: v2.source,
     },
   }
 }

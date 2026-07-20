@@ -21,7 +21,10 @@
 // values). Purchase state is synchronized through `orders`, not duplicated on
 // contacts. No full-refresh — that's the job of dedicated Shopify backfills.
 
-import { type RawDb, reattachHistoryForContact } from '../../modules/contact/reattach-history'
+import {
+  type RawDb,
+  reattachShopifyCustomerHistory,
+} from '../../modules/contact/reattach-history'
 import { classifyOrderChannel, type OrderSalesChannel } from '../../modules/order/classify-order-channel'
 import {
   paginateConnection,
@@ -382,22 +385,14 @@ export default defineCommand({
     // (or before the Contact row existed at all) get linked back via the
     // contact's email. First-write-wins on cart.shopify_customer_id.
     let cartsReattached = 0
+    let cartLinksReattached = 0
     await step.action('reattach-cart-history', {
       invoke: async (_i: unknown, ctx) => {
         const db = ctx.app.infra.db as RawDb | undefined
         if (!db || customersForUpsert.length === 0) return null
-        for (const c of customersForUpsert) {
-          if (!c.shopify_customer_id || !c.email) continue
-          try {
-            const outcome = await reattachHistoryForContact(db, {
-              email: c.email,
-              shopify_customer_id: c.shopify_customer_id,
-            })
-            cartsReattached += outcome.carts_attached
-          } catch (err) {
-            log.warn(`[syncContactsFromShopify] reattach failed for ${c.email}: ${(err as Error).message}`)
-          }
-        }
+        const outcome = await reattachShopifyCustomerHistory(db, customersForUpsert)
+        cartsReattached = outcome.carts_attached
+        cartLinksReattached = outcome.cart_links_attached
         return null
       },
       compensate: async () => {
@@ -449,13 +444,14 @@ export default defineCommand({
 
     const durationMs = Date.now() - startedAt
     log.info(
-      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} carts_reattached=${cartsReattached} contact_refresh_requested=${refreshEmails.length} order_refresh_requested=${ordersForUpsert.length} duration_ms=${durationMs}`,
+      `[syncContactsFromShopify] done — contacts=${contactsWritten} orders=${ordersWritten} carts_reattached=${cartsReattached} cart_links_reattached=${cartLinksReattached} contact_refresh_requested=${refreshEmails.length} order_refresh_requested=${ordersForUpsert.length} duration_ms=${durationMs}`,
     )
 
     return {
       contacts: contactsWritten,
       orders: ordersWritten,
       carts_reattached: cartsReattached,
+      cart_links_reattached: cartLinksReattached,
       contact_refresh_requested: refreshEmails.length,
       order_refresh_requested: ordersForUpsert.length,
       duration_ms: durationMs,

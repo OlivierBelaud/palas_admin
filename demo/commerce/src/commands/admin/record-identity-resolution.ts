@@ -1,4 +1,5 @@
 import {
+  buildIdentityAuditEvidence,
   compareIdentityResolvers,
   emailSha256,
   type IdentityServiceLike,
@@ -57,7 +58,7 @@ export default defineCommand({
         duration_ms: durationMs,
         error_message: null,
         aliases_seen: comparison.aliases_seen,
-        evidence: comparison.evidence,
+        evidence: buildIdentityAuditEvidence(v1.source, v2.source),
       })
 
       return {
