@@ -14,10 +14,11 @@ sont à mettre côté `Production` (et `Preview` si on veut tester en preview).
 | `MANTA_UID_SECRET` | HMAC-SHA256 secret pour le token `manta-uid` (identification visiteur cross-device dans `/api/cart-tracking/c?u=…`). 90 jours de TTL. Si absent en prod le code throw `INVALID_STATE` au premier sign. |
 | `CRON_SECRET` | Bearer token attendu sur `/api/crons/*`. Vercel Cron l'injecte automatiquement sur chaque trigger. Sans ça, n'importe qui peut faire tourner un cron en GET. |
 
-**Secret généré pour ce projet** (à coller dans `UNSUBSCRIBE_SECRET` sur Vercel) :
+Générer la valeur hors du dépôt, puis la stocker directement dans Vercel ou
+dans le gestionnaire de secrets approuvé. Ne jamais la committer :
 
-```
-4fa2b20cbbdb1ffa1c58c18d2cec944b9cc7c9be5ae199642c16d5752aa25adc
+```dotenv
+UNSUBSCRIBE_SECRET=<generate-and-store-in-secret-manager>
 ```
 
 Pour générer un nouveau secret quand on en a besoin :
@@ -101,8 +102,8 @@ Si les deux paires sont absentes, le cache visitor passe en no-op (la route rép
 
 ## Récap minimum pour faire tourner unsubscribe + relance panier
 
-```
-UNSUBSCRIBE_SECRET=4fa2b20cbbdb1ffa1c58c18d2cec944b9cc7c9be5ae199642c16d5752aa25adc
+```dotenv
+UNSUBSCRIBE_SECRET=<generate-and-store-in-secret-manager>
 RESEND_API_KEY=<from Resend dashboard>
 RESEND_FROM_EMAIL=Fancy Palas <hello@fancypalas.com>
 ADMIN_BASE_URL=https://admin.fancypalas.com
