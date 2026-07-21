@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "baseline": [
+    "20260508234806_migration.sql",
+    "20260509003245_migration.sql",
+    "20260511145539_migration.sql",
+    "20260511160000_cart_order_unique.sql",
+    "20260520080000_orders_shopify_customer_id.sql",
+    "20260527143000_abandoned_cart_campaign.sql",
+    "20260609152000_event_hub_logs.sql",
+    "20260609161000_abandoned_cart_message_discount.sql",
+    "20260609221500_identity_resolution_logs.sql",
+    "20260609233000_dispatch_logs.sql",
+    "20260611090000_abandoned_cart_message_snapshots.sql",
+    "20260611150000_cart_browser_locale.sql",
+    "20260611223000_abandoned_cart_sequences.sql",
+    "20260612000000_system_audits.sql",
+    "20260612152000_abandoned_cart_supersession.sql",
+    "20260615100000_drop_contact_order_snapshots.sql",
+    "20260615120000_orders_shipping_address.sql",
+    "20260615121000_reporting_daily_snapshots.sql",
+    "20260702233000_marketing_rules.sql",
+    "20260702234500_marketing_rules_first_order.sql",
+    "20260703093000_seed_personal_marketing_rules.sql",
+    "20260703133000_seed_gift_threshold_marketing_rules.sql",
+    "20260720153000_order_contact_unique.sql",
+    "20260720170000_abandoned_cart_delivery_lease.sql"
+  ],
+  "apply": [
+    "20260716120000_catalog_taxonomy.sql",
+    "20260716133000_catalog_category_presentation.sql",
+    "20260716150000_catalog_shopify_mirrors.sql",
+    "20260717100000_catalog_content.sql",
+    "20260717113000_catalog_menu_images.sql",
+    "20260720170000_catalog_publication_governance.sql"
+  ]
+}

@@ -1,21 +1,8 @@
 // Global teardown for the Playwright runtime smoke.
 // Kills the manta start child, drops the ephemeral database, and removes the tempdir.
 
-import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs'
-import { resolve } from 'node:path'
-
-const STATE_PATH = resolve('tests/runtime/.state.json')
-
-interface State {
-  skipped: boolean
-  reason?: string
-  port?: number
-  pid?: number
-  cachePid?: number
-  tempDir?: string
-  dbName?: string
-  baseUrl?: string
-}
+import { existsSync, unlinkSync } from 'node:fs'
+import { readRuntimeState, RUNTIME_STATE_PATH } from './state'
 
 async function isAlive(pid: number): Promise<boolean> {
   try {
@@ -27,13 +14,11 @@ async function isAlive(pid: number): Promise<boolean> {
 }
 
 async function globalTeardown(): Promise<void> {
-  if (!existsSync(STATE_PATH)) return
+  if (!existsSync(RUNTIME_STATE_PATH)) return
 
-  const state = JSON.parse(readFileSync(STATE_PATH, 'utf8')) as State
+  const state = readRuntimeState()
 
   try {
-    if (state.skipped) return
-
     for (const pid of [state.pid, state.cachePid]) {
       if (!pid) continue
       try {
@@ -77,12 +62,9 @@ async function globalTeardown(): Promise<void> {
       }
     }
 
-    if (state.tempDir) {
-      rmSync(state.tempDir, { recursive: true, force: true })
-    }
   } finally {
     try {
-      unlinkSync(STATE_PATH)
+      unlinkSync(RUNTIME_STATE_PATH)
     } catch {
       /* ignore */
     }
