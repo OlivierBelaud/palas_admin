@@ -103,6 +103,10 @@ function parseNormalizedPayload(value: MissingDispatchRow['payload_normalized'])
   return value
 }
 
+function sqlTimestamp(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value
+}
+
 function nextRetryDelayMinutes(attemptCount: number) {
   return Math.min(60, Math.max(1, 2 ** Math.max(0, attemptCount - 1)))
 }
@@ -373,8 +377,8 @@ export async function ensureMissingDestinationDispatchLogs({
         row.source_event_name,
         destination,
         ready ? 'pending' : 'invalid',
-        row.received_at,
-        ready ? new Date() : null,
+        sqlTimestamp(row.received_at),
+        ready ? new Date().toISOString() : null,
         ready ? null : (errors[0] ?? `${destination}_invalid_payload`),
         ready ? null : errors.join(', '),
         JSON.stringify(mapped.payload),

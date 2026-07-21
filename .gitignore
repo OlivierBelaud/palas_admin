@@ -82,6 +82,9 @@ coverage/
 
 # ── Playwright ──
 .playwright-mcp/
+/test-results/
+/tests/runtime/.auth.json
+/tests/runtime/.state.json
 
 # ── Claude Code — entirely local, never committed ──
 .claude/

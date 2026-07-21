@@ -1,0 +1,2 @@
+-- Workflow state is operational evidence used for recovery and audit.
+-- A rollback deliberately keeps both tables and their data intact.

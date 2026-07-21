@@ -50,6 +50,7 @@ describe('Event Hub dispatch reconciliation', () => {
     )
     expect(writes[0].query).toContain('ON CONFLICT (event_destination_key) DO NOTHING')
     expect(writes[0].query).toContain('RETURNING id')
+    expect(writes[0].params?.some((value) => value instanceof Date)).toBe(false)
   })
 
   it('is a no-op when another reconciler already inserted the destination row', async () => {

@@ -21,7 +21,7 @@ function makeReq(
     method: 'POST',
     headers: {
       ...(options.browserOrigin === false ? {} : { origin: 'https://fancypalas.com' }),
-      ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+      ...(options.token ? { 'x-palas-ingest-token': options.token } : {}),
       'content-type': 'application/json',
       'user-agent': 'Vitest Browser',
       'x-forwarded-for': '203.0.113.10, 10.0.0.1',
@@ -202,6 +202,8 @@ describe('Event Hub ingest consent logging', () => {
 
     const ga4Call = unsafeCalls.find((call) => call.params?.[0] === 'evt_purchase_with_event_hub_client_id:ga4')
     expect(ga4Call?.params?.[4]).toBe('pending')
+    expect(ga4Call?.params?.[5]).toBe('2026-06-12T12:00:00.000Z')
+    expect(ga4Call?.params?.[6]).toEqual(expect.any(String))
     expect(ga4Call?.params?.[8]).toBeNull()
     expect(ga4Call?.query).toContain('ON CONFLICT (event_destination_key) DO NOTHING')
 

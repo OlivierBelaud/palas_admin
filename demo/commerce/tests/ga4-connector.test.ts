@@ -225,7 +225,7 @@ describe('GA4 connector mapping', () => {
       'ga4',
       'pending',
       '2026-06-18T08:30:00.000Z',
-      expect.any(Date),
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       null,
       null,
     ])

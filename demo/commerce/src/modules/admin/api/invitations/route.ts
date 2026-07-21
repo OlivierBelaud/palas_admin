@@ -65,7 +65,7 @@ function normalizeEmail(value: unknown): string | null {
 
 function inviteUrl(req: Request, token: string): string {
   const base = (process.env.ADMIN_BASE_URL ?? process.env.MANTA_BASE_URL ?? new URL(req.url).origin).replace(/\/+$/, '')
-  return `${base}/admin/accept-invite?token=${encodeURIComponent(token)}`
+  return `${base}/accept-invite?token=${encodeURIComponent(token)}`
 }
 
 function inviteStatus(row: InviteRow): string {

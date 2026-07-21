@@ -8,6 +8,7 @@ const supportFiles = new Set([
   'patch-root-spa-vercel.mjs',
   'patch-root-spa-vercel.test.ts',
   'prepare-root-spa-public.mjs',
+  'prepare-runtime-manifest.ts',
 ])
 const inventory = JSON.parse(readFileSync(`${scriptsDir}/operator-scripts.json`, 'utf8')).classifications
 const operatorFiles = readdirSync(scriptsDir)
