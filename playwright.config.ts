@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const authState = 'tests/runtime/.auth.json'
+
 export default defineConfig({
   testDir: 'tests/runtime',
   testMatch: '**/*.spec.ts',
@@ -15,5 +17,13 @@ export default defineConfig({
     baseURL: process.env.MANTA_RUNTIME_BASE_URL ?? 'http://localhost:19500',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'auth-setup', testMatch: '**/auth.setup.ts' },
+    {
+      name: 'chromium',
+      testIgnore: '**/auth.setup.ts',
+      dependencies: ['auth-setup'],
+      use: { ...devices['Desktop Chrome'], storageState: authState },
+    },
+  ],
 })

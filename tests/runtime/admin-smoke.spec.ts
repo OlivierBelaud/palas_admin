@@ -1,54 +1,48 @@
-import { createHmac } from 'node:crypto'
-import { expect, test } from '@playwright/test'
+import { type APIRequestContext, expect, test } from '@playwright/test'
 import { readRuntimeState } from './state'
 
 const state = readRuntimeState()
 
-function adminToken() {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
-  const payload = Buffer.from(
-    JSON.stringify({
-      id: 'runtime-admin',
-      actor_id: 'runtime-admin',
-      auth_identity_id: 'runtime-admin-auth',
-      type: 'admin',
-      exp: Math.floor(Date.now() / 1000) + 300,
-    }),
-  ).toString('base64url')
-  const signature = createHmac('sha256', 'test-secret-for-runtime-smoke')
-    .update(`${header}.${payload}`)
-    .digest('base64url')
-  return `${header}.${payload}.${signature}`
+async function realAdminToken(request: APIRequestContext) {
+  const response = await request.post(`${state.baseUrl}/api/admin/login`, {
+    data: { email: state.bootstrapAdmin.email, password: state.bootstrapAdmin.password },
+  })
+  expect(response.status()).toBe(200)
+  return (await response.json()).token as string
 }
 
-test.describe('admin-smoke', () => {
-  test('admin home page renders without errors', async ({ page }) => {
+async function catalogHandler(request: APIRequestContext) {
+  process.env.DATABASE_URL = state.databaseUrl
+  process.env.JWT_SECRET = 'test-secret-for-runtime-smoke'
+  process.env.SHOPIFY_CATALOG_WRITES_ENABLED = 'false'
+  const token = await realAdminToken(request)
+  // @ts-expect-error The generated fast function is JavaScript and intentionally has no declaration file.
+  const { default: handler } = await import('../../demo/commerce/vercel-fast-functions/admin-catalog-taxonomy.mjs')
+  return {
+    invoke: (data: Record<string, unknown>) =>
+      handler.fetch(
+        new Request('http://runtime.local/api/admin/catalog-taxonomy', {
+          body: JSON.stringify(data),
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+      ),
+  }
+}
+
+test.describe('admin runtime smoke', () => {
+  test('authenticated home and infrastructure health render without errors', async ({ page }) => {
     const pageErrors: Error[] = []
     const successfulResponses: string[] = []
 
-    page.on('pageerror', (err) => pageErrors.push(err))
-    page.on('response', (res) => {
-      const url = res.url()
-      const status = res.status()
-      if (status >= 200 && status < 300 && (url.includes('/admin/') || url.includes('/api/'))) {
-        successfulResponses.push(`${status} ${url}`)
+    page.on('pageerror', (error) => pageErrors.push(error))
+    page.on('response', (response) => {
+      const url = response.url()
+      if (response.ok() && (url.includes('/admin/') || url.includes('/api/'))) {
+        successfulResponses.push(`${response.status()} ${url}`)
       }
     })
 
-    await page.context().addCookies([
-      {
-        name: 'manta.admin.access',
-        value: adminToken(),
-        url: state.baseUrl,
-      },
-    ])
-    await page.addInitScript(() => localStorage.setItem('manta-auth-state', 'authenticated'))
-    await page.route('**/api/admin/me', (route) =>
-      route.fulfill({
-        contentType: 'application/json',
-        json: { data: { id: 'runtime-admin', email: 'runtime@example.com' } },
-      }),
-    )
     const response = await page.goto(`${state.baseUrl}/`, { waitUntil: 'networkidle', timeout: 30_000 })
     expect(response?.status()).toBe(200)
     await expect(page).toHaveTitle('Admin')
@@ -58,50 +52,33 @@ test.describe('admin-smoke', () => {
     expect(pageErrors).toEqual([])
     expect(successfulResponses.length).toBeGreaterThan(0)
 
-    // Verify /health/live directly
-    const health = await page.request.get(`${state.baseUrl}/health/live`)
-    expect(health.status()).toBe(200)
+    const live = await page.request.get(`${state.baseUrl}/health/live`)
+    expect(live.status()).toBe(200)
 
-    // BC-F22 — /health/ready must report actual infra probes (db at least).
     const ready = await page.request.get(`${state.baseUrl}/health/ready`)
     expect(ready.status()).toBe(200)
-    const readyBody = await ready.json()
-    expect(readyBody.status).toBe('ready')
-    expect(readyBody.checks).toBeDefined()
-    expect(readyBody.checks.db).toBe('ok')
+    expect(await ready.json()).toMatchObject({ status: 'ready', checks: { db: 'ok' } })
   })
 
-  test('catalog publication stays disabled until the production write gate is explicitly armed', async () => {
-    const modulePath = '../../demo/commerce/vercel-fast-functions/admin-catalog-taxonomy.mjs'
-    const { default: handler } = await import(modulePath)
-    const response = await handler.fetch(
-      new Request('http://runtime.local/api/admin/catalog-taxonomy', {
-        body: JSON.stringify({ action: 'sync_shopify_collections' }),
-        headers: { authorization: `Bearer ${adminToken()}`, 'content-type': 'application/json' },
-        method: 'POST',
-      }),
-    )
+  test('catalog publication stays disabled until the production write gate is armed', async ({ request }) => {
+    const { invoke } = await catalogHandler(request)
+    const response = await invoke({ action: 'sync_shopify_collections' })
 
     expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.data.shopify_sync).toMatchObject({
-      ok: false,
-      blocked: true,
-      error: expect.stringContaining('SHOPIFY_CATALOG_WRITES_ENABLED'),
+    expect(await response.json()).toMatchObject({
+      data: {
+        shopify_sync: {
+          ok: false,
+          blocked: true,
+          error: expect.stringContaining('SHOPIFY_CATALOG_WRITES_ENABLED'),
+        },
+      },
     })
   })
 
-  test('catalog deletion remains replayable after the local soft-delete commits', async () => {
-    const modulePath = '../../demo/commerce/vercel-fast-functions/admin-catalog-taxonomy.mjs'
-    const { default: handler } = await import(modulePath)
-    const invoke = (data: Record<string, unknown>) =>
-      handler.fetch(
-        new Request('http://runtime.local/api/admin/catalog-taxonomy', {
-          body: JSON.stringify(data),
-          headers: { authorization: `Bearer ${adminToken()}`, 'content-type': 'application/json' },
-          method: 'POST',
-        }),
-      )
+  test('catalog deletion remains replayable after the local soft-delete commits', async ({ request }) => {
+    const { invoke } = await catalogHandler(request)
+
     const create = await invoke({ action: 'create_category', title_fr: 'Runtime retirement test' })
     expect(create.status).toBe(200)
     const categoryId = (await create.json()).data.result.id
@@ -112,27 +89,10 @@ test.describe('admin-smoke', () => {
 
     const replayedDelete = await invoke({ action: 'delete_category', category_id: categoryId })
     expect(replayedDelete.status).toBe(200)
-    expect((await replayedDelete.json()).data.result).toMatchObject({
-      id: categoryId,
-      already_deleted: true,
-    })
+    expect((await replayedDelete.json()).data.result).toMatchObject({ id: categoryId, already_deleted: true })
   })
 
   test('catalog navigation is read-only and renders its ownership boundary', async ({ page }) => {
-    await page.context().addCookies([
-      {
-        name: 'manta.admin.access',
-        value: adminToken(),
-        url: state.baseUrl,
-      },
-    ])
-    await page.addInitScript(() => localStorage.setItem('manta-auth-state', 'authenticated'))
-    await page.route('**/api/admin/me', (route) =>
-      route.fulfill({
-        contentType: 'application/json',
-        json: { data: { id: 'runtime-admin', email: 'runtime@example.com' } },
-      }),
-    )
     const mutations: string[] = []
     await page.route('**/api/admin/catalog-taxonomy', async (route) => {
       if (route.request().method() !== 'GET') {

@@ -12,7 +12,7 @@ export default defineQuery({
   description: 'Aggregated cart statistics (last 30 days) — activity states derived on the fly',
   input: z.object({}),
   handler: async (_input, { db, schema }) => {
-    const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString()
+    const since = new Date(Date.now() - 30 * 86400 * 1000)
     const carts = await readRows(
       { db, schema },
       {

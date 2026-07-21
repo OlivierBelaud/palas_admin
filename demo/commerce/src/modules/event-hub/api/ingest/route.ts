@@ -73,7 +73,7 @@ function corsHeaders(origin: string | null): Record<string, string> {
 
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Palas-Test',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Palas-Ingest-Token, X-Palas-Test',
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -199,7 +199,9 @@ function isAllowedDirectIngestSource(source: string): boolean {
 function hasTrustedIngestToken(req: Request): boolean {
   const expected = process.env.EVENT_HUB_INGEST_TOKEN?.trim()
   const authorization = req.headers.get('authorization')
-  const received = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : ''
+  const received =
+    req.headers.get('x-palas-ingest-token')?.trim() ||
+    (authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '')
   if (!expected || !received) return false
 
   const expectedBytes = Buffer.from(expected)
@@ -502,6 +504,8 @@ export async function POST(req: Request) {
   const pickedEventId = pickEventId(body, eventName)
   const eventId = pickedEventId.value
   const eventTime = pickEventTime(body)
+  const eventTimeSql = eventTime.toISOString()
+  const nextAttemptSql = new Date().toISOString()
   const consent = readConsent(body)
   const identity = resolveIdentity(req, body)
   const normalized = summarizePayload(body, eventName, identity, ga4ContextFromHeaders(req.headers), consent)
@@ -573,8 +577,8 @@ export async function POST(req: Request) {
         eventName,
         str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
         ga4.ok ? 'pending' : 'invalid',
-        eventTime,
-        ga4.ok ? new Date() : null,
+        eventTimeSql,
+        ga4.ok ? nextAttemptSql : null,
         ga4.ok ? null : (ga4.errors[0] ?? 'ga4_invalid_payload'),
         ga4.ok ? null : ga4.errors.join(', '),
         JSON.stringify(ga4.payload),
@@ -603,8 +607,8 @@ export async function POST(req: Request) {
         eventName,
         str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
         googleAds.ok ? 'pending' : 'invalid',
-        eventTime,
-        googleAds.ok ? new Date() : null,
+        eventTimeSql,
+        googleAds.ok ? nextAttemptSql : null,
         googleAds.ok ? null : (googleAds.errors[0] ?? 'google_ads_invalid_payload'),
         googleAds.ok ? null : googleAds.errors.join(', '),
         JSON.stringify(googleAds.payload),
@@ -633,8 +637,8 @@ export async function POST(req: Request) {
         eventName,
         str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
         metaCapi.ok ? 'pending' : 'invalid',
-        eventTime,
-        metaCapi.ok ? new Date() : null,
+        eventTimeSql,
+        metaCapi.ok ? nextAttemptSql : null,
         metaCapi.ok ? null : (metaCapi.errors[0] ?? 'meta_capi_invalid_payload'),
         metaCapi.ok ? null : metaCapi.errors.join(', '),
         JSON.stringify(metaCapi.payload),

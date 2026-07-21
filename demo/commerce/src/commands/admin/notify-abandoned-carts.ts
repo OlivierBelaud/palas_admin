@@ -21,14 +21,20 @@ export default defineCommand({
         const sql = resolveSql(ctx.app)
         const notification = resolveNotification(ctx.app)
         const file = resolveFile(ctx.app)
-        if (!sql || !notification) {
+        if (!sql || (!notification && !input.dryRun)) {
           throw new MantaError('UNEXPECTED_STATE', 'Database or notification port missing')
+        }
+
+        const dryRunNotification = {
+          send: async () => {
+            throw new MantaError('UNEXPECTED_STATE', 'Dry-run attempted an outbound notification')
+          },
         }
 
         return await runAbandonedCartCampaign(
           {
             sql,
-            notification,
+            notification: notification ?? dryRunNotification,
             file,
             adminBase: (process.env.ADMIN_BASE_URL ?? 'https://admin.fancypalas.com').replace(/\/+$/, ''),
             fromEmail: process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>',

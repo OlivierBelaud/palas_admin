@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { createTestDatabase, waitForPg } from '@mantajs/test-utils/pg'
+import { waitForPg } from '@mantajs/test-utils/pg'
 
 if (!process.env.TEST_DATABASE_URL?.trim()) {
   throw new Error('TEST_DATABASE_URL is required for the mandatory migration gate')
@@ -25,7 +26,10 @@ if (!isDeepStrictEqual(migrationFiles, classifiedFiles)) {
 }
 
 await waitForPg()
-const database = await createTestDatabase(`admin_migrations_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+const database = await createMigrationDatabase(
+  process.env.TEST_DATABASE_URL,
+  `admin_migrations_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+)
 const mantaBin = resolve(demoDir, 'node_modules', '.bin', process.platform === 'win32' ? 'manta.cmd' : 'manta')
 
 try {
@@ -106,4 +110,51 @@ try {
   )
 } finally {
   await database.cleanup()
+}
+
+async function createMigrationDatabase(bootstrapUrl, dbName) {
+  const { default: pg } = await import('pg')
+  const roleName = `${dbName}_role`
+  const password = randomUUID()
+  const bootstrap = new pg.Client({ connectionString: bootstrapUrl })
+  await bootstrap.connect()
+  try {
+    await bootstrap.query(`DROP DATABASE IF EXISTS "${dbName}"`)
+    await bootstrap.query(`DROP ROLE IF EXISTS "${roleName}"`)
+    await bootstrap.query(`CREATE ROLE "${roleName}" LOGIN PASSWORD '${password}'`)
+    await bootstrap.query(`CREATE DATABASE "${dbName}" OWNER "${roleName}"`)
+  } finally {
+    await bootstrap.end()
+  }
+
+  // @mantajs/test-utils beta.12 replaces the final slash-delimited URL
+  // segment and corrupts libpq socket URLs. Give the application adapters a
+  // dedicated TCP role while keeping the bootstrap connection on the local
+  // socket. Remove this compatibility path when OLI-393 is released.
+  const databaseUrl = new URL(bootstrapUrl)
+  if (!databaseUrl.hostname || databaseUrl.searchParams.get('host')?.startsWith('/')) {
+    databaseUrl.hostname = '127.0.0.1'
+  }
+  databaseUrl.searchParams.delete('host')
+  databaseUrl.username = roleName
+  databaseUrl.password = password
+  databaseUrl.pathname = `/${dbName}`
+
+  return {
+    url: databaseUrl.toString(),
+    cleanup: async () => {
+      const client = new pg.Client({ connectionString: bootstrapUrl })
+      await client.connect()
+      try {
+        await client.query(
+          'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+          [dbName],
+        )
+        await client.query(`DROP DATABASE IF EXISTS "${dbName}"`)
+        await client.query(`DROP ROLE IF EXISTS "${roleName}"`)
+      } finally {
+        await client.end()
+      }
+    },
+  }
 }

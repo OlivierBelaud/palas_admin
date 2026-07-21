@@ -140,6 +140,10 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value)
 }
 
+function sqlTimestamp(value: Date | string): string {
+  return toDate(value).toISOString()
+}
+
 function dueAt(base: Date | string, ms: number): Date {
   return new Date(toDate(base).getTime() + ms)
 }
@@ -257,8 +261,8 @@ async function maybeRestartSequence(
     await sql`
       UPDATE abandoned_cart_cases
       SET current_sequence_version = ${nextVersion},
-          sequence_started_at = ${cartActionAt},
-          last_cart_action_at = ${cartActionAt},
+          sequence_started_at = ${sqlTimestamp(cartActionAt)},
+          last_cart_action_at = ${sqlTimestamp(cartActionAt)},
           stage_at_open = ${c.highest_stage},
           updated_at = NOW()
       WHERE id = ${cartCase.id}`
@@ -274,7 +278,7 @@ async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
         email = ${c.email.toLowerCase()},
         cart_token = ${c.cart_token},
         checkout_token = COALESCE(${c.checkout_token}, acc.checkout_token),
-        last_cart_action_at = ${toDate(c.last_action_at)},
+        last_cart_action_at = ${sqlTimestamp(c.last_action_at)},
         stage_at_open = ${c.highest_stage},
         updated_at = NOW()
     WHERE acc.id = (
@@ -301,7 +305,7 @@ async function ensureCase(sql: RuntimeSql, c: CandidateRow): Promise<CaseRow> {
     )
     VALUES (
       ${newId('acc')}, ${c.id}, ${c.contact_id}, ${c.email.toLowerCase()}, ${c.cart_token}, ${c.checkout_token},
-      ${caseTypeForStage(c.highest_stage)}, 'open', 1, ${toDate(c.last_action_at)}, ${c.highest_stage}, ${toDate(c.last_action_at)}, NOW(), NOW(), NOW()
+      ${caseTypeForStage(c.highest_stage)}, 'open', 1, ${sqlTimestamp(c.last_action_at)}, ${c.highest_stage}, ${sqlTimestamp(c.last_action_at)}, NOW(), NOW(), NOW()
     )
     ON CONFLICT (cart_id) DO UPDATE SET
       contact_id = COALESCE(EXCLUDED.contact_id, abandoned_cart_cases.contact_id),
@@ -355,7 +359,7 @@ async function createPendingMessage(
     )
     VALUES (
       ${newId('acm')}, ${caseId}, ${c.id}, ${c.email.toLowerCase()}, ${type},
-      ${sequence.version}, ${sequence.startedAt}, 'pending', ${scheduledFor}, ${idempotencyKey}, NOW(), NOW()
+      ${sequence.version}, ${sqlTimestamp(sequence.startedAt)}, 'pending', ${sqlTimestamp(scheduledFor)}, ${idempotencyKey}, NOW(), NOW()
     )
     ON CONFLICT (case_id, sequence_version, message_type) DO NOTHING
     RETURNING id, message_type, sequence_version, sequence_started_at, status, sent_at, scheduled_for`
@@ -390,7 +394,7 @@ async function claimMessageForDelivery(
       AND (
         delivery_claim_token IS NULL
         OR delivery_claimed_at IS NULL
-        OR delivery_claimed_at <= ${staleBefore}
+        OR delivery_claimed_at <= ${sqlTimestamp(staleBefore)}
       )
     RETURNING id`
   return rows[0] ? { messageId: rows[0].id, claimToken } : null
@@ -612,8 +616,8 @@ async function findNewerActiveCartForEmail(
       AND email IS NOT NULL
       AND items IS NOT NULL
       AND jsonb_array_length(items) > 0
-      AND last_action_at >= ${cutoff}
-      AND last_action_at > ${toDate(c.last_action_at)}
+      AND last_action_at >= ${sqlTimestamp(cutoff)}
+      AND last_action_at > ${sqlTimestamp(c.last_action_at)}
       AND highest_stage <> 'completed'
       AND COALESCE(status, 'active') <> 'completed'
       AND COALESCE(shopify_order_id, '') = ''
@@ -629,7 +633,7 @@ async function findNewerOpenCaseForEmail(sql: RuntimeSql, c: CandidateRow): Prom
     WHERE LOWER(email) = LOWER(${c.email})
       AND cart_id <> ${c.id}
       AND status = 'open'
-      AND last_cart_action_at > ${toDate(c.last_action_at)}
+      AND last_cart_action_at > ${sqlTimestamp(c.last_action_at)}
     ORDER BY last_cart_action_at DESC
     LIMIT 1`
   return rows[0] ?? null
@@ -676,7 +680,7 @@ async function closeOlderOpenCasesForEmail(sql: RuntimeSql, c: CandidateRow, per
       AND LOWER(acc.email) = LOWER(${c.email})
       AND acc.cart_id <> ${c.id}
       AND acc.status = 'open'
-      AND acc.last_cart_action_at < ${cartActionAt}
+      AND acc.last_cart_action_at < ${sqlTimestamp(cartActionAt)}
       AND m.status = 'pending'`
 
   await sql`
@@ -686,7 +690,7 @@ async function closeOlderOpenCasesForEmail(sql: RuntimeSql, c: CandidateRow, per
     WHERE LOWER(email) = LOWER(${c.email})
       AND cart_id <> ${c.id}
       AND status = 'open'
-      AND last_cart_action_at < ${cartActionAt}`
+      AND last_cart_action_at < ${sqlTimestamp(cartActionAt)}`
 }
 
 async function markSent(
@@ -766,7 +770,7 @@ async function findLocalOrderAfter(sql: RuntimeSql, email: string, since: Date):
     SELECT shopify_order_id, order_number, placed_at, total_price, currency
     FROM orders
     WHERE LOWER(email) = LOWER(${email})
-      AND placed_at >= ${since}
+      AND placed_at >= ${sqlTimestamp(since)}
       AND status IN ('paid', 'fulfilled')
     ORDER BY placed_at DESC
     LIMIT 1`
@@ -847,7 +851,7 @@ async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Da
     SELECT occurred_at
     FROM klaviyo_events
     WHERE LOWER(email) = LOWER(${email})
-      AND occurred_at >= ${since}
+      AND occurred_at >= ${sqlTimestamp(since)}
       AND (
         metric = ANY(${KLAVIYO_ABANDON_METRICS})
         OR (metric = 'Received Email' AND (
@@ -1057,8 +1061,8 @@ export async function runAbandonedCartCampaign(
     WHERE c.email IS NOT NULL
       AND c.items IS NOT NULL
       AND jsonb_array_length(c.items) > 0
-      AND c.last_action_at >= ${cutoff}
-      AND c.last_action_at <= ${new Date(now.getTime() - PAYMENT_HELP_AFTER_HOURS * HOUR_MS)}
+      AND c.last_action_at >= ${sqlTimestamp(cutoff)}
+      AND c.last_action_at <= ${sqlTimestamp(new Date(now.getTime() - PAYMENT_HELP_AFTER_HOURS * HOUR_MS))}
       AND c.highest_stage <> 'completed'
       AND COALESCE(c.status, 'active') <> 'completed'
       AND COALESCE(c.shopify_order_id, '') = ''

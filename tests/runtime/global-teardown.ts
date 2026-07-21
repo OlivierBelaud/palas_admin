@@ -2,7 +2,7 @@
 // Kills the manta start child, drops the ephemeral database, and removes the tempdir.
 
 import { existsSync, unlinkSync } from 'node:fs'
-import { readRuntimeState, RUNTIME_STATE_PATH } from './state'
+import { RUNTIME_AUTH_PATH, RUNTIME_STATE_PATH, readRuntimeState } from './state'
 
 async function isAlive(pid: number): Promise<boolean> {
   try {
@@ -48,12 +48,16 @@ async function globalTeardown(): Promise<void> {
         const client = new Client({ connectionString: process.env.TEST_DATABASE_URL })
         await client.connect()
         try {
-          await client.query(`
+          await client.query(
+            `
             SELECT pg_terminate_backend(pid)
             FROM pg_stat_activity
-            WHERE datname = '${state.dbName}' AND pid <> pg_backend_pid()
-          `)
+            WHERE datname = $1 AND pid <> pg_backend_pid()
+          `,
+            [state.dbName],
+          )
           await client.query(`DROP DATABASE IF EXISTS "${state.dbName}"`)
+          if (state.dbRole) await client.query(`DROP ROLE IF EXISTS "${state.dbRole}"`)
         } finally {
           await client.end()
         }
@@ -61,10 +65,14 @@ async function globalTeardown(): Promise<void> {
         /* best effort */
       }
     }
-
   } finally {
     try {
       unlinkSync(RUNTIME_STATE_PATH)
+    } catch {
+      /* ignore */
+    }
+    try {
+      unlinkSync(RUNTIME_AUTH_PATH)
     } catch {
       /* ignore */
     }

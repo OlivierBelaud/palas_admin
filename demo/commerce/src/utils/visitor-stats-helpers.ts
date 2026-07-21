@@ -95,7 +95,7 @@ export async function pullSessions(
           'email_acquired_via',
         ],
         filters: {
-          started_at: { $gte: lookbackStart.toISOString(), $lt: to.toISOString() },
+          started_at: { $gte: lookbackStart, $lt: to },
         },
         pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
       })) as unknown as SessionLite[]

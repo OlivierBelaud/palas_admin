@@ -65,9 +65,9 @@ async function pullCarts(
         fields: ['id', 'cart_birth_at', 'created_at', 'shopify_order_id'],
         filters: {
           $or: [
-            { cart_birth_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+            { cart_birth_at: { $gte: from, $lt: to } },
             // Fallback for carts created before cart_birth_at existed.
-            { cart_birth_at: null, created_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+            { cart_birth_at: null, created_at: { $gte: from, $lt: to } },
           ],
         },
         pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
@@ -149,7 +149,7 @@ async function pullEcommerceOrderIds(
         fields: ['shopify_order_id'],
         filters: {
           include_in_ecommerce_analytics: true,
-          placed_at: { $gte: from.toISOString(), $lt: to.toISOString() },
+          placed_at: { $gte: from, $lt: to },
         },
         pagination: { take: PAGE, skip: offset, limit: PAGE, offset },
       })) as OrderLite[]

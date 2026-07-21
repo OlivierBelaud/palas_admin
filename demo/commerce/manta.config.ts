@@ -18,6 +18,7 @@ const publicBaseUrl =
   process.env.MANTA_BASE_URL ??
   process.env.ADMIN_BASE_URL ??
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://admin.fancypalas.com')
+const runtimeSmoke = process.env.MANTA_RUNTIME_SMOKE === '1'
 
 if (!process.env.UPSTASH_REDIS_REST_URL && upstashRedisUrl) {
   process.env.UPSTASH_REDIS_REST_URL = upstashRedisUrl
@@ -65,12 +66,16 @@ export default defineConfig({
     // IJobSchedulerPort — so user jobs and the framework reaper job
     // run unchanged.
     IJobSchedulerPort: { adapter: '@mantajs/adapter-jobs-vercel-cron' },
-    INotificationPort: {
-      adapter: '@mantajs/adapter-notification-resend',
-      options: {
-        defaultFrom: process.env.RESEND_FROM_EMAIL ?? 'PALAS <hello@fancypalas.com>',
-        defaultReplyTo: process.env.RESEND_REPLY_TO,
-      },
-    },
+    ...(runtimeSmoke
+      ? {}
+      : {
+          INotificationPort: {
+            adapter: '@mantajs/adapter-notification-resend',
+            options: {
+              defaultFrom: process.env.RESEND_FROM_EMAIL ?? 'PALAS <hello@fancypalas.com>',
+              defaultReplyTo: process.env.RESEND_REPLY_TO,
+            },
+          },
+        }),
   },
 })

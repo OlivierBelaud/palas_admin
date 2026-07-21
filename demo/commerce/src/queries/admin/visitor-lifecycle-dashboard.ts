@@ -142,7 +142,7 @@ export default defineQuery({
             fields: ['id', 'shopify_order_id', 'total_price', 'placed_at', 'include_in_ecommerce_analytics'],
             filters: {
               include_in_ecommerce_analytics: true,
-              placed_at: { $gte: from.toISOString(), $lt: to.toISOString() },
+              placed_at: { $gte: from, $lt: to },
             },
             pagination,
           }) as unknown as Promise<OrderRow[]>,
@@ -313,7 +313,7 @@ async function loadSessions(
           'email_acquired_via',
           'is_paid_session',
         ],
-        filters: { started_at: { $gte: from.toISOString(), $lt: to.toISOString() } },
+        filters: { started_at: { $gte: from, $lt: to } },
         pagination,
       }) as unknown as Promise<SessionRow[]>,
   ).catch((err) => {

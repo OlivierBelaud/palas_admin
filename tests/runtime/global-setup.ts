@@ -5,7 +5,8 @@
 // a failed gate, never a silently skipped runtime suite.
 
 import { execFileSync, spawn } from 'node:child_process'
-import { unlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { copyFileSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { RUNTIME_STATE_PATH, writeRuntimeState } from './state'
 
@@ -14,27 +15,81 @@ const MANTA_BIN = resolve(DEMO_DIR, 'node_modules', '.bin', process.platform ===
 const CACHE_SERVER = resolve('tests/runtime/cache-server.ts')
 const BOOTSTRAP_SCHEMA = resolve(DEMO_DIR, 'scripts/bootstrap-ci-schema.ts')
 const APPLY_MIGRATIONS = resolve(DEMO_DIR, 'scripts/apply-ci-migrations.ts')
+const PREPARE_RUNTIME_MANIFEST = resolve(DEMO_DIR, 'scripts/prepare-runtime-manifest.ts')
+const PREPARE_ROOT_SPA_PUBLIC = resolve(DEMO_DIR, 'scripts/prepare-root-spa-public.mjs')
+const SPA_FAVICON = resolve(DEMO_DIR, 'src/spa/admin/public/favicon.webp')
+const TRACKED_FAVICON = resolve(DEMO_DIR, 'public/favicon.webp')
 const READY_SIGNAL = 'Listening on:'
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024
+
+async function createRuntimeDatabase(bootstrapUrl: string) {
+  const { default: pg } = await import('pg')
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const dbName = `runtime_smoke_${suffix}`
+  const dbRole = `runtime_smoke_role_${suffix}`
+  const dbPassword = randomUUID()
+  const bootstrap = new pg.Client({ connectionString: bootstrapUrl })
+  await bootstrap.connect()
+  try {
+    await bootstrap.query(`DROP DATABASE IF EXISTS "${dbName}"`)
+    await bootstrap.query(`DROP ROLE IF EXISTS "${dbRole}"`)
+    await bootstrap.query(`CREATE ROLE "${dbRole}" LOGIN PASSWORD '${dbPassword}'`)
+    await bootstrap.query(`CREATE DATABASE "${dbName}" OWNER "${dbRole}"`)
+  } finally {
+    await bootstrap.end()
+  }
+
+  const runtimeUrl = new URL(bootstrapUrl)
+  if (!runtimeUrl.hostname || runtimeUrl.searchParams.get('host')?.startsWith('/')) {
+    runtimeUrl.hostname = '127.0.0.1'
+  }
+  runtimeUrl.searchParams.delete('host')
+  runtimeUrl.username = dbRole
+  runtimeUrl.password = dbPassword
+  runtimeUrl.pathname = `/${dbName}`
+  return {
+    dbName,
+    dbRole,
+    url: runtimeUrl.toString(),
+    cleanup: async () => {
+      const client = new pg.Client({ connectionString: bootstrapUrl })
+      await client.connect()
+      try {
+        await client.query(
+          'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+          [dbName],
+        )
+        await client.query(`DROP DATABASE IF EXISTS "${dbName}"`)
+        await client.query(`DROP ROLE IF EXISTS "${dbRole}"`)
+      } finally {
+        await client.end()
+      }
+    },
+  }
+}
 
 async function globalSetup(): Promise<void> {
   if (!process.env.TEST_DATABASE_URL?.trim()) {
     throw new Error('TEST_DATABASE_URL is required for the mandatory runtime smoke')
   }
 
-  const { createTestDatabase, waitForPg } = await import('@mantajs/test-utils/pg')
-
-  await waitForPg()
-  const database = await createTestDatabase(`runtime_smoke_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+  const database = await createRuntimeDatabase(process.env.TEST_DATABASE_URL)
   let cachePid: number | undefined
   let serverPid: number | undefined
 
   try {
     const dbUrl = database.url
-    const dbName = new URL(dbUrl).pathname.replace(/^\//, '')
+    const dbName = database.dbName
     const port = 19500 + Math.floor(Math.random() * 500)
     const cachePort = 20500 + Math.floor(Math.random() * 500)
     const cacheUrl = `http://127.0.0.1:${cachePort}`
+    const baseUrl = `http://localhost:${port}`
+    const cacheToken = 'runtime-smoke-token'
+    const bootstrapAdmin = {
+      email: 'runtime-admin@example.test',
+      password: 'Runtime-password-354!',
+      inviteToken: randomUUID(),
+    }
 
     const runEnv: Record<string, string> = {
       PATH: process.env.PATH ?? '',
@@ -43,10 +98,14 @@ async function globalSetup(): Promise<void> {
       JWT_SECRET: 'test-secret-for-runtime-smoke',
       COOKIE_SECRET: 'test-cookie-secret-for-runtime-smoke',
       MANTA_RUNTIME_SMOKE: '1',
-      RESEND_API_KEY: 're_runtime_smoke_no_delivery',
+      MANTA_BASE_URL: baseUrl,
+      ADMIN_BASE_URL: baseUrl,
+      CRON_SECRET: 'runtime-smoke-cron-secret',
+      EVENT_HUB_INGEST_TOKEN: 'runtime-smoke-ingest-token',
+      UNSUBSCRIBE_SECRET: 'runtime-smoke-unsubscribe-secret-0000000000000000000000000000',
       SHOPIFY_CATALOG_WRITES_ENABLED: 'false',
       UPSTASH_REDIS_REST_URL: cacheUrl,
-      UPSTASH_REDIS_REST_TOKEN: 'runtime-smoke-token',
+      UPSTASH_REDIS_REST_TOKEN: cacheToken,
       RUNTIME_CACHE_PORT: String(cachePort),
       APP_ENV: 'prod',
       NODE_ENV: 'production',
@@ -99,12 +158,43 @@ async function globalSetup(): Promise<void> {
       stdio: 'inherit',
       env: runEnv,
     })
-
-    execFileSync(MANTA_BIN, ['build', '--preset', 'node', '--no-migrate'], {
+    execFileSync(process.execPath, [PREPARE_RUNTIME_MANIFEST], {
       cwd: DEMO_DIR,
       stdio: 'inherit',
       env: runEnv,
     })
+    execFileSync(process.execPath, [PREPARE_ROOT_SPA_PUBLIC], {
+      cwd: DEMO_DIR,
+      stdio: 'inherit',
+      env: runEnv,
+    })
+
+    const { default: pg } = await import('pg')
+    const fixtureDb = new pg.Client({ connectionString: dbUrl })
+    await fixtureDb.connect()
+    try {
+      await fixtureDb.query(
+        `INSERT INTO admin_invites
+           (id, email, accepted, token, expires_at, metadata, created_at, updated_at)
+         VALUES ($1, $2, false, $3, now() + interval '7 days', '{}'::jsonb, now(), now())`,
+        [randomUUID(), bootstrapAdmin.email, bootstrapAdmin.inviteToken],
+      )
+    } finally {
+      await fixtureDb.end()
+    }
+
+    try {
+      execFileSync(MANTA_BIN, ['build', '--preset', 'node', '--no-migrate'], {
+        cwd: DEMO_DIR,
+        stdio: 'inherit',
+        env: runEnv,
+      })
+    } finally {
+      // Manta materializes the compiled SPA into demo/commerce/public and
+      // replaces that directory. Keep the canonical tracked asset intact so a
+      // runtime test never dirties the checkout or breaks the secret scanner.
+      copyFileSync(SPA_FAVICON, TRACKED_FAVICON)
+    }
 
     const startEnv: Record<string, string> = { ...runEnv, PORT: String(port), NITRO_PORT: String(port) }
 
@@ -166,6 +256,8 @@ async function globalSetup(): Promise<void> {
       child.stderr?.on('data', onStderr)
       child.on('exit', onExit)
     })
+    child.stdout?.pipe(process.stdout)
+    child.stderr?.pipe(process.stderr)
 
     // Poll /health/live until 200 or 30s elapsed.
     const deadline = Date.now() + 30_000
@@ -193,8 +285,17 @@ async function globalSetup(): Promise<void> {
       )
     }
 
-    const baseUrl = `http://localhost:${port}`
-    writeRuntimeState({ pid: child.pid, cachePid: cacheChild.pid, dbName, baseUrl })
+    writeRuntimeState({
+      pid: child.pid,
+      cachePid: cacheChild.pid,
+      dbName,
+      dbRole: database.dbRole,
+      baseUrl,
+      databaseUrl: dbUrl,
+      cacheUrl,
+      cacheToken,
+      bootstrapAdmin,
+    })
 
     child.unref()
   } catch (error) {

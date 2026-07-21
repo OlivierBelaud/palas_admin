@@ -16,7 +16,7 @@ export default defineQuery({
     const to = new Date()
     const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
     const baseFilters: Record<string, unknown> = {
-      observed_at: { $gte: from.toISOString(), $lte: to.toISOString() },
+      observed_at: { $gte: from, $lte: to },
     }
     const filters: Record<string, unknown> = { ...baseFilters }
     if (input.status && input.status !== 'all') filters.resolution_status = input.status
