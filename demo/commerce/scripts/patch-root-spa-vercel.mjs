@@ -2,7 +2,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
-const functionRegions = ['fra1']
+const fastFunctionManifest = JSON.parse(
+  readFileSync(new URL('../vercel-fast-functions.manifest.json', import.meta.url), 'utf8'),
+)
+const functionRegions = fastFunctionManifest.regions
 const require = createRequire(import.meta.url)
 
 const selfRedirects = new Map([
@@ -111,7 +114,6 @@ function patchOutputConfig() {
   if (!existsSync(path)) return
 
   const config = readJson(path)
-  const vercelConfig = existsSync('vercel.json') ? readJson('vercel.json') : {}
   const routes = Array.isArray(config.routes) ? config.routes : []
   const filteredRoutes = routes.filter((route) => {
     if (!route?.src) return true
@@ -153,7 +155,7 @@ function installFastFunction({ source, route, extraSources = [], maxDuration }) 
     launcherType: 'Nodejs',
     shouldAddHelpers: false,
     supportsResponseStreaming: true,
-    runtime: 'nodejs24.x',
+    runtime: fastFunctionManifest.runtime,
     regions: functionRegions,
     ...(maxDuration ? { maxDuration } : {}),
   })
@@ -177,86 +179,7 @@ function resolvePackageRoot(packageName) {
 }
 
 function installFastFunctions() {
-  const abandonedCartCampaignSources = ['abandoned-cart-campaign-common.mjs']
-  const visitorStatsRoutes = [
-    'visitor-stats-unique-visitors-by-segment',
-    'visitor-stats-carts-created-funnel',
-    'visitor-stats-carts-updated-funnel',
-    'visitor-stats-identity-acquisitions',
-    'visitor-stats-paid-vs-organic',
-  ]
-  installFastFunction({
-    source: 'admin-me.mjs',
-    route: 'api/admin/me',
-  })
-  installFastFunction({
-    source: 'admin-graph.mjs',
-    route: 'api/admin/graph',
-  })
-  installFastFunction({
-    source: 'admin-cart-stats.mjs',
-    route: 'api/admin/cart-stats',
-  })
-  installFastFunction({
-    source: 'admin-charts-lab-data.mjs',
-    route: 'api/admin/charts-lab-data',
-  })
-  installFastFunction({
-    source: 'admin-users.mjs',
-    route: 'api/admin/users',
-  })
-  installFastFunction({
-    source: 'admin-invitations.mjs',
-    route: 'api/admin/invitations',
-  })
-  installFastFunction({
-    source: 'admin-catalog-taxonomy.mjs',
-    route: 'api/admin/catalog-taxonomy',
-    extraSources: ['catalog-classification-seed.json', 'catalog-shopify-sync.mjs'],
-    maxDuration: 300,
-  })
-  installFastFunction({
-    source: 'admin-catalog-content.mjs',
-    route: 'api/admin/catalog-content',
-  })
-  installFastFunction({
-    source: 'admin-visitor-lifecycle-dashboard.mjs',
-    route: 'api/admin/visitor-lifecycle-dashboard',
-  })
-  for (const route of visitorStatsRoutes) {
-    installFastFunction({
-      source: 'admin-visitor-stats.mjs',
-      route: `api/admin/${route}`,
-    })
-  }
-  installFastFunction({
-    source: 'admin-abandoned-cart-campaign-dashboard.mjs',
-    route: 'api/admin/abandoned-cart-campaign-dashboard',
-    extraSources: abandonedCartCampaignSources,
-  })
-  installFastFunction({
-    source: 'admin-abandoned-cart-campaign-case-list.mjs',
-    route: 'api/admin/abandoned-cart-campaign-case-list',
-    extraSources: abandonedCartCampaignSources,
-  })
-  installFastFunction({
-    source: 'admin-abandoned-cart-campaign-message-list.mjs',
-    route: 'api/admin/abandoned-cart-campaign-message-list',
-    extraSources: abandonedCartCampaignSources,
-  })
-  installFastFunction({
-    source: 'admin-abandoned-cart-campaign-check-list.mjs',
-    route: 'api/admin/abandoned-cart-campaign-check-list',
-    extraSources: abandonedCartCampaignSources,
-  })
-  installFastFunction({
-    source: 'admin-system-dashboard.mjs',
-    route: 'api/cart-tracking/admin-system-dashboard',
-  })
-  installFastFunction({
-    source: 'admin-tracking-health.mjs',
-    route: 'api/cart-tracking/admin-tracking-health',
-  })
+  for (const spec of fastFunctionManifest.functions) installFastFunction(spec)
 }
 
 patchVercelJson()

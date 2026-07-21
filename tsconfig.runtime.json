@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "tests/runtime/**/*.ts",
+    "demo/commerce/scripts/apply-ci-migrations.ts",
+    "demo/commerce/scripts/bootstrap-ci-schema.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["**/dist/**", "demo/**/.manta/server/**", "demo/**/.manta/spa/**"]
+}

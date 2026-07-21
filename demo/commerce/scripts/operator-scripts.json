@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "classifications": {
+    "abandoned-cart-strategy-scan.ts": { "class": "read-only", "guard": "No mutation path" },
+    "audit-abandoned-cart-discounts.ts": { "class": "read-only", "guard": "No mutation path" },
+    "audit-and-fix-prod-v1.ts": {
+      "class": "mutation",
+      "guard": "Explicit repair script; review target and credentials before execution"
+    },
+    "audit-orphans-and-enrich.ts": {
+      "class": "mutation",
+      "guard": "Enriches database records; review target before execution"
+    },
+    "audit-posthog-cart-drift.ts": { "class": "read-only", "guard": "No mutation path" },
+    "audit-posthog-session-gaps.mjs": { "class": "read-only", "guard": "No mutation path" },
+    "backfill-cart-birth-at.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-cart-contact-links.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-checkout-events.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-event-log-muids.mjs": { "class": "dry-run", "guard": "Writes require --apply", "optInToken": "--apply" },
+    "backfill-klaviyo-events.ts": {
+      "class": "mutation",
+      "guard": "Backfills database records; review target before execution"
+    },
+    "backfill-klaviyo-profile-ids.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-order-contact-links.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-order-shipping-address.mjs": {
+      "class": "dry-run",
+      "guard": "Writes require --apply",
+      "optInToken": "--apply"
+    },
+    "backfill-prod-v1.ts": {
+      "class": "mutation",
+      "guard": "Production backfill; review target and credentials before execution"
+    },
+    "backfill-shopify-completions.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-shopify-customers.ts": { "class": "mutation", "guard": "Use --dry-run before any write" },
+    "backfill-visitor-sessions.ts": { "class": "dry-run", "guard": "Writes require --apply", "optInToken": "--apply" },
+    "bootstrap-cart-stats-fields.ts": {
+      "class": "mutation",
+      "guard": "Schema bootstrap; review target before execution"
+    },
+    "bootstrap-crm.ts": { "class": "mutation", "guard": "Schema bootstrap; review target before execution" },
+    "bootstrap-email-captures.ts": { "class": "mutation", "guard": "Schema bootstrap; review target before execution" },
+    "bootstrap-visitor-sessions.ts": {
+      "class": "mutation",
+      "guard": "Schema bootstrap; review target before execution"
+    },
+    "cart-stats-clean-and-report.ts": {
+      "class": "dry-run",
+      "guard": "Deletes require --apply",
+      "optInToken": "--apply"
+    },
+    "cart-stats-scan.ts": { "class": "read-only", "guard": "No provider or database mutation path" },
+    "check-email-captures.ts": { "class": "read-only", "guard": "No mutation path" },
+    "klaviyo-abandon-perf.ts": {
+      "class": "read-only",
+      "guard": "Reads provider metrics and writes only a local report"
+    },
+    "klaviyo-flow-recon.ts": { "class": "read-only", "guard": "No mutation path" },
+    "klaviyo-flow-timing.ts": { "class": "read-only", "guard": "No mutation path" },
+    "klaviyo-fr-audit.ts": { "class": "read-only", "guard": "No mutation path" },
+    "normalize-posthog-event-log-properties.ts": {
+      "class": "dry-run",
+      "guard": "Writes require --apply",
+      "optInToken": "--apply"
+    },
+    "rebuild-production.ts": {
+      "class": "mutation",
+      "guard": "Destructive rebuild; requires an explicit operator procedure"
+    },
+    "refresh-visitor-lifecycle-facts.ts": {
+      "class": "mutation",
+      "guard": "Refreshes persisted lifecycle facts; review target before execution"
+    },
+    "register-shopify-webhooks.ts": {
+      "class": "mutation",
+      "guard": "Mutates Shopify webhook registrations; review target before execution"
+    },
+    "replay-posthog-cart-snapshots.ts": {
+      "class": "dry-run",
+      "guard": "Writes require --apply",
+      "optInToken": "--apply"
+    },
+    "send-daily-reporting-email.ts": {
+      "class": "mutation",
+      "guard": "Persists a snapshot; sending additionally requires --send"
+    },
+    "send-historical-real.ts": { "class": "mutation", "guard": "Sends real email unless --dry is supplied" },
+    "send-may-8-real.ts": { "class": "mutation", "guard": "Sends real email unless --dry is supplied" },
+    "smoke-meta-capi.mjs": {
+      "class": "mutation",
+      "guard": "Emits a provider smoke event; use only with dedicated test credentials"
+    },
+    "sync-catalog-shopify.mjs": {
+      "class": "mutation",
+      "guard": "Publishes catalog data to Shopify; production gate remains external"
+    },
+    "test-abandoned-cart-email.ts": { "class": "dry-run", "guard": "Sending requires --send", "optInToken": "--send" }
+  }
+}

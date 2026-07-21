@@ -1,12 +1,8 @@
 import { createHmac } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
+import { readRuntimeState } from './state'
 
-const state = JSON.parse(readFileSync('tests/runtime/.state.json', 'utf8')) as {
-  skipped: boolean
-  reason?: string
-  baseUrl?: string
-}
+const state = readRuntimeState()
 
 function adminToken() {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
@@ -26,8 +22,6 @@ function adminToken() {
 }
 
 test.describe('admin-smoke', () => {
-  test.skip(state.skipped, state.reason ?? 'runtime smoke skipped')
-
   test('admin home page renders without errors', async ({ page }) => {
     const pageErrors: Error[] = []
     const successfulResponses: string[] = []

@@ -6,6 +6,7 @@ export default defineConfig({
   globalSetup: './tests/runtime/global-setup.ts',
   globalTeardown: './tests/runtime/global-teardown.ts',
   fullyParallel: false,
+  forbidOnly: Boolean(process.env.CI),
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
