@@ -29,7 +29,9 @@ interface CacheEntry {
 }
 
 const TTL_MS = 5 * 60 * 1000
+const MAX_CACHE_ENTRIES = 1_000
 const cache = new Map<string, CacheEntry>()
+const inFlight = new Map<string, Promise<string | null>>()
 
 let metrics = { lookups: 0, hits: 0, misses: 0, recoveries: 0 }
 
@@ -54,6 +56,20 @@ export function resetIdentityMetrics(): void {
 
 export function clearIdentityCache(): void {
   cache.clear()
+  inFlight.clear()
+}
+
+function cacheIdentity(distinctId: string, email: string | null, now = Date.now()): void {
+  for (const [key, entry] of cache) {
+    if (entry.expires_at <= now) cache.delete(key)
+  }
+  cache.delete(distinctId)
+  cache.set(distinctId, { email, expires_at: now + TTL_MS })
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
 }
 
 /**
@@ -71,35 +87,46 @@ export async function resolveEmailByDistinctId(
     metrics.hits += 1
     return cached.email
   }
+  if (cached) cache.delete(distinctId)
+
+  const pending = inFlight.get(distinctId)
+  if (pending) return pending
 
   const host = opts.host ?? posthogHost()
   const key = opts.apiKey ?? posthogPrivateKey()
   if (!key) return null
 
-  metrics.lookups += 1
-  const safe = distinctId.replace(/'/g, "''")
-  try {
-    const rows = await runPosthogHogQL(
-      `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
-      {
-        host,
-        privateKey: key,
-        // Bypass PostHog's server-side query cache — our single-user lookup
-        // must reflect the latest $identify, otherwise newly-identified users
-        // stay anonymous in our DB for up to the cache TTL.
-        refresh: 'force_blocking',
-      },
-    )
-    const email = (rows?.[0]?.[0] as string | null | undefined) ?? null
-    cache.set(distinctId, { email, expires_at: now + TTL_MS })
-    if (email) metrics.recoveries += 1
-    else metrics.misses += 1
-    return email
-  } catch {
-    cache.set(distinctId, { email: null, expires_at: now + TTL_MS })
-    metrics.misses += 1
-    return null
-  }
+  const current = (async () => {
+    metrics.lookups += 1
+    const safe = distinctId.replace(/'/g, "''")
+    try {
+      const rows = await runPosthogHogQL(
+        `SELECT person.properties.email FROM events WHERE distinct_id = '${safe}' AND person.properties.email IS NOT NULL AND person.properties.email != '' ORDER BY timestamp DESC LIMIT 1`,
+        {
+          host,
+          privateKey: key,
+          // Bypass PostHog's server-side query cache — our single-user lookup
+          // must reflect the latest $identify, otherwise newly-identified users
+          // stay anonymous in our DB for up to the cache TTL.
+          refresh: 'force_blocking',
+        },
+      )
+      const email = (rows?.[0]?.[0] as string | null | undefined) ?? null
+      cacheIdentity(distinctId, email, now)
+      if (email) metrics.recoveries += 1
+      else metrics.misses += 1
+      return email
+    } catch {
+      cacheIdentity(distinctId, null, now)
+      metrics.misses += 1
+      return null
+    }
+  })()
+  inFlight.set(distinctId, current)
+  current.finally(() => {
+    if (inFlight.get(distinctId) === current) inFlight.delete(distinctId)
+  })
+  return current
 }
 
 /**
@@ -137,7 +164,7 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
       const email = row[1] as string | null
       if (id && email) {
         map.set(id, email)
-        cache.set(id, { email, expires_at: Date.now() + TTL_MS })
+        cacheIdentity(id, email)
       }
     }
     return map

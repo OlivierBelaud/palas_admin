@@ -3,7 +3,7 @@ type PosthogProject = {
   api_token?: string | null
 }
 
-let resolvedProjectId: Promise<string> | null = null
+const resolvedProjectIds = new Map<string, Promise<string>>()
 
 function cleanBaseUrl(host: string): string {
   return host
@@ -28,11 +28,14 @@ export async function resolvePosthogProjectId(opts?: {
   const configured = process.env.POSTHOG_PROJECT_ID?.trim()
   if (configured) return configured
 
-  if (!resolvedProjectId) {
-    resolvedProjectId = (async () => {
-      const host = cleanBaseUrl(opts?.host ?? posthogHost())
-      const privateKey = opts?.privateKey ?? posthogPrivateKey()
-      const publicToken = opts?.publicToken ?? process.env.POSTHOG_TOKEN ?? null
+  const host = cleanBaseUrl(opts?.host ?? posthogHost())
+  const privateKey = opts?.privateKey ?? posthogPrivateKey()
+  const publicToken = opts?.publicToken ?? process.env.POSTHOG_TOKEN ?? null
+  const cacheKey = `${host}\0${privateKey ?? ''}\0${publicToken ?? ''}`
+  let projectId = resolvedProjectIds.get(cacheKey)
+
+  if (!projectId) {
+    const current = (async () => {
 
       if (!privateKey || !publicToken) return '@current'
 
@@ -45,9 +48,14 @@ export async function resolvePosthogProjectId(opts?: {
       const match = (body.results ?? []).find((project) => project.api_token === publicToken)
       return match?.id != null ? String(match.id) : '@current'
     })()
+    projectId = current
+    resolvedProjectIds.set(cacheKey, current)
+    current.catch(() => {
+      if (resolvedProjectIds.get(cacheKey) === current) resolvedProjectIds.delete(cacheKey)
+    })
   }
 
-  return resolvedProjectId
+  return projectId
 }
 
 export async function posthogQueryUrl(opts?: {

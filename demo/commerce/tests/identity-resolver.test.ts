@@ -69,6 +69,28 @@ describe('identity-resolver', () => {
       expect(m.hits).toBe(1)
     })
 
+    it('shares an in-flight lookup for the same identity', async () => {
+      let release: (() => void) | undefined
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = () => resolve(Response.json({ results: [['isa.morin@example.com']] }))
+          }),
+      )
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const first = resolveEmailByDistinctId('d1')
+      const second = resolveEmailByDistinctId('d1')
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      release?.()
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        'isa.morin@example.com',
+        'isa.morin@example.com',
+      ])
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
     it('caches null results to avoid re-querying missing identities', async () => {
       const fetchMock = mockFetch({ results: [] })
       globalThis.fetch = fetchMock
@@ -138,6 +160,16 @@ describe('identity-resolver', () => {
       expect(email).toBe('a@b.com')
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(getIdentityMetrics().hits).toBe(1)
+    })
+
+    it('bounds the process cache while returning the complete batch result', async () => {
+      const rows = Array.from({ length: 1_001 }, (_, index) => [`d${index}`, `user${index}@example.com`])
+      globalThis.fetch = mockFetch({ results: rows })
+
+      const map = await resolveEmailsBatch()
+
+      expect(map.size).toBe(1_001)
+      expect(getIdentityMetrics().cacheSize).toBeLessThanOrEqual(1_000)
     })
   })
 

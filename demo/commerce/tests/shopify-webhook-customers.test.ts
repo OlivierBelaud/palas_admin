@@ -77,6 +77,31 @@ function withRuntimeApp(req: Request): Request {
   return req
 }
 
+function withControlledEventTransport(req: Request) {
+  const sql = Object.assign(() => Promise.resolve([]), {
+    unsafe: () => Promise.resolve([]),
+  })
+  const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
+  Object.defineProperty(req, 'app', {
+    value: {
+      resolve(key: string) {
+        if (key !== 'IDatabasePort' && key !== 'db') return undefined
+        return {
+          getPool: () => sql,
+          raw: () => Promise.resolve([]),
+        }
+      },
+      emit(event: string) {
+        emittedEvents.push(event)
+        return new Promise<void>((resolve, reject) => pending.set(event, { resolve, reject }))
+      },
+    },
+    enumerable: true,
+    configurable: true,
+  })
+  return { req, pending }
+}
+
 describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
   it('returns 200 when Shopify confirms the customer id', async () => {
     const fetchMock = vi.fn(async (url: string | URL) => {
@@ -109,6 +134,67 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('OK')
     expect(upsertCalls.length).toBe(1)
+  })
+
+  it('does not acknowledge Shopify until every refresh event is durably emitted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ customer: { id: SHOPIFY_REAL_ID, email: 'jane@example.com' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const controlled = withControlledEventTransport(
+      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+      }),
+    )
+    let settled = false
+    const responsePromise = POST(controlled.req).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(controlled.pending.size).toBe(2))
+
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    for (const event of controlled.pending.values()) event.resolve()
+    expect((await responsePromise).status).toBe(200)
+  })
+
+  it('returns a retryable failure when a refresh event cannot be durably emitted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ customer: { id: SHOPIFY_REAL_ID, email: 'jane@example.com' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const controlled = withControlledEventTransport(
+      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+      }),
+    )
+    const responsePromise = POST(controlled.req)
+    await vi.waitFor(() => expect(controlled.pending.size).toBe(2))
+    controlled.pending.get('contact.refresh-requested')?.reject(new Error('event transport unavailable'))
+    controlled.pending.get('cart.refresh-requested')?.resolve()
+
+    const response = await responsePromise
+    expect(response.status).toBe(500)
+    expect(await response.text()).toBe('Internal Error')
   })
 
   it('returns 401 when Shopify cannot find the customer id', async () => {

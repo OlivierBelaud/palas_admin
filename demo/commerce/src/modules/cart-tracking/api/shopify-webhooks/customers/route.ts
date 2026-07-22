@@ -66,28 +66,22 @@ export async function POST(req: Request): Promise<Response> {
     }
     const email = customer.email?.trim().toLowerCase()
     if (email && app?.emit) {
-      app
-        .emit('contact.refresh-requested', {
+      const results = await Promise.allSettled([
+        app.emit('contact.refresh-requested', {
           email,
           reason: 'shopify_customer_webhook',
           source: 'shopify-webhooks/customers',
           requested_at: new Date().toISOString(),
-        })
-        .catch((err) => {
-          console.warn(
-            `[shopify-webhook customers] contact refresh emit failed for ${email}: ${(err as Error).message}`,
-          )
-        })
-      app
-        .emit('cart.refresh-requested', {
+        }),
+        app.emit('cart.refresh-requested', {
           email,
           reason: 'shopify_customer_webhook',
           source: 'shopify-webhooks/customers',
           requested_at: new Date().toISOString(),
-        })
-        .catch((err) => {
-          console.warn(`[shopify-webhook customers] cart refresh emit failed for ${email}: ${(err as Error).message}`)
-        })
+        }),
+      ])
+      const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failure) throw failure.reason
     }
     console.log(
       `[shopify-webhook customers] customer=${customer.id} matched_via=${outcome.matched_via} contact_id=${outcome.contact_id ?? 'null'} created=${outcome.created} carts_reattached=${outcome.carts_reattached}`,
