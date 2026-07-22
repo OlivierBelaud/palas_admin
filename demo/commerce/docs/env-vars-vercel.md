@@ -10,6 +10,7 @@ sont à mettre côté `Production` (et `Preview` si on veut tester en preview).
 
 | Variable | Rôle |
 |----------|------|
+| `SHOPIFY_WEBHOOK_SECRET` | Clé secrète API de l'app Shopify qui signe `X-Shopify-Hmac-Sha256`. Elle doit correspondre à l'app ayant émis `SHOPIFY_ADMIN_ACCESS_TOKEN`; si elle manque, les webhooks clients échouent en 500, et si elle diffère, ils sont refusés en 401 avant tout appel provider ou mutation. |
 | `UNSUBSCRIBE_SECRET` | HMAC-SHA256 secret qui signe le token RFC-8058 du lien unsubscribe dans les emails Resend. Sans ça, les liens unsubscribe ne se vérifient pas. **No TTL** sur le token — l'email peut être ouvert 6 mois plus tard, le lien doit toujours marcher. |
 | `MANTA_UID_SECRET` | HMAC-SHA256 secret pour le token `manta-uid` (identification visiteur cross-device dans `/api/cart-tracking/c?u=…`). 90 jours de TTL. Si absent en prod le code throw `INVALID_STATE` au premier sign. |
 | `CRON_SECRET` | Bearer token attendu sur `/api/crons/*`. Vercel Cron l'injecte automatiquement sur chaque trigger. Sans ça, n'importe qui peut faire tourner un cron en GET. |
@@ -18,10 +19,13 @@ Générer la valeur hors du dépôt, puis la stocker directement dans Vercel ou
 dans le gestionnaire de secrets approuvé. Ne jamais la committer :
 
 ```dotenv
+SHOPIFY_WEBHOOK_SECRET=<shopify-app-api-secret-key>
 UNSUBSCRIBE_SECRET=<generate-and-store-in-secret-manager>
 ```
 
-Pour générer un nouveau secret quand on en a besoin :
+`SHOPIFY_WEBHOOK_SECRET` ne se génère pas localement : copier la clé secrète
+API de l'app depuis Shopify Admin. Pour les secrets possédés par Palas, générer
+une nouvelle valeur quand nécessaire avec :
 
 ```bash
 openssl rand -hex 32

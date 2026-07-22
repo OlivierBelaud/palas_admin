@@ -2,15 +2,15 @@
 //
 // URL: POST /api/cart-tracking/shopify-webhooks/customers
 //
-// Real-time capture of every Shopify customer create/update. Same fetch-back
-// authenticity model as orders-paid: the inbound POST is untrusted; we
-// re-fetch the customer via Admin REST and reject if Shopify doesn't confirm
-// the id exists. A forged POST can't fabricate a real customer id.
+// Real-time capture of every Shopify customer create/update. The HMAC over the
+// exact request body is the trust boundary; fetch-back then provides fresh
+// canonical customer data before projection.
 //
 // Shopify retries non-2xx for up to 48h → handler is idempotent
 // (upsertShopifyCustomer is, via shopify_customer_id OR email match).
 
 import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
+import { verifyShopifyHmac } from '../../../shopify-webhook-hmac'
 import { type ShopifyCustomerPayload, upsertShopifyCustomer } from '../../../../contact/upsert-shopify-customer'
 
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
@@ -31,9 +31,27 @@ async function fetchShopifyCustomer(customerId: string | number): Promise<Shopif
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET
+  if (!webhookSecret) {
+    console.error('[shopify-webhook customers] SHOPIFY_WEBHOOK_SECRET missing')
+    return new Response('Webhook Secret Misconfigured', { status: 500 })
+  }
+
+  let rawBody: string
+  try {
+    rawBody = await req.text()
+  } catch {
+    return new Response('Bad Request', { status: 400 })
+  }
+  const signature = req.headers.get('x-shopify-hmac-sha256')
+  if (!verifyShopifyHmac(rawBody, signature, webhookSecret)) {
+    console.warn('[shopify-webhook customers] invalid Shopify HMAC — rejecting')
+    return new Response('Unauthorized', { status: 401 })
+  }
+
   let posted: { id?: number | string } & Record<string, unknown>
   try {
-    posted = (await req.json()) as { id?: number | string } & Record<string, unknown>
+    posted = JSON.parse(rawBody) as { id?: number | string } & Record<string, unknown>
   } catch {
     return new Response('Bad JSON', { status: 400 })
   }

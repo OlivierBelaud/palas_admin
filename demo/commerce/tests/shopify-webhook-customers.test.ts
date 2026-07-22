@@ -1,14 +1,15 @@
 // Smoke test — Shopify customers webhook route.
 //
-// Validates the fetch-back authenticity gate:
-//   - a real customer id → Shopify returns the body → 200
-//   - a fake customer id → Shopify returns 404 → route returns 401
-//   - a malformed POST body → 400
+// Validates the HMAC trust boundary before the canonical fetch-back:
+//   - a valid signature + real customer id → 200
+//   - a missing/invalid signature → 401 without provider or DB effects
+//   - a valid signature + malformed body → 400
 //
 // We mock the `postgres` module and the `upsertShopifyCustomer` helper so
 // the route test stays self-contained (no DB needed).
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createHmac } from 'node:crypto'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock postgres BEFORE importing the route module so the singleton uses our stub.
 vi.mock('postgres', () => {
@@ -44,6 +45,7 @@ vi.mock('../src/modules/contact/upsert-shopify-customer', () => ({
 const routeModulePromise = import('../src/modules/cart-tracking/api/shopify-webhooks/customers/route')
 
 const SHOPIFY_REAL_ID = '1234567890'
+const SHOPIFY_WEBHOOK_SECRET = 'test-shopify-webhook-secret'
 
 beforeEach(() => {
   upsertCalls.length = 0
@@ -52,7 +54,24 @@ beforeEach(() => {
   process.env.DATABASE_URL = 'postgres://test:test@localhost/test'
   process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = 'test-token'
   process.env.SHOPIFY_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
+  process.env.SHOPIFY_WEBHOOK_SECRET = SHOPIFY_WEBHOOK_SECRET
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function signedRequest(body: string, signatureBody = body): Request {
+  const signature = createHmac('sha256', SHOPIFY_WEBHOOK_SECRET).update(signatureBody, 'utf8').digest('base64')
+  return new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Hmac-Sha256': signature,
+    },
+    body,
+  })
+}
 
 function attachRuntimeApp(req: Request, emit?: (event: string) => Promise<void>): Request {
   const sql = Object.assign(() => Promise.resolve([]), {
@@ -113,11 +132,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { POST } = await routeModulePromise
-    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
-    })
+    const req = signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID }))
     const res = await POST(withRuntimeApp(req))
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('OK')
@@ -137,11 +152,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
 
     const { POST } = await routeModulePromise
     const controlled = withControlledEventTransport(
-      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
-      }),
+      signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID })),
     )
     let settled = false
     const responsePromise = POST(controlled.req).finally(() => {
@@ -169,11 +180,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
 
     const { POST } = await routeModulePromise
     const controlled = withControlledEventTransport(
-      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
-      }),
+      signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID })),
     )
     const responsePromise = POST(controlled.req)
     await vi.waitFor(() => expect(controlled.pending.size).toBe(2))
@@ -183,6 +190,10 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     const response = await responsePromise
     expect(response.status).toBe(500)
     expect(await response.text()).toBe('Internal Error')
+
+    const retry = await POST(withRuntimeApp(signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID }))))
+    expect(retry.status).toBe(200)
+    expect(await retry.text()).toBe('OK')
   })
 
   it('fails before the upsert when the durable event transport is missing', async () => {
@@ -195,11 +206,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
 
     const { POST } = await routeModulePromise
     const request = attachRuntimeApp(
-      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
-      }),
+      signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID })),
     )
 
     const response = await POST(request)
@@ -214,11 +221,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { POST } = await routeModulePromise
-    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: '9999999' }),
-    })
+    const req = signedRequest(JSON.stringify({ id: '9999999' }))
     const res = await POST(req)
     expect(res.status).toBe(401)
     expect(upsertCalls.length).toBe(0)
@@ -244,11 +247,7 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     )
 
     const { POST } = await routeModulePromise
-    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
-    })
+    const req = signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID }))
     const res = await POST(withRuntimeApp(req))
 
     expect(res.status).toBe(409)
@@ -258,23 +257,83 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
 
   it('returns 400 on malformed JSON body', async () => {
     const { POST } = await routeModulePromise
-    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not-json{',
-    })
+    const req = signedRequest('not-json{')
     const res = await POST(req)
     expect(res.status).toBe(400)
   })
 
   it('returns 400 when payload has no id', async () => {
     const { POST } = await routeModulePromise
+    const req = signedRequest(JSON.stringify({ no_id: true }))
+    const res = await POST(req)
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects a missing signature before any provider or database effect', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await routeModulePromise
     const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ no_id: true }),
+      body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
     })
-    const res = await POST(req)
-    expect(res.status).toBe(400)
+
+    const res = await POST(withRuntimeApp(req))
+    expect(res.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(upsertCalls).toEqual([])
+    expect(emittedEvents).toEqual([])
+  })
+
+  it('rejects a body changed after signing before any provider or database effect', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const signedBody = JSON.stringify({ id: SHOPIFY_REAL_ID })
+    const tamperedBody = JSON.stringify({ id: 'another-customer' })
+
+    const { POST } = await routeModulePromise
+    const res = await POST(withRuntimeApp(signedRequest(tamperedBody, signedBody)))
+
+    expect(res.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(upsertCalls).toEqual([])
+    expect(emittedEvents).toEqual([])
+  })
+
+  it('rejects a malformed signature without calling Shopify or mutating state', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const req = new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Hmac-Sha256': 'not-a-valid-sha256-signature',
+      },
+      body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+    })
+
+    const { POST } = await routeModulePromise
+    const res = await POST(withRuntimeApp(req))
+
+    expect(res.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(upsertCalls).toEqual([])
+    expect(emittedEvents).toEqual([])
+  })
+
+  it('fails closed before reading the body when the webhook secret is missing', async () => {
+    delete process.env.SHOPIFY_WEBHOOK_SECRET
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await routeModulePromise
+    const res = await POST(withRuntimeApp(signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID }))))
+
+    expect(res.status).toBe(500)
+    expect(await res.text()).toBe('Webhook Secret Misconfigured')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(upsertCalls).toEqual([])
   })
 })
