@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@mantajs/adapter-eventbus-upstash@0.2.0-beta.12': 2c5c77f6f8dfc5842f6d988d809779fe5affdec1e874741e62d566f2f07dd9d9
   '@mantajs/adapter-notification-resend@0.2.0-beta.12': 88cbacc10257fcafc5412e4b6dfffe292a85048953b79e62be3a786cc73b2ff2
   '@mantajs/core@0.2.0-beta.12': def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065
   '@mantajs/dashboard@0.2.0-beta.12': d2a98d63bfde2c28db810d6425f48d99188f5697652ac3996aad0f5a9d35e77a
@@ -4483,7 +4484,7 @@ snapshots:
       - sql.js
       - sqlite3
 
-  '@mantajs/adapter-eventbus-upstash@0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))':
+  '@mantajs/adapter-eventbus-upstash@0.2.0-beta.12(patch_hash=2c5c77f6f8dfc5842f6d988d809779fe5affdec1e874741e62d566f2f07dd9d9)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))':
     dependencies:
       '@mantajs/core': 0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7)
       '@upstash/qstash': 2.11.0
@@ -4536,7 +4537,7 @@ snapshots:
       '@mantajs/adapter-cache-upstash': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-database-neon': 0.2.0-beta.12(@libsql/client-wasm@0.17.3)(@mantajs/adapter-database-pg@0.2.0-beta.12(@libsql/client-wasm@0.17.3)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(react@19.2.7))(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(react@19.2.7)
       '@mantajs/adapter-database-pg': 0.2.0-beta.12(@libsql/client-wasm@0.17.3)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(react@19.2.7)
-      '@mantajs/adapter-eventbus-upstash': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
+      '@mantajs/adapter-eventbus-upstash': 0.2.0-beta.12(patch_hash=2c5c77f6f8dfc5842f6d988d809779fe5affdec1e874741e62d566f2f07dd9d9)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-file-vercel-blob': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-h3': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(crossws@0.4.6(srvx@0.11.16))
       '@mantajs/adapter-jobs-vercel-cron': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
