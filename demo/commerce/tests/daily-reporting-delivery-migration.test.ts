@@ -14,8 +14,10 @@ describe('daily reporting delivery durability migration', () => {
     expect(migration).toContain('claim_token')
     expect(migration).toContain('claim_expires_at')
     expect(migration).toContain('attempt_count')
-    expect(migration).toContain('orders_reporting_eligible_placed_at_idx')
-    expect(migration).toContain('visitor_sessions_reporting_email_message_idx')
+    expect(migration).toContain('next_attempt_at')
+    expect(migration).toContain('reporting_daily_deliveries_retry_due_idx')
+    expect(migration).not.toContain('orders_reporting_eligible_placed_at_idx')
+    expect(migration).not.toContain('visitor_sessions_reporting_email_message_idx')
   })
 
   it('keeps financial delivery evidence on rollback', async () => {
@@ -24,7 +26,7 @@ describe('daily reporting delivery durability migration', () => {
       'utf8',
     )
 
-    expect(rollback).toContain('DROP INDEX IF EXISTS')
+    expect(rollback).not.toContain('DROP INDEX')
     expect(rollback).not.toContain('DROP TABLE')
     expect(rollback).not.toContain('DELETE FROM')
   })

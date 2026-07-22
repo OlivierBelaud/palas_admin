@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS "reporting_daily_deliveries" (
   "claimed_at" TIMESTAMPTZ,
   "claim_expires_at" TIMESTAMPTZ,
   "attempt_count" INTEGER NOT NULL DEFAULT 0,
+  "next_attempt_at" TIMESTAMPTZ,
   "last_attempted_at" TIMESTAMPTZ,
   "sent_at" TIMESTAMPTZ,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -37,15 +38,6 @@ CREATE INDEX IF NOT EXISTS "reporting_daily_deliveries_claim_expiry_idx"
   ON "reporting_daily_deliveries" ("claim_expires_at")
   WHERE "deleted_at" IS NULL AND "status" = 'claimed';
 
-CREATE INDEX IF NOT EXISTS "orders_reporting_eligible_placed_at_idx"
-  ON "orders" ("placed_at")
-  WHERE "deleted_at" IS NULL
-    AND "include_in_ecommerce_analytics" = true
-    AND "status" IN ('paid', 'fulfilled');
-
-CREATE INDEX IF NOT EXISTS "visitor_sessions_reporting_email_message_idx"
-  ON "visitor_sessions" (
-    "started_at",
-    (substring("first_url" FROM '(?:[?&])palas_email_message_id=([^&#]+)'))
-  )
-  WHERE "deleted_at" IS NULL AND "first_url" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "reporting_daily_deliveries_retry_due_idx"
+  ON "reporting_daily_deliveries" ("next_attempt_at", "day")
+  WHERE "deleted_at" IS NULL AND "status" <> 'succeeded' AND "attempt_count" < 5;

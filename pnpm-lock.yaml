@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@mantajs/adapter-notification-resend@0.2.0-beta.12': 88cbacc10257fcafc5412e4b6dfffe292a85048953b79e62be3a786cc73b2ff2
   '@mantajs/core@0.2.0-beta.12': def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065
   '@mantajs/dashboard@0.2.0-beta.12': d2a98d63bfde2c28db810d6425f48d99188f5697652ac3996aad0f5a9d35e77a
 
@@ -80,7 +81,7 @@ importers:
         version: 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-notification-resend':
         specifier: 0.2.0-beta.12
-        version: 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
+        version: 0.2.0-beta.12(patch_hash=88cbacc10257fcafc5412e4b6dfffe292a85048953b79e62be3a786cc73b2ff2)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
       '@mantajs/adapter-queue-qstash':
         specifier: 0.2.0-beta.12
         version: 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
@@ -4514,7 +4515,7 @@ snapshots:
       pino: 9.14.0
       pino-pretty: 11.3.0
 
-  '@mantajs/adapter-notification-resend@0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))':
+  '@mantajs/adapter-notification-resend@0.2.0-beta.12(patch_hash=88cbacc10257fcafc5412e4b6dfffe292a85048953b79e62be3a786cc73b2ff2)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))':
     dependencies:
       '@mantajs/core': 0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7)
       resend: 6.12.4(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
@@ -4540,7 +4541,7 @@ snapshots:
       '@mantajs/adapter-jobs-vercel-cron': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-locking-neon': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/adapter-logger-pino': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
-      '@mantajs/adapter-notification-resend': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
+      '@mantajs/adapter-notification-resend': 0.2.0-beta.12(patch_hash=88cbacc10257fcafc5412e4b6dfffe292a85048953b79e62be3a786cc73b2ff2)(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(@react-email/render@2.0.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
       '@mantajs/adapter-queue-qstash': 0.2.0-beta.12(@mantajs/core@0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))
       '@mantajs/core': 0.2.0-beta.12(patch_hash=def9be7ec6e877298230a2ad90460f2dfdc45d8f3a9f28f0792673fc9559c065)(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7)
       '@mantajs/host-nitro': 0.2.0-beta.12(@types/node@25.9.2)(@upstash/redis@1.38.0)(@vercel/blob@2.4.0)(chokidar@4.0.3)(dotenv@16.6.1)(drizzle-orm@0.35.3(@libsql/client-wasm@0.17.3)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.22.0)(postgres@3.4.9)(react@19.2.7))(lightningcss@1.32.0)(rollup@4.61.1)

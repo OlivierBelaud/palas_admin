@@ -151,6 +151,10 @@ interface SendDailyReportResult {
   }>
 }
 
+export interface ResumeDailyReportDeliveriesResult {
+  sent: SendDailyReportResult['sent']
+}
+
 type DailyReportDeliveryStatus = 'pending' | 'claimed' | 'succeeded' | 'failed' | 'reconciliation_required'
 type NotificationPayload = Parameters<RuntimeNotificationPort['send']>[0]
 type NotificationResult = Awaited<ReturnType<RuntimeNotificationPort['send']>>
@@ -160,11 +164,17 @@ type DailyReportEmailContent = NotificationPayload &
 
 interface DailyReportDeliveryRow {
   content_payload: DailyReportEmailContent
+  idempotency_key: string
+  recipient: string
   status: DailyReportDeliveryStatus
   provider_status: NotificationResult['status'] | null
   provider_message_id: string | null
   provider_error: string | null
 }
+
+type DailyReportDeliveryClaim =
+  | { kind: 'send'; claimToken: string; content: DailyReportEmailContent }
+  | { kind: 'replay' | 'busy'; row: DailyReportDeliveryRow }
 
 interface SendDailyReportOptions {
   sql: RuntimeSql
@@ -282,11 +292,7 @@ export function parisDayWindow(day: string): { start: Date; end: Date } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw invalidReportingDay(day)
   const [year, month, date] = day.split('-').map(Number)
   const candidate = new Date(Date.UTC(year, month - 1, date, 12))
-  if (
-    candidate.getUTCFullYear() !== year ||
-    candidate.getUTCMonth() !== month - 1 ||
-    candidate.getUTCDate() !== date
-  ) {
+  if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== date) {
     throw invalidReportingDay(day)
   }
   return {
@@ -524,37 +530,92 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
       sent.push(deliveryResult(to, claim.row))
       continue
     }
-
-    try {
-      const result = await sendNotificationWithTimeout(options.notification, claim.content)
-      const deliveryStatus = deliveryStatusForProviderStatus(result.status)
-      const finalized = await finalizeDailyReportDelivery(options.sql, {
+    sent.push(
+      await deliverClaimedDailyReport(options.sql, options.notification, log, {
+        to,
         idempotencyKey,
         claimToken: claim.claimToken,
-        deliveryStatus,
-        providerStatus: result.status,
-        providerMessageId: result.id,
-        providerError: result.error?.message,
-      })
-      sent.push(deliveryResult(to, finalized))
-      if (result.status === 'FAILURE') {
-        log.error(`[daily-reporting] send failed to=${to} error=${result.error?.message ?? 'unknown'}`)
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const finalized = await finalizeDailyReportDelivery(options.sql, {
-        idempotencyKey,
-        claimToken: claim.claimToken,
-        deliveryStatus: 'reconciliation_required',
-        providerStatus: null,
-        providerError: message,
-      })
-      sent.push(deliveryResult(to, finalized))
-      log.error(`[daily-reporting] ambiguous send to=${to} error=${message}`)
-    }
+        content: claim.content,
+      }),
+    )
   }
 
   return { payload, snapshot_status: snapshotStatus, sent }
+}
+
+export async function resumeDailyReportDeliveries(options: {
+  sql: RuntimeSql
+  notification: RuntimeNotificationPort
+  beforeDay: string
+  limit?: number
+  log?: Pick<Console, 'info' | 'warn' | 'error'>
+}): Promise<ResumeDailyReportDeliveriesResult> {
+  const log = options.log ?? console
+  const limit = Math.max(1, Math.min(options.limit ?? 100, 500))
+  const candidates = await options.sql.unsafe<Array<{ idempotency_key: string; recipient: string }>>(
+    `SELECT idempotency_key, recipient
+     FROM reporting_daily_deliveries
+     WHERE deleted_at IS NULL
+       AND day < $1
+       AND status <> 'succeeded'
+       AND attempt_count < 5
+       AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+       AND (claim_token IS NULL OR claim_expires_at <= NOW())
+     ORDER BY day ASC, recipient_normalized ASC
+     LIMIT $2`,
+    [options.beforeDay, limit],
+  )
+  const sent: ResumeDailyReportDeliveriesResult['sent'] = []
+  for (const candidate of candidates) {
+    const claim = await claimPersistedDailyReportDelivery(options.sql, candidate.idempotency_key)
+    if (claim.kind !== 'send') {
+      sent.push(deliveryResult(candidate.recipient, claim.row))
+      continue
+    }
+    sent.push(
+      await deliverClaimedDailyReport(options.sql, options.notification, log, {
+        to: candidate.recipient,
+        idempotencyKey: candidate.idempotency_key,
+        claimToken: claim.claimToken,
+        content: claim.content,
+      }),
+    )
+  }
+  return { sent }
+}
+
+async function deliverClaimedDailyReport(
+  sql: RuntimeSql,
+  notification: RuntimeNotificationPort,
+  log: Pick<Console, 'info' | 'warn' | 'error'>,
+  input: { to: string; idempotencyKey: string; claimToken: string; content: DailyReportEmailContent },
+): Promise<SendDailyReportResult['sent'][number]> {
+  try {
+    const result = await sendNotificationWithTimeout(notification, input.content)
+    const finalized = await finalizeDailyReportDelivery(sql, {
+      idempotencyKey: input.idempotencyKey,
+      claimToken: input.claimToken,
+      deliveryStatus: deliveryStatusForProviderStatus(result.status),
+      providerStatus: result.status,
+      providerMessageId: result.id,
+      providerError: result.error?.message,
+    })
+    if (result.status === 'FAILURE') {
+      log.error(`[daily-reporting] send failed to=${input.to} error=${result.error?.message ?? 'unknown'}`)
+    }
+    return deliveryResult(input.to, finalized)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const finalized = await finalizeDailyReportDelivery(sql, {
+      idempotencyKey: input.idempotencyKey,
+      claimToken: input.claimToken,
+      deliveryStatus: 'reconciliation_required',
+      providerStatus: null,
+      providerError: message,
+    })
+    log.error(`[daily-reporting] ambiguous send to=${input.to} error=${message}`)
+    return deliveryResult(input.to, finalized)
+  }
 }
 
 function deliveryStatusForProviderStatus(status: NotificationResult['status']): DailyReportDeliveryStatus {
@@ -578,16 +639,13 @@ function uniqueRecipients(recipients: string[]): string[] {
 async function claimDailyReportDelivery(
   sql: RuntimeSql,
   input: { payload: DailyReportPayload; content: DailyReportEmailContent; revision: string },
-): Promise<
-  | { kind: 'send'; claimToken: string; content: DailyReportEmailContent }
-  | { kind: 'replay' | 'busy'; row: DailyReportDeliveryRow }
-> {
+): Promise<DailyReportDeliveryClaim> {
   const recipientNormalized = input.content.to.trim().toLowerCase()
   await sql.unsafe(
     `INSERT INTO reporting_daily_deliveries
        (day, timezone, recipient, recipient_normalized, revision, idempotency_key, content_payload, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending')
-     ON CONFLICT (idempotency_key) WHERE deleted_at IS NULL DO NOTHING`,
+     ON CONFLICT DO NOTHING`,
     [
       input.payload.day,
       input.payload.timezone,
@@ -599,6 +657,13 @@ async function claimDailyReportDelivery(
     ],
   )
 
+  return claimPersistedDailyReportDelivery(sql, input.content.idempotency_key)
+}
+
+async function claimPersistedDailyReportDelivery(
+  sql: RuntimeSql,
+  idempotencyKey: string,
+): Promise<DailyReportDeliveryClaim> {
   const claimToken = crypto.randomUUID()
   const [claimed] = await sql.unsafe<Array<{ content_payload: DailyReportEmailContent }>>(
     `UPDATE reporting_daily_deliveries
@@ -612,13 +677,15 @@ async function claimDailyReportDelivery(
      WHERE idempotency_key = $1
        AND deleted_at IS NULL
        AND status <> 'succeeded'
+       AND attempt_count < 5
+       AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
        AND (claim_token IS NULL OR claim_expires_at <= NOW())
      RETURNING content_payload`,
-    [input.content.idempotency_key, claimToken],
+    [idempotencyKey, claimToken],
   )
   if (claimed) return { kind: 'send', claimToken, content: parseDailyReportEmailContent(claimed.content_payload) }
 
-  const row = await loadDailyReportDelivery(sql, input.content.idempotency_key)
+  const row = await loadDailyReportDelivery(sql, idempotencyKey)
   return { kind: row.status === 'succeeded' ? 'replay' : 'busy', row }
 }
 
@@ -645,6 +712,13 @@ async function finalizeDailyReportDelivery(
          provider_error = $6,
          provider_observed_at = NOW(),
          sent_at = CASE WHEN $3 = 'succeeded' THEN NOW() ELSE sent_at END,
+         next_attempt_at = CASE
+           WHEN $3 = 'succeeded' THEN NULL
+           WHEN attempt_count = 1 THEN NOW() + INTERVAL '15 minutes'
+           WHEN attempt_count = 2 THEN NOW() + INTERVAL '1 hour'
+           WHEN attempt_count = 3 THEN NOW() + INTERVAL '4 hours'
+           ELSE NOW() + INTERVAL '24 hours'
+         END,
          claim_token = NULL,
          claimed_at = NULL,
          claim_expires_at = NULL,
@@ -652,7 +726,7 @@ async function finalizeDailyReportDelivery(
      WHERE idempotency_key = $1
        AND claim_token = $2
        AND deleted_at IS NULL
-     RETURNING content_payload, status, provider_status, provider_message_id, provider_error`,
+     RETURNING idempotency_key, recipient, content_payload, status, provider_status, provider_message_id, provider_error`,
     [
       input.idempotencyKey,
       input.claimToken,
@@ -667,7 +741,7 @@ async function finalizeDailyReportDelivery(
 
 async function loadDailyReportDelivery(sql: RuntimeSql, idempotencyKey: string): Promise<DailyReportDeliveryRow> {
   const [row] = await sql.unsafe<DailyReportDeliveryRow[]>(
-    `SELECT content_payload, status, provider_status, provider_message_id, provider_error
+    `SELECT idempotency_key, recipient, content_payload, status, provider_status, provider_message_id, provider_error
      FROM reporting_daily_deliveries
      WHERE idempotency_key = $1 AND deleted_at IS NULL`,
     [idempotencyKey],
@@ -1154,11 +1228,20 @@ function cartSummarySql(): string {
 function cartActivityAggSql(): string {
   return `
   WITH day_sessions AS (
-    SELECT *
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
+    SELECT
+      vs.*,
+      EXISTS (
+        SELECT 1
+        FROM orders o
+        WHERE o.shopify_order_id = vs.order_id
+          AND ${ELIGIBLE_ORDER_PREDICATE}
+          AND o.placed_at >= $1::timestamptz
+          AND o.placed_at < $2::timestamptz
+      ) AS has_eligible_order
+    FROM visitor_sessions vs
+    WHERE vs.deleted_at IS NULL
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
   ),
   segment_rows AS (
     SELECT
@@ -1173,7 +1256,7 @@ function cartActivityAggSql(): string {
       COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
       COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+      COUNT(*) FILTER (WHERE has_eligible_order)::int AS order_sessions
     FROM day_sessions
     GROUP BY 1
   ),
@@ -1190,7 +1273,7 @@ function cartActivityAggSql(): string {
       COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
       COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+      COUNT(*) FILTER (WHERE has_eligible_order)::int AS order_sessions
     FROM day_sessions
   )
   SELECT *
@@ -1339,13 +1422,18 @@ function abandonedCartEmailSql(): string {
     SELECT
       m.message_type,
       COUNT(c.id)::int AS conversions,
-      COALESCE(SUM(c.recovered_amount), 0)::float AS revenue
+      COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM sent_messages m
     JOIN abandoned_cart_cases c
       ON c.deleted_at IS NULL
       AND c.recovered_source_message_id = m.id
       AND c.recovered_at >= $1::timestamptz
       AND c.recovered_at < $2::timestamptz
+    JOIN orders o
+      ON o.shopify_order_id = c.recovered_order_id
+      AND ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     GROUP BY m.message_type
   )
   SELECT

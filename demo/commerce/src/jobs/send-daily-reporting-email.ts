@@ -4,7 +4,7 @@
 // summer reporting period; the product requirement is "in the night / around
 // 5h", so this stays early enough for operations.
 
-import { sendDailyReportEmail } from '../utils/daily-reporting'
+import { resumeDailyReportDeliveries, sendDailyReportEmail } from '../utils/daily-reporting'
 import type { RuntimeSql } from '../utils/manta-runtime'
 
 const EMPTY = {
@@ -30,13 +30,23 @@ export default defineJob('send-daily-reporting-email', '0 3 * * *', async ({ db,
     notification,
     log,
   })
-  const succeeded = result.sent.filter((row) => row.delivery_status === 'succeeded').length
-  const errors = result.sent.filter((row) => row.delivery_status === 'failed').length
-  const unresolved = result.sent.filter(
-    (row) => row.delivery_status === 'pending' || row.delivery_status === 'claimed' || row.delivery_status === 'reconciliation_required',
+  const resumed = await resumeDailyReportDeliveries({
+    sql: pool as RuntimeSql,
+    notification,
+    beforeDay: result.payload.day,
+    log,
+  })
+  const deliveries = [...result.sent, ...resumed.sent]
+  const succeeded = deliveries.filter((row) => row.delivery_status === 'succeeded').length
+  const errors = deliveries.filter((row) => row.delivery_status === 'failed').length
+  const unresolved = deliveries.filter(
+    (row) =>
+      row.delivery_status === 'pending' ||
+      row.delivery_status === 'claimed' ||
+      row.delivery_status === 'reconciliation_required',
   ).length
   log.info(
-    `[send-daily-reporting-email] day=${result.payload.day} status=${result.snapshot_status} succeeded=${succeeded} errors=${errors} unresolved=${unresolved}`,
+    `[send-daily-reporting-email] day=${result.payload.day} status=${result.snapshot_status} succeeded=${succeeded} errors=${errors} unresolved=${unresolved} resumed=${resumed.sent.length}`,
   )
   return {
     day: result.payload.day,
