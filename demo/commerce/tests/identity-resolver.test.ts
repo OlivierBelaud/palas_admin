@@ -91,6 +91,47 @@ describe('identity-resolver', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
+    it('isolates cached and in-flight identities by PostHog configuration', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ results: [['eu@example.com']] }))
+        .mockResolvedValueOnce(Response.json({ results: [['us@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      await expect(resolveEmailByDistinctId('d1', { host: 'https://eu.posthog', apiKey: 'eu-key' })).resolves.toBe(
+        'eu@example.com',
+      )
+      await expect(resolveEmailByDistinctId('d1', { host: 'https://us.posthog', apiKey: 'us-key' })).resolves.toBe(
+        'us@example.com',
+      )
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('times out a stuck lookup, clears it, and permits a retry', async () => {
+      const controller = new AbortController()
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+            }),
+        )
+        .mockResolvedValueOnce(Response.json({ results: [['recovered@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const first = resolveEmailByDistinctId('d1')
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      controller.abort(new Error('timeout'))
+      await expect(first).resolves.toBeNull()
+
+      await expect(resolveEmailByDistinctId('d1')).resolves.toBe('recovered@example.com')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      timeoutSpy.mockRestore()
+    })
+
     it('caches null results to avoid re-querying missing identities', async () => {
       const fetchMock = mockFetch({ results: [] })
       globalThis.fetch = fetchMock

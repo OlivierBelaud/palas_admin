@@ -5,7 +5,7 @@ index e728775..f5c6a14 100644
 @@ -60,14 +60,25 @@ async function bootstrap() {
    return _bootstrapped
  }
- 
+
 -const _promise = bootstrap()
 +let _promise: Promise<any> | null = null
 +
@@ -19,13 +19,13 @@ index e728775..f5c6a14 100644
 +  }
 +  return _promise
 +}
- 
+
  export async function getMantaAdapter() {
 -  const { adapter } = await _promise
 +  const { adapter } = await bootPromise()
    return adapter
  }
- 
+
  export async function getMantaApp() {
 -  const { app } = await _promise
 +  const { app } = await bootPromise()

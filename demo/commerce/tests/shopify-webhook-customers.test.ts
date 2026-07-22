@@ -54,7 +54,7 @@ beforeEach(() => {
   process.env.SHOPIFY_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
 })
 
-function withRuntimeApp(req: Request): Request {
+function attachRuntimeApp(req: Request, emit: (event: string) => Promise<void>): Request {
   const sql = Object.assign(() => Promise.resolve([]), {
     unsafe: () => Promise.resolve([]),
   })
@@ -67,9 +67,7 @@ function withRuntimeApp(req: Request): Request {
           raw: () => Promise.resolve([]),
         }
       },
-      emit: async (event: string) => {
-        emittedEvents.push(event)
-      },
+      emit,
     },
     enumerable: true,
     configurable: true,
@@ -77,27 +75,17 @@ function withRuntimeApp(req: Request): Request {
   return req
 }
 
-function withControlledEventTransport(req: Request) {
-  const sql = Object.assign(() => Promise.resolve([]), {
-    unsafe: () => Promise.resolve([]),
+function withRuntimeApp(req: Request): Request {
+  return attachRuntimeApp(req, async (event) => {
+    emittedEvents.push(event)
   })
+}
+
+function withControlledEventTransport(req: Request) {
   const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
-  Object.defineProperty(req, 'app', {
-    value: {
-      resolve(key: string) {
-        if (key !== 'IDatabasePort' && key !== 'db') return undefined
-        return {
-          getPool: () => sql,
-          raw: () => Promise.resolve([]),
-        }
-      },
-      emit(event: string) {
-        emittedEvents.push(event)
-        return new Promise<void>((resolve, reject) => pending.set(event, { resolve, reject }))
-      },
-    },
-    enumerable: true,
-    configurable: true,
+  attachRuntimeApp(req, (event) => {
+    emittedEvents.push(event)
+    return new Promise<void>((resolve, reject) => pending.set(event, { resolve, reject }))
   })
   return { req, pending }
 }

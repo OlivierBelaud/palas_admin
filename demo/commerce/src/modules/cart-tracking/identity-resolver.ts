@@ -29,6 +29,7 @@ interface CacheEntry {
 }
 
 const TTL_MS = 5 * 60 * 1000
+const LOOKUP_TIMEOUT_MS = 10_000
 const MAX_CACHE_ENTRIES = 1_000
 const cache = new Map<string, CacheEntry>()
 const inFlight = new Map<string, Promise<string | null>>()
@@ -59,12 +60,19 @@ export function clearIdentityCache(): void {
   inFlight.clear()
 }
 
-function cacheIdentity(distinctId: string, email: string | null, now = Date.now()): void {
+function identityKey(distinctId: string, host: string, apiKey: string): string {
+  return `${host}\0${apiKey}\0${distinctId}`
+}
+
+function pruneExpiredCache(now: number): void {
   for (const [key, entry] of cache) {
     if (entry.expires_at <= now) cache.delete(key)
   }
-  cache.delete(distinctId)
-  cache.set(distinctId, { email, expires_at: now + TTL_MS })
+}
+
+function cacheIdentity(key: string, email: string | null, now = Date.now()): void {
+  cache.delete(key)
+  cache.set(key, { email, expires_at: now + TTL_MS })
   while (cache.size > MAX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value
     if (oldest === undefined) break
@@ -82,19 +90,19 @@ export async function resolveEmailByDistinctId(
   opts: IdentityResolverOptions = {},
 ): Promise<string | null> {
   const now = Date.now()
-  const cached = cache.get(distinctId)
+  const host = opts.host ?? posthogHost()
+  const key = opts.apiKey ?? posthogPrivateKey()
+  if (!key) return null
+
+  pruneExpiredCache(now)
+  const cacheKey = identityKey(distinctId, host, key)
+  const cached = cache.get(cacheKey)
   if (cached && cached.expires_at > now) {
     metrics.hits += 1
     return cached.email
   }
-  if (cached) cache.delete(distinctId)
-
-  const pending = inFlight.get(distinctId)
+  const pending = inFlight.get(cacheKey)
   if (pending) return pending
-
-  const host = opts.host ?? posthogHost()
-  const key = opts.apiKey ?? posthogPrivateKey()
-  if (!key) return null
 
   const current = (async () => {
     metrics.lookups += 1
@@ -109,22 +117,22 @@ export async function resolveEmailByDistinctId(
           // must reflect the latest $identify, otherwise newly-identified users
           // stay anonymous in our DB for up to the cache TTL.
           refresh: 'force_blocking',
+          signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
         },
       )
       const email = (rows?.[0]?.[0] as string | null | undefined) ?? null
-      cacheIdentity(distinctId, email, now)
+      cacheIdentity(cacheKey, email, now)
       if (email) metrics.recoveries += 1
       else metrics.misses += 1
       return email
     } catch {
-      cacheIdentity(distinctId, null, now)
       metrics.misses += 1
       return null
     }
   })()
-  inFlight.set(distinctId, current)
+  inFlight.set(cacheKey, current)
   current.finally(() => {
-    if (inFlight.get(distinctId) === current) inFlight.delete(distinctId)
+    if (inFlight.get(cacheKey) === current) inFlight.delete(cacheKey)
   })
   return current
 }
@@ -144,6 +152,8 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
   if (!key) return map
 
   try {
+    const now = Date.now()
+    pruneExpiredCache(now)
     const rows = await runPosthogHogQL(
       // LIMIT 100000: PostHog HogQL defaults to 100 rows when no explicit
       // LIMIT is set, which silently drops 90% of distinct_ids on a real
@@ -164,7 +174,7 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
       const email = row[1] as string | null
       if (id && email) {
         map.set(id, email)
-        cacheIdentity(id, email)
+        cacheIdentity(identityKey(id, host, key), email, now)
       }
     }
     return map

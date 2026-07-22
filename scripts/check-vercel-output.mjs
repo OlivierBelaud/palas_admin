@@ -4,14 +4,17 @@ import { isDeepStrictEqual } from 'node:util'
 
 const outputRoot = 'demo/commerce/.vercel/output'
 const manifest = readJson('demo/commerce/vercel-fast-functions.manifest.json')
+const runtimeContracts = readJson('demo/commerce/runtime-contracts.json')
 const customRoutes = manifest.functions.map((spec) => spec.route)
 const expectedFunctions = ['__server', ...customRoutes]
 const sourceDir = 'demo/commerce/vercel-fast-functions'
 
 const deployableSources = globSync('admin-*.mjs', { cwd: sourceDir }).sort()
 const manifestSources = [...new Set(manifest.functions.map((spec) => spec.source))].sort()
-if (customRoutes.length < 20) {
-  throw new Error(`Vercel fast-function inventory regressed: expected at least 20 routes, found ${customRoutes.length}`)
+if (customRoutes.length < runtimeContracts.inventory.minimumFastFunctionRoutes) {
+  throw new Error(
+    `Vercel fast-function inventory regressed: expected at least ${runtimeContracts.inventory.minimumFastFunctionRoutes} routes, found ${customRoutes.length}`,
+  )
 }
 if (!isDeepStrictEqual(deployableSources, manifestSources)) {
   const missing = deployableSources.filter((source) => !manifestSources.includes(source))

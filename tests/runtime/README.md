@@ -20,7 +20,7 @@ The runtime gate fails explicitly. A green runtime check always means the compil
 
 ## CI requirements
 
-CI should set `TEST_DATABASE_URL` when the runtime smoke is required. Without it, the smoke is skipped the same way it is in local development.
+CI must set `TEST_DATABASE_URL` when the runtime smoke is required. Without it, the gate fails explicitly in every environment.
 
 ## How the smoke boots
 

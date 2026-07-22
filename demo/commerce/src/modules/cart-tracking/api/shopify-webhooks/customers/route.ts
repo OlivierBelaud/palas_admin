@@ -88,7 +88,7 @@ export async function POST(req: Request): Promise<Response> {
     )
     return new Response('OK', { status: 200 })
   } catch (err) {
-    console.error(`[shopify-webhook customers] upsert failed for customer ${customer.id}: ${(err as Error).message}`)
+    console.error(`[shopify-webhook customers] processing failed for customer ${customer.id}: ${(err as Error).message}`)
     return new Response('Internal Error', { status: 500 })
   }
 }
