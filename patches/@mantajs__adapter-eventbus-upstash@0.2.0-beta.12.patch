@@ -1,0 +1,23 @@
+diff --git a/dist/adapter.js b/dist/adapter.js
+index d09c383..0beaa8a 100644
+--- a/dist/adapter.js
++++ b/dist/adapter.js
+@@ -53,12 +53,13 @@ export class UpstashEventBusAdapter {
+         // Non-grouped: deliver locally + publish to QStash
+         for (const msg of events) {
+             this._runInterceptors(msg);
+-            this._deliverLocally(msg);
+-            // Publish to QStash for durable delivery (fire-and-forget)
++            // A configured durable transport is the delivery path. Await its
++            // acknowledgement so callers can retry a rejected publication.
+             if (this._qstash && this._callbackUrl) {
+-                this._publishToQStash(msg).catch((err) => {
+-                    console.warn(`[EventBus] QStash publish failed for ${msg.eventName}: ${err?.message ?? err}`);
+-                });
++                await this._publishToQStash(msg);
++            }
++            else {
++                this._deliverLocally(msg);
+             }
+         }
+     }

@@ -69,6 +69,69 @@ describe('identity-resolver', () => {
       expect(m.hits).toBe(1)
     })
 
+    it('shares an in-flight lookup for the same identity', async () => {
+      let release: (() => void) | undefined
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = () => resolve(Response.json({ results: [['isa.morin@example.com']] }))
+          }),
+      )
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const first = resolveEmailByDistinctId('d1')
+      const second = resolveEmailByDistinctId('d1')
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      release?.()
+
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        'isa.morin@example.com',
+        'isa.morin@example.com',
+      ])
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('isolates cached and in-flight identities by PostHog configuration', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ results: [['eu@example.com']] }))
+        .mockResolvedValueOnce(Response.json({ results: [['us@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      await expect(resolveEmailByDistinctId('d1', { host: 'https://eu.posthog', apiKey: 'eu-key' })).resolves.toBe(
+        'eu@example.com',
+      )
+      await expect(resolveEmailByDistinctId('d1', { host: 'https://us.posthog', apiKey: 'us-key' })).resolves.toBe(
+        'us@example.com',
+      )
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('times out a stuck lookup, clears it, and permits a retry', async () => {
+      const controller = new AbortController()
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+            }),
+        )
+        .mockResolvedValueOnce(Response.json({ results: [['recovered@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const first = resolveEmailByDistinctId('d1')
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      controller.abort(new Error('timeout'))
+      await expect(first).resolves.toBeNull()
+
+      await expect(resolveEmailByDistinctId('d1')).resolves.toBe('recovered@example.com')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      timeoutSpy.mockRestore()
+    })
+
     it('caches null results to avoid re-querying missing identities', async () => {
       const fetchMock = mockFetch({ results: [] })
       globalThis.fetch = fetchMock
@@ -138,6 +201,46 @@ describe('identity-resolver', () => {
       expect(email).toBe('a@b.com')
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(getIdentityMetrics().hits).toBe(1)
+    })
+
+    it('bounds the process cache while returning the complete batch result', async () => {
+      const rows = Array.from({ length: 1_001 }, (_, index) => [`d${index}`, `user${index}@example.com`])
+      globalThis.fetch = mockFetch({ results: rows })
+
+      const map = await resolveEmailsBatch()
+
+      expect(map.size).toBe(1_001)
+      expect(getIdentityMetrics().cacheSize).toBeLessThanOrEqual(1_000)
+    })
+
+    it('times out a stalled batch lookup and permits a later retry', async () => {
+      const controller = new AbortController()
+      const retrySignal = new AbortController().signal
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValueOnce(controller.signal)
+        .mockReturnValueOnce(retrySignal)
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+            }),
+        )
+        .mockResolvedValueOnce(Response.json({ results: [['d1', 'recovered@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const stalled = resolveEmailsBatch()
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
+      controller.abort(new Error('timeout'))
+      await expect(stalled).resolves.toEqual(new Map())
+
+      await expect(resolveEmailsBatch()).resolves.toEqual(new Map([['d1', 'recovered@example.com']]))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[1]?.[1]?.signal).toBe(retrySignal)
+      timeoutSpy.mockRestore()
     })
   })
 

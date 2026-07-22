@@ -9,9 +9,10 @@
   ],
   "scripts": {
     "build": "pnpm --dir demo/commerce build",
+    "build:edge": "node scripts/check-runtime-contracts.mjs --target backend-edge",
     "build:ci": "node scripts/build-vercel-ci.mjs && node scripts/check-vercel-output.mjs",
     "check:secrets": "node scripts/check-secrets.mjs --self-test && node scripts/check-secrets.mjs",
-    "check:inventory": "node scripts/check-test-inventory.mjs && node scripts/check-operator-inventory.mjs",
+    "check:inventory": "node scripts/check-test-inventory.mjs && node scripts/check-operator-inventory.mjs && node scripts/check-runtime-contracts.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "check:quality": "pnpm check:inventory && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm check:migrations && pnpm build:ci",
     "test": "vitest run --config vitest.exhaustive.config.ts",

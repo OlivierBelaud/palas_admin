@@ -11,10 +11,18 @@
     {
       "source": "admin-catalog-taxonomy.mjs",
       "route": "api/admin/catalog-taxonomy",
-      "extraSources": ["catalog-classification-seed.json", "catalog-shopify-sync.mjs"],
+      "extraSources": [
+        "catalog-classification-seed.json",
+        "catalog-shopify-sync.mjs",
+        "catalog-publication-governance.mjs"
+      ],
       "maxDuration": 300
     },
-    { "source": "admin-catalog-content.mjs", "route": "api/admin/catalog-content" },
+    {
+      "source": "admin-catalog-content.mjs",
+      "route": "api/admin/catalog-content",
+      "extraSources": ["catalog-publication-governance.mjs"]
+    },
     { "source": "admin-visitor-lifecycle-dashboard.mjs", "route": "api/admin/visitor-lifecycle-dashboard" },
     { "source": "admin-visitor-stats.mjs", "route": "api/admin/visitor-stats-unique-visitors-by-segment" },
     { "source": "admin-visitor-stats.mjs", "route": "api/admin/visitor-stats-carts-created-funnel" },

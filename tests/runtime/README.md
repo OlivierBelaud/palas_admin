@@ -16,11 +16,11 @@ TEST_DATABASE_URL=postgresql://<user>@localhost:5432/postgres pnpm check:runtime
 
 ## Without `TEST_DATABASE_URL`
 
-The Playwright global setup writes a skipped state and exits 0. This is the default contributor experience when Postgres is not set up locally — `pnpm check` still exits 0.
+The runtime gate fails explicitly. A green runtime check always means the compiled server was exercised against PostgreSQL; it is never silently skipped.
 
 ## CI requirements
 
-CI should set `TEST_DATABASE_URL` when the runtime smoke is required. Without it, the smoke is skipped the same way it is in local development.
+CI must set `TEST_DATABASE_URL` when the runtime smoke is required. Without it, the gate fails explicitly in every environment.
 
 ## How the smoke boots
 

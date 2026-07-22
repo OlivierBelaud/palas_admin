@@ -20,6 +20,8 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@mantajs/*'
 patchedDependencies:
+  '@mantajs/adapter-eventbus-upstash@0.2.0-beta.12': patches/@mantajs__adapter-eventbus-upstash@0.2.0-beta.12.patch
   '@mantajs/adapter-notification-resend@0.2.0-beta.12': patches/@mantajs__adapter-notification-resend@0.2.0-beta.12.patch
   '@mantajs/core@0.2.0-beta.12': patches/@mantajs__core@0.2.0-beta.12.patch
   '@mantajs/dashboard@0.2.0-beta.12': patches/@mantajs__dashboard@0.2.0-beta.12.patch
+  '@mantajs/host-nitro@0.2.0-beta.12': patches/@mantajs__host-nitro@0.2.0-beta.12.patch

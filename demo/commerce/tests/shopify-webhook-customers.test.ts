@@ -54,7 +54,7 @@ beforeEach(() => {
   process.env.SHOPIFY_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
 })
 
-function withRuntimeApp(req: Request): Request {
+function attachRuntimeApp(req: Request, emit?: (event: string) => Promise<void>): Request {
   const sql = Object.assign(() => Promise.resolve([]), {
     unsafe: () => Promise.resolve([]),
   })
@@ -67,14 +67,27 @@ function withRuntimeApp(req: Request): Request {
           raw: () => Promise.resolve([]),
         }
       },
-      emit: async (event: string) => {
-        emittedEvents.push(event)
-      },
+      ...(emit ? { emit } : {}),
     },
     enumerable: true,
     configurable: true,
   })
   return req
+}
+
+function withRuntimeApp(req: Request): Request {
+  return attachRuntimeApp(req, async (event) => {
+    emittedEvents.push(event)
+  })
+}
+
+function withControlledEventTransport(req: Request) {
+  const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
+  attachRuntimeApp(req, (event) => {
+    emittedEvents.push(event)
+    return new Promise<void>((resolve, reject) => pending.set(event, { resolve, reject }))
+  })
+  return { req, pending }
 }
 
 describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
@@ -109,6 +122,91 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('OK')
     expect(upsertCalls.length).toBe(1)
+  })
+
+  it('does not acknowledge Shopify until every refresh event is durably emitted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ customer: { id: SHOPIFY_REAL_ID, email: 'jane@example.com' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const controlled = withControlledEventTransport(
+      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+      }),
+    )
+    let settled = false
+    const responsePromise = POST(controlled.req).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(controlled.pending.size).toBe(2))
+
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    for (const event of controlled.pending.values()) event.resolve()
+    expect((await responsePromise).status).toBe(200)
+  })
+
+  it('returns a retryable failure when a refresh event cannot be durably emitted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ customer: { id: SHOPIFY_REAL_ID, email: 'jane@example.com' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const controlled = withControlledEventTransport(
+      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+      }),
+    )
+    const responsePromise = POST(controlled.req)
+    await vi.waitFor(() => expect(controlled.pending.size).toBe(2))
+    controlled.pending.get('contact.refresh-requested')?.reject(new Error('event transport unavailable'))
+    controlled.pending.get('cart.refresh-requested')?.resolve()
+
+    const response = await responsePromise
+    expect(response.status).toBe(500)
+    expect(await response.text()).toBe('Internal Error')
+  })
+
+  it('fails before the upsert when the durable event transport is missing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ customer: { id: SHOPIFY_REAL_ID, email: 'jane@example.com' } }),
+      ),
+    )
+
+    const { POST } = await routeModulePromise
+    const request = attachRuntimeApp(
+      new Request('https://admin.fancypalas.com/api/cart-tracking/shopify-webhooks/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: SHOPIFY_REAL_ID }),
+      }),
+    )
+
+    const response = await POST(request)
+
+    expect(response.status).toBe(500)
+    expect(await response.text()).toBe('Event Transport Misconfigured')
+    expect(upsertCalls).toEqual([])
   })
 
   it('returns 401 when Shopify cannot find the customer id', async () => {
