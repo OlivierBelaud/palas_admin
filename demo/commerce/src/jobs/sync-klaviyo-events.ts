@@ -11,7 +11,7 @@ interface SyncResult {
 
 const EMPTY: SyncResult = { scanned: 0, inserted: 0, skipped: 0, carts_marked_klaviyo: 0 }
 
-export default defineJob('sync-klaviyo-events', '20 * * * *', async ({ command, log }) => {
+export default defineJob('sync-klaviyo-events', '50 * * * *', async ({ command, log }) => {
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[sync-klaviyo-events] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY

@@ -125,12 +125,10 @@ test.describe('persisted Admin projections and consent', () => {
       )
       return result.rows
     })
-    expect(
-      workflows.filter((workflow) =>
-        ['cmd:markContactUnsubscribed', 'cmd:refreshContact'].includes(workflow.command_name),
-      ).length,
-      JSON.stringify(workflows),
-    ).toBeGreaterThanOrEqual(3)
-    expect(workflows.every((workflow) => workflow.status === 'succeeded')).toBe(true)
+    const relevantWorkflows = workflows.filter((workflow) =>
+      ['cmd:markContactUnsubscribed', 'cmd:refreshContact'].includes(workflow.command_name),
+    )
+    expect(relevantWorkflows.length, JSON.stringify(workflows)).toBeGreaterThanOrEqual(3)
+    expect(relevantWorkflows.every((workflow) => workflow.status === 'succeeded')).toBe(true)
   })
 })

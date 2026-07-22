@@ -4,6 +4,14 @@ import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
 import { buildEmailLinkTrackingParams } from './email-link-tracking'
 import { archiveEmailSnapshot, type EmailSnapshotResult } from './email-snapshot'
+import { KLAVIYO_ABANDONMENT_METRICS, KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES } from './klaviyo-abandonment-contract'
+import {
+  DEFAULT_KLAVIYO_PROJECTION_MAX_AGE_MS,
+  KLAVIYO_PROJECTION_KEY,
+  type KlaviyoProjectionFence,
+  projectionFenceFromState,
+  requireFreshKlaviyoProjection,
+} from './klaviyo-projection-state'
 import type { RuntimeFilePort, RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
 import { sendPosthogEvent } from './posthog-ingest'
 import { buildRecoveryUrl } from './recovery-url'
@@ -125,7 +133,6 @@ const DEFAULT_RECOVERY_WINDOW_DAYS = 7
 const DELIVERY_CLAIM_LEASE_MS = 2 * 60 * 1000
 const DELIVERY_CLAIM_HEARTBEAT_MS = 30 * 1000
 const NOTIFICATION_PROVIDER_TIMEOUT_MS = 90 * 1000
-const KLAVIYO_ABANDON_METRICS = ['Shopify_Checkout_Abandonned', 'Checkout Abandoned']
 const GWP_TITLE_RX = /\b(?:gift|offert|free|charm offert)\b/i
 
 function newId(prefix: string): string {
@@ -428,17 +435,69 @@ function startDeliveryClaimHeartbeat(
   return () => clearInterval(timer)
 }
 
-async function refreshDeliveryClaim(
+/**
+ * Last local authorization before the irreversible provider effect.
+ *
+ * This single statement both refreshes the owned delivery claim and fences it
+ * against the exact successful projection generation captured at campaign
+ * start. It also closes the local event race between the earlier candidate
+ * check and this point. No database lock is held while calling the provider.
+ *
+ * Residual boundary: PostHog is an eventually-consistent mirror. An event that
+ * Klaviyo emitted but PostHog has not exposed cannot be proven absent here.
+ * Eliminating that cross-system window requires a shared provider claim, one
+ * authoritative sender, or a direct Klaviyo read before delivery.
+ */
+export async function fenceDeliveryAgainstKlaviyoProjection(
   sql: RuntimeSql,
   claim: { messageId: string; claimToken: string },
+  projection: KlaviyoProjectionFence,
+  email: string,
+  since: Date,
 ): Promise<boolean> {
-  const rows = await sql<Array<{ id: string }>>`
-    UPDATE abandoned_cart_messages
-    SET delivery_claimed_at = NOW(), updated_at = NOW()
-    WHERE id = ${claim.messageId}
-      AND delivery_claim_token = ${claim.claimToken}
-      AND status IN ('pending', 'failed')
-    RETURNING id`
+  const rows = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE abandoned_cart_messages AS message
+     SET delivery_claimed_at = NOW(), updated_at = NOW()
+     FROM klaviyo_projection_state AS projection
+     WHERE message.id = $1
+       AND message.delivery_claim_token = $2
+       AND message.status IN ('pending', 'failed')
+       AND projection.projection_key = $3
+       AND projection.status = 'succeeded'
+       AND projection.generation = $4
+       AND projection.sync_token = $5
+       AND projection.covered_through = $6::timestamptz
+       AND projection.requested_through = projection.covered_through
+       AND projection.last_successful_at IS NOT NULL
+       AND projection.covered_through >= NOW() - ($7::bigint * INTERVAL '1 millisecond')
+       AND NOT EXISTS (
+         SELECT 1
+         FROM klaviyo_events AS event
+         WHERE LOWER(event.email) = LOWER($8)
+           AND event.occurred_at >= $9::timestamptz
+           AND (
+             event.metric = ANY($10::text[])
+             OR (
+               event.metric = 'Received Email'
+               AND LOWER(COALESCE(event.subject, '')) LIKE ANY($11::text[])
+             )
+           )
+       )
+     RETURNING message.id`,
+    [
+      claim.messageId,
+      claim.claimToken,
+      KLAVIYO_PROJECTION_KEY,
+      projection.generation,
+      projection.syncToken,
+      projection.throughIso,
+      DEFAULT_KLAVIYO_PROJECTION_MAX_AGE_MS,
+      email,
+      since.toISOString(),
+      [...KLAVIYO_ABANDONMENT_METRICS],
+      KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES.map((needle) => `%${needle}%`),
+    ],
+  )
   return rows.length > 0
 }
 
@@ -846,19 +905,18 @@ async function findShopifyOrderAfter(
   }
 }
 
-async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Date): Promise<Date | null> {
+export async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Date): Promise<Date | null> {
   const rows = await sql<Array<{ occurred_at: Date | string }>>`
     SELECT occurred_at
     FROM klaviyo_events
     WHERE LOWER(email) = LOWER(${email})
       AND occurred_at >= ${sqlTimestamp(since)}
       AND (
-        metric = ANY(${KLAVIYO_ABANDON_METRICS})
-        OR (metric = 'Received Email' AND (
-          subject ILIKE '%oublié quelque chose%'
-          OR subject ILIKE '%pensez encore%'
-          OR subject ILIKE '%attend plus que vous%'
-        ))
+        metric = ANY(${[...KLAVIYO_ABANDONMENT_METRICS]})
+        OR (
+          metric = 'Received Email'
+          AND LOWER(COALESCE(subject, '')) LIKE ANY(${KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES.map((needle) => `%${needle}%`)})
+        )
       )
     ORDER BY occurred_at DESC
     LIMIT 1`
@@ -1000,6 +1058,8 @@ export async function runAbandonedCartCampaign(
   } = opts
 
   const now = new Date()
+  const initialProjection = await requireFreshKlaviyoProjection(sql, now)
+  const projectionFence = projectionFenceFromState(initialProjection)
   const cutoff = new Date(now.getTime() - maxCaseAgeDays * DAY_MS)
   const candidates = await sql<CandidateRow[]>`
     SELECT
@@ -1282,9 +1342,10 @@ export async function runAbandonedCartCampaign(
           log.warn(`[abandoned-cart-campaign] snapshot failed message=${messageId}: ${snapshot.error}`)
         }
 
-        // A successor may have reclaimed a stale lease while rendering or
-        // archiving. Refresh ownership immediately before the irreversible call.
-        if (!(await refreshDeliveryClaim(sql, claim))) {
+        // One atomic local fence verifies the exact projection generation,
+        // claim ownership/freshness and absence of a matching event immediately
+        // before the provider call.
+        if (!(await fenceDeliveryAgainstKlaviyoProjection(sql, claim, projectionFence, c.email, since))) {
           result.claim_conflicts++
           continue
         }

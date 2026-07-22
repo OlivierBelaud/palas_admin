@@ -16,6 +16,7 @@
 // Production-only — local `manta dev` no-ops to avoid hitting prod data.
 
 import { type AbandonedCartCampaignResult, runAbandonedCartCampaign } from '../utils/abandoned-cart-campaign'
+import { runAfterKlaviyoProjectionSync } from '../utils/klaviyo-synchronized-campaign'
 import { type RuntimeSql, resolveFile } from '../utils/manta-runtime'
 
 const EMPTY: AbandonedCartCampaignResult = {
@@ -33,7 +34,7 @@ const EMPTY: AbandonedCartCampaignResult = {
   claim_conflicts: 0,
 }
 
-export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db, notification, log }) => {
+export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, command, db, notification, log }) => {
   if (process.env.NODE_ENV !== 'production') {
     log.info(`[detect-abandoned-carts] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
@@ -49,16 +50,25 @@ export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, db
   const fromEmail = process.env.RESEND_FROM_EMAIL ?? 'Fancy Palas <hello@fancypalas.com>'
   const replyTo = process.env.RESEND_REPLY_TO ?? 'hello@fancypalas.com'
 
-  const result = await runAbandonedCartCampaign({
-    sql,
-    notification,
-    file: resolveFile(app),
-    adminBase,
-    fromEmail,
-    replyTo,
-    batchLimit: 50,
-    log,
-  })
+  const commands = command as unknown as { syncKlaviyoEvents(input: Record<string, never>): Promise<unknown> }
+  const result = await runAfterKlaviyoProjectionSync(
+    () => commands.syncKlaviyoEvents({}),
+    () =>
+      runAbandonedCartCampaign({
+        sql,
+        notification,
+        file: resolveFile(app),
+        adminBase,
+        fromEmail,
+        replyTo,
+        batchLimit: 50,
+        log,
+      }),
+    (stage, error) => {
+      const label = stage === 'sync' ? 'Klaviyo preflight failed' : 'campaign failed'
+      log.error(`[detect-abandoned-carts] ${label}: ${(error as Error).message}`)
+    },
+  )
   log.info(
     `[detect-abandoned-carts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors} claim_conflicts=${result.claim_conflicts} skipped_shopify_order=${result.skipped_shopify_order} skipped_shopify_unavailable=${result.skipped_shopify_unavailable}`,
   )

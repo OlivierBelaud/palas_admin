@@ -59,6 +59,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Mandatory PostgreSQL Klaviyo delivery fence
+        run: pnpm exec vitest run demo/commerce/tests/klaviyo-delivery-fence-postgres.test.ts --reporter=verbose
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
       - name: Exhaustive quality gate
         run: pnpm check:quality
         env:

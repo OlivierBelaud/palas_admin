@@ -32,6 +32,7 @@ import {
   type SendAbandonedCartEmailResult,
   sendAbandonedCartEmailForCart,
 } from '../emails/abandoned-cart/send-for-cart'
+import { KLAVIYO_ABANDONMENT_METRICS, isKlaviyoAbandonmentEvent } from './klaviyo-abandonment-contract'
 
 export interface EligibleCart {
   id: string
@@ -116,13 +117,6 @@ export interface BasicLogger {
   warn: (msg: string) => void
   error: (msg: string) => void
 }
-
-// Klaviyo native abandonment metrics + subject patterns (see legacy HogQL in
-// the previous Klaviyo-based command). These are what we treat as evidence
-// that Klaviyo's own flow already reached out to the contact recently — when
-// present we yield to it and skip our own send.
-const KLAVIYO_ABANDON_METRICS = ['Shopify_Checkout_Abandonned', 'Checkout Abandoned']
-const KLAVIYO_ABANDON_SUBJECT_PATTERNS = ['oublié quelque chose', 'pensez encore', 'attend plus que vous']
 
 // Default window: any Klaviyo native abandonment email sent within the last
 // `klaviyoRecentHours` is grounds to skip (we yield to Klaviyo's flow).
@@ -253,12 +247,7 @@ export function isContactOptedOut(contact: ContactLookupRow): boolean {
 
 /** True iff the Klaviyo event row qualifies as a recent abandonment-flow send for `email`. */
 export function isAbandonmentFlowEvent(row: KlaviyoEventLookupRow): boolean {
-  if (KLAVIYO_ABANDON_METRICS.includes(row.metric)) return true
-  if (row.metric === 'Received Email' && row.subject) {
-    const lc = row.subject.toLowerCase()
-    return KLAVIYO_ABANDON_SUBJECT_PATTERNS.some((p) => lc.includes(p))
-  }
-  return false
+  return isKlaviyoAbandonmentEvent(row)
 }
 
 /**
@@ -295,7 +284,7 @@ export async function loadRecentKlaviyoAbandonByEmail(
     {
       email: { $in: emails },
       occurred_at: { $gte: sinceDate },
-      metric: { $in: [...KLAVIYO_ABANDON_METRICS, 'Received Email'] },
+      metric: { $in: [...KLAVIYO_ABANDONMENT_METRICS, 'Received Email'] },
     },
     { order: { occurred_at: 'DESC' } },
   )

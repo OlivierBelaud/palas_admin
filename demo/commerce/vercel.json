@@ -90,7 +90,7 @@
     },
     {
       "path": "/api/crons/sync-klaviyo-events",
-      "schedule": "20 * * * *"
+      "schedule": "50 * * * *"
     },
     {
       "path": "/api/crons/sync-posthog-events",
