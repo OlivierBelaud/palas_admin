@@ -142,7 +142,35 @@ export interface DailyReportPayload {
 interface SendDailyReportResult {
   payload: DailyReportPayload
   snapshot_status: 'ready' | 'partial' | 'failed'
-  sent: Array<{ to: string; status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: string }>
+  sent: Array<{
+    to: string
+    status: 'SUCCESS' | 'FAILURE' | 'PENDING'
+    delivery_status: DailyReportDeliveryStatus
+    id?: string
+    error?: string
+  }>
+}
+
+type DailyReportDeliveryStatus = 'pending' | 'claimed' | 'succeeded' | 'failed' | 'reconciliation_required'
+
+interface DailyReportEmailContent {
+  to: string
+  channel: string
+  from: string
+  replyTo?: string
+  subject: string
+  html: string
+  text: string
+  idempotency_key: string
+  tags: Array<{ name: string; value: string }>
+}
+
+interface DailyReportDeliveryRow {
+  content_payload: DailyReportEmailContent
+  status: DailyReportDeliveryStatus
+  provider_status: 'SUCCESS' | 'FAILURE' | 'PENDING' | null
+  provider_message_id: string | null
+  provider_error: string | null
 }
 
 interface SendDailyReportOptions {
@@ -460,7 +488,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
   const snapshotStatus = dailyReportSnapshotStatus(payload)
   await storeDailyReportSnapshot(options.sql, payload, snapshotStatus)
 
-  const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
+  const recipients = uniqueRecipients(options.recipients ?? dailyReportRecipientsFromEnv())
   const html = renderDailyReportHtml(payload)
   const text = renderDailyReportText(payload)
   const subject =
@@ -474,12 +502,13 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
     return {
       payload,
       snapshot_status: snapshotStatus,
-      sent: recipients.map((to) => ({ to, status: 'PENDING' })),
+      sent: recipients.map((to) => ({ to, status: 'PENDING', delivery_status: 'pending' })),
     }
   }
 
   for (const to of recipients) {
-    const result = await options.notification.send({
+    const idempotencyKey = `daily-report:${payload.day}:${to.toLowerCase()}${idempotencyScope}`
+    const content: DailyReportEmailContent = {
       to,
       channel: 'email',
       from: options.fromEmail ?? process.env.RESEND_FROM_EMAIL ?? 'PALAS <hello@fancypalas.com>',
@@ -487,24 +516,197 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
       subject,
       html,
       text,
-      idempotency_key: `daily-report:${payload.day}:${to}${idempotencyScope}`,
+      idempotency_key: idempotencyKey,
       tags: [
         { name: 'kind', value: 'daily_reporting' },
         { name: 'day', value: payload.day },
       ],
+    }
+    const claim = await claimDailyReportDelivery(options.sql, {
+      payload,
+      content,
+      revision: options.idempotencySuffix ?? 'default',
     })
-    sent.push({
-      to,
-      status: result.status,
-      id: result.id,
-      error: result.error?.message,
-    })
-    if (result.status === 'FAILURE') {
-      log.error(`[daily-reporting] send failed to=${to} error=${result.error?.message ?? 'unknown'}`)
+    if (claim.kind !== 'send') {
+      sent.push(deliveryResult(to, claim.row))
+      continue
+    }
+
+    try {
+      const result = await sendNotificationWithTimeout(options.notification, claim.content)
+      const deliveryStatus: DailyReportDeliveryStatus =
+        result.status === 'SUCCESS'
+          ? 'succeeded'
+          : result.status === 'FAILURE'
+            ? 'failed'
+            : 'reconciliation_required'
+      const finalized = await finalizeDailyReportDelivery(options.sql, {
+        idempotencyKey,
+        claimToken: claim.claimToken,
+        deliveryStatus,
+        providerStatus: result.status,
+        providerMessageId: result.id,
+        providerError: result.error?.message,
+      })
+      sent.push(deliveryResult(to, finalized))
+      if (result.status === 'FAILURE') {
+        log.error(`[daily-reporting] send failed to=${to} error=${result.error?.message ?? 'unknown'}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const finalized = await finalizeDailyReportDelivery(options.sql, {
+        idempotencyKey,
+        claimToken: claim.claimToken,
+        deliveryStatus: 'reconciliation_required',
+        providerStatus: null,
+        providerError: message,
+      })
+      sent.push(deliveryResult(to, finalized))
+      log.error(`[daily-reporting] ambiguous send to=${to} error=${message}`)
     }
   }
 
   return { payload, snapshot_status: snapshotStatus, sent }
+}
+
+function uniqueRecipients(recipients: string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const recipient of recipients) {
+    const normalized = recipient.trim().toLowerCase()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    unique.push(recipient.trim())
+  }
+  return unique
+}
+
+async function claimDailyReportDelivery(
+  sql: RuntimeSql,
+  input: { payload: DailyReportPayload; content: DailyReportEmailContent; revision: string },
+): Promise<
+  | { kind: 'send'; claimToken: string; content: DailyReportEmailContent }
+  | { kind: 'replay' | 'busy'; row: DailyReportDeliveryRow }
+> {
+  const recipientNormalized = input.content.to.trim().toLowerCase()
+  await sql.unsafe(
+    `INSERT INTO reporting_daily_deliveries
+       (day, timezone, recipient, recipient_normalized, revision, idempotency_key, content_payload, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending')
+     ON CONFLICT (idempotency_key) WHERE deleted_at IS NULL DO NOTHING`,
+    [
+      input.payload.day,
+      input.payload.timezone,
+      input.content.to,
+      recipientNormalized,
+      input.revision,
+      input.content.idempotency_key,
+      JSON.stringify(input.content),
+    ],
+  )
+
+  const claimToken = crypto.randomUUID()
+  const [claimed] = await sql.unsafe<Array<{ content_payload: DailyReportEmailContent }>>(
+    `UPDATE reporting_daily_deliveries
+     SET status = 'claimed',
+         claim_token = $2,
+         claimed_at = NOW(),
+         claim_expires_at = NOW() + INTERVAL '5 minutes',
+         attempt_count = attempt_count + 1,
+         last_attempted_at = NOW(),
+         updated_at = NOW()
+     WHERE idempotency_key = $1
+       AND deleted_at IS NULL
+       AND status <> 'succeeded'
+       AND (claim_token IS NULL OR claim_expires_at <= NOW())
+     RETURNING content_payload`,
+    [input.content.idempotency_key, claimToken],
+  )
+  if (claimed) return { kind: 'send', claimToken, content: parseDailyReportEmailContent(claimed.content_payload) }
+
+  const row = await loadDailyReportDelivery(sql, input.content.idempotency_key)
+  return { kind: row.status === 'succeeded' ? 'replay' : 'busy', row }
+}
+
+function parseDailyReportEmailContent(value: DailyReportEmailContent | string): DailyReportEmailContent {
+  return typeof value === 'string' ? (JSON.parse(value) as DailyReportEmailContent) : value
+}
+
+async function finalizeDailyReportDelivery(
+  sql: RuntimeSql,
+  input: {
+    idempotencyKey: string
+    claimToken: string
+    deliveryStatus: DailyReportDeliveryStatus
+    providerStatus: 'SUCCESS' | 'FAILURE' | 'PENDING' | null
+    providerMessageId?: string
+    providerError?: string
+  },
+): Promise<DailyReportDeliveryRow> {
+  const [row] = await sql.unsafe<DailyReportDeliveryRow[]>(
+    `UPDATE reporting_daily_deliveries
+     SET status = $3,
+         provider_status = $4,
+         provider_message_id = $5,
+         provider_error = $6,
+         provider_observed_at = NOW(),
+         sent_at = CASE WHEN $3 = 'succeeded' THEN NOW() ELSE sent_at END,
+         claim_token = NULL,
+         claimed_at = NULL,
+         claim_expires_at = NULL,
+         updated_at = NOW()
+     WHERE idempotency_key = $1
+       AND claim_token = $2
+       AND deleted_at IS NULL
+     RETURNING content_payload, status, provider_status, provider_message_id, provider_error`,
+    [
+      input.idempotencyKey,
+      input.claimToken,
+      input.deliveryStatus,
+      input.providerStatus,
+      input.providerMessageId ?? null,
+      input.providerError ?? null,
+    ],
+  )
+  return row ?? loadDailyReportDelivery(sql, input.idempotencyKey)
+}
+
+async function loadDailyReportDelivery(sql: RuntimeSql, idempotencyKey: string): Promise<DailyReportDeliveryRow> {
+  const [row] = await sql.unsafe<DailyReportDeliveryRow[]>(
+    `SELECT content_payload, status, provider_status, provider_message_id, provider_error
+     FROM reporting_daily_deliveries
+     WHERE idempotency_key = $1 AND deleted_at IS NULL`,
+    [idempotencyKey],
+  )
+  if (!row) throw new Error(`Daily report delivery disappeared: ${idempotencyKey}`)
+  return row
+}
+
+function deliveryResult(to: string, row: DailyReportDeliveryRow): SendDailyReportResult['sent'][number] {
+  return {
+    to,
+    status: row.provider_status ?? 'PENDING',
+    delivery_status: row.status,
+    id: row.provider_message_id ?? undefined,
+    error: row.provider_error ?? undefined,
+  }
+}
+
+async function sendNotificationWithTimeout(
+  notification: RuntimeNotificationPort,
+  content: DailyReportEmailContent,
+): ReturnType<RuntimeNotificationPort['send']> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      notification.send(content),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Notification provider timed out after 60 seconds')), 60_000)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 export function dailyReportSnapshotStatus(payload: DailyReportPayload): 'ready' | 'partial' {
@@ -1474,7 +1676,7 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
 
   const body = table(
     'Relances panier CRM',
-    ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Clics', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
+    ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Messages cliques', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
     payload.abandoned_cart_emails.map((row) => [
       row.label,
       formatInteger(row.sent),
@@ -1487,7 +1689,7 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
       formatMoney(row.revenue),
     ]),
   )
-  return `${body}<p class="note muted">Les clics correspondent aux sessions arrivees via les liens de relance tagues Email 1/2/3. Les conversions et le CA sont rattaches au message CRM source quand le cas panier est marque recupere. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
+  return `${body}<p class="note muted">Un message est compte clique lorsqu'au moins une session de la meme journee porte son identifiant CRM exact. Les envois, sessions et recuperations utilisent donc la meme cohorte quotidienne ; un message n'est compte qu'une fois. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
 }
 
 function hasAbandonedCartEmailRows(payload: DailyReportPayload): boolean {
@@ -1537,7 +1739,8 @@ function renderChannelTable(payload: DailyReportPayload): string {
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
   <p class="note"><strong>Synthese panier</strong> separe les volumes de paniers, sessions et visiteurs. Les paniers crees viennent de la table carts ; les vues et updates viennent des compteurs visitor_sessions.</p>
-  <p class="note"><strong>Commandes</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce. Les commandes POS et les commandes d'apps externes exclues ne sont pas des conversions ecommerce.</p>
+  <p class="note"><strong>Commandes</strong> compte uniquement les commandes Shopify payees ou executees et incluses dans l'analytics ecommerce. Les commandes en attente, annulees, remboursees, POS ou issues d'apps externes exclues ne gonflent ni les commandes ni le CA.</p>
+  <p class="note"><strong>Conversions</strong> compte les sessions ou visiteurs distincts de la journee ayant au moins une commande eligible rattachee. Les commandes sans session restent visibles comme controle qualite, mais n'entrent pas dans le numerateur.</p>
   <p class="note"><strong>Tables detaillees panier</strong> conservent les volumes techniques : paniers distincts, sessions et evenements. Elles ne doivent pas etre additionnees comme des personnes.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
   <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>

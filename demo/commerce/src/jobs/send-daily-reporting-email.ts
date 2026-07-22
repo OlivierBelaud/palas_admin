@@ -30,13 +30,17 @@ export default defineJob('send-daily-reporting-email', '0 3 * * *', async ({ db,
     notification,
     log,
   })
-  const errors = result.sent.filter((row) => row.status === 'FAILURE').length
+  const succeeded = result.sent.filter((row) => row.delivery_status === 'succeeded').length
+  const errors = result.sent.filter((row) => row.delivery_status === 'failed').length
+  const unresolved = result.sent.filter(
+    (row) => row.delivery_status === 'pending' || row.delivery_status === 'claimed' || row.delivery_status === 'reconciliation_required',
+  ).length
   log.info(
-    `[send-daily-reporting-email] day=${result.payload.day} status=${result.snapshot_status} sent=${result.sent.length} errors=${errors}`,
+    `[send-daily-reporting-email] day=${result.payload.day} status=${result.snapshot_status} succeeded=${succeeded} errors=${errors} unresolved=${unresolved}`,
   )
   return {
     day: result.payload.day,
-    sent: result.sent.length,
-    errors,
+    sent: succeeded,
+    errors: errors + unresolved,
   }
 })

@@ -1,7 +1,7 @@
 import postgres from 'postgres'
 import { describe, expect, it } from 'vitest'
-import { buildDailyReportPayload } from '../src/utils/daily-reporting'
-import type { RuntimeSql } from '../src/utils/manta-runtime'
+import { buildDailyReportPayload, sendDailyReportEmail } from '../src/utils/daily-reporting'
+import type { RuntimeNotificationPort, RuntimeSql } from '../src/utils/manta-runtime'
 
 const databaseUrl = process.env.TEST_DATABASE_URL
 
@@ -72,6 +72,100 @@ describe.skipIf(!databaseUrl)('daily reporting contract (PostgreSQL)', () => {
       await admin.end()
     }
   })
+
+  it('isolates recipients and resumes each durable delivery exactly once', async () => {
+    const admin = postgres(databaseUrl as string, { max: 1 })
+    const schema = `daily_delivery_${crypto.randomUUID().replaceAll('-', '')}`
+
+    try {
+      await admin.unsafe(`CREATE SCHEMA "${schema}"`)
+      await admin.begin(async (tx) => {
+        await tx.unsafe(`SET LOCAL search_path TO "${schema}"`)
+        await createReportingSchema(tx as unknown as RuntimeSql)
+        await seedReportingMatrix(tx as unknown as RuntimeSql)
+        const sql = tx as unknown as RuntimeSql
+        const firstCalls: string[] = []
+        const firstNotification: RuntimeNotificationPort = {
+          async send(message) {
+            firstCalls.push(message.to)
+            if (message.to === 'a@example.com') throw new Error('provider timeout')
+            if (message.to === 'b@example.com') return { status: 'PENDING', id: 'pending-b' }
+            return { status: 'SUCCESS', id: 'sent-c' }
+          },
+        }
+
+        const first = await sendDailyReportEmail({
+          sql,
+          notification: firstNotification,
+          day: '2026-06-16',
+          now: new Date('2026-06-17T03:00:00.000Z'),
+          recipients: ['a@example.com', 'b@example.com', 'c@example.com'],
+        })
+
+        expect(firstCalls).toEqual(['a@example.com', 'b@example.com', 'c@example.com'])
+        expect(first.sent.map(({ to, delivery_status }) => ({ to, delivery_status }))).toEqual([
+          { to: 'a@example.com', delivery_status: 'reconciliation_required' },
+          { to: 'b@example.com', delivery_status: 'reconciliation_required' },
+          { to: 'c@example.com', delivery_status: 'succeeded' },
+        ])
+
+        const retryCalls: string[] = []
+        const retry = await sendDailyReportEmail({
+          sql,
+          notification: {
+            async send(message) {
+              retryCalls.push(message.to)
+              return { status: 'SUCCESS', id: `retry-${message.to}` }
+            },
+          },
+          day: '2026-06-16',
+          now: new Date('2026-06-17T04:00:00.000Z'),
+          recipients: ['a@example.com', 'b@example.com', 'c@example.com'],
+        })
+
+        expect(retryCalls).toEqual(['a@example.com', 'b@example.com'])
+        expect(retry.sent.every((row) => row.delivery_status === 'succeeded')).toBe(true)
+        const deliveries = await sql.unsafe<Array<{ recipient: string; status: string; attempt_count: number }>>(
+          `SELECT recipient, status, attempt_count
+           FROM reporting_daily_deliveries
+           ORDER BY recipient`,
+        )
+        expect(deliveries).toEqual([
+          { recipient: 'a@example.com', status: 'succeeded', attempt_count: 2 },
+          { recipient: 'b@example.com', status: 'succeeded', attempt_count: 2 },
+          { recipient: 'c@example.com', status: 'succeeded', attempt_count: 1 },
+        ])
+
+        let concurrentProviderCalls = 0
+        const concurrentNotification: RuntimeNotificationPort = {
+          async send() {
+            concurrentProviderCalls += 1
+            await new Promise((resolve) => setTimeout(resolve, 25))
+            return { status: 'SUCCESS', id: 'sent-once' }
+          },
+        }
+        const concurrentOptions = {
+          sql,
+          notification: concurrentNotification,
+          day: '2026-06-16',
+          now: new Date('2026-06-17T05:00:00.000Z'),
+          recipients: ['concurrent@example.com'],
+        }
+        const concurrent = await Promise.all([
+          sendDailyReportEmail(concurrentOptions),
+          sendDailyReportEmail(concurrentOptions),
+        ])
+
+        expect(concurrentProviderCalls).toBe(1)
+        expect(concurrent.flatMap((result) => result.sent).some((row) => row.delivery_status === 'succeeded')).toBe(
+          true,
+        )
+      })
+    } finally {
+      await admin.unsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`)
+      await admin.end()
+    }
+  })
 })
 
 async function createReportingSchema(sql: RuntimeSql): Promise<void> {
@@ -130,6 +224,47 @@ async function createReportingSchema(sql: RuntimeSql): Promise<void> {
       recovered_at timestamptz,
       deleted_at timestamptz
     );
+    CREATE TABLE reporting_daily_snapshots (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      day text NOT NULL,
+      timezone text NOT NULL,
+      status text NOT NULL,
+      payload jsonb NOT NULL,
+      generated_at timestamptz NOT NULL,
+      source_max_last_event_at timestamptz,
+      error_message text,
+      created_at timestamptz NOT NULL DEFAULT NOW(),
+      updated_at timestamptz NOT NULL DEFAULT NOW(),
+      deleted_at timestamptz
+    );
+    CREATE UNIQUE INDEX reporting_daily_snapshots_day_timezone_uq
+      ON reporting_daily_snapshots (day, timezone) WHERE deleted_at IS NULL;
+    CREATE TABLE reporting_daily_deliveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      day text NOT NULL,
+      timezone text NOT NULL,
+      recipient text NOT NULL,
+      recipient_normalized text NOT NULL,
+      revision text NOT NULL,
+      idempotency_key text NOT NULL,
+      content_payload jsonb NOT NULL,
+      status text NOT NULL,
+      provider_status text,
+      provider_message_id text,
+      provider_error text,
+      provider_observed_at timestamptz,
+      claim_token text,
+      claimed_at timestamptz,
+      claim_expires_at timestamptz,
+      attempt_count integer NOT NULL DEFAULT 0,
+      last_attempted_at timestamptz,
+      sent_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT NOW(),
+      updated_at timestamptz NOT NULL DEFAULT NOW(),
+      deleted_at timestamptz
+    );
+    CREATE UNIQUE INDEX reporting_daily_deliveries_key_uq
+      ON reporting_daily_deliveries (idempotency_key) WHERE deleted_at IS NULL;
   `)
 }
 
