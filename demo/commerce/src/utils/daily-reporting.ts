@@ -16,6 +16,11 @@ interface MetricRow {
   revenue: number
 }
 
+interface ConversionMetricRow extends MetricRow {
+  converted_sessions: number
+  converted_visitors: number
+}
+
 export interface DailyReportSegmentRow extends MetricRow {
   segment: SegmentKey
   label: string
@@ -137,8 +142,39 @@ export interface DailyReportPayload {
 interface SendDailyReportResult {
   payload: DailyReportPayload
   snapshot_status: 'ready' | 'partial' | 'failed'
-  sent: Array<{ to: string; status: 'SUCCESS' | 'FAILURE' | 'PENDING'; id?: string; error?: string }>
+  sent: Array<{
+    to: string
+    status: 'SUCCESS' | 'FAILURE' | 'PENDING'
+    delivery_status: DailyReportDeliveryStatus
+    id?: string
+    error?: string
+  }>
 }
+
+export interface ResumeDailyReportDeliveriesResult {
+  sent: SendDailyReportResult['sent']
+}
+
+type DailyReportDeliveryStatus = 'pending' | 'claimed' | 'succeeded' | 'failed' | 'reconciliation_required'
+type NotificationPayload = Parameters<RuntimeNotificationPort['send']>[0]
+type NotificationResult = Awaited<ReturnType<RuntimeNotificationPort['send']>>
+
+type DailyReportEmailContent = NotificationPayload &
+  Required<Pick<NotificationPayload, 'from' | 'subject' | 'html' | 'text' | 'idempotency_key' | 'tags'>>
+
+interface DailyReportDeliveryRow {
+  content_payload: DailyReportEmailContent
+  idempotency_key: string
+  recipient: string
+  status: DailyReportDeliveryStatus
+  provider_status: NotificationResult['status'] | null
+  provider_message_id: string | null
+  provider_error: string | null
+}
+
+type DailyReportDeliveryClaim =
+  | { kind: 'send'; claimToken: string; content: DailyReportEmailContent }
+  | { kind: 'replay' | 'busy'; row: DailyReportDeliveryRow }
 
 interface SendDailyReportOptions {
   sql: RuntimeSql
@@ -160,6 +196,10 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
   unattributed: 'Non attribue',
   total: 'Total journee',
 }
+
+const ELIGIBLE_ORDER_PREDICATE = `o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.status IN ('paid', 'fulfilled')`
 
 const SOURCE_CASE = `
 CASE
@@ -249,12 +289,20 @@ export function previousParisDay(now = new Date()): string {
 }
 
 export function parisDayWindow(day: string): { start: Date; end: Date } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw invalidReportingDay(day)
   const [year, month, date] = day.split('-').map(Number)
-  if (!year || !month || !date) throw new MantaError('INVALID_DATA', `Invalid reporting day: ${day}`)
+  const candidate = new Date(Date.UTC(year, month - 1, date, 12))
+  if (candidate.getUTCFullYear() !== year || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== date) {
+    throw invalidReportingDay(day)
+  }
   return {
     start: zonedDateTimeToUtc(DAILY_REPORT_TIMEZONE, year, month, date, 0, 0, 0),
     end: zonedDateTimeToUtc(DAILY_REPORT_TIMEZONE, year, month, date + 1, 0, 0, 0),
   }
+}
+
+function invalidReportingDay(day: string): Error {
+  return new Error(`Invalid reporting day: ${day}`)
 }
 
 export async function buildDailyReportPayload(
@@ -268,14 +316,30 @@ export async function buildDailyReportPayload(
 
   const [base] = await sql.unsafe<BaseRow[]>(
     `
+    WITH day_sessions AS (
+      SELECT *
+      FROM visitor_sessions
+      WHERE deleted_at IS NULL
+        AND started_at >= $1::timestamptz
+        AND started_at < $2::timestamptz
+    ),
+    converted_day_sessions AS (
+      SELECT DISTINCT vs.id AS session_row_id
+      FROM day_sessions vs
+      JOIN orders o
+        ON ${ELIGIBLE_ORDER_PREDICATE}
+        AND o.placed_at >= $1::timestamptz
+        AND o.placed_at < $2::timestamptz
+        AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
+    )
     SELECT
       COUNT(*)::int AS sessions,
-      COUNT(DISTINCT distinct_id)::int AS unique_visitors,
-      MAX(last_event_at) AS source_max_last_event_at
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
+      COUNT(DISTINCT vs.distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_sessions,
+      COUNT(DISTINCT vs.distinct_id) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_visitors,
+      MAX(vs.last_event_at) AS source_max_last_event_at
+    FROM day_sessions vs
+    LEFT JOIN converted_day_sessions cds ON cds.session_row_id = vs.id
     `,
     [startIso, endIso],
   )
@@ -286,11 +350,10 @@ export async function buildDailyReportPayload(
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue,
       COUNT(DISTINCT NULLIF(shipping_country_code, ''))::int AS sold_countries_count
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     `,
     [startIso, endIso],
   )
@@ -312,11 +375,10 @@ export async function buildDailyReportPayload(
       COALESCE(NULLIF(shipping_country_name, ''), NULLIF(shipping_country_code, ''), 'Non renseigne') AS country_name,
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     GROUP BY 1, 2
     ORDER BY orders DESC, revenue DESC, country_name ASC
     `,
@@ -334,7 +396,11 @@ export async function buildDailyReportPayload(
       : null,
   }
 
-  const segmentRows = buildSegmentRows(rawSegmentRows, summary)
+  const segmentRows = buildSegmentRows(rawSegmentRows, {
+    ...summary,
+    converted_sessions: toNumber(base?.converted_sessions),
+    converted_visitors: toNumber(base?.converted_visitors),
+  })
   const unattributed = segmentRows.find((row) => row.segment === 'unattributed')
   const cartSummary = buildCartSummary(cartSummaryRow)
 
@@ -346,8 +412,8 @@ export async function buildDailyReportPayload(
     summary: {
       ...summary,
       average_order_value: ratio(summary.revenue, summary.orders),
-      session_conversion_rate: ratio(summary.orders, summary.sessions),
-      visitor_conversion_rate: ratio(summary.orders, summary.unique_visitors),
+      session_conversion_rate: ratio(toNumber(base?.converted_sessions), summary.sessions),
+      visitor_conversion_rate: ratio(toNumber(base?.converted_visitors), summary.unique_visitors),
       unattributed_orders: unattributed?.orders ?? 0,
       unattributed_revenue: unattributed?.revenue ?? 0,
     },
@@ -421,7 +487,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
   const snapshotStatus = dailyReportSnapshotStatus(payload)
   await storeDailyReportSnapshot(options.sql, payload, snapshotStatus)
 
-  const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
+  const recipients = uniqueRecipients(options.recipients ?? dailyReportRecipientsFromEnv())
   const html = renderDailyReportHtml(payload)
   const text = renderDailyReportText(payload)
   const subject =
@@ -435,12 +501,13 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
     return {
       payload,
       snapshot_status: snapshotStatus,
-      sent: recipients.map((to) => ({ to, status: 'PENDING' })),
+      sent: recipients.map((to) => ({ to, status: 'PENDING', delivery_status: 'pending' })),
     }
   }
 
   for (const to of recipients) {
-    const result = await options.notification.send({
+    const idempotencyKey = `daily-report:${payload.day}:${to.toLowerCase()}${idempotencyScope}`
+    const content: DailyReportEmailContent = {
       to,
       channel: 'email',
       from: options.fromEmail ?? process.env.RESEND_FROM_EMAIL ?? 'PALAS <hello@fancypalas.com>',
@@ -448,24 +515,267 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
       subject,
       html,
       text,
-      idempotency_key: `daily-report:${payload.day}:${to}${idempotencyScope}`,
+      idempotency_key: idempotencyKey,
       tags: [
         { name: 'kind', value: 'daily_reporting' },
         { name: 'day', value: payload.day },
       ],
-    })
-    sent.push({
-      to,
-      status: result.status,
-      id: result.id,
-      error: result.error?.message,
-    })
-    if (result.status === 'FAILURE') {
-      log.error(`[daily-reporting] send failed to=${to} error=${result.error?.message ?? 'unknown'}`)
     }
+    const claim = await claimDailyReportDelivery(options.sql, {
+      payload,
+      content,
+      revision: options.idempotencySuffix ?? 'default',
+    })
+    if (claim.kind !== 'send') {
+      sent.push(deliveryResult(to, claim.row))
+      continue
+    }
+    sent.push(
+      await deliverClaimedDailyReport(options.sql, options.notification, log, {
+        to,
+        idempotencyKey,
+        claimToken: claim.claimToken,
+        content: claim.content,
+      }),
+    )
   }
 
   return { payload, snapshot_status: snapshotStatus, sent }
+}
+
+export async function resumeDailyReportDeliveries(options: {
+  sql: RuntimeSql
+  notification: RuntimeNotificationPort
+  beforeDay: string
+  limit?: number
+  log?: Pick<Console, 'info' | 'warn' | 'error'>
+}): Promise<ResumeDailyReportDeliveriesResult> {
+  const log = options.log ?? console
+  const limit = Math.max(1, Math.min(options.limit ?? 100, 500))
+  const candidates = await options.sql.unsafe<Array<{ idempotency_key: string; recipient: string }>>(
+    `SELECT idempotency_key, recipient
+     FROM reporting_daily_deliveries
+     WHERE deleted_at IS NULL
+       AND day < $1
+       AND status <> 'succeeded'
+       AND attempt_count < 5
+       AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+       AND (claim_token IS NULL OR claim_expires_at <= NOW())
+     ORDER BY day ASC, recipient_normalized ASC
+     LIMIT $2`,
+    [options.beforeDay, limit],
+  )
+  const sent: ResumeDailyReportDeliveriesResult['sent'] = []
+  for (const candidate of candidates) {
+    const claim = await claimPersistedDailyReportDelivery(options.sql, candidate.idempotency_key)
+    if (claim.kind !== 'send') {
+      sent.push(deliveryResult(candidate.recipient, claim.row))
+      continue
+    }
+    sent.push(
+      await deliverClaimedDailyReport(options.sql, options.notification, log, {
+        to: candidate.recipient,
+        idempotencyKey: candidate.idempotency_key,
+        claimToken: claim.claimToken,
+        content: claim.content,
+      }),
+    )
+  }
+  return { sent }
+}
+
+async function deliverClaimedDailyReport(
+  sql: RuntimeSql,
+  notification: RuntimeNotificationPort,
+  log: Pick<Console, 'info' | 'warn' | 'error'>,
+  input: { to: string; idempotencyKey: string; claimToken: string; content: DailyReportEmailContent },
+): Promise<SendDailyReportResult['sent'][number]> {
+  try {
+    const result = await sendNotificationWithTimeout(notification, input.content)
+    const finalized = await finalizeDailyReportDelivery(sql, {
+      idempotencyKey: input.idempotencyKey,
+      claimToken: input.claimToken,
+      deliveryStatus: deliveryStatusForProviderStatus(result.status),
+      providerStatus: result.status,
+      providerMessageId: result.id,
+      providerError: result.error?.message,
+    })
+    if (result.status === 'FAILURE') {
+      log.error(`[daily-reporting] send failed to=${input.to} error=${result.error?.message ?? 'unknown'}`)
+    }
+    return deliveryResult(input.to, finalized)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const finalized = await finalizeDailyReportDelivery(sql, {
+      idempotencyKey: input.idempotencyKey,
+      claimToken: input.claimToken,
+      deliveryStatus: 'reconciliation_required',
+      providerStatus: null,
+      providerError: message,
+    })
+    log.error(`[daily-reporting] ambiguous send to=${input.to} error=${message}`)
+    return deliveryResult(input.to, finalized)
+  }
+}
+
+function deliveryStatusForProviderStatus(status: NotificationResult['status']): DailyReportDeliveryStatus {
+  if (status === 'SUCCESS') return 'succeeded'
+  if (status === 'FAILURE') return 'failed'
+  return 'reconciliation_required'
+}
+
+function uniqueRecipients(recipients: string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const recipient of recipients) {
+    const normalized = recipient.trim().toLowerCase()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    unique.push(recipient.trim())
+  }
+  return unique
+}
+
+async function claimDailyReportDelivery(
+  sql: RuntimeSql,
+  input: { payload: DailyReportPayload; content: DailyReportEmailContent; revision: string },
+): Promise<DailyReportDeliveryClaim> {
+  const recipientNormalized = input.content.to.trim().toLowerCase()
+  await sql.unsafe(
+    `INSERT INTO reporting_daily_deliveries
+       (day, timezone, recipient, recipient_normalized, revision, idempotency_key, content_payload, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending')
+     ON CONFLICT DO NOTHING`,
+    [
+      input.payload.day,
+      input.payload.timezone,
+      input.content.to,
+      recipientNormalized,
+      input.revision,
+      input.content.idempotency_key,
+      JSON.stringify(input.content),
+    ],
+  )
+
+  return claimPersistedDailyReportDelivery(sql, input.content.idempotency_key)
+}
+
+async function claimPersistedDailyReportDelivery(
+  sql: RuntimeSql,
+  idempotencyKey: string,
+): Promise<DailyReportDeliveryClaim> {
+  const claimToken = crypto.randomUUID()
+  const [claimed] = await sql.unsafe<Array<{ content_payload: DailyReportEmailContent }>>(
+    `UPDATE reporting_daily_deliveries
+     SET status = 'claimed',
+         claim_token = $2,
+         claimed_at = NOW(),
+         claim_expires_at = NOW() + INTERVAL '5 minutes',
+         attempt_count = attempt_count + 1,
+         last_attempted_at = NOW(),
+         updated_at = NOW()
+     WHERE idempotency_key = $1
+       AND deleted_at IS NULL
+       AND status <> 'succeeded'
+       AND attempt_count < 5
+       AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+       AND (claim_token IS NULL OR claim_expires_at <= NOW())
+     RETURNING content_payload`,
+    [idempotencyKey, claimToken],
+  )
+  if (claimed) return { kind: 'send', claimToken, content: parseDailyReportEmailContent(claimed.content_payload) }
+
+  const row = await loadDailyReportDelivery(sql, idempotencyKey)
+  return { kind: row.status === 'succeeded' ? 'replay' : 'busy', row }
+}
+
+function parseDailyReportEmailContent(value: DailyReportEmailContent | string): DailyReportEmailContent {
+  return typeof value === 'string' ? (JSON.parse(value) as DailyReportEmailContent) : value
+}
+
+async function finalizeDailyReportDelivery(
+  sql: RuntimeSql,
+  input: {
+    idempotencyKey: string
+    claimToken: string
+    deliveryStatus: DailyReportDeliveryStatus
+    providerStatus: NotificationResult['status'] | null
+    providerMessageId?: string
+    providerError?: string
+  },
+): Promise<DailyReportDeliveryRow> {
+  const [row] = await sql.unsafe<DailyReportDeliveryRow[]>(
+    `UPDATE reporting_daily_deliveries
+     SET status = $3,
+         provider_status = $4,
+         provider_message_id = $5,
+         provider_error = $6,
+         provider_observed_at = NOW(),
+         sent_at = CASE WHEN $3 = 'succeeded' THEN NOW() ELSE sent_at END,
+         next_attempt_at = CASE
+           WHEN $3 = 'succeeded' THEN NULL
+           WHEN attempt_count = 1 THEN NOW() + INTERVAL '15 minutes'
+           WHEN attempt_count = 2 THEN NOW() + INTERVAL '1 hour'
+           WHEN attempt_count = 3 THEN NOW() + INTERVAL '4 hours'
+           ELSE NOW() + INTERVAL '24 hours'
+         END,
+         claim_token = NULL,
+         claimed_at = NULL,
+         claim_expires_at = NULL,
+         updated_at = NOW()
+     WHERE idempotency_key = $1
+       AND claim_token = $2
+       AND deleted_at IS NULL
+     RETURNING idempotency_key, recipient, content_payload, status, provider_status, provider_message_id, provider_error`,
+    [
+      input.idempotencyKey,
+      input.claimToken,
+      input.deliveryStatus,
+      input.providerStatus,
+      input.providerMessageId ?? null,
+      input.providerError ?? null,
+    ],
+  )
+  return row ?? loadDailyReportDelivery(sql, input.idempotencyKey)
+}
+
+async function loadDailyReportDelivery(sql: RuntimeSql, idempotencyKey: string): Promise<DailyReportDeliveryRow> {
+  const [row] = await sql.unsafe<DailyReportDeliveryRow[]>(
+    `SELECT idempotency_key, recipient, content_payload, status, provider_status, provider_message_id, provider_error
+     FROM reporting_daily_deliveries
+     WHERE idempotency_key = $1 AND deleted_at IS NULL`,
+    [idempotencyKey],
+  )
+  if (!row) throw new Error(`Daily report delivery disappeared: ${idempotencyKey}`)
+  return row
+}
+
+function deliveryResult(to: string, row: DailyReportDeliveryRow): SendDailyReportResult['sent'][number] {
+  return {
+    to,
+    status: row.provider_status ?? 'PENDING',
+    delivery_status: row.status,
+    id: row.provider_message_id ?? undefined,
+    error: row.provider_error ?? undefined,
+  }
+}
+
+async function sendNotificationWithTimeout(
+  notification: RuntimeNotificationPort,
+  content: DailyReportEmailContent,
+): ReturnType<RuntimeNotificationPort['send']> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      notification.send(content),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Notification provider timed out after 60 seconds')), 60_000)
+        timeout.unref?.()
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 export function dailyReportSnapshotStatus(payload: DailyReportPayload): 'ready' | 'partial' {
@@ -598,8 +908,11 @@ function segmentAggSql(): string {
     SELECT
       COALESCE(ds.segment_at_session_start, 'unknown') AS segment,
       COUNT(*)::int AS sessions,
-      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors
+      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_sessions,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_visitors
     FROM day_sessions ds
+    LEFT JOIN converted_day_sessions cds ON cds.session_row_id = ds.id
     GROUP BY 1
   ),
   segment_orders AS (
@@ -615,28 +928,29 @@ function segmentAggSql(): string {
       'unattributed'::text AS segment,
       0::int AS sessions,
       0::int AS unique_visitors,
+      0::int AS converted_sessions,
+      0::int AS converted_visitors,
       COUNT(*)::int AS orders,
       COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM orders o
     LEFT JOIN attributed_order_sessions ao ON ao.order_row_id = o.id
-    WHERE o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND ao.order_row_id IS NULL
   )
   SELECT *
   FROM (
-    SELECT st.segment, st.sessions, st.unique_visitors, COALESCE(so.orders, 0)::int AS orders, COALESCE(so.revenue, 0)::float AS revenue
+    SELECT st.segment, st.sessions, st.unique_visitors, st.converted_sessions, st.converted_visitors, COALESCE(so.orders, 0)::int AS orders, COALESCE(so.revenue, 0)::float AS revenue
     FROM segment_traffic st
     LEFT JOIN segment_orders so ON so.segment = st.segment
     UNION ALL
-    SELECT so.segment, 0::int AS sessions, 0::int AS unique_visitors, so.orders, so.revenue
+    SELECT so.segment, 0::int AS sessions, 0::int AS unique_visitors, 0::int AS converted_sessions, 0::int AS converted_visitors, so.orders, so.revenue
     FROM segment_orders so
     LEFT JOIN segment_traffic st ON st.segment = so.segment
     WHERE st.segment IS NULL
     UNION ALL
-    SELECT segment, sessions, unique_visitors, orders, revenue FROM unattributed
+    SELECT segment, sessions, unique_visitors, converted_sessions, converted_visitors, orders, revenue FROM unattributed
   ) rows
   ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 ELSE 4 END
   `
@@ -731,16 +1045,32 @@ function channelAggSql(): string {
       ON co.segment = ct.segment
       AND co.operational_channel = ct.operational_channel
   ),
+  total_traffic AS (
+    SELECT
+      operational_channel,
+      COUNT(*)::int AS sessions,
+      COUNT(DISTINCT distinct_id)::int AS unique_visitors
+    FROM channel_sessions
+    GROUP BY 1
+  ),
+  total_orders AS (
+    SELECT
+      operational_channel,
+      COUNT(*)::int AS orders,
+      COALESCE(SUM(total_price), 0)::float AS revenue
+    FROM channel_order_sessions
+    GROUP BY 1
+  ),
   total_rows AS (
     SELECT
       'total'::text AS segment,
-      operational_channel,
-      SUM(sessions)::int AS sessions,
-      SUM(unique_visitors)::int AS unique_visitors,
-      SUM(orders)::int AS orders,
-      SUM(revenue)::float AS revenue
-    FROM segment_rows
-    GROUP BY 1, 2
+      COALESCE(tt.operational_channel, tor.operational_channel) AS operational_channel,
+      COALESCE(tt.sessions, 0)::int AS sessions,
+      COALESCE(tt.unique_visitors, 0)::int AS unique_visitors,
+      COALESCE(tor.orders, 0)::int AS orders,
+      COALESCE(tor.revenue, 0)::float AS revenue
+    FROM total_traffic tt
+    FULL JOIN total_orders tor ON tor.operational_channel = tt.operational_channel
   )
   SELECT *
   FROM (
@@ -768,11 +1098,10 @@ function cartSummarySql(): string {
   ),
   day_orders AS (
     SELECT *
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
   ),
   born_linked_orders AS (
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
@@ -792,7 +1121,7 @@ function cartSummarySql(): string {
     SELECT
       COUNT(DISTINCT bc.id)::int AS carts_created,
       COUNT(DISTINCT bc.distinct_id)::int AS carts_created_visitors,
-      COUNT(DISTINCT blo.order_id)::int AS carts_created_converted
+      COUNT(DISTINCT bc.id) FILTER (WHERE blo.order_id IS NOT NULL)::int AS carts_created_converted
     FROM born_carts bc
     LEFT JOIN born_linked_orders blo ON blo.cart_id = bc.id
   ),
@@ -814,11 +1143,8 @@ function cartSummarySql(): string {
   session_orders AS (
     SELECT DISTINCT ds.id AS session_row_id, o.id AS order_id
     FROM day_sessions ds
-    JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
-      AND o.placed_at >= $1::timestamptz
-      AND o.placed_at < $2::timestamptz
+    JOIN day_orders o
+      ON true
       AND (
         ds.order_id = o.shopify_order_id
         OR ds.order_id = o.id::text
@@ -856,10 +1182,10 @@ function cartSummarySql(): string {
       COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_visitors,
       COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_visitors,
       COUNT(DISTINCT vb.distinct_id)::int AS total_cart_visitors,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'created')::int AS exclusive_created_converted,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_converted,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_converted,
-      COUNT(DISTINCT vo.order_id)::int AS total_cart_converted
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'created' AND vo.order_id IS NOT NULL)::int AS exclusive_created_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'updated' AND vo.order_id IS NOT NULL)::int AS exclusive_updated_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'viewed' AND vo.order_id IS NOT NULL)::int AS exclusive_viewed_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE vo.order_id IS NOT NULL)::int AS total_cart_converted
     FROM visitor_bucket vb
     LEFT JOIN visitor_orders vo ON vo.distinct_id = vb.distinct_id
   ),
@@ -868,11 +1194,11 @@ function cartSummarySql(): string {
       COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS carts_updated,
       COUNT(*) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_sessions,
       COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_visitors,
-      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_converted,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0 AND so.order_id IS NOT NULL)::int AS carts_updated_converted,
       COALESCE(SUM(ds.carts_viewed_in_session), 0)::int AS cart_view_events,
       COUNT(*) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_visitors,
-      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_converted
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_viewed_in_session > 0 AND so.order_id IS NOT NULL)::int AS cart_view_converted
     FROM day_sessions ds
     LEFT JOIN session_orders so ON so.session_row_id = ds.id
   )
@@ -902,11 +1228,20 @@ function cartSummarySql(): string {
 function cartActivityAggSql(): string {
   return `
   WITH day_sessions AS (
-    SELECT *
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
+    SELECT
+      vs.*,
+      EXISTS (
+        SELECT 1
+        FROM orders o
+        WHERE o.shopify_order_id = vs.order_id
+          AND ${ELIGIBLE_ORDER_PREDICATE}
+          AND o.placed_at >= $1::timestamptz
+          AND o.placed_at < $2::timestamptz
+      ) AS has_eligible_order
+    FROM visitor_sessions vs
+    WHERE vs.deleted_at IS NULL
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
   ),
   segment_rows AS (
     SELECT
@@ -921,7 +1256,7 @@ function cartActivityAggSql(): string {
       COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
       COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+      COUNT(*) FILTER (WHERE has_eligible_order)::int AS order_sessions
     FROM day_sessions
     GROUP BY 1
   ),
@@ -938,7 +1273,7 @@ function cartActivityAggSql(): string {
       COUNT(*) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT distinct_id) FILTER (WHERE carts_viewed_in_session > 0)::int AS cart_view_visitors,
       COALESCE(SUM(carts_viewed_in_session), 0)::int AS cart_view_events,
-      COUNT(*) FILTER (WHERE order_id IS NOT NULL)::int AS order_sessions
+      COUNT(*) FILTER (WHERE has_eligible_order)::int AS order_sessions
     FROM day_sessions
   )
   SELECT *
@@ -984,8 +1319,7 @@ function cartBirthAggSql(): string {
       ON co.deleted_at IS NULL
       AND co.cart_id = bc.id
     JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+      ON ${ELIGIBLE_ORDER_PREDICATE}
       AND o.id::text = co.order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
@@ -993,23 +1327,47 @@ function cartBirthAggSql(): string {
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id, o.total_price
     FROM born_carts bc
     JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+      ON ${ELIGIBLE_ORDER_PREDICATE}
       AND o.shopify_order_id = bc.shopify_order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
   ),
-  segment_rows AS (
+  segment_orders AS (
+    SELECT DISTINCT bs.segment, lo.order_id, lo.total_price
+    FROM birth_segments bs
+    JOIN linked_orders lo ON lo.cart_id = bs.id
+  ),
+  segment_cart_stats AS (
     SELECT
       bs.segment,
       COUNT(DISTINCT bs.id)::int AS carts_born,
       COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
-      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
-      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
-      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors
     FROM birth_segments bs
-    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
     GROUP BY 1
+  ),
+  segment_order_stats AS (
+    SELECT
+      segment,
+      COUNT(*)::int AS orders_same_day,
+      COALESCE(SUM(total_price), 0)::float AS revenue_same_day
+    FROM segment_orders
+    GROUP BY 1
+  ),
+  segment_rows AS (
+    SELECT
+      scs.segment,
+      scs.carts_born,
+      scs.carts_born_with_email,
+      scs.cart_visitors,
+      COALESCE(sos.orders_same_day, 0)::int AS orders_same_day,
+      COALESCE(sos.revenue_same_day, 0)::float AS revenue_same_day
+    FROM segment_cart_stats scs
+    LEFT JOIN segment_order_stats sos ON sos.segment = scs.segment
+  ),
+  total_orders AS (
+    SELECT DISTINCT order_id, total_price
+    FROM linked_orders
   ),
   total_row AS (
     SELECT
@@ -1017,10 +1375,9 @@ function cartBirthAggSql(): string {
       COUNT(DISTINCT bs.id)::int AS carts_born,
       COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
       COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
-      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
-      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+      (SELECT COUNT(*)::int FROM total_orders) AS orders_same_day,
+      (SELECT COALESCE(SUM(total_price), 0)::float FROM total_orders) AS revenue_same_day
     FROM birth_segments bs
-    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
   )
   SELECT *
   FROM (
@@ -1049,36 +1406,34 @@ function abandonedCartEmailSql(): string {
       AND sent_at >= $1::timestamptz
       AND sent_at < $2::timestamptz
   ),
-  click_sessions AS (
+  clicked_messages AS (
     SELECT
-      CASE
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_1%' THEN 'abandoned_cart_1'
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_2%' THEN 'abandoned_cart_2'
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_3%' THEN 'abandoned_cart_3'
-        ELSE NULL
-      END AS message_type,
-      COUNT(*)::int AS clicks
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
-      AND first_url ILIKE '%palas_email_type=abandoned_cart%'
-      AND (
-        first_url ILIKE '%utm_content=abandoned_cart_1%'
-        OR first_url ILIKE '%utm_content=abandoned_cart_2%'
-        OR first_url ILIKE '%utm_content=abandoned_cart_3%'
-      )
-    GROUP BY 1
+      m.message_type,
+      COUNT(DISTINCT m.id)::int AS clicks
+    FROM sent_messages m
+    JOIN visitor_sessions vs
+      ON vs.deleted_at IS NULL
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
+      AND substring(vs.first_url FROM '(?:[?&])palas_email_message_id=([^&#]+)') = m.id::text
+    GROUP BY m.message_type
   ),
   recoveries AS (
     SELECT
       m.message_type,
       COUNT(c.id)::int AS conversions,
-      COALESCE(SUM(c.recovered_amount), 0)::float AS revenue
+      COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM sent_messages m
     JOIN abandoned_cart_cases c
       ON c.deleted_at IS NULL
       AND c.recovered_source_message_id = m.id
+      AND c.recovered_at >= $1::timestamptz
+      AND c.recovered_at < $2::timestamptz
+    JOIN orders o
+      ON o.shopify_order_id = c.recovered_order_id
+      AND ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     GROUP BY m.message_type
   )
   SELECT
@@ -1091,7 +1446,7 @@ function abandonedCartEmailSql(): string {
     COALESCE(r.revenue, 0)::float AS revenue
   FROM typed t
   LEFT JOIN sent_messages m ON m.message_type = t.message_type
-  LEFT JOIN click_sessions cs ON cs.message_type = t.message_type
+  LEFT JOIN clicked_messages cs ON cs.message_type = t.message_type
   LEFT JOIN recoveries r ON r.message_type = t.message_type
   GROUP BY t.message_type, t.label, t.sort_order, cs.clicks, r.conversions, r.revenue
   ORDER BY t.sort_order ASC
@@ -1106,6 +1461,15 @@ function segmentCte(): string {
     WHERE deleted_at IS NULL
       AND started_at >= $1::timestamptz
       AND started_at < $2::timestamptz
+  ),
+  converted_day_sessions AS (
+    SELECT DISTINCT ds.id AS session_row_id
+    FROM day_sessions ds
+    JOIN orders o
+      ON ${ELIGIBLE_ORDER_PREDICATE}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+      AND (ds.order_id = o.shopify_order_id OR ds.order_id = o.id::text)
   ),
   attributed_order_sessions AS (
     SELECT DISTINCT ON (o.id)
@@ -1124,14 +1488,13 @@ function segmentCte(): string {
       vs.referring_domain,
       vs.is_paid_session
     FROM orders o
-    JOIN visitor_sessions vs
-      ON vs.deleted_at IS NULL
+    JOIN day_sessions vs
+      ON true
       AND (
         vs.order_id = o.shopify_order_id
         OR vs.order_id = o.id::text
       )
-    WHERE o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     ORDER BY o.id, vs.last_event_at DESC
@@ -1215,17 +1578,17 @@ function buildAbandonedCartEmailRows(rows: AbandonedCartEmailAggRow[]): DailyRep
       label: row.label,
       sent,
       opens,
-      open_rate: opens === null ? null : ratio(opens, sent),
+      open_rate: opens === null ? null : boundedRatio(opens, sent),
       clicks,
-      click_rate: ratio(clicks, sent),
+      click_rate: boundedRatio(clicks, sent),
       conversions,
-      conversion_rate: ratio(conversions, sent),
+      conversion_rate: boundedRatio(conversions, sent),
       revenue: roundMoney(toNumber(row.revenue)),
     }
   })
 }
 
-function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyReportSegmentRow[] {
+function buildSegmentRows(rawRows: SegmentAggRow[], summary: ConversionMetricRow): DailyReportSegmentRow[] {
   const bySegment = new Map(rawRows.map((row) => [row.segment, row]))
   const rows: DailyReportSegmentRow[] = ['unknown', 'known_no_purchase', 'returning_customer', 'unattributed'].map(
     (segment) => {
@@ -1233,6 +1596,8 @@ function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyRe
       const metric = {
         sessions: toNumber(raw?.sessions),
         unique_visitors: toNumber(raw?.unique_visitors),
+        converted_sessions: toNumber(raw?.converted_sessions),
+        converted_visitors: toNumber(raw?.converted_visitors),
         orders: toNumber(raw?.orders),
         revenue: roundMoney(toNumber(raw?.revenue)),
       }
@@ -1243,14 +1608,15 @@ function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyRe
   return rows
 }
 
-function toSegmentRow(segment: SegmentKey, metric: MetricRow): DailyReportSegmentRow {
+function toSegmentRow(segment: SegmentKey, metric: ConversionMetricRow): DailyReportSegmentRow {
+  const { converted_sessions, converted_visitors, ...displayMetric } = metric
   return {
     segment,
     label: SEGMENT_LABELS[segment],
-    ...metric,
+    ...displayMetric,
     average_order_value: ratio(metric.revenue, metric.orders),
-    session_conversion_rate: metric.sessions > 0 ? ratio(metric.orders, metric.sessions) : null,
-    visitor_conversion_rate: metric.unique_visitors > 0 ? ratio(metric.orders, metric.unique_visitors) : null,
+    session_conversion_rate: ratio(converted_sessions, metric.sessions),
+    visitor_conversion_rate: ratio(converted_visitors, metric.unique_visitors),
   }
 }
 
@@ -1393,7 +1759,7 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
 
   const body = table(
     'Relances panier CRM',
-    ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Clics', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
+    ['Email', 'Envoyes', 'Ouvertures', 'Taux ouv.', 'Messages cliques', 'Taux clic', 'Conv.', 'Taux conv.', 'CA'],
     payload.abandoned_cart_emails.map((row) => [
       row.label,
       formatInteger(row.sent),
@@ -1406,7 +1772,7 @@ function renderAbandonedCartEmailTable(payload: DailyReportPayload): string {
       formatMoney(row.revenue),
     ]),
   )
-  return `${body}<p class="note muted">Les clics correspondent aux sessions arrivees via les liens de relance tagues Email 1/2/3. Les conversions et le CA sont rattaches au message CRM source quand le cas panier est marque recupere. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
+  return `${body}<p class="note muted">Un message est compte clique lorsqu'au moins une session de la meme journee porte son identifiant CRM exact. Les envois, sessions et recuperations utilisent donc la meme cohorte quotidienne ; un message n'est compte qu'une fois. Les ouvertures restent affichees a "-" tant que les evenements d'ouverture email ne sont pas synchronises en base.</p>`
 }
 
 function hasAbandonedCartEmailRows(payload: DailyReportPayload): boolean {
@@ -1456,7 +1822,8 @@ function renderChannelTable(payload: DailyReportPayload): string {
 function renderDefinitionNotes(): string {
   return `<h2>Definitions rapides</h2>
   <p class="note"><strong>Synthese panier</strong> separe les volumes de paniers, sessions et visiteurs. Les paniers crees viennent de la table carts ; les vues et updates viennent des compteurs visitor_sessions.</p>
-  <p class="note"><strong>Commandes</strong> compte uniquement les commandes Shopify incluses dans l'analytics ecommerce. Les commandes POS et les commandes d'apps externes exclues ne sont pas des conversions ecommerce.</p>
+  <p class="note"><strong>Commandes</strong> compte uniquement les commandes Shopify payees ou executees et incluses dans l'analytics ecommerce. Les commandes en attente, annulees, remboursees, POS ou issues d'apps externes exclues ne gonflent ni les commandes ni le CA.</p>
+  <p class="note"><strong>Conversions</strong> compte les sessions ou visiteurs distincts de la journee ayant au moins une commande eligible rattachee. Les commandes sans session restent visibles comme controle qualite, mais n'entrent pas dans le numerateur.</p>
   <p class="note"><strong>Tables detaillees panier</strong> conservent les volumes techniques : paniers distincts, sessions et evenements. Elles ne doivent pas etre additionnees comme des personnes.</p>
   <p class="note"><strong>Sources de trafic</strong> detaille les sources d'acquisition detectees au niveau session : Google Ads, Meta Ads, SEO, Direct, Klaviyo, relance panier, etc.</p>
   <p class="note"><strong>Canaux operationnels par segment</strong> regroupe ces sources en familles actionnables, puis les croise avec le segment client : inconnus, prospects, clients. C'est la vue la plus utile pour piloter les budgets et les actions CRM.</p>
@@ -1472,6 +1839,11 @@ function table(title: string, headers: string[], rows: string[][]): string {
 function ratio(numerator: number, denominator: number): number | null {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null
   return numerator / denominator
+}
+
+function boundedRatio(numerator: number, denominator: number): number | null {
+  const value = ratio(numerator, denominator)
+  return value === null ? null : Math.min(1, Math.max(0, value))
 }
 
 function roundMoney(value: number): number {
@@ -1613,6 +1985,8 @@ function timeZoneOffsetMs(timeZone: string, date: Date): number {
 interface BaseRow {
   sessions: number | string
   unique_visitors: number | string
+  converted_sessions: number | string
+  converted_visitors: number | string
   source_max_last_event_at: Date | string | null
 }
 
@@ -1626,6 +2000,8 @@ interface SegmentAggRow {
   segment: string
   sessions: number | string
   unique_visitors: number | string
+  converted_sessions: number | string
+  converted_visitors: number | string
   orders: number | string
   revenue: number | string
 }

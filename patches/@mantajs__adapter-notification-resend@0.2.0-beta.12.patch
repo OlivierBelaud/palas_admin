@@ -1,0 +1,68 @@
+diff --git a/dist/adapter.js b/dist/adapter.js
+index 02a05109b9d27fe5c5dbd7873855c6844d14a4e3..11107655af9302a6443ea5310e55ee45d699856e 100644
+--- a/dist/adapter.js
++++ b/dist/adapter.js
+@@ -40,13 +40,7 @@ export class ResendNotificationAdapter {
+             throw new MantaError('INVALID_DATA', 'No `from` address — pass `from` per call or set `defaultFrom` on the adapter.');
+         }
+         const replyTo = notification.replyTo ?? this._defaultReplyTo;
+-        // Per the framework plan, idempotency_key is forwarded as the
+-        // `Idempotency-Key` HTTP header. Resend's docs document that header
+-        // name directly, so this is the canonical mapping.
+         const headers = { ...(notification.headers ?? {}) };
+-        if (notification.idempotency_key) {
+-            headers['Idempotency-Key'] = notification.idempotency_key;
+-        }
+         // Build the SDK payload. The Resend SDK's CreateEmailOptions is a
+         // discriminated union (react|html|text RequireAtLeastOne) — we provide
+         // html and/or text, never react.
+@@ -65,7 +59,9 @@ export class ResendNotificationAdapter {
+             payload.text = notification.text;
+         let response;
+         try {
+-            response = await this._client.emails.send(payload);
++            response = await this._client.emails.send(payload, notification.idempotency_key
++                ? { idempotencyKey: notification.idempotency_key }
++                : undefined);
+         }
+         catch (err) {
+             // Network/transport errors — let the workflow runner decide retry.
+diff --git a/dist/adapter.test.js b/dist/adapter.test.js
+index 53e4dc69d080f7f211e0fad443279e3a9de9feeb..12977e01f84d52f4d0850979ad273a9726707399 100644
+--- a/dist/adapter.test.js
++++ b/dist/adapter.test.js
+@@ -58,7 +58,7 @@ describe('ResendNotificationAdapter', () => {
+         });
+         expect(sendMock.mock.calls[0][0]).toMatchObject({ from: 'override@x.com' });
+     });
+-    it('forwards idempotency_key as Idempotency-Key header', async () => {
++    it('forwards idempotency_key as the Resend request option', async () => {
+         sendMock.mockResolvedValueOnce({ data: { id: 'msg_3' }, error: null, headers: {} });
+         const a = new ResendNotificationAdapter({ apiKey: 'k', defaultFrom: 'a@x.com' });
+         await a.send({
+@@ -68,9 +68,10 @@ describe('ResendNotificationAdapter', () => {
+             text: 'hi',
+             idempotency_key: 'cart:123:1',
+         });
+-        expect(sendMock.mock.calls[0][0].headers).toMatchObject({ 'Idempotency-Key': 'cart:123:1' });
++        expect(sendMock.mock.calls[0][0].headers).toBeUndefined();
++        expect(sendMock.mock.calls[0][1]).toEqual({ idempotencyKey: 'cart:123:1' });
+     });
+-    it('preserves caller headers and adds Idempotency-Key', async () => {
++    it('preserves caller headers while keeping request idempotency separate', async () => {
+         sendMock.mockResolvedValueOnce({ data: { id: 'msg_4' }, error: null, headers: {} });
+         const a = new ResendNotificationAdapter({ apiKey: 'k', defaultFrom: 'a@x.com' });
+         await a.send({
+@@ -81,10 +82,8 @@ describe('ResendNotificationAdapter', () => {
+             headers: { 'List-Unsubscribe': '<https://x.com/u>' },
+             idempotency_key: 'k-1',
+         });
+-        expect(sendMock.mock.calls[0][0].headers).toEqual({
+-            'List-Unsubscribe': '<https://x.com/u>',
+-            'Idempotency-Key': 'k-1',
+-        });
++        expect(sendMock.mock.calls[0][0].headers).toEqual({ 'List-Unsubscribe': '<https://x.com/u>' });
++        expect(sendMock.mock.calls[0][1]).toEqual({ idempotencyKey: 'k-1' });
+     });
+     it('passes tags through to the SDK', async () => {
+         sendMock.mockResolvedValueOnce({ data: { id: 'msg_5' }, error: null, headers: {} });

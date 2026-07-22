@@ -1,0 +1,3 @@
+-- The append-only delivery ledger and its indexes are intentionally retained
+-- so rollback cannot discard reporting delivery audit evidence or introduce
+-- blocking DDL on a live reporting path.
