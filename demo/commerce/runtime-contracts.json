@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "static-edge": {
+      "status": "supported",
+      "scope": "Compiled SPA assets only; API traffic is routed to a Node backend."
+    },
+    "persistent-node": {
+      "status": "supported",
+      "scope": "Compiled Manta Node server with PostgreSQL and durable external adapters."
+    },
+    "vercel-serverless-node": {
+      "status": "supported",
+      "scope": "Manta fallback plus explicit fast functions on nodejs24.x.",
+      "conditions": [
+        "DATABASE_URL capacity includes at most two PostgreSQL connections per warm fast-function instance.",
+        "BLOB_READ_WRITE_TOKEN is configured in production.",
+        "Upstash, Resend and provider credentials are configured for the enabled features."
+      ]
+    },
+    "backend-edge": {
+      "status": "unsupported",
+      "scope": "API routes, jobs, subscribers and database-backed fast functions.",
+      "reason": "The reachable runtime graph uses Node crypto, PostgreSQL TCP, Buffer and Node-only Manta adapters."
+    }
+  },
+  "inventory": {
+    "minimumApplicationRoutes": 13,
+    "expectedJobs": 14,
+    "minimumFastFunctionRoutes": 20
+  },
+  "adapters": {
+    "database": { "runtime": "node", "transport": "postgresql-tcp", "status": "supported" },
+    "cache": { "runtime": "node", "transport": "upstash-http", "status": "supported" },
+    "file": { "runtime": "node", "transport": "vercel-blob-http", "status": "production-required" },
+    "jobs": { "runtime": "node", "transport": "vercel-cron-http", "status": "supported" },
+    "notification": { "runtime": "node", "transport": "resend-http", "status": "supported" }
+  }
+}

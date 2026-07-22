@@ -1,6 +1,27 @@
 // biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@mantajs/core'
 
+const EDGE_BACKEND_TARGETS = new Set(['cloudflare', 'cloudflare-pages', 'edge', 'vercel-edge'])
+
+export function assertRuntimeEnvironment(env: Record<string, string | undefined>): void {
+  const target = (env.MANTA_DEPLOY_PRESET ?? env.NITRO_PRESET ?? '').trim().toLowerCase()
+  if (EDGE_BACKEND_TARGETS.has(target)) {
+    throw new Error(
+      `Admin backend edge runtime is unsupported (${target}): the current graph requires Node crypto, PostgreSQL TCP and Node-only Manta adapters. Use the static SPA at the edge with a Node backend.`,
+    )
+  }
+
+  const distributedProduction = env.VERCEL_ENV === 'production'
+  const isolatedSmoke = env.MANTA_RUNTIME_SMOKE === '1'
+  if (distributedProduction && !isolatedSmoke && !env.BLOB_READ_WRITE_TOKEN?.trim()) {
+    throw new Error(
+      'BLOB_READ_WRITE_TOKEN is required for distributed production; the in-memory file adapter is not durable across serverless instances.',
+    )
+  }
+}
+
+assertRuntimeEnvironment(process.env)
+
 const blobReadWriteToken = process.env.BLOB_READ_WRITE_TOKEN
 const upstashRedisUrl =
   process.env.UPSTASH_REDIS_REST_URL ??

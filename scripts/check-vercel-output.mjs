@@ -1,4 +1,5 @@
-import { globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
 const outputRoot = 'demo/commerce/.vercel/output'
@@ -45,6 +46,26 @@ for (const route of expectedFunctions) {
   if (config.runtime !== manifest.runtime) throw new Error(`${route} must use ${manifest.runtime}, got ${config.runtime}`)
   if (!isDeepStrictEqual(config.regions, manifest.regions)) {
     throw new Error(`${route} must be pinned to ${manifest.regions.join(', ')}`)
+  }
+
+  if (route === '__server') continue
+  if (config.handler !== 'index.mjs' || config.launcherType !== 'Nodejs') {
+    throw new Error(`${route} must use the explicit Node launcher and index.mjs handler`)
+  }
+  const spec = manifest.functions.find((candidate) => candidate.route === route)
+  const requiredFiles = [
+    'index.mjs',
+    'runtime.mjs',
+    'node_modules/postgres/package.json',
+    ...(spec?.extraSources ?? []),
+  ]
+  for (const file of requiredFiles) {
+    if (!existsSync(`${dir}/${file}`)) throw new Error(`${route} is missing packaged runtime dependency ${file}`)
+  }
+
+  const handlerModule = await import(`${pathToFileURL(`${dir}/index.mjs`).href}?contract=${encodeURIComponent(route)}`)
+  if (typeof handlerModule.default?.fetch !== 'function') {
+    throw new Error(`${route} packaged handler does not export default.fetch`)
   }
 }
 

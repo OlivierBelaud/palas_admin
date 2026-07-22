@@ -9,13 +9,22 @@ describe('catalog taxonomy Vercel packaging', () => {
     functions: Array<{ source: string; extraSources?: string[]; maxDuration?: number }>
   }
   const taxonomy = manifest.functions.find((spec) => spec.source === 'admin-catalog-taxonomy.mjs')
+  const content = manifest.functions.find((spec) => spec.source === 'admin-catalog-content.mjs')
 
   it('ships every runtime dependency used by the taxonomy endpoint', () => {
-    expect(taxonomy?.extraSources).toEqual(['catalog-classification-seed.json', 'catalog-shopify-sync.mjs'])
+    expect(taxonomy?.extraSources).toEqual([
+      'catalog-classification-seed.json',
+      'catalog-shopify-sync.mjs',
+      'catalog-publication-governance.mjs',
+    ])
   })
 
   it('keeps the long-running Shopify reconstruction timeout', () => {
     expect(taxonomy?.maxDuration).toBe(300)
     expect(source).toContain('...(maxDuration ? { maxDuration } : {})')
+  })
+
+  it('ships the publication policy used by the catalog content endpoint', () => {
+    expect(content?.extraSources).toEqual(['catalog-publication-governance.mjs'])
   })
 })
