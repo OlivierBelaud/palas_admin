@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import postgres from 'postgres'
 import { describe, expect, it } from 'vitest'
 import { buildDailyReportPayload, sendDailyReportEmail } from '../src/utils/daily-reporting'
@@ -224,48 +225,17 @@ async function createReportingSchema(sql: RuntimeSql): Promise<void> {
       recovered_at timestamptz,
       deleted_at timestamptz
     );
-    CREATE TABLE reporting_daily_snapshots (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      day text NOT NULL,
-      timezone text NOT NULL,
-      status text NOT NULL,
-      payload jsonb NOT NULL,
-      generated_at timestamptz NOT NULL,
-      source_max_last_event_at timestamptz,
-      error_message text,
-      created_at timestamptz NOT NULL DEFAULT NOW(),
-      updated_at timestamptz NOT NULL DEFAULT NOW(),
-      deleted_at timestamptz
-    );
-    CREATE UNIQUE INDEX reporting_daily_snapshots_day_timezone_uq
-      ON reporting_daily_snapshots (day, timezone) WHERE deleted_at IS NULL;
-    CREATE TABLE reporting_daily_deliveries (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      day text NOT NULL,
-      timezone text NOT NULL,
-      recipient text NOT NULL,
-      recipient_normalized text NOT NULL,
-      revision text NOT NULL,
-      idempotency_key text NOT NULL,
-      content_payload jsonb NOT NULL,
-      status text NOT NULL,
-      provider_status text,
-      provider_message_id text,
-      provider_error text,
-      provider_observed_at timestamptz,
-      claim_token text,
-      claimed_at timestamptz,
-      claim_expires_at timestamptz,
-      attempt_count integer NOT NULL DEFAULT 0,
-      last_attempted_at timestamptz,
-      sent_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT NOW(),
-      updated_at timestamptz NOT NULL DEFAULT NOW(),
-      deleted_at timestamptz
-    );
-    CREATE UNIQUE INDEX reporting_daily_deliveries_key_uq
-      ON reporting_daily_deliveries (idempotency_key) WHERE deleted_at IS NULL;
   `)
+  const snapshotMigration = await readFile(
+    new URL('../drizzle/migrations/20260615121000_reporting_daily_snapshots.sql', import.meta.url),
+    'utf8',
+  )
+  const deliveryMigration = await readFile(
+    new URL('../drizzle/migrations/20260722180000_reporting_daily_deliveries.sql', import.meta.url),
+    'utf8',
+  )
+  await sql.unsafe(snapshotMigration)
+  await sql.unsafe(deliveryMigration)
 }
 
 async function seedReportingMatrix(sql: RuntimeSql): Promise<void> {

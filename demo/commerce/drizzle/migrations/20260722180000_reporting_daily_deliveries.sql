@@ -33,5 +33,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS "reporting_daily_deliveries_recipient_revision
   ON "reporting_daily_deliveries" ("day", "timezone", "recipient_normalized", "revision")
   WHERE "deleted_at" IS NULL;
 
-CREATE INDEX IF NOT EXISTS "reporting_daily_deliveries_status_idx"
-  ON "reporting_daily_deliveries" ("status", "claim_expires_at");
+CREATE INDEX IF NOT EXISTS "reporting_daily_deliveries_claim_expiry_idx"
+  ON "reporting_daily_deliveries" ("claim_expires_at")
+  WHERE "deleted_at" IS NULL AND "status" = 'claimed';
+
+CREATE INDEX IF NOT EXISTS "orders_reporting_eligible_placed_at_idx"
+  ON "orders" ("placed_at")
+  WHERE "deleted_at" IS NULL
+    AND "include_in_ecommerce_analytics" = true
+    AND "status" IN ('paid', 'fulfilled');
+
+CREATE INDEX IF NOT EXISTS "visitor_sessions_reporting_email_message_idx"
+  ON "visitor_sessions" (
+    "started_at",
+    (substring("first_url" FROM '(?:[?&])palas_email_message_id=([^&#]+)'))
+  )
+  WHERE "deleted_at" IS NULL AND "first_url" IS NOT NULL;

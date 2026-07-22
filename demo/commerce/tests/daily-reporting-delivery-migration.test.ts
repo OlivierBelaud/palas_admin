@@ -14,6 +14,8 @@ describe('daily reporting delivery durability migration', () => {
     expect(migration).toContain('claim_token')
     expect(migration).toContain('claim_expires_at')
     expect(migration).toContain('attempt_count')
+    expect(migration).toContain('orders_reporting_eligible_placed_at_idx')
+    expect(migration).toContain('visitor_sessions_reporting_email_message_idx')
   })
 
   it('keeps financial delivery evidence on rollback', async () => {

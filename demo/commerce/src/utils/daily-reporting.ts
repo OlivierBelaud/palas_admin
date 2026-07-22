@@ -152,23 +152,16 @@ interface SendDailyReportResult {
 }
 
 type DailyReportDeliveryStatus = 'pending' | 'claimed' | 'succeeded' | 'failed' | 'reconciliation_required'
+type NotificationPayload = Parameters<RuntimeNotificationPort['send']>[0]
+type NotificationResult = Awaited<ReturnType<RuntimeNotificationPort['send']>>
 
-interface DailyReportEmailContent {
-  to: string
-  channel: string
-  from: string
-  replyTo?: string
-  subject: string
-  html: string
-  text: string
-  idempotency_key: string
-  tags: Array<{ name: string; value: string }>
-}
+type DailyReportEmailContent = NotificationPayload &
+  Required<Pick<NotificationPayload, 'from' | 'subject' | 'html' | 'text' | 'idempotency_key' | 'tags'>>
 
 interface DailyReportDeliveryRow {
   content_payload: DailyReportEmailContent
   status: DailyReportDeliveryStatus
-  provider_status: 'SUCCESS' | 'FAILURE' | 'PENDING' | null
+  provider_status: NotificationResult['status'] | null
   provider_message_id: string | null
   provider_error: string | null
 }
@@ -194,11 +187,9 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
   total: 'Total journee',
 }
 
-function eligibleOrderPredicate(alias: string): string {
-  return `${alias}.deleted_at IS NULL
-      AND ${alias}.include_in_ecommerce_analytics = true
-      AND ${alias}.status IN ('paid', 'fulfilled')`
-}
+const ELIGIBLE_ORDER_PREDICATE = `o.deleted_at IS NULL
+      AND o.include_in_ecommerce_analytics = true
+      AND o.status IN ('paid', 'fulfilled')`
 
 const SOURCE_CASE = `
 CASE
@@ -319,28 +310,30 @@ export async function buildDailyReportPayload(
 
   const [base] = await sql.unsafe<BaseRow[]>(
     `
+    WITH day_sessions AS (
+      SELECT *
+      FROM visitor_sessions
+      WHERE deleted_at IS NULL
+        AND started_at >= $1::timestamptz
+        AND started_at < $2::timestamptz
+    ),
+    converted_day_sessions AS (
+      SELECT DISTINCT vs.id AS session_row_id
+      FROM day_sessions vs
+      JOIN orders o
+        ON ${ELIGIBLE_ORDER_PREDICATE}
+        AND o.placed_at >= $1::timestamptz
+        AND o.placed_at < $2::timestamptz
+        AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
+    )
     SELECT
       COUNT(*)::int AS sessions,
       COUNT(DISTINCT vs.distinct_id)::int AS unique_visitors,
-      COUNT(*) FILTER (WHERE EXISTS (
-        SELECT 1 FROM orders o
-        WHERE ${eligibleOrderPredicate('o')}
-          AND o.placed_at >= $1::timestamptz
-          AND o.placed_at < $2::timestamptz
-          AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
-      ))::int AS converted_sessions,
-      COUNT(DISTINCT vs.distinct_id) FILTER (WHERE EXISTS (
-        SELECT 1 FROM orders o
-        WHERE ${eligibleOrderPredicate('o')}
-          AND o.placed_at >= $1::timestamptz
-          AND o.placed_at < $2::timestamptz
-          AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
-      ))::int AS converted_visitors,
+      COUNT(*) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_sessions,
+      COUNT(DISTINCT vs.distinct_id) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_visitors,
       MAX(vs.last_event_at) AS source_max_last_event_at
-    FROM visitor_sessions vs
-    WHERE vs.deleted_at IS NULL
-      AND vs.started_at >= $1::timestamptz
-      AND vs.started_at < $2::timestamptz
+    FROM day_sessions vs
+    LEFT JOIN converted_day_sessions cds ON cds.session_row_id = vs.id
     `,
     [startIso, endIso],
   )
@@ -352,7 +345,7 @@ export async function buildDailyReportPayload(
       COALESCE(SUM(total_price), 0)::float AS revenue,
       COUNT(DISTINCT NULLIF(shipping_country_code, ''))::int AS sold_countries_count
     FROM orders o
-    WHERE ${eligibleOrderPredicate('o')}
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     `,
@@ -377,7 +370,7 @@ export async function buildDailyReportPayload(
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
     FROM orders o
-    WHERE ${eligibleOrderPredicate('o')}
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     GROUP BY 1, 2
@@ -534,12 +527,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
 
     try {
       const result = await sendNotificationWithTimeout(options.notification, claim.content)
-      const deliveryStatus: DailyReportDeliveryStatus =
-        result.status === 'SUCCESS'
-          ? 'succeeded'
-          : result.status === 'FAILURE'
-            ? 'failed'
-            : 'reconciliation_required'
+      const deliveryStatus = deliveryStatusForProviderStatus(result.status)
       const finalized = await finalizeDailyReportDelivery(options.sql, {
         idempotencyKey,
         claimToken: claim.claimToken,
@@ -567,6 +555,12 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
   }
 
   return { payload, snapshot_status: snapshotStatus, sent }
+}
+
+function deliveryStatusForProviderStatus(status: NotificationResult['status']): DailyReportDeliveryStatus {
+  if (status === 'SUCCESS') return 'succeeded'
+  if (status === 'FAILURE') return 'failed'
+  return 'reconciliation_required'
 }
 
 function uniqueRecipients(recipients: string[]): string[] {
@@ -638,7 +632,7 @@ async function finalizeDailyReportDelivery(
     idempotencyKey: string
     claimToken: string
     deliveryStatus: DailyReportDeliveryStatus
-    providerStatus: 'SUCCESS' | 'FAILURE' | 'PENDING' | null
+    providerStatus: NotificationResult['status'] | null
     providerMessageId?: string
     providerError?: string
   },
@@ -702,6 +696,7 @@ async function sendNotificationWithTimeout(
       notification.send(content),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => reject(new Error('Notification provider timed out after 60 seconds')), 60_000)
+        timeout.unref?.()
       }),
     ])
   } finally {
@@ -865,7 +860,7 @@ function segmentAggSql(): string {
       COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM orders o
     LEFT JOIN attributed_order_sessions ao ON ao.order_row_id = o.id
-    WHERE ${eligibleOrderPredicate('o')}
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND ao.order_row_id IS NULL
@@ -1030,7 +1025,7 @@ function cartSummarySql(): string {
   day_orders AS (
     SELECT *
     FROM orders o
-    WHERE ${eligibleOrderPredicate('o')}
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
   ),
@@ -1241,7 +1236,7 @@ function cartBirthAggSql(): string {
       ON co.deleted_at IS NULL
       AND co.cart_id = bc.id
     JOIN orders o
-      ON ${eligibleOrderPredicate('o')}
+      ON ${ELIGIBLE_ORDER_PREDICATE}
       AND o.id::text = co.order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
@@ -1249,7 +1244,7 @@ function cartBirthAggSql(): string {
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id, o.total_price
     FROM born_carts bc
     JOIN orders o
-      ON ${eligibleOrderPredicate('o')}
+      ON ${ELIGIBLE_ORDER_PREDICATE}
       AND o.shopify_order_id = bc.shopify_order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
@@ -1383,7 +1378,7 @@ function segmentCte(): string {
     SELECT DISTINCT ds.id AS session_row_id
     FROM day_sessions ds
     JOIN orders o
-      ON ${eligibleOrderPredicate('o')}
+      ON ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND (ds.order_id = o.shopify_order_id OR ds.order_id = o.id::text)
@@ -1411,7 +1406,7 @@ function segmentCte(): string {
         vs.order_id = o.shopify_order_id
         OR vs.order_id = o.id::text
       )
-    WHERE ${eligibleOrderPredicate('o')}
+    WHERE ${ELIGIBLE_ORDER_PREDICATE}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     ORDER BY o.id, vs.last_event_at DESC
