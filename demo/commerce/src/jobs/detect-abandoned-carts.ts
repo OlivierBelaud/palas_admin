@@ -16,8 +16,8 @@
 // Production-only — local `manta dev` no-ops to avoid hitting prod data.
 
 import { type AbandonedCartCampaignResult, runAbandonedCartCampaign } from '../utils/abandoned-cart-campaign'
-import { type RuntimeSql, resolveFile } from '../utils/manta-runtime'
 import { runAfterKlaviyoProjectionSync } from '../utils/klaviyo-synchronized-campaign'
+import { type RuntimeSql, resolveFile } from '../utils/manta-runtime'
 
 const EMPTY: AbandonedCartCampaignResult = {
   scanned: 0,
@@ -51,26 +51,24 @@ export default defineJob('detect-abandoned-carts', '0 * * * *', async ({ app, co
   const replyTo = process.env.RESEND_REPLY_TO ?? 'hello@fancypalas.com'
 
   const commands = command as unknown as { syncKlaviyoEvents(input: Record<string, never>): Promise<unknown> }
-  let result: AbandonedCartCampaignResult
-  try {
-    result = await runAfterKlaviyoProjectionSync(
-      () => commands.syncKlaviyoEvents({}),
-      () =>
-        runAbandonedCartCampaign({
-          sql,
-          notification,
-          file: resolveFile(app),
-          adminBase,
-          fromEmail,
-          replyTo,
-          batchLimit: 50,
-          log,
-        }),
-    )
-  } catch (error) {
-    log.error(`[detect-abandoned-carts] Klaviyo preflight failed: ${(error as Error).message}`)
-    throw error
-  }
+  const result = await runAfterKlaviyoProjectionSync(
+    () => commands.syncKlaviyoEvents({}),
+    () =>
+      runAbandonedCartCampaign({
+        sql,
+        notification,
+        file: resolveFile(app),
+        adminBase,
+        fromEmail,
+        replyTo,
+        batchLimit: 50,
+        log,
+      }),
+    (stage, error) => {
+      const label = stage === 'sync' ? 'Klaviyo preflight failed' : 'campaign failed'
+      log.error(`[detect-abandoned-carts] ${label}: ${(error as Error).message}`)
+    },
+  )
   log.info(
     `[detect-abandoned-carts] scanned=${result.scanned} due=${result.due} sent=${result.sent} skipped=${result.skipped} recovered=${result.recovered} errors=${result.errors} claim_conflicts=${result.claim_conflicts} skipped_shopify_order=${result.skipped_shopify_order} skipped_shopify_unavailable=${result.skipped_shopify_unavailable}`,
   )

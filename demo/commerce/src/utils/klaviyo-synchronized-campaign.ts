@@ -2,7 +2,19 @@
 export async function runAfterKlaviyoProjectionSync<T>(
   sync: () => Promise<unknown>,
   campaign: () => Promise<T>,
+  onError?: (stage: 'sync' | 'campaign', error: unknown) => void,
 ): Promise<T> {
-  await sync()
-  return campaign()
+  try {
+    await sync()
+  } catch (error) {
+    onError?.('sync', error)
+    throw error
+  }
+
+  try {
+    return await campaign()
+  } catch (error) {
+    onError?.('campaign', error)
+    throw error
+  }
 }

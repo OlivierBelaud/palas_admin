@@ -13,15 +13,15 @@
 // 'klaviyo'` (only when not already notified) so that
 // `cart.abandon_notified_at` is a unified record across Manta + Klaviyo.
 
-import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 import { buildKlaviyoAbandonmentHogqlPredicate } from '../../utils/klaviyo-abandonment-contract'
 import {
+  type KlaviyoSyncAttempt,
   markKlaviyoProjectionSyncFailed,
   markKlaviyoProjectionSyncSucceeded,
   startKlaviyoProjectionSyncAttempt,
-  type KlaviyoSyncAttempt,
 } from '../../utils/klaviyo-projection-state'
 import { resolveSql } from '../../utils/manta-runtime'
+import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
 import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from '../../utils/sync-klaviyo-events-mark-helper'
 
 const HOGQL_LIMIT = 5000
@@ -149,6 +149,12 @@ export default defineCommand({
     fullRefresh: z.boolean().default(false),
   }),
   workflow: async (input, { step, log }) => {
+    // Failure audits must run again on every WorkflowManager attempt. This
+    // nonce is intentionally created outside a checkpoint so each workflow
+    // re-entry gets a unique failure action name; start and success actions
+    // remain workflow-stable below.
+    const retryInvocationNonce = crypto.randomUUID()
+    const failureActionName = (phase: string): string => `fail-klaviyo-projection-${phase}-${retryInvocationNonce}`
     const recordProjection = async (
       actionName: string,
       update: (sql: NonNullable<ReturnType<typeof resolveSql>>) => Promise<void>,
@@ -190,11 +196,10 @@ export default defineCommand({
           occurred_at?: Date | string | null
         }>
         const maxAt = latest[0]?.occurred_at ? new Date(latest[0].occurred_at).getTime() : null
-        sinceMs =
-          maxAt && Number.isFinite(maxAt) ? maxAt - OVERLAP_MS : attemptedAt.getTime() - FALLBACK_LOOKBACK_MS
+        sinceMs = maxAt && Number.isFinite(maxAt) ? maxAt - OVERLAP_MS : attemptedAt.getTime() - FALLBACK_LOOKBACK_MS
       }
     } catch (error) {
-      await recordProjection('fail-klaviyo-projection-high-water', (sql) =>
+      await recordProjection(failureActionName('high-water'), (sql) =>
         markKlaviyoProjectionSyncFailed(sql, syncAttempt, new Date(), error),
       )
       throw error
@@ -218,7 +223,7 @@ export default defineCommand({
         },
       })({})
     } catch (error) {
-      await recordProjection('fail-klaviyo-projection-pull', (sql) =>
+      await recordProjection(failureActionName('pull'), (sql) =>
         markKlaviyoProjectionSyncFailed(sql, syncAttempt, new Date(), error),
       )
       throw error
@@ -254,7 +259,7 @@ export default defineCommand({
         ['klaviyo_event_id'],
       )) as Array<{ id: string }>
     } catch (error) {
-      await recordProjection('fail-klaviyo-projection-upsert', (sql) =>
+      await recordProjection(failureActionName('upsert'), (sql) =>
         markKlaviyoProjectionSyncFailed(sql, syncAttempt, new Date(), error),
       )
       throw error
@@ -289,7 +294,7 @@ export default defineCommand({
         },
       })({})
     } catch (error) {
-      await recordProjection('fail-klaviyo-projection-cart-marking', (sql) =>
+      await recordProjection(failureActionName('cart-marking'), (sql) =>
         markKlaviyoProjectionSyncFailed(sql, syncAttempt, new Date(), error),
       )
       throw error

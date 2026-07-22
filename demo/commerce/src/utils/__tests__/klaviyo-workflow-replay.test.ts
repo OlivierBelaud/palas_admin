@@ -37,12 +37,13 @@ function createProjectionSql(calls: SqlCall[]): RuntimeSql {
 }
 
 describe('syncKlaviyoEvents WorkflowManager replay', () => {
-  it('reuses the real command start token, generation and upper bound after a post-start failure', async () => {
+  it('reuses the real command start token, generation and upper bound after repeated post-start failures', async () => {
     const sqlCalls: SqlCall[] = []
     const sql = createProjectionSql(sqlCalls)
     const listKlaviyoEvents = vi
       .fn<() => Promise<unknown[]>>()
-      .mockRejectedValueOnce(new Error('transient high-water failure'))
+      .mockRejectedValueOnce(new Error('first transient high-water failure'))
+      .mockRejectedValueOnce(new Error('second transient high-water failure'))
       .mockResolvedValueOnce([])
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
     const app = {
@@ -74,9 +75,9 @@ describe('syncKlaviyoEvents WorkflowManager replay', () => {
     const starts = sqlCalls.filter((call) => call.query.includes('INSERT INTO klaviyo_projection_state'))
     const failures = sqlCalls.filter((call) => call.query.includes("SET status = 'failed'"))
     const successes = sqlCalls.filter((call) => call.query.includes("SET status = 'succeeded'"))
-    expect(listKlaviyoEvents).toHaveBeenCalledTimes(2)
+    expect(listKlaviyoEvents).toHaveBeenCalledTimes(3)
     expect(starts).toHaveLength(1)
-    expect(failures).toHaveLength(1)
+    expect(failures).toHaveLength(2)
     expect(successes).toHaveLength(1)
     expect(runPosthogHogQL).toHaveBeenCalledTimes(1)
 
@@ -85,6 +86,7 @@ describe('syncKlaviyoEvents WorkflowManager replay', () => {
     const startThrough = starts[0].values[3] as Date
     expect(startThrough.getMilliseconds()).toBe(0)
     expect(failures[0].values.slice(3)).toEqual([startToken, 11, startAttemptedAt, startThrough])
+    expect(failures[1].values.slice(3)).toEqual([startToken, 11, startAttemptedAt, startThrough])
     expect(successes[0].values.slice(4)).toEqual([startToken, 11, startAttemptedAt, startThrough])
     expect(result.result).toMatchObject({
       projection_fence: {

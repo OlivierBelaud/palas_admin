@@ -50,11 +50,11 @@ describe.skipIf(!databaseUrl)('Klaviyo delivery fence (PostgreSQL)', () => {
         const through = new Date(Math.floor(Date.now() / 1000) * 1000)
         const fence = { generation: 7, syncToken: 'sync_7', throughIso: through.toISOString() }
         const sql = tx as unknown as RuntimeSql
-        const authorize = () =>
+        const authorize = (deliveryFence = fence) =>
           fenceDeliveryAgainstKlaviyoProjection(
             sql,
             { messageId: 'message_1', claimToken: 'claim_original' },
-            fence,
+            deliveryFence,
             'shopper@test.com',
             new Date(through.getTime() - 60 * 60_000),
           )
@@ -81,10 +81,13 @@ describe.skipIf(!databaseUrl)('Klaviyo delivery fence (PostgreSQL)', () => {
           expect(await authorize()).toBe(false)
         }
 
+        const staleThrough = new Date(Math.floor((Date.now() - 2 * 60_000) / 1000) * 1000)
+        const staleFence = { ...fence, throughIso: staleThrough.toISOString() }
         await tx.unsafe(
-          "UPDATE klaviyo_projection_state SET status = 'succeeded', requested_through = NOW() - INTERVAL '2 minutes', covered_through = NOW() - INTERVAL '2 minutes'",
+          "UPDATE klaviyo_projection_state SET status = 'succeeded', requested_through = $1, covered_through = $1",
+          [staleThrough],
         )
-        expect(await authorize()).toBe(false)
+        expect(await authorize(staleFence)).toBe(false)
 
         await tx.unsafe(
           `UPDATE klaviyo_projection_state

@@ -4,11 +4,7 @@ import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
 import { buildEmailLinkTrackingParams } from './email-link-tracking'
 import { archiveEmailSnapshot, type EmailSnapshotResult } from './email-snapshot'
-import {
-  isKlaviyoAbandonmentEvent,
-  KLAVIYO_ABANDONMENT_METRICS,
-  KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES,
-} from './klaviyo-abandonment-contract'
+import { KLAVIYO_ABANDONMENT_METRICS, KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES } from './klaviyo-abandonment-contract'
 import {
   DEFAULT_KLAVIYO_PROJECTION_MAX_AGE_MS,
   KLAVIYO_PROJECTION_KEY,
@@ -909,16 +905,22 @@ async function findShopifyOrderAfter(
   }
 }
 
-async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Date): Promise<Date | null> {
-  const rows = await sql<Array<{ metric: string; subject: string | null; occurred_at: Date | string }>>`
-    SELECT metric, subject, occurred_at
+export async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Date): Promise<Date | null> {
+  const rows = await sql<Array<{ occurred_at: Date | string }>>`
+    SELECT occurred_at
     FROM klaviyo_events
     WHERE LOWER(email) = LOWER(${email})
       AND occurred_at >= ${sqlTimestamp(since)}
+      AND (
+        metric = ANY(${[...KLAVIYO_ABANDONMENT_METRICS]})
+        OR (
+          metric = 'Received Email'
+          AND LOWER(COALESCE(subject, '')) LIKE ANY(${KLAVIYO_ABANDONMENT_SUBJECT_NEEDLES.map((needle) => `%${needle}%`)})
+        )
+      )
     ORDER BY occurred_at DESC
-    LIMIT 100`
-  const match = rows.find(isKlaviyoAbandonmentEvent)
-  return match?.occurred_at ? toDate(match.occurred_at) : null
+    LIMIT 1`
+  return rows[0]?.occurred_at ? toDate(rows[0].occurred_at) : null
 }
 
 async function renderMessage(opts: {

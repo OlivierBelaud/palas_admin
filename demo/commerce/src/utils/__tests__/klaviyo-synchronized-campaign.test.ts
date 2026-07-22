@@ -21,14 +21,39 @@ describe('runAfterKlaviyoProjectionSync', () => {
 
   it('never starts the campaign when the provider sync fails', async () => {
     const campaign = vi.fn()
+    const onError = vi.fn()
 
     await expect(
-      runAfterKlaviyoProjectionSync(async () => {
-        throw new Error('PostHog unavailable')
-      }, campaign),
+      runAfterKlaviyoProjectionSync(
+        async () => {
+          throw new Error('PostHog unavailable')
+        },
+        campaign,
+        onError,
+      ),
     ).rejects.toThrow('PostHog unavailable')
 
     expect(campaign).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('sync', expect.objectContaining({ message: 'PostHog unavailable' }))
+  })
+
+  it('reports campaign failures separately from sync failures', async () => {
+    const onError = vi.fn()
+
+    await expect(
+      runAfterKlaviyoProjectionSync(
+        async () => {},
+        async () => {
+          throw new Error('campaign database unavailable')
+        },
+        onError,
+      ),
+    ).rejects.toThrow('campaign database unavailable')
+
+    expect(onError).toHaveBeenCalledWith(
+      'campaign',
+      expect.objectContaining({ message: 'campaign database unavailable' }),
+    )
   })
 
   it('makes an event created after the scheduled sync visible before campaign arbitration', async () => {
