@@ -212,6 +212,36 @@ describe('identity-resolver', () => {
       expect(map.size).toBe(1_001)
       expect(getIdentityMetrics().cacheSize).toBeLessThanOrEqual(1_000)
     })
+
+    it('times out a stalled batch lookup and permits a later retry', async () => {
+      const controller = new AbortController()
+      const retrySignal = new AbortController().signal
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValueOnce(controller.signal)
+        .mockReturnValueOnce(retrySignal)
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+            }),
+        )
+        .mockResolvedValueOnce(Response.json({ results: [['d1', 'recovered@example.com']] }))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const stalled = resolveEmailsBatch()
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
+      controller.abort(new Error('timeout'))
+      await expect(stalled).resolves.toEqual(new Map())
+
+      await expect(resolveEmailsBatch()).resolves.toEqual(new Map([['d1', 'recovered@example.com']]))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[1]?.[1]?.signal).toBe(retrySignal)
+      timeoutSpy.mockRestore()
+    })
   })
 
   describe('enrichEventWithEmail', () => {

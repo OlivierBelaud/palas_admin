@@ -167,6 +167,7 @@ export async function resolveEmailsBatch(opts: IdentityResolverOptions = {}): Pr
         // produce the authoritative snapshot; cached identity maps would
         // silently miss users who were identified since the last rebuild.
         refresh: 'force_blocking',
+        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
       },
     )
     for (const row of rows ?? []) {

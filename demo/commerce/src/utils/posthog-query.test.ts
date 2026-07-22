@@ -53,6 +53,37 @@ describe('PostHog project resolution in warm runtimes', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('aborts stalled project discovery and lets a later HogQL query retry', async () => {
+    const firstController = new AbortController()
+    const retryController = new AbortController()
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+          }),
+      )
+      .mockResolvedValueOnce(Response.json({ results: [{ id: 7, api_token: 'public-token' }] }))
+      .mockResolvedValueOnce(Response.json({ results: [['recovered']] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { runPosthogHogQL } = await freshModule()
+    const opts = { host: 'https://eu.posthog.com', privateKey: 'private-key', publicToken: 'public-token' }
+
+    const stalled = runPosthogHogQL('SELECT 1', { ...opts, signal: firstController.signal })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(firstController.signal)
+    firstController.abort(new Error('timeout'))
+    await expect(stalled).rejects.toThrow('timeout')
+
+    await expect(runPosthogHogQL('SELECT 1', { ...opts, signal: retryController.signal })).resolves.toEqual([
+      ['recovered'],
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[1]?.[1]?.signal).toBe(retryController.signal)
+    expect(fetchMock.mock.calls[2]?.[1]?.signal).toBe(retryController.signal)
+  })
+
   it('isolates cached project ids by PostHog configuration', async () => {
     const fetchMock = vi
       .fn()

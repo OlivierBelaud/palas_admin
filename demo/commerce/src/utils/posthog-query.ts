@@ -5,6 +5,13 @@ type PosthogProject = {
 
 const resolvedProjectIds = new Map<string, Promise<string>>()
 
+interface PosthogConnectionOptions {
+  host?: string
+  privateKey?: string | null
+  publicToken?: string | null
+  signal?: AbortSignal
+}
+
 function cleanBaseUrl(host: string): string {
   return host
     .replace('://eu.i.posthog.com', '://eu.posthog.com')
@@ -20,11 +27,7 @@ export function posthogPrivateKey(): string | null {
   return process.env.POSTHOG_PERSONAL_API_KEY ?? process.env.POSTHOG_API_KEY ?? null
 }
 
-export async function resolvePosthogProjectId(opts?: {
-  host?: string
-  privateKey?: string | null
-  publicToken?: string | null
-}): Promise<string> {
+export async function resolvePosthogProjectId(opts?: PosthogConnectionOptions): Promise<string> {
   const configured = process.env.POSTHOG_PROJECT_ID?.trim()
   if (configured) return configured
 
@@ -41,6 +44,7 @@ export async function resolvePosthogProjectId(opts?: {
 
       const res = await fetch(`${host}/api/projects/`, {
         headers: { Authorization: `Bearer ${privateKey}` },
+        signal: opts?.signal,
       })
       if (!res.ok) return '@current'
 
@@ -58,11 +62,7 @@ export async function resolvePosthogProjectId(opts?: {
   return projectId
 }
 
-export async function posthogQueryUrl(opts?: {
-  host?: string
-  privateKey?: string | null
-  publicToken?: string | null
-}): Promise<string> {
+export async function posthogQueryUrl(opts?: PosthogConnectionOptions): Promise<string> {
   const host = cleanBaseUrl(opts?.host ?? posthogHost())
   const projectId = await resolvePosthogProjectId(opts)
   return `${host}/api/projects/${encodeURIComponent(projectId)}/query/`
@@ -70,12 +70,8 @@ export async function posthogQueryUrl(opts?: {
 
 export async function runPosthogHogQL<T = unknown[][]>(
   query: string,
-  opts?: {
-    host?: string
-    privateKey?: string | null
-    publicToken?: string | null
+  opts?: PosthogConnectionOptions & {
     refresh?: 'force_blocking' | 'blocking' | 'async' | 'lazy_async'
-    signal?: AbortSignal
   },
 ): Promise<T> {
   const privateKey = opts?.privateKey ?? posthogPrivateKey()

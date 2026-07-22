@@ -2,14 +2,35 @@ import { describe, expect, it } from 'vitest'
 import { assertRuntimeEnvironment } from '../manta.config'
 
 describe('Admin runtime environment contract', () => {
-  it.each(['cloudflare', 'edge', 'vercel-edge'])('rejects the unsupported backend target %s', (target) => {
-    expect(() => assertRuntimeEnvironment({ MANTA_DEPLOY_PRESET: target })).toThrow(
-      /Admin backend edge runtime is unsupported/,
-    )
-  })
+  const edgeTargets = [
+    'cloudflare',
+    'cloudflare_module',
+    'cloudflare-module',
+    'cloudflare-pages',
+    'cloudflare-pages-static',
+    'edge',
+    'vercel-edge',
+  ]
+
+  it.each(['MANTA_DEPLOY_PRESET', 'NITRO_PRESET'] as const)(
+    'rejects every unsupported backend target from %s',
+    (presetVariable) => {
+      for (const target of edgeTargets) {
+        expect(() => assertRuntimeEnvironment({ [presetVariable]: target })).toThrow(
+          /Admin backend edge runtime is unsupported/,
+        )
+      }
+    },
+  )
 
   it('requires durable file storage in distributed production', () => {
     expect(() => assertRuntimeEnvironment({ VERCEL_ENV: 'production' })).toThrow(
+      /BLOB_READ_WRITE_TOKEN is required/,
+    )
+  })
+
+  it('requires durable file storage in persistent Node production', () => {
+    expect(() => assertRuntimeEnvironment({ NODE_ENV: 'production' })).toThrow(
       /BLOB_READ_WRITE_TOKEN is required/,
     )
   })
@@ -25,6 +46,12 @@ describe('Admin runtime environment contract', () => {
       assertRuntimeEnvironment({
         MANTA_DEPLOY_PRESET: 'vercel',
         VERCEL_ENV: 'production',
+        BLOB_READ_WRITE_TOKEN: 'configured',
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertRuntimeEnvironment({
+        NODE_ENV: 'production',
         BLOB_READ_WRITE_TOKEN: 'configured',
       }),
     ).not.toThrow()

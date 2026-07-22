@@ -1,7 +1,15 @@
 // biome-ignore lint/style/noRestrictedImports: manta.config.ts runs before globals are injected
 import { defineConfig } from '@mantajs/core'
 
-const EDGE_BACKEND_TARGETS = new Set(['cloudflare', 'cloudflare-pages', 'edge', 'vercel-edge'])
+const EDGE_BACKEND_TARGETS = new Set([
+  'cloudflare',
+  'cloudflare_module',
+  'cloudflare-module',
+  'cloudflare-pages',
+  'cloudflare-pages-static',
+  'edge',
+  'vercel-edge',
+])
 
 export function assertRuntimeEnvironment(env: Record<string, string | undefined>): void {
   const target = (env.MANTA_DEPLOY_PRESET ?? env.NITRO_PRESET ?? '').trim().toLowerCase()
@@ -11,7 +19,7 @@ export function assertRuntimeEnvironment(env: Record<string, string | undefined>
     )
   }
 
-  const distributedProduction = env.VERCEL_ENV === 'production'
+  const distributedProduction = env.VERCEL_ENV === 'production' || env.NODE_ENV === 'production'
   const isolatedSmoke = env.MANTA_RUNTIME_SMOKE === '1'
   if (distributedProduction && !isolatedSmoke && !env.BLOB_READ_WRITE_TOKEN?.trim()) {
     throw new Error(

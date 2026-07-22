@@ -56,6 +56,12 @@ export async function POST(req: Request): Promise<Response> {
     console.error('[shopify-webhook customers] IDatabasePort missing')
     return new Response('Server Misconfigured', { status: 500 })
   }
+  const email = customer.email?.trim().toLowerCase()
+  const emit = app?.emit?.bind(app)
+  if (email && !emit) {
+    console.error('[shopify-webhook customers] event transport missing')
+    return new Response('Event Transport Misconfigured', { status: 500 })
+  }
   try {
     const outcome = await upsertShopifyCustomer(sql, customer)
     if (outcome.matched_via === 'identity_conflict') {
@@ -64,16 +70,15 @@ export async function POST(req: Request): Promise<Response> {
       )
       return new Response('Identity Conflict', { status: 409 })
     }
-    const email = customer.email?.trim().toLowerCase()
-    if (email && app?.emit) {
+    if (email && emit) {
       const results = await Promise.allSettled([
-        app.emit('contact.refresh-requested', {
+        emit('contact.refresh-requested', {
           email,
           reason: 'shopify_customer_webhook',
           source: 'shopify-webhooks/customers',
           requested_at: new Date().toISOString(),
         }),
-        app.emit('cart.refresh-requested', {
+        emit('cart.refresh-requested', {
           email,
           reason: 'shopify_customer_webhook',
           source: 'shopify-webhooks/customers',
