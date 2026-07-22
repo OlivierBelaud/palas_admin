@@ -16,6 +16,11 @@ interface MetricRow {
   revenue: number
 }
 
+interface ConversionMetricRow extends MetricRow {
+  converted_sessions: number
+  converted_visitors: number
+}
+
 export interface DailyReportSegmentRow extends MetricRow {
   segment: SegmentKey
   label: string
@@ -161,6 +166,12 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
   total: 'Total journee',
 }
 
+function eligibleOrderPredicate(alias: string): string {
+  return `${alias}.deleted_at IS NULL
+      AND ${alias}.include_in_ecommerce_analytics = true
+      AND ${alias}.status IN ('paid', 'fulfilled')`
+}
+
 const SOURCE_CASE = `
 CASE
   WHEN COALESCE(first_url, '') ILIKE '%palas_email_type=abandoned_cart%'
@@ -249,12 +260,24 @@ export function previousParisDay(now = new Date()): string {
 }
 
 export function parisDayWindow(day: string): { start: Date; end: Date } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw invalidReportingDay(day)
   const [year, month, date] = day.split('-').map(Number)
-  if (!year || !month || !date) throw new MantaError('INVALID_DATA', `Invalid reporting day: ${day}`)
+  const candidate = new Date(Date.UTC(year, month - 1, date, 12))
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== date
+  ) {
+    throw invalidReportingDay(day)
+  }
   return {
     start: zonedDateTimeToUtc(DAILY_REPORT_TIMEZONE, year, month, date, 0, 0, 0),
     end: zonedDateTimeToUtc(DAILY_REPORT_TIMEZONE, year, month, date + 1, 0, 0, 0),
   }
+}
+
+function invalidReportingDay(day: string): Error {
+  return new Error(`Invalid reporting day: ${day}`)
 }
 
 export async function buildDailyReportPayload(
@@ -270,12 +293,26 @@ export async function buildDailyReportPayload(
     `
     SELECT
       COUNT(*)::int AS sessions,
-      COUNT(DISTINCT distinct_id)::int AS unique_visitors,
-      MAX(last_event_at) AS source_max_last_event_at
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
+      COUNT(DISTINCT vs.distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM orders o
+        WHERE ${eligibleOrderPredicate('o')}
+          AND o.placed_at >= $1::timestamptz
+          AND o.placed_at < $2::timestamptz
+          AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
+      ))::int AS converted_sessions,
+      COUNT(DISTINCT vs.distinct_id) FILTER (WHERE EXISTS (
+        SELECT 1 FROM orders o
+        WHERE ${eligibleOrderPredicate('o')}
+          AND o.placed_at >= $1::timestamptz
+          AND o.placed_at < $2::timestamptz
+          AND (vs.order_id = o.shopify_order_id OR vs.order_id = o.id::text)
+      ))::int AS converted_visitors,
+      MAX(vs.last_event_at) AS source_max_last_event_at
+    FROM visitor_sessions vs
+    WHERE vs.deleted_at IS NULL
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
     `,
     [startIso, endIso],
   )
@@ -286,11 +323,10 @@ export async function buildDailyReportPayload(
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue,
       COUNT(DISTINCT NULLIF(shipping_country_code, ''))::int AS sold_countries_count
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${eligibleOrderPredicate('o')}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     `,
     [startIso, endIso],
   )
@@ -312,11 +348,10 @@ export async function buildDailyReportPayload(
       COALESCE(NULLIF(shipping_country_name, ''), NULLIF(shipping_country_code, ''), 'Non renseigne') AS country_name,
       COUNT(*)::int AS orders,
       COALESCE(SUM(total_price), 0)::float AS revenue
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${eligibleOrderPredicate('o')}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
     GROUP BY 1, 2
     ORDER BY orders DESC, revenue DESC, country_name ASC
     `,
@@ -334,7 +369,11 @@ export async function buildDailyReportPayload(
       : null,
   }
 
-  const segmentRows = buildSegmentRows(rawSegmentRows, summary)
+  const segmentRows = buildSegmentRows(rawSegmentRows, {
+    ...summary,
+    converted_sessions: toNumber(base?.converted_sessions),
+    converted_visitors: toNumber(base?.converted_visitors),
+  })
   const unattributed = segmentRows.find((row) => row.segment === 'unattributed')
   const cartSummary = buildCartSummary(cartSummaryRow)
 
@@ -346,8 +385,8 @@ export async function buildDailyReportPayload(
     summary: {
       ...summary,
       average_order_value: ratio(summary.revenue, summary.orders),
-      session_conversion_rate: ratio(summary.orders, summary.sessions),
-      visitor_conversion_rate: ratio(summary.orders, summary.unique_visitors),
+      session_conversion_rate: ratio(toNumber(base?.converted_sessions), summary.sessions),
+      visitor_conversion_rate: ratio(toNumber(base?.converted_visitors), summary.unique_visitors),
       unattributed_orders: unattributed?.orders ?? 0,
       unattributed_revenue: unattributed?.revenue ?? 0,
     },
@@ -598,8 +637,11 @@ function segmentAggSql(): string {
     SELECT
       COALESCE(ds.segment_at_session_start, 'unknown') AS segment,
       COUNT(*)::int AS sessions,
-      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors
+      COUNT(DISTINCT ds.distinct_id)::int AS unique_visitors,
+      COUNT(*) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_sessions,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE cds.session_row_id IS NOT NULL)::int AS converted_visitors
     FROM day_sessions ds
+    LEFT JOIN converted_day_sessions cds ON cds.session_row_id = ds.id
     GROUP BY 1
   ),
   segment_orders AS (
@@ -615,28 +657,29 @@ function segmentAggSql(): string {
       'unattributed'::text AS segment,
       0::int AS sessions,
       0::int AS unique_visitors,
+      0::int AS converted_sessions,
+      0::int AS converted_visitors,
       COUNT(*)::int AS orders,
       COALESCE(SUM(o.total_price), 0)::float AS revenue
     FROM orders o
     LEFT JOIN attributed_order_sessions ao ON ao.order_row_id = o.id
-    WHERE o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+    WHERE ${eligibleOrderPredicate('o')}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
       AND ao.order_row_id IS NULL
   )
   SELECT *
   FROM (
-    SELECT st.segment, st.sessions, st.unique_visitors, COALESCE(so.orders, 0)::int AS orders, COALESCE(so.revenue, 0)::float AS revenue
+    SELECT st.segment, st.sessions, st.unique_visitors, st.converted_sessions, st.converted_visitors, COALESCE(so.orders, 0)::int AS orders, COALESCE(so.revenue, 0)::float AS revenue
     FROM segment_traffic st
     LEFT JOIN segment_orders so ON so.segment = st.segment
     UNION ALL
-    SELECT so.segment, 0::int AS sessions, 0::int AS unique_visitors, so.orders, so.revenue
+    SELECT so.segment, 0::int AS sessions, 0::int AS unique_visitors, 0::int AS converted_sessions, 0::int AS converted_visitors, so.orders, so.revenue
     FROM segment_orders so
     LEFT JOIN segment_traffic st ON st.segment = so.segment
     WHERE st.segment IS NULL
     UNION ALL
-    SELECT segment, sessions, unique_visitors, orders, revenue FROM unattributed
+    SELECT segment, sessions, unique_visitors, converted_sessions, converted_visitors, orders, revenue FROM unattributed
   ) rows
   ORDER BY CASE segment WHEN 'unknown' THEN 1 WHEN 'known_no_purchase' THEN 2 WHEN 'returning_customer' THEN 3 ELSE 4 END
   `
@@ -731,16 +774,32 @@ function channelAggSql(): string {
       ON co.segment = ct.segment
       AND co.operational_channel = ct.operational_channel
   ),
+  total_traffic AS (
+    SELECT
+      operational_channel,
+      COUNT(*)::int AS sessions,
+      COUNT(DISTINCT distinct_id)::int AS unique_visitors
+    FROM channel_sessions
+    GROUP BY 1
+  ),
+  total_orders AS (
+    SELECT
+      operational_channel,
+      COUNT(*)::int AS orders,
+      COALESCE(SUM(total_price), 0)::float AS revenue
+    FROM channel_order_sessions
+    GROUP BY 1
+  ),
   total_rows AS (
     SELECT
       'total'::text AS segment,
-      operational_channel,
-      SUM(sessions)::int AS sessions,
-      SUM(unique_visitors)::int AS unique_visitors,
-      SUM(orders)::int AS orders,
-      SUM(revenue)::float AS revenue
-    FROM segment_rows
-    GROUP BY 1, 2
+      COALESCE(tt.operational_channel, tor.operational_channel) AS operational_channel,
+      COALESCE(tt.sessions, 0)::int AS sessions,
+      COALESCE(tt.unique_visitors, 0)::int AS unique_visitors,
+      COALESCE(tor.orders, 0)::int AS orders,
+      COALESCE(tor.revenue, 0)::float AS revenue
+    FROM total_traffic tt
+    FULL JOIN total_orders tor ON tor.operational_channel = tt.operational_channel
   )
   SELECT *
   FROM (
@@ -768,11 +827,10 @@ function cartSummarySql(): string {
   ),
   day_orders AS (
     SELECT *
-    FROM orders
-    WHERE deleted_at IS NULL
-      AND include_in_ecommerce_analytics = true
-      AND placed_at >= $1::timestamptz
-      AND placed_at < $2::timestamptz
+    FROM orders o
+    WHERE ${eligibleOrderPredicate('o')}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
   ),
   born_linked_orders AS (
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id
@@ -792,7 +850,7 @@ function cartSummarySql(): string {
     SELECT
       COUNT(DISTINCT bc.id)::int AS carts_created,
       COUNT(DISTINCT bc.distinct_id)::int AS carts_created_visitors,
-      COUNT(DISTINCT blo.order_id)::int AS carts_created_converted
+      COUNT(DISTINCT bc.id) FILTER (WHERE blo.order_id IS NOT NULL)::int AS carts_created_converted
     FROM born_carts bc
     LEFT JOIN born_linked_orders blo ON blo.cart_id = bc.id
   ),
@@ -814,11 +872,8 @@ function cartSummarySql(): string {
   session_orders AS (
     SELECT DISTINCT ds.id AS session_row_id, o.id AS order_id
     FROM day_sessions ds
-    JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
-      AND o.placed_at >= $1::timestamptz
-      AND o.placed_at < $2::timestamptz
+    JOIN day_orders o
+      ON true
       AND (
         ds.order_id = o.shopify_order_id
         OR ds.order_id = o.id::text
@@ -856,10 +911,10 @@ function cartSummarySql(): string {
       COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_visitors,
       COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_visitors,
       COUNT(DISTINCT vb.distinct_id)::int AS total_cart_visitors,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'created')::int AS exclusive_created_converted,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'updated')::int AS exclusive_updated_converted,
-      COUNT(DISTINCT vo.order_id) FILTER (WHERE bucket = 'viewed')::int AS exclusive_viewed_converted,
-      COUNT(DISTINCT vo.order_id)::int AS total_cart_converted
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'created' AND vo.order_id IS NOT NULL)::int AS exclusive_created_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'updated' AND vo.order_id IS NOT NULL)::int AS exclusive_updated_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE bucket = 'viewed' AND vo.order_id IS NOT NULL)::int AS exclusive_viewed_converted,
+      COUNT(DISTINCT vb.distinct_id) FILTER (WHERE vo.order_id IS NOT NULL)::int AS total_cart_converted
     FROM visitor_bucket vb
     LEFT JOIN visitor_orders vo ON vo.distinct_id = vb.distinct_id
   ),
@@ -868,11 +923,11 @@ function cartSummarySql(): string {
       COALESCE(SUM(ds.carts_updated_in_session), 0)::int AS carts_updated,
       COUNT(*) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_sessions,
       COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_visitors,
-      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_updated_in_session > 0)::int AS carts_updated_converted,
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_updated_in_session > 0 AND so.order_id IS NOT NULL)::int AS carts_updated_converted,
       COALESCE(SUM(ds.carts_viewed_in_session), 0)::int AS cart_view_events,
       COUNT(*) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_sessions,
       COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_visitors,
-      COUNT(DISTINCT so.order_id) FILTER (WHERE ds.carts_viewed_in_session > 0)::int AS cart_view_converted
+      COUNT(DISTINCT ds.distinct_id) FILTER (WHERE ds.carts_viewed_in_session > 0 AND so.order_id IS NOT NULL)::int AS cart_view_converted
     FROM day_sessions ds
     LEFT JOIN session_orders so ON so.session_row_id = ds.id
   )
@@ -984,8 +1039,7 @@ function cartBirthAggSql(): string {
       ON co.deleted_at IS NULL
       AND co.cart_id = bc.id
     JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+      ON ${eligibleOrderPredicate('o')}
       AND o.id::text = co.order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
@@ -993,23 +1047,47 @@ function cartBirthAggSql(): string {
     SELECT DISTINCT bc.id AS cart_id, o.id AS order_id, o.total_price
     FROM born_carts bc
     JOIN orders o
-      ON o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+      ON ${eligibleOrderPredicate('o')}
       AND o.shopify_order_id = bc.shopify_order_id
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
   ),
-  segment_rows AS (
+  segment_orders AS (
+    SELECT DISTINCT bs.segment, lo.order_id, lo.total_price
+    FROM birth_segments bs
+    JOIN linked_orders lo ON lo.cart_id = bs.id
+  ),
+  segment_cart_stats AS (
     SELECT
       bs.segment,
       COUNT(DISTINCT bs.id)::int AS carts_born,
       COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
-      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
-      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
-      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+      COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors
     FROM birth_segments bs
-    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
     GROUP BY 1
+  ),
+  segment_order_stats AS (
+    SELECT
+      segment,
+      COUNT(*)::int AS orders_same_day,
+      COALESCE(SUM(total_price), 0)::float AS revenue_same_day
+    FROM segment_orders
+    GROUP BY 1
+  ),
+  segment_rows AS (
+    SELECT
+      scs.segment,
+      scs.carts_born,
+      scs.carts_born_with_email,
+      scs.cart_visitors,
+      COALESCE(sos.orders_same_day, 0)::int AS orders_same_day,
+      COALESCE(sos.revenue_same_day, 0)::float AS revenue_same_day
+    FROM segment_cart_stats scs
+    LEFT JOIN segment_order_stats sos ON sos.segment = scs.segment
+  ),
+  total_orders AS (
+    SELECT DISTINCT order_id, total_price
+    FROM linked_orders
   ),
   total_row AS (
     SELECT
@@ -1017,10 +1095,9 @@ function cartBirthAggSql(): string {
       COUNT(DISTINCT bs.id)::int AS carts_born,
       COUNT(DISTINCT bs.id) FILTER (WHERE bs.email IS NOT NULL)::int AS carts_born_with_email,
       COUNT(DISTINCT bs.distinct_id)::int AS cart_visitors,
-      COUNT(DISTINCT lo.order_id)::int AS orders_same_day,
-      COALESCE(SUM(lo.total_price), 0)::float AS revenue_same_day
+      (SELECT COUNT(*)::int FROM total_orders) AS orders_same_day,
+      (SELECT COALESCE(SUM(total_price), 0)::float FROM total_orders) AS revenue_same_day
     FROM birth_segments bs
-    LEFT JOIN linked_orders lo ON lo.cart_id = bs.id
   )
   SELECT *
   FROM (
@@ -1049,26 +1126,17 @@ function abandonedCartEmailSql(): string {
       AND sent_at >= $1::timestamptz
       AND sent_at < $2::timestamptz
   ),
-  click_sessions AS (
+  clicked_messages AS (
     SELECT
-      CASE
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_1%' THEN 'abandoned_cart_1'
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_2%' THEN 'abandoned_cart_2'
-        WHEN first_url ILIKE '%utm_content=abandoned_cart_3%' THEN 'abandoned_cart_3'
-        ELSE NULL
-      END AS message_type,
-      COUNT(*)::int AS clicks
-    FROM visitor_sessions
-    WHERE deleted_at IS NULL
-      AND started_at >= $1::timestamptz
-      AND started_at < $2::timestamptz
-      AND first_url ILIKE '%palas_email_type=abandoned_cart%'
-      AND (
-        first_url ILIKE '%utm_content=abandoned_cart_1%'
-        OR first_url ILIKE '%utm_content=abandoned_cart_2%'
-        OR first_url ILIKE '%utm_content=abandoned_cart_3%'
-      )
-    GROUP BY 1
+      m.message_type,
+      COUNT(DISTINCT m.id)::int AS clicks
+    FROM sent_messages m
+    JOIN visitor_sessions vs
+      ON vs.deleted_at IS NULL
+      AND vs.started_at >= $1::timestamptz
+      AND vs.started_at < $2::timestamptz
+      AND substring(vs.first_url FROM '(?:[?&])palas_email_message_id=([^&#]+)') = m.id::text
+    GROUP BY m.message_type
   ),
   recoveries AS (
     SELECT
@@ -1079,6 +1147,8 @@ function abandonedCartEmailSql(): string {
     JOIN abandoned_cart_cases c
       ON c.deleted_at IS NULL
       AND c.recovered_source_message_id = m.id
+      AND c.recovered_at >= $1::timestamptz
+      AND c.recovered_at < $2::timestamptz
     GROUP BY m.message_type
   )
   SELECT
@@ -1091,7 +1161,7 @@ function abandonedCartEmailSql(): string {
     COALESCE(r.revenue, 0)::float AS revenue
   FROM typed t
   LEFT JOIN sent_messages m ON m.message_type = t.message_type
-  LEFT JOIN click_sessions cs ON cs.message_type = t.message_type
+  LEFT JOIN clicked_messages cs ON cs.message_type = t.message_type
   LEFT JOIN recoveries r ON r.message_type = t.message_type
   GROUP BY t.message_type, t.label, t.sort_order, cs.clicks, r.conversions, r.revenue
   ORDER BY t.sort_order ASC
@@ -1106,6 +1176,15 @@ function segmentCte(): string {
     WHERE deleted_at IS NULL
       AND started_at >= $1::timestamptz
       AND started_at < $2::timestamptz
+  ),
+  converted_day_sessions AS (
+    SELECT DISTINCT ds.id AS session_row_id
+    FROM day_sessions ds
+    JOIN orders o
+      ON ${eligibleOrderPredicate('o')}
+      AND o.placed_at >= $1::timestamptz
+      AND o.placed_at < $2::timestamptz
+      AND (ds.order_id = o.shopify_order_id OR ds.order_id = o.id::text)
   ),
   attributed_order_sessions AS (
     SELECT DISTINCT ON (o.id)
@@ -1124,14 +1203,13 @@ function segmentCte(): string {
       vs.referring_domain,
       vs.is_paid_session
     FROM orders o
-    JOIN visitor_sessions vs
-      ON vs.deleted_at IS NULL
+    JOIN day_sessions vs
+      ON true
       AND (
         vs.order_id = o.shopify_order_id
         OR vs.order_id = o.id::text
       )
-    WHERE o.deleted_at IS NULL
-      AND o.include_in_ecommerce_analytics = true
+    WHERE ${eligibleOrderPredicate('o')}
       AND o.placed_at >= $1::timestamptz
       AND o.placed_at < $2::timestamptz
     ORDER BY o.id, vs.last_event_at DESC
@@ -1215,17 +1293,17 @@ function buildAbandonedCartEmailRows(rows: AbandonedCartEmailAggRow[]): DailyRep
       label: row.label,
       sent,
       opens,
-      open_rate: opens === null ? null : ratio(opens, sent),
+      open_rate: opens === null ? null : boundedRatio(opens, sent),
       clicks,
-      click_rate: ratio(clicks, sent),
+      click_rate: boundedRatio(clicks, sent),
       conversions,
-      conversion_rate: ratio(conversions, sent),
+      conversion_rate: boundedRatio(conversions, sent),
       revenue: roundMoney(toNumber(row.revenue)),
     }
   })
 }
 
-function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyReportSegmentRow[] {
+function buildSegmentRows(rawRows: SegmentAggRow[], summary: ConversionMetricRow): DailyReportSegmentRow[] {
   const bySegment = new Map(rawRows.map((row) => [row.segment, row]))
   const rows: DailyReportSegmentRow[] = ['unknown', 'known_no_purchase', 'returning_customer', 'unattributed'].map(
     (segment) => {
@@ -1233,6 +1311,8 @@ function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyRe
       const metric = {
         sessions: toNumber(raw?.sessions),
         unique_visitors: toNumber(raw?.unique_visitors),
+        converted_sessions: toNumber(raw?.converted_sessions),
+        converted_visitors: toNumber(raw?.converted_visitors),
         orders: toNumber(raw?.orders),
         revenue: roundMoney(toNumber(raw?.revenue)),
       }
@@ -1243,14 +1323,15 @@ function buildSegmentRows(rawRows: SegmentAggRow[], summary: MetricRow): DailyRe
   return rows
 }
 
-function toSegmentRow(segment: SegmentKey, metric: MetricRow): DailyReportSegmentRow {
+function toSegmentRow(segment: SegmentKey, metric: ConversionMetricRow): DailyReportSegmentRow {
+  const { converted_sessions, converted_visitors, ...displayMetric } = metric
   return {
     segment,
     label: SEGMENT_LABELS[segment],
-    ...metric,
+    ...displayMetric,
     average_order_value: ratio(metric.revenue, metric.orders),
-    session_conversion_rate: metric.sessions > 0 ? ratio(metric.orders, metric.sessions) : null,
-    visitor_conversion_rate: metric.unique_visitors > 0 ? ratio(metric.orders, metric.unique_visitors) : null,
+    session_conversion_rate: ratio(converted_sessions, metric.sessions),
+    visitor_conversion_rate: ratio(converted_visitors, metric.unique_visitors),
   }
 }
 
@@ -1474,6 +1555,11 @@ function ratio(numerator: number, denominator: number): number | null {
   return numerator / denominator
 }
 
+function boundedRatio(numerator: number, denominator: number): number | null {
+  const value = ratio(numerator, denominator)
+  return value === null ? null : Math.min(1, Math.max(0, value))
+}
+
 function roundMoney(value: number): number {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100
 }
@@ -1613,6 +1699,8 @@ function timeZoneOffsetMs(timeZone: string, date: Date): number {
 interface BaseRow {
   sessions: number | string
   unique_visitors: number | string
+  converted_sessions: number | string
+  converted_visitors: number | string
   source_max_last_event_at: Date | string | null
 }
 
@@ -1626,6 +1714,8 @@ interface SegmentAggRow {
   segment: string
   sessions: number | string
   unique_visitors: number | string
+  converted_sessions: number | string
+  converted_visitors: number | string
   orders: number | string
   revenue: number | string
 }
