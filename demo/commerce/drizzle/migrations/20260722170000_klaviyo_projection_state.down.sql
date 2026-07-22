@@ -1,0 +1,3 @@
+-- The projection watermark is operational audit evidence. Keep it on rollback
+-- so operators can distinguish a stale projection from a successful empty sync.
+-- No schema action is intentionally performed.

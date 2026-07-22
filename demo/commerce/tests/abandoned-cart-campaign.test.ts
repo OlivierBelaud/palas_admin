@@ -18,10 +18,27 @@ vi.mock('../src/utils/discount-codes', async (importOriginal) => {
   }
 })
 
+function freshKlaviyoProjectionState() {
+  const now = new Date(Math.floor(Date.now() / 1000) * 1000)
+  return [
+    {
+      generation: 7,
+      sync_token: 'sync_7',
+      status: 'succeeded',
+      last_attempted_at: now,
+      last_successful_at: now,
+      requested_through: now,
+      covered_through: now,
+      last_error: null,
+    },
+  ]
+}
+
 function makeSql() {
   const updates: string[] = []
   const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
     const query = strings.join('?')
+    if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
     if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) {
       return [
         {
@@ -63,7 +80,7 @@ function makeSql() {
     }
     throw new Error(`Unexpected SQL: ${query}`)
   }) as RuntimeSql
-  sql.unsafe = async <T = unknown>() => [] as T
+  sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
   return { sql, updates }
 }
 
@@ -117,6 +134,7 @@ describe('runAbandonedCartCampaign guard checks', () => {
     const writes: string[] = []
     const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
       const query = strings.join('?')
+      if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
       if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) {
         return [
           {
@@ -169,7 +187,15 @@ describe('runAbandonedCartCampaign guard checks', () => {
         ]
       }
       if (query.includes('FROM orders') && query.includes('placed_at >=')) return []
-      if (query.includes('FROM klaviyo_events')) return [{ occurred_at: new Date('2026-06-10T12:15:00Z') }]
+      if (query.includes('FROM klaviyo_events')) {
+        return [
+          {
+            metric: 'Ops Cart Abandoned',
+            subject: null,
+            occurred_at: new Date('2026-06-10T12:15:00Z'),
+          },
+        ]
+      }
       if (query.includes('INSERT INTO abandoned_cart_checks')) {
         writes.push('check')
         return []
@@ -192,7 +218,7 @@ describe('runAbandonedCartCampaign guard checks', () => {
       if (query.includes('WITH recovered AS')) return [{ recovered: '0' }]
       throw new Error(`Unexpected SQL: ${query}`)
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
 
     const sent: unknown[] = []
     const notification: RuntimeNotificationPort = {
@@ -233,6 +259,7 @@ describe('runAbandonedCartCampaign guard checks', () => {
     const writes: string[] = []
     const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
       const query = strings.join('?')
+      if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
       if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) {
         firstQuery.push(query)
         return [
@@ -313,7 +340,7 @@ describe('runAbandonedCartCampaign guard checks', () => {
       if (query.includes('WITH recovered AS')) return [{ recovered: '0' }]
       throw new Error(`Unexpected SQL: ${query}`)
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
 
     const sent: Array<{ html?: string; text?: string; tags?: Array<{ name: string; value: string }> }> = []
     const notification: RuntimeNotificationPort = {
@@ -387,6 +414,7 @@ describe('runAbandonedCartCampaign retries', () => {
     let heartbeatUpdates = 0
     const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
       const query = strings.join('?')
+      if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
       if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) {
         return [
           {
@@ -477,7 +505,7 @@ describe('runAbandonedCartCampaign retries', () => {
       if (query.includes('WITH recovered AS')) return [{ recovered: '0' }]
       throw new Error(`Unexpected SQL: ${query}`)
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
 
     const deliveries: Array<{ idempotency_key?: string }> = []
     let attempt = 0
@@ -553,6 +581,7 @@ describe('runAbandonedCartCampaign delivery ownership', () => {
     const mutations: string[] = []
     const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
       const query = strings.join('?')
+      if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
       if (/\b(?:INSERT INTO|UPDATE|DELETE FROM)\b/.test(query)) mutations.push(query)
       if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) return [candidate()]
       if (query.includes('last_cart_action_at >') || query.includes('last_action_at >')) return []
@@ -582,7 +611,7 @@ describe('runAbandonedCartCampaign delivery ownership', () => {
       if (query.includes('FROM klaviyo_events')) return []
       throw new Error(`Unexpected SQL: ${query}`)
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
     const notification: RuntimeNotificationPort = {
       send: vi.fn(async () => ({ status: 'SUCCESS' as const, id: 'must_not_send' })),
     }
@@ -631,6 +660,7 @@ describe('runAbandonedCartCampaign delivery ownership', () => {
     })
     const sql = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
       const query = strings.join('?')
+      if (query.includes('FROM klaviyo_projection_state')) return freshKlaviyoProjectionState()
       if (query.includes('FROM carts c') && query.includes('LEFT JOIN LATERAL')) return [candidate()]
       if (query.includes('last_cart_action_at >') || query.includes('last_action_at >')) return []
       if (query.includes('UPDATE abandoned_cart_cases acc')) {
@@ -672,7 +702,7 @@ describe('runAbandonedCartCampaign delivery ownership', () => {
       if (query.includes('WITH recovered AS')) return [{ recovered: '0' }]
       throw new Error(`Unexpected SQL: ${query}`)
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
     const notification: RuntimeNotificationPort = {
       send: vi.fn(async () => ({ status: 'SUCCESS' as const, id: 'provider_claim' })),
     }
@@ -699,7 +729,7 @@ describe('reconcileAbandonedCartRecoveries', () => {
       invocation += 1
       return [{ recovered: invocation === 1 ? '1' : '0' }]
     }) as RuntimeSql
-    sql.unsafe = async <T = unknown>() => [] as T
+    sql.unsafe = async <T = unknown>() => [{ id: 'message_1' }] as T
 
     await expect(reconcileAbandonedCartRecoveries(sql)).resolves.toBe(1)
     await expect(reconcileAbandonedCartRecoveries(sql)).resolves.toBe(0)

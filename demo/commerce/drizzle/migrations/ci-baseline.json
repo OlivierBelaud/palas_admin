@@ -33,6 +33,7 @@
     "20260717100000_catalog_content.sql",
     "20260717113000_catalog_menu_images.sql",
     "20260720170000_catalog_publication_governance.sql",
-    "20260721100000_manta_workflow_runtime.sql"
+    "20260721100000_manta_workflow_runtime.sql",
+    "20260722170000_klaviyo_projection_state.sql"
   ]
 }
