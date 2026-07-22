@@ -6,10 +6,8 @@
 
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import {
-  deriveOrderStatus,
-  verifyShopifyHmac,
-} from '../src/modules/cart-tracking/upsert-shopify-order'
+import { verifyShopifyHmac } from '../src/modules/cart-tracking/shopify-webhook-hmac'
+import { deriveOrderStatus } from '../src/modules/cart-tracking/upsert-shopify-order'
 
 const SECRET = '287428e44d0d3e929d5d1149aa6a52032c36424a711b11a69d1d2b49a72c490b'
 const BODY = JSON.stringify({ id: 12345, cart_token: 'abc', email: 'jane@example.com' })

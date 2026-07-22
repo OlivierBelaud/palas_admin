@@ -21,7 +21,6 @@
 // is at the `completed` stage, we no-op. Shopify can replay webhooks for
 // up to 48h after the first delivery.
 
-import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { RuntimeSql } from '../../utils/manta-runtime'
 import { jsonParam } from '../../utils/manta-runtime'
 import { repairOrderSessionAttribution } from '../../utils/order-session-attribution-repair'
@@ -74,26 +73,6 @@ export interface UpsertOutcome {
 }
 
 export type SqlClient = RuntimeSql
-
-// ── HMAC verification ────────────────────────────────────────────────
-
-/**
- * Verify a Shopify webhook signature. `rawBody` MUST be the exact bytes
- * Shopify sent — never re-stringify the parsed JSON.
- *
- * Header: X-Shopify-Hmac-Sha256 (base64).
- * Returns true on match. Uses timingSafeEqual to keep comparison
- * constant-time.
- */
-export function verifyShopifyHmac(rawBody: string, headerValue: string | null, secret: string): boolean {
-  if (!headerValue || !secret) return false
-  const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64')
-  // Lengths must match before timingSafeEqual or Node throws synchronously.
-  const a = Buffer.from(expected, 'utf8')
-  const b = Buffer.from(headerValue, 'utf8')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
