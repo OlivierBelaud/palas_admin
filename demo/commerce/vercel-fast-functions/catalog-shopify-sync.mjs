@@ -14,11 +14,10 @@ import {
   shouldReplayCatalogPublication,
   planCatalogPublication,
 } from './catalog-publication-governance.mjs'
+import { SHOPIFY_ADMIN_DEFAULTS, resolveShopifyAdminConfig, shopifyAdminGraphql } from './shopify-admin-transport.mjs'
 
 const COLLECTION_TITLE_PREFIX = '[PALAS CAT]'
 const UNCLASSIFIED_KEY = 'unclassified'
-const SHOPIFY_API_VERSION = '2025-10'
-const PRODUCTION_SHOP_DOMAIN = 'fancy-palas.myshopify.com'
 const DEFAULT_STOREFRONT_PUBLICATION_ID = 'gid://shopify/Publication/234170581339'
 const PUBLICATION_CLAIM_HEARTBEAT_MS = 60_000
 const SHOPIFY_REQUEST_TIMEOUT_MS = 30_000
@@ -53,33 +52,24 @@ function chunks(items, size = 250) {
 
 function shopifyConfig(env = process.env) {
   assertCatalogPublicationAllowed(env)
-  const token = env.SHOPIFY_ADMIN_ACCESS_TOKEN
-  if (!token) throw new CatalogShopifySyncError('SHOPIFY_ADMIN_ACCESS_TOKEN is not configured')
-  const domain = env.SHOPIFY_SHOP_DOMAIN || PRODUCTION_SHOP_DOMAIN
+  const transport = resolveShopifyAdminConfig({}, env)
   const publicationId = env.SHOPIFY_CATALOG_PUBLICATION_ID || DEFAULT_STOREFRONT_PUBLICATION_ID
-  if (domain !== PRODUCTION_SHOP_DOMAIN || publicationId !== DEFAULT_STOREFRONT_PUBLICATION_ID) {
-    throw new CatalogShopifySyncError(`Catalog production target is not approved (${domain}, ${publicationId})`)
+  if (transport.domain !== SHOPIFY_ADMIN_DEFAULTS.domain || publicationId !== DEFAULT_STOREFRONT_PUBLICATION_ID) {
+    throw new CatalogShopifySyncError(
+      `Catalog production target is not approved (${transport.domain}, ${publicationId})`,
+    )
   }
-  return {
-    endpoint: `https://${domain}/admin/api/${env.SHOPIFY_ADMIN_API_VERSION ?? SHOPIFY_API_VERSION}/graphql.json`,
-    token,
-    publicationId,
-  }
+  return { ...transport, publicationId, env }
 }
 
 async function shopifyGraphql(config, query, variables = {}) {
-  const { endpoint, token } = config
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
-    headers: { 'content-type': 'application/json', 'x-shopify-access-token': token },
-    body: JSON.stringify({ query, variables }),
+  return await shopifyAdminGraphql(query, variables, {
+    domain: config.domain,
+    token: config.token,
+    apiVersion: config.apiVersion,
+    timeoutMs: SHOPIFY_REQUEST_TIMEOUT_MS,
+    env: config.env,
   })
-  const body = await response.json().catch(() => null)
-  if (!response.ok) throw new CatalogShopifySyncError(`Shopify HTTP ${response.status}`)
-  if (body?.errors?.length) throw new CatalogShopifySyncError(body.errors.map((error) => error.message).join(' | '))
-  if (!body?.data) throw new CatalogShopifySyncError('Shopify returned no data')
-  return body.data
 }
 
 function assertNoUserErrors(payload, operation) {

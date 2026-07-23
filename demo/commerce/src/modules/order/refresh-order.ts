@@ -117,7 +117,7 @@ export function mapShopifyOrderNodeToSnapshot(node: ShopifyOrderNode, syncedAt =
 
 export async function fetchShopifyOrderSnapshot(shopifyOrderId: string | number): Promise<OrderSnapshot | null> {
   const id = normalizeShopifyOrderId(shopifyOrderId)
-  const client = new ShopifyAdminClient({ domain: process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com' })
+  const client = new ShopifyAdminClient()
   const data = await client.query<{
     node: ShopifyOrderNode | null
   }>(

@@ -10,13 +10,13 @@
 // must be idempotent (upsertShopifyOrder is, via shopify_order_id match).
 
 import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
+import {
+  ShopifyAdminTransportError,
+  shopifyAdminJson,
+} from '../../../../../../vercel-fast-functions/shopify-admin-transport.mjs'
 import { verifyShopifyHmac } from '../../../shopify-webhook-hmac'
 import type { ShopifyOrderPayload } from '../../../upsert-shopify-order'
 import { upsertShopifyOrder } from '../../../upsert-shopify-order'
-
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const SHOPIFY_API_VERSION = '2024-10'
-const SHOPIFY_FETCH_TIMEOUT_MS = 10_000
 
 export async function OPTIONS(_req: Request): Promise<Response> {
   // Shopify never sends preflight (server-to-server), but reply correctly
@@ -30,24 +30,22 @@ type ShopifyOrderFetchResult =
   | { status: 'unavailable'; reason: string }
 
 async function fetchShopifyOrder(orderId: string | number): Promise<ShopifyOrderFetchResult> {
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN
-  if (!token) return { status: 'unavailable', reason: 'Shopify Admin token missing' }
-  const url = `https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders/${orderId}.json`
   try {
-    const res = await fetch(url, {
-      headers: { 'X-Shopify-Access-Token': token },
-      signal: AbortSignal.timeout(SHOPIFY_FETCH_TIMEOUT_MS),
-    })
-    if (res.status === 404) return { status: 'not_found' }
-    if (!res.ok) return { status: 'unavailable', reason: `Shopify HTTP ${res.status}` }
-    const body = (await res.json()) as { order?: ShopifyOrderPayload }
-    return body.order
-      ? { status: 'found', order: body.order }
+    const { data } = await shopifyAdminJson<{ order?: ShopifyOrderPayload }>(
+      `orders/${orderId}.json`,
+      {},
+      { maxAttempts: 2 },
+    )
+    return data.order
+      ? { status: 'found', order: data.order }
       : { status: 'unavailable', reason: 'Shopify response omitted order' }
-  } catch (err) {
+  } catch (error) {
+    if (error instanceof ShopifyAdminTransportError && error.kind === 'not_found') {
+      return { status: 'not_found' }
+    }
     return {
       status: 'unavailable',
-      reason: err instanceof Error ? err.message : String(err),
+      reason: error instanceof Error ? error.message : String(error),
     }
   }
 }

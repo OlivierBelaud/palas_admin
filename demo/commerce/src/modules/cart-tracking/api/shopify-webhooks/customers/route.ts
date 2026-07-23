@@ -10,24 +10,38 @@
 // (upsertShopifyCustomer is, via shopify_customer_id OR email match).
 
 import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
+import {
+  ShopifyAdminTransportError,
+  shopifyAdminJson,
+} from '../../../../../../vercel-fast-functions/shopify-admin-transport.mjs'
 import { verifyShopifyHmac } from '../../../shopify-webhook-hmac'
 import { type ShopifyCustomerPayload, upsertShopifyCustomer } from '../../../../contact/upsert-shopify-customer'
-
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const SHOPIFY_API_VERSION = '2024-10'
 
 export async function OPTIONS(_req: Request): Promise<Response> {
   return new Response(null, { status: 204 })
 }
 
-async function fetchShopifyCustomer(customerId: string | number): Promise<ShopifyCustomerPayload | null> {
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN
-  if (!token) return null
-  const url = `https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/customers/${customerId}.json`
-  const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } })
-  if (!res.ok) return null
-  const body = (await res.json()) as { customer?: ShopifyCustomerPayload }
-  return body.customer ?? null
+type ShopifyCustomerFetchResult =
+  | { status: 'found'; customer: ShopifyCustomerPayload }
+  | { status: 'not_found' }
+  | { status: 'unavailable'; reason: string }
+
+async function fetchShopifyCustomer(customerId: string | number): Promise<ShopifyCustomerFetchResult> {
+  try {
+    const { data } = await shopifyAdminJson<{ customer?: ShopifyCustomerPayload }>(
+      `customers/${customerId}.json`,
+      {},
+      { maxAttempts: 2 },
+    )
+    return data.customer
+      ? { status: 'found', customer: data.customer }
+      : { status: 'unavailable', reason: 'Shopify response omitted customer' }
+  } catch (error) {
+    if (error instanceof ShopifyAdminTransportError && error.kind === 'not_found') {
+      return { status: 'not_found' }
+    }
+    return { status: 'unavailable', reason: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -62,11 +76,16 @@ export async function POST(req: Request): Promise<Response> {
 
   // Fetch-back verification: real Shopify customer id round-trips with our
   // Admin token. Forges can't fabricate an id that exists.
-  const customer = await fetchShopifyCustomer(postedId)
-  if (!customer) {
+  const fetched = await fetchShopifyCustomer(postedId)
+  if (fetched.status === 'not_found') {
     console.warn(`[shopify-webhook customers] customer ${postedId} not found via Admin API — rejecting`)
     return new Response('Unauthorized', { status: 401 })
   }
+  if (fetched.status === 'unavailable') {
+    console.error(`[shopify-webhook customers] Shopify unavailable for customer ${postedId}: ${fetched.reason}`)
+    return new Response('Shopify Unavailable', { status: 502 })
+  }
+  const customer = fetched.customer
 
   const app = (req as Request & { app?: RuntimeApp }).app
   const sql = resolveSql(app)
@@ -111,7 +130,9 @@ export async function POST(req: Request): Promise<Response> {
     )
     return new Response('OK', { status: 200 })
   } catch (err) {
-    console.error(`[shopify-webhook customers] processing failed for customer ${customer.id}: ${(err as Error).message}`)
+    console.error(
+      `[shopify-webhook customers] processing failed for customer ${customer.id}: ${(err as Error).message}`,
+    )
     return new Response('Internal Error', { status: 500 })
   }
 }

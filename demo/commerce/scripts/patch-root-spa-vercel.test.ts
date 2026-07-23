@@ -16,6 +16,7 @@ describe('catalog taxonomy Vercel packaging', () => {
       'catalog-classification-seed.json',
       'catalog-shopify-sync.mjs',
       'catalog-publication-governance.mjs',
+      'shopify-admin-transport.mjs',
     ])
   })
 
@@ -25,6 +26,6 @@ describe('catalog taxonomy Vercel packaging', () => {
   })
 
   it('ships the publication policy used by the catalog content endpoint', () => {
-    expect(content?.extraSources).toEqual(['catalog-publication-governance.mjs'])
+    expect(content?.extraSources).toEqual(['catalog-publication-governance.mjs', 'shopify-admin-transport.mjs'])
   })
 })

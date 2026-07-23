@@ -15,7 +15,7 @@
 //     for "live + 15min rattrapage" coverage.
 //
 // Strategy:
-//   1. GET /admin/api/2024-10/orders.json with `financial_status=paid` and
+//   1. GET Shopify paid orders with `financial_status=paid` and
 //      `created_at_min=NOW-2d`. 2-day window absorbs cron downtime + late
 //      payment processing.
 //   2. For each Shopify order, find the local cart on
@@ -32,8 +32,8 @@
 // write if it's already set). Safe to re-run.
 
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
+import { resolveShopifyAdminConfig, shopifyAdminJson } from '../../../vercel-fast-functions/shopify-admin-transport.mjs'
 
-const SHOPIFY_API_VERSION = '2024-10'
 const WINDOW_HOURS = 48 // 2 days — same window as `reconcile-shopify-daily`
 const PAGE_LIMIT = 250
 
@@ -72,14 +72,7 @@ export default defineCommand({
     'Pull paid Shopify orders over a sliding window and dispatch `ingestCartEvent` for any local cart that has not yet reached `completed` stage. Catches checkouts the Shopify Web Pixel missed (e.g. Apple Pay, Shop Pay).',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
-    const shopifyToken =
-      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN
-    const shopifyDomain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-    const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? SHOPIFY_API_VERSION
-
-    if (!shopifyToken) {
-      throw new MantaError('INVALID_STATE', 'SHOPIFY_ADMIN_ACCESS_TOKEN is required for reconcileShopifyOrders')
-    }
+    const shopify = resolveShopifyAdminConfig()
 
     return await step.action('reconcile-shopify-orders', {
       invoke: async (
@@ -126,29 +119,27 @@ export default defineCommand({
         let orderRefreshRequested = 0
 
         let url: string | null =
-          `https://${shopifyDomain}/admin/api/${apiVersion}/orders.json` +
+          `${shopify.endpoint}/orders.json` +
           `?status=any&financial_status=paid&created_at_min=${encodeURIComponent(sinceIso)}&limit=${PAGE_LIMIT}`
 
-        log.info(`[reconcileShopifyOrders] starting — since=${sinceIso} domain=${shopifyDomain}`)
+        log.info(`[reconcileShopifyOrders] starting — since=${sinceIso} domain=${shopify.domain}`)
 
         while (url) {
           if (ctx.signal?.aborted) {
             throw new MantaError('CONFLICT', 'reconcileShopifyOrders cancelled', { code: 'WORKFLOW_CANCELLED' })
           }
 
-          const res = await fetch(url, {
-            headers: {
-              'X-Shopify-Access-Token': shopifyToken,
-              'Content-Type': 'application/json',
-            },
-            signal: ctx.signal,
-          })
-          if (!res.ok) {
-            log.warn(`[reconcileShopifyOrders] Shopify HTTP ${res.status}`)
+          let page: { data: ShopifyOrdersResponse; response: Response }
+          try {
+            page = await shopifyAdminJson<ShopifyOrdersResponse>(url, { signal: ctx.signal }, { maxAttempts: 2 })
+          } catch (error) {
+            log.warn(
+              `[reconcileShopifyOrders] Shopify request failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
             errors += 1
             break
           }
-          const body = (await res.json()) as ShopifyOrdersResponse
+          const { data: body, response } = page
           const orders = body.orders ?? []
           scanned += orders.length
 
@@ -229,7 +220,7 @@ export default defineCommand({
             }
           }
 
-          url = parseNextLink(res.headers.get('link'))
+          url = parseNextLink(response.headers.get('link'))
         }
 
         const durationMs = Date.now() - startedAt

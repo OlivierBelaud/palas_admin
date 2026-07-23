@@ -15,6 +15,7 @@
 import { type RawDb, refreshCartSnapshot } from '../modules/cart-tracking/refresh-cart'
 import { type ShopifyOrderPayload, upsertShopifyOrder } from '../modules/cart-tracking/upsert-shopify-order'
 import type { RuntimeSql } from '../utils/manta-runtime'
+import { resolveShopifyAdminConfig, shopifyAdminJson } from '../../vercel-fast-functions/shopify-admin-transport.mjs'
 
 interface ReconcileResult {
   scanned: number
@@ -59,13 +60,8 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ db, l
     log.info(`[reconcile-shopify-daily] skipped (NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}, prod-only)`)
     return EMPTY
   }
-  const shopifyToken =
-    process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN
-  const shopifyDomain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-  const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2025-10'
-
   const pool = db?.getPool()
-  if (!db || typeof pool !== 'function' || !shopifyToken) {
+  if (!db || typeof pool !== 'function') {
     log.error('[reconcile-shopify-daily] IDatabasePort or SHOPIFY_ADMIN_ACCESS_TOKEN missing')
     return { ...EMPTY, errors: 1 }
   }
@@ -78,24 +74,14 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ db, l
   const result: ReconcileResult = { ...EMPTY }
 
   try {
+    const shopify = resolveShopifyAdminConfig()
     const sinceIso = new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000).toISOString()
     let url: string | null =
-      `https://${shopifyDomain}/admin/api/${apiVersion}/orders.json` +
+      `${shopify.endpoint}/orders.json` +
       `?status=any&financial_status=paid&created_at_min=${encodeURIComponent(sinceIso)}&limit=${PAGE_LIMIT}`
 
     while (url) {
-      const res = await fetch(url, {
-        headers: {
-          'X-Shopify-Access-Token': shopifyToken,
-          'Content-Type': 'application/json',
-        },
-      })
-      if (!res.ok) {
-        log.warn(`[reconcile-shopify-daily] Shopify HTTP ${res.status}`)
-        result.errors++
-        break
-      }
-      const body = (await res.json()) as ShopifyOrdersResponse
+      const { data: body, response } = await shopifyAdminJson<ShopifyOrdersResponse>(url, {}, { maxAttempts: 2 })
       const orders = body.orders ?? []
       result.scanned += orders.length
 
@@ -123,7 +109,7 @@ export default defineJob('reconcile-shopify-daily', '30 6 * * *', async ({ db, l
         }
       }
 
-      url = parseNextLink(res.headers.get('link'))
+      url = parseNextLink(response.headers.get('link'))
     }
 
     result.duration_ms = Date.now() - t0

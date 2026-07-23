@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
+import { shopifyAdminGraphql as requestShopifyAdminGraphql } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -74,24 +75,7 @@ function shopifyReady() {
 }
 
 async function shopifyGraphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const domain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-  const version = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2025-10'
-  if (!token) throw new Error('SHOPIFY_ADMIN_ACCESS_TOKEN missing')
-
-  const res = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
-    method: 'POST',
-    headers: {
-      'X-Shopify-Access-Token': token,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> }
-  if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join(' | '))
-  if (!body.data) throw new Error('empty Shopify response')
-  return body.data
+  return await requestShopifyAdminGraphql<T>(query, variables)
 }
 
 async function checkShopifyPriorOrders(email: string, sentAt: Date): Promise<ShopifyPriorOrderResult> {

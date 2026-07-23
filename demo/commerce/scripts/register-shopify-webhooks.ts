@@ -31,6 +31,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveShopifyAdminConfig, shopifyAdminGraphql } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -52,20 +53,11 @@ const useProd = process.argv.includes('--prod')
 loadEnv('.env', false)
 if (useProd) loadEnv('.env.production', true)
 
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const SHOPIFY_TOKEN =
-  process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN
-const API_VER = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2025-10'
+const shopify = resolveShopifyAdminConfig()
 const ADMIN_BASE = (process.env.ADMIN_BASE_URL ?? 'https://admin.fancypalas.com').replace(/\/+$/, '')
-
-if (!SHOPIFY_TOKEN) {
-  console.error('[register-shopify-webhooks] missing SHOPIFY_ADMIN_ACCESS_TOKEN env')
-  process.exit(1)
-}
 
 const ORDERS_PAID_ENDPOINT = `${ADMIN_BASE}/api/cart-tracking/shopify-webhooks/orders-paid`
 const CUSTOMERS_ENDPOINT = `${ADMIN_BASE}/api/cart-tracking/shopify-webhooks/customers`
-const GRAPHQL_URL = `https://${SHOPIFY_DOMAIN}/admin/api/${API_VER}/graphql.json`
 
 type WebhookTopic = 'ORDERS_PAID' | 'CUSTOMERS_CREATE' | 'CUSTOMERS_UPDATE'
 
@@ -80,32 +72,8 @@ const BINDINGS: TopicBinding[] = [
   { topic: 'CUSTOMERS_UPDATE', endpoint: CUSTOMERS_ENDPOINT },
 ]
 
-interface ShopifyGraphQLError {
-  message: string
-}
-interface GraphQLResponse<T> {
-  data?: T
-  errors?: ShopifyGraphQLError[]
-}
-
 async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch(GRAPHQL_URL, {
-    method: 'POST',
-    headers: {
-      'X-Shopify-Access-Token': SHOPIFY_TOKEN as string,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-  if (!res.ok) {
-    throw new Error(`Shopify HTTP ${res.status} ${await res.text().catch(() => '')}`)
-  }
-  const body = (await res.json()) as GraphQLResponse<T>
-  if (body.errors && body.errors.length > 0) {
-    throw new Error(`Shopify GraphQL: ${body.errors.map((e) => e.message).join(' | ')}`)
-  }
-  if (!body.data) throw new Error('Shopify GraphQL: empty response')
-  return body.data
+  return await shopifyAdminGraphql<T>(query, variables)
 }
 
 interface ExistingSubscriptionsData {
@@ -191,8 +159,8 @@ async function ensureSubscription(binding: TopicBinding): Promise<void> {
 
 async function main(): Promise<void> {
   console.log(`[register-shopify-webhooks] target: ${useProd ? 'PROD' : 'LOCAL'}`)
-  console.log(`[register-shopify-webhooks] shop:   ${SHOPIFY_DOMAIN}`)
-  console.log(`[register-shopify-webhooks] api:    ${API_VER}`)
+  console.log(`[register-shopify-webhooks] shop:   ${shopify.domain}`)
+  console.log(`[register-shopify-webhooks] api:    ${shopify.apiVersion}`)
   console.log(`[register-shopify-webhooks] orders-paid endpoint: ${ORDERS_PAID_ENDPOINT}`)
   console.log(`[register-shopify-webhooks] customers endpoint:   ${CUSTOMERS_ENDPOINT}`)
 

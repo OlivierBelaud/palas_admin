@@ -9,6 +9,7 @@
 
 import { readFileSync } from 'node:fs'
 import postgres from 'postgres'
+import { shopifyAdminGraphql } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const args = process.argv.slice(2)
 const useProd = args.includes('--prod')
@@ -43,15 +44,11 @@ loadEnv('.env', false)
 if (useProd) loadEnv('.env.production', true)
 
 const databaseUrl = process.env.DATABASE_URL
-const shopifyDomain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const shopifyToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN
-const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2025-10'
 const days = readNumberFlag('--days', 30)
 const limit = readNumberFlag('--limit', 5000)
 const batchSize = Math.min(readNumberFlag('--batch-size', 50), 100)
 
 if (!databaseUrl) throw new Error('DATABASE_URL missing')
-if (!shopifyToken) throw new Error('SHOPIFY_ADMIN_ACCESS_TOKEN missing')
 
 const sql = postgres(databaseUrl, {
   ssl: useProd || /neon\.tech|amazonaws\.com|render\.com|railway\.app/.test(databaseUrl) ? 'require' : undefined,
@@ -73,14 +70,8 @@ function clean(value) {
 
 async function fetchShippingByIds(ids) {
   const gids = ids.map((id) => `gid://shopify/Order/${normalizeShopifyOrderId(id)}`)
-  const res = await fetch(`https://${shopifyDomain}/admin/api/${apiVersion}/graphql.json`, {
-    method: 'POST',
-    headers: {
-      'X-Shopify-Access-Token': shopifyToken,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      query: `query OrdersShipping($ids: [ID!]!) {
+  const data = await shopifyAdminGraphql(
+    `query OrdersShipping($ids: [ID!]!) {
         nodes(ids: $ids) {
           ... on Order {
             id
@@ -88,16 +79,11 @@ async function fetchShippingByIds(ids) {
           }
         }
       }`,
-      variables: { ids: gids },
-    }),
-  })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`Shopify ${res.status}: ${text.slice(0, 500)}`)
-  const body = JSON.parse(text)
-  if (body.errors?.length) throw new Error(`Shopify GraphQL: ${body.errors.map((err) => err.message).join(' | ')}`)
+    { ids: gids },
+  )
 
   const out = new Map()
-  for (const node of body.data?.nodes ?? []) {
+  for (const node of data.nodes ?? []) {
     if (!node?.id) continue
     out.set(normalizeShopifyOrderId(node.id), {
       shipping_country_code: clean(node.shippingAddress?.countryCodeV2),
