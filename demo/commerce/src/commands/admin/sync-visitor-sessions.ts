@@ -1,25 +1,11 @@
-// Command: continuous PostHog -> visitor_sessions snapshot sync.
-//
-// PostHog remains the raw event log. This command only folds recent events
-// carrying (distinct_id, $session_id) into the local visitor_sessions snapshot.
-// It complements the live posthog-cart-tracker subscriber for events that reach
-// PostHog directly or arrive while the app is redeploying.
+// Manual workflow adapter for the canonical PostHog -> visitor_sessions
+// projection. Pagination, resume and identity behavior live exclusively in
+// utils/visitor-session-sync.ts.
 
-import { type HogQLEventRow, rowToPosthogEvent } from '../../modules/cart-tracking/posthog-sync'
-import { extractSessionId } from '../../modules/visitor-session/attribution'
-import type { RuntimeSql } from '../../utils/manta-runtime'
-import { repairOrderSessionAttribution } from '../../utils/order-session-attribution-repair'
-import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+import { type RuntimeDatabase, runVisitorSessionSync } from '../../utils/visitor-session-sync'
+import { posthogPrivateKey } from '../../utils/posthog-query'
 
-type RawDb = {
-  raw<T = unknown>(query: string, params?: unknown[]): Promise<T[]>
-}
-
-// Keep the cron comfortably inside Vercel's serverless window. Each event can
-// dispatch an idempotent sub-command, so a 5k batch may leave the workflow run
-// stuck as `pending` if the function is killed before the runner finalizes.
-const MAX_EVENTS_PER_RUN = 250
-const DEFAULT_LOOKBACK_MINUTES = 24 * 60
+const DEFAULT_MANUAL_LOOKBACK_MINUTES = 24 * 60
 
 export default defineCommand({
   name: 'syncVisitorSessions',
@@ -34,123 +20,26 @@ export default defineCommand({
     }
 
     return await step.action('sync-visitor-sessions', {
-      invoke: async (_i: unknown, ctx) => {
-        const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
-        if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
+      invoke: async (_input: unknown, context) => {
+        const db = context.app.resolve('IDatabasePort') as RuntimeDatabase | undefined
+        if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
-        const startedAt = Date.now()
-        const lookbackMinutes = input.lookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES
-        const latestRows = await db.raw<{ max_ts: Date | string | null }>(
-          `SELECT MAX(last_event_at) AS max_ts FROM visitor_sessions`,
-        )
-        const latest = latestRows[0]?.max_ts ? new Date(latestRows[0].max_ts) : null
-        const since = latest
-          ? new Date(latest.getTime() - lookbackMinutes * 60 * 1000)
-          : new Date(Date.now() - 24 * 60 * 60 * 1000)
-        const sinceIso = since.toISOString()
-
-        log.info(`[syncVisitorSessions] starting — since=${sinceIso} lookbackMinutes=${lookbackMinutes}`)
-
-        const hogql = `SELECT uuid, event, distinct_id, timestamp, properties
-                         FROM events
-                        WHERE timestamp > toDateTime('${sinceIso}')
-                          AND distinct_id IS NOT NULL
-                          AND properties.$session_id IS NOT NULL
-                        ORDER BY timestamp ASC, uuid ASC
-                        LIMIT ${MAX_EVENTS_PER_RUN}`
-
-        const rows = (await runPosthogHogQL(hogql, {
+        const result = await runVisitorSessionSync({
+          db,
           privateKey: key,
-          signal: ctx.signal,
-        })) as unknown as HogQLEventRow[]
-
-        let attempted = 0
-        let skipped = 0
-        let errors = 0
-        for (const row of rows) {
-          if (ctx.signal?.aborted) break
-
-          const evt = rowToPosthogEvent(row)
-          const sessionId = extractSessionId(evt)
-          if (!sessionId || !evt.distinct_id) {
-            skipped += 1
-            continue
-          }
-
-          const props = evt.properties ?? {}
-          const $set = (props.$set as Record<string, unknown> | undefined) ?? {}
-          const emailOnEvent = ($set.email as string | undefined) ?? null
-
-          try {
-            attempted += 1
-            // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed
-            await (step.command as any).upsertVisitorSessionFromEvent({
-              distinct_id: evt.distinct_id,
-              session_id: sessionId,
-              event_uuid: evt.uuid,
-              event_name: evt.event,
-              occurred_at: evt.timestamp,
-              email_on_event: emailOnEvent,
-              current_url: (props.$current_url as string | undefined) ?? null,
-              utm_source: (props.utm_source as string | undefined) ?? null,
-              utm_medium: (props.utm_medium as string | undefined) ?? null,
-              utm_campaign: (props.utm_campaign as string | undefined) ?? null,
-              referring_domain: (props.$referring_domain as string | undefined) ?? null,
-            })
-          } catch (err) {
-            errors += 1
-            if (errors < 10) {
-              log.warn(
-                `[syncVisitorSessions] upsertVisitorSessionFromEvent failed for ${evt.event} (${evt.uuid}): ${(err as Error).message}`,
-              )
-            }
-          }
-        }
-
-        if (ctx.signal?.aborted) {
+          // Preserve the manual command's historical full-day replay default.
+          // The scheduled adapter uses the canonical engine's 15-minute overlap.
+          lookbackMinutes: input.lookbackMinutes ?? DEFAULT_MANUAL_LOOKBACK_MINUTES,
+          signal: context.signal,
+          log,
+        })
+        if (context.signal?.aborted) {
           throw new MantaError('CONFLICT', 'syncVisitorSessions cancelled', { code: 'WORKFLOW_CANCELLED' })
         }
-
-        const finalRows = await db.raw<{ max_ts: Date | string | null }>(
-          `SELECT MAX(last_event_at) AS max_ts FROM visitor_sessions`,
-        )
-        const durationMs = Date.now() - startedAt
-        const maxAt = finalRows[0]?.max_ts ? new Date(finalRows[0].max_ts).toISOString() : null
-        let attributionRepaired = 0
-        let remainingUnattributedRecent = 0
-        try {
-          const repairSql = { unsafe: db.raw.bind(db) } as unknown as RuntimeSql
-          const repairEnd = new Date(Date.now() + 60 * 60 * 1000)
-          const repairStart = new Date(Date.now() - 48 * 60 * 60 * 1000)
-          const repair = await repairOrderSessionAttribution(repairSql, {
-            startIso: repairStart.toISOString(),
-            endIso: repairEnd.toISOString(),
-          })
-          attributionRepaired = repair.repaired_orders
-          remainingUnattributedRecent = repair.remaining_unattributed_orders
-        } catch (err) {
-          errors += 1
-          log.warn(`[syncVisitorSessions] attribution invariant repair failed: ${(err as Error).message}`)
-        }
-
-        log.info(
-          `[syncVisitorSessions] done — fetched=${rows.length} attempted=${attempted} skipped=${skipped} errors=${errors} maxAt=${maxAt ?? 'none'} attribution_repaired=${attributionRepaired} remaining_unattributed_recent=${remainingUnattributedRecent} duration_ms=${durationMs}`,
-        )
-
-        return {
-          fetched: rows.length,
-          attempted,
-          skipped,
-          errors,
-          since: sinceIso,
-          max_at: maxAt,
-          attribution_repaired: attributionRepaired,
-          remaining_unattributed_recent: remainingUnattributedRecent,
-          duration_ms: durationMs,
-        }
+        return result
       },
       compensate: async () => {
-        // upsertVisitorSessionFromEvent is idempotent per event_uuid/session.
+        // The canonical engine deduplicates each session by event UUID.
       },
     })({})
   },
