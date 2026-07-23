@@ -183,6 +183,12 @@ describe('Shopify Admin transport', () => {
     await expect(
       shopifyAdminRequest('https://example.myshopify.com/admin/api/2024-10/orders.json', {}, options),
     ).rejects.toMatchObject({ kind: 'configuration' })
+    await expect(
+      shopifyAdminRequest('https://example.myshopify.com:8443/admin/api/2099-01/orders.json', {}, options),
+    ).rejects.toMatchObject({ kind: 'configuration' })
+    await expect(
+      shopifyAdminRequest('https://example.myshopify.com/admin/api/2099-010/orders.json', {}, options),
+    ).rejects.toMatchObject({ kind: 'configuration' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

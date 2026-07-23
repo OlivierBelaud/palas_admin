@@ -120,7 +120,9 @@ export async function shopifyAdminRequest(pathOrUrl, init = {}, options = {}) {
   const url = /^https?:\/\//.test(pathOrUrl)
     ? new URL(pathOrUrl)
     : new URL(String(pathOrUrl).replace(/^\/+/, ''), baseUrl)
-  if (url.protocol !== 'https:' || url.hostname !== baseUrl.hostname || !url.pathname.startsWith(baseUrl.pathname)) {
+  const approvedPath = baseUrl.pathname.replace(/\/+$/, '')
+  const isApprovedPath = url.pathname === approvedPath || url.pathname.startsWith(`${approvedPath}/`)
+  if (url.protocol !== 'https:' || url.origin !== baseUrl.origin || !isApprovedPath) {
     throw new ShopifyAdminTransportError(
       'configuration',
       `Refusing Shopify Admin credentials for unapproved origin ${url.origin}`,
