@@ -2,18 +2,15 @@
 //
 // URL: POST /api/cart-tracking/shopify-webhooks/orders-paid
 //
-// Real-time capture of every paid Shopify order. Authenticity is proven by
-// re-fetching the order from Shopify Admin API with our access token rather
-// than by HMAC: Shopify's Custom App secret is only retrievable through the
-// Admin UI, and the fetch-back roundtrip (~100ms) is small compared to the
-// 5s Shopify timeout. A forged POST can't make Shopify return a non-existent
-// order id, and any mismatch (status, total) between forged body and the
-// re-fetched order causes us to drop the payload.
+// Real-time capture of every paid Shopify order. The HMAC over the exact
+// request body is the trust boundary; fetch-back then provides fresh canonical
+// order data before projection.
 //
 // Shopify guarantees retries for up to 48h on non-2xx responses → handler
 // must be idempotent (upsertShopifyOrder is, via shopify_order_id match).
 
 import { type RuntimeApp, resolveSql } from '../../../../../utils/manta-runtime'
+import { verifyShopifyHmac } from '../../../shopify-webhook-hmac'
 import type { ShopifyOrderPayload } from '../../../upsert-shopify-order'
 import { upsertShopifyOrder } from '../../../upsert-shopify-order'
 
@@ -56,11 +53,28 @@ async function fetchShopifyOrder(orderId: string | number): Promise<ShopifyOrder
 }
 
 export async function POST(req: Request): Promise<Response> {
-  // 1) Parse the body. We treat it as untrusted: a real Shopify order id
-  //    must round-trip via the Admin API before we ingest.
+  const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET
+  if (!webhookSecret) {
+    console.error('[shopify-webhook orders-paid] SHOPIFY_WEBHOOK_SECRET missing')
+    return new Response('Webhook Secret Misconfigured', { status: 500 })
+  }
+
+  let rawBody: string
+  try {
+    rawBody = await req.text()
+  } catch {
+    return new Response('Bad Request', { status: 400 })
+  }
+  const signature = req.headers.get('x-shopify-hmac-sha256')
+  if (!verifyShopifyHmac(rawBody, signature, webhookSecret)) {
+    console.warn('[shopify-webhook orders-paid] invalid Shopify HMAC — rejecting')
+    return new Response('Unauthorized', { status: 401 })
+  }
+
+  // 1) Parse only after authenticating the exact bytes Shopify signed.
   let posted: { id?: number | string } & Record<string, unknown>
   try {
-    posted = (await req.json()) as { id?: number | string } & Record<string, unknown>
+    posted = JSON.parse(rawBody) as { id?: number | string } & Record<string, unknown>
   } catch {
     return new Response('Bad JSON', { status: 400 })
   }
