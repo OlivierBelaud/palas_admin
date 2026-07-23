@@ -33,7 +33,6 @@ export default defineJob('send-daily-reporting-email', '0 3 * * *', async ({ db,
   const resumed = await resumeDailyReportDeliveries({
     sql: pool as RuntimeSql,
     notification,
-    beforeDay: result.payload.day,
     log,
   })
   const deliveries = [...result.sent, ...resumed.sent]

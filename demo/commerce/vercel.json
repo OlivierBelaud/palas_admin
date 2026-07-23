@@ -77,6 +77,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/crons/resume-daily-report-deliveries",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/crons/run-system-audits-nightly",
       "schedule": "0 0 * * *"
     },

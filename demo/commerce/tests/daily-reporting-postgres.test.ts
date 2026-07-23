@@ -277,12 +277,87 @@ async function verifyIndependentDeliveryClaims(workerA: RuntimeSql, workerB: Run
         return { status: 'SUCCESS', id: 'backlog-resumed' }
       },
     },
-    beforeDay: '2026-06-16',
   })
   expect(backlogCalls).toBe(1)
   expect(resumed.sent).toEqual([
     expect.objectContaining({ to: 'backlog@example.com', delivery_status: 'succeeded', id: 'backlog-resumed' }),
   ])
+
+  const ambiguousAttemptKeys: string[] = []
+  const ambiguous = await sendDailyReportEmail({
+    sql: workerA,
+    notification: {
+      async send(message) {
+        ambiguousAttemptKeys.push(message.idempotency_key ?? '')
+        throw new Error('provider response lost')
+      },
+    },
+    day: '2026-06-16',
+    now: new Date('2026-06-17T05:20:00.000Z'),
+    recipients: ['current-day@example.com'],
+  })
+  expect(ambiguous.sent[0]).toMatchObject({ delivery_status: 'reconciliation_required' })
+
+  const [snapshotBeforeRecovery] = await workerA.unsafe<Array<{ payload: unknown; updated_at: string }>>(
+    `SELECT payload, updated_at::text
+     FROM reporting_daily_snapshots
+     WHERE day = '2026-06-16' AND timezone = 'Europe/Paris' AND deleted_at IS NULL`,
+  )
+
+  let earlyRetryCalls = 0
+  const earlyRetry = await resumeDailyReportDeliveries({
+    sql: workerB,
+    notification: {
+      async send() {
+        earlyRetryCalls += 1
+        return { status: 'SUCCESS', id: 'too-early' }
+      },
+    },
+  })
+  expect(earlyRetryCalls).toBe(0)
+  expect(earlyRetry.sent).toEqual([])
+
+  await workerA.unsafe(
+    `UPDATE reporting_daily_deliveries
+     SET next_attempt_at = NOW() - INTERVAL '1 second'
+     WHERE recipient = 'current-day@example.com'`,
+  )
+  let concurrentRecoveryCalls = 0
+  const recoveryNotification: RuntimeNotificationPort = {
+    async send(message) {
+      concurrentRecoveryCalls += 1
+      ambiguousAttemptKeys.push(message.idempotency_key ?? '')
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      return { status: 'SUCCESS', id: 'current-day-recovered' }
+    },
+  }
+  const recoveries = await Promise.all([
+    resumeDailyReportDeliveries({ sql: workerA, notification: recoveryNotification }),
+    resumeDailyReportDeliveries({ sql: workerB, notification: recoveryNotification }),
+  ])
+  expect(concurrentRecoveryCalls).toBe(1)
+  expect(new Set(ambiguousAttemptKeys)).toEqual(new Set(['daily-report:2026-06-16:current-day@example.com']))
+  expect(recoveries.flatMap(({ sent }) => sent)).toContainEqual(
+    expect.objectContaining({
+      to: 'current-day@example.com',
+      delivery_status: 'succeeded',
+      id: 'current-day-recovered',
+    }),
+  )
+
+  const replay = await resumeDailyReportDeliveries({
+    sql: workerA,
+    notification: recoveryNotification,
+  })
+  expect(concurrentRecoveryCalls).toBe(1)
+  expect(replay.sent).toEqual([])
+
+  const [snapshotAfterRecovery] = await workerA.unsafe<Array<{ payload: unknown; updated_at: string }>>(
+    `SELECT payload, updated_at::text
+     FROM reporting_daily_snapshots
+     WHERE day = '2026-06-16' AND timezone = 'Europe/Paris' AND deleted_at IS NULL`,
+  )
+  expect(snapshotAfterRecovery).toEqual(snapshotBeforeRecovery)
 
   await sendDailyReportEmail({
     sql: workerA,
@@ -309,7 +384,6 @@ async function verifyIndependentDeliveryClaims(workerA: RuntimeSql, workerB: Run
         return { status: 'SUCCESS', id: 'must-not-send' }
       },
     },
-    beforeDay: '2026-06-16',
   })
   expect(exhaustedCalls).toBe(0)
   expect(exhausted.sent).toEqual([])

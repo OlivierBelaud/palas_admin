@@ -546,7 +546,6 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
 export async function resumeDailyReportDeliveries(options: {
   sql: RuntimeSql
   notification: RuntimeNotificationPort
-  beforeDay: string
   limit?: number
   log?: Pick<Console, 'info' | 'warn' | 'error'>
 }): Promise<ResumeDailyReportDeliveriesResult> {
@@ -556,22 +555,18 @@ export async function resumeDailyReportDeliveries(options: {
     `SELECT idempotency_key, recipient
      FROM reporting_daily_deliveries
      WHERE deleted_at IS NULL
-       AND day < $1
        AND status <> 'succeeded'
        AND attempt_count < 5
        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
        AND (claim_token IS NULL OR claim_expires_at <= NOW())
      ORDER BY day ASC, recipient_normalized ASC
-     LIMIT $2`,
-    [options.beforeDay, limit],
+     LIMIT $1`,
+    [limit],
   )
   const sent: ResumeDailyReportDeliveriesResult['sent'] = []
   for (const candidate of candidates) {
     const claim = await claimPersistedDailyReportDelivery(options.sql, candidate.idempotency_key)
-    if (claim.kind !== 'send') {
-      sent.push(deliveryResult(candidate.recipient, claim.row))
-      continue
-    }
+    if (claim.kind !== 'send') continue
     sent.push(
       await deliverClaimedDailyReport(options.sql, options.notification, log, {
         to: candidate.recipient,
