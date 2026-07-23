@@ -41,6 +41,105 @@ describe('runtime contract checker', () => {
 
     expect(() => checkRuntimeContracts({ workspaceRoot: root })).toThrow('Runtime target mapping drift')
   })
+
+  it('rejects schedule drift between a defineJob declaration and its Vercel cron route', () => {
+    const root = createRuntimeFixture()
+    const vercelPath = join(root, 'demo/commerce/vercel.json')
+    const vercel = readJson(vercelPath)
+    vercel.crons[0].schedule = '15 * * * *'
+    writeJson(vercelPath, vercel)
+
+    expect(() => checkRuntimeContracts({ workspaceRoot: root })).toThrow(
+      'Cron contract drift for reconcile: defineJob schedule "0 * * * *" != Vercel schedule "15 * * * *"',
+    )
+  })
+
+  it('rejects a route whose name does not match the defineJob declaration', () => {
+    const root = createRuntimeFixture()
+    const vercelPath = join(root, 'demo/commerce/vercel.json')
+    const vercel = readJson(vercelPath)
+    vercel.crons[0].path = '/api/crons/reconcile-renamed'
+    writeJson(vercelPath, vercel)
+
+    expect(() => checkRuntimeContracts({ workspaceRoot: root })).toThrow(
+      'Job/cron drift (missing crons: reconcile; stale crons: reconcile-renamed)',
+    )
+  })
+
+  it('does not accept a stale defineJob declaration copied into a comment', () => {
+    const root = createRuntimeFixture()
+    write(
+      join(root, 'demo/commerce/src/jobs/reconcile.ts'),
+      [
+        "// defineJob('reconcile', '0 * * * *', async () => undefined)",
+        "export default defineJob('reconcile', '15 * * * *', async () => undefined)",
+        '',
+      ].join('\n'),
+    )
+
+    expect(() => checkRuntimeContracts({ workspaceRoot: root })).toThrow(
+      'Cron contract drift for reconcile: defineJob schedule "15 * * * *" != Vercel schedule "0 * * * *"',
+    )
+  })
+
+  it.each([
+    [
+      'a defineJob name that differs from its filename',
+      (root: string) =>
+        write(
+          join(root, 'demo/commerce/src/jobs/reconcile.ts'),
+          "export default defineJob('renamed', '0 * * * *', async () => undefined)\n",
+        ),
+      'Job contract drift for reconcile: defineJob name "renamed" must match its filename',
+    ],
+    [
+      'an indirect default export instead of export default defineJob',
+      (root: string) =>
+        write(
+          join(root, 'demo/commerce/src/jobs/reconcile.ts'),
+          [
+            "const job = defineJob('reconcile', '0 * * * *', async () => undefined)",
+            'export default job',
+            '',
+          ].join('\n'),
+        ),
+      'Job contract unreadable for reconcile: expected an export default defineJob(...) declaration',
+    ],
+    [
+      'a non-literal defineJob schedule',
+      (root: string) =>
+        write(
+          join(root, 'demo/commerce/src/jobs/reconcile.ts'),
+          "const schedule = '0 * * * *'\nexport default defineJob('reconcile', schedule, async () => undefined)\n",
+        ),
+      'Job contract unreadable for reconcile: defineJob name and schedule must be string literals',
+    ],
+    [
+      'a malformed Vercel cron route',
+      (root: string) => {
+        const vercelPath = join(root, 'demo/commerce/vercel.json')
+        const vercel = readJson(vercelPath)
+        vercel.crons[0].path = '/internal/crons/reconcile'
+        writeJson(vercelPath, vercel)
+      },
+      'Invalid Vercel cron route "/internal/crons/reconcile": expected /api/crons/<job-name>',
+    ],
+    [
+      'an empty Vercel cron schedule',
+      (root: string) => {
+        const vercelPath = join(root, 'demo/commerce/vercel.json')
+        const vercel = readJson(vercelPath)
+        vercel.crons[0].schedule = ''
+        writeJson(vercelPath, vercel)
+      },
+      'Invalid Vercel cron schedule for reconcile: expected a non-empty string',
+    ],
+  ])('rejects %s', (_description, mutate, message) => {
+    const root = createRuntimeFixture()
+    mutate(root)
+
+    expect(() => checkRuntimeContracts({ workspaceRoot: root })).toThrow(message)
+  })
 })
 
 describe('Vercel output checker', () => {
@@ -82,7 +181,10 @@ function createRuntimeFixture() {
     functions: [{ route: 'admin-test', source: 'admin-test.mjs' }],
   })
   write(join(root, 'demo/commerce/src/example/api/ping/route.ts'), '')
-  write(join(root, 'demo/commerce/src/jobs/reconcile.ts'), '')
+  write(
+    join(root, 'demo/commerce/src/jobs/reconcile.ts'),
+    "export default defineJob('reconcile', '0 * * * *', async () => undefined)\n",
+  )
   return root
 }
 
