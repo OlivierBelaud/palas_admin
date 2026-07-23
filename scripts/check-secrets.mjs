@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { lstatSync, readFileSync, readlinkSync } from "node:fs"
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs"
 import { relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -82,6 +82,9 @@ function scanRepository() {
 
   for (const trackedPath of trackedFiles(root)) {
     const absolutePath = resolve(root, trackedPath)
+    if (!existsSync(absolutePath)) {
+      continue
+    }
     const fileStat = lstatSync(absolutePath)
 
     if (fileStat.size > MAX_FILE_SIZE_BYTES) {

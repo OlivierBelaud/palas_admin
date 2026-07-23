@@ -1,7 +1,9 @@
 // Standalone helper: render + send the abandoned-cart email for one cart.
 // Pure function over (cart + contact + adapter) — no framework wiring.
-// Reused both by the test command (`sendAbandonedCartEmail`) and by the
-// smoke script. Keep this file infra-light: nothing here pulls
+// Used by the explicit operator smoke script and retained legacy
+// characterization tests. It is not a registered production command; real
+// campaign sends go through `runAbandonedCartCampaign`. Keep this file
+// infra-light: nothing here pulls
 // `step.service` or other workflow primitives.
 //
 // Idempotence: callers may pass an explicit `idempotencyKey`. By default we

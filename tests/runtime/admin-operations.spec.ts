@@ -94,6 +94,11 @@ test.describe('Admin operational boundaries', () => {
         },
       })
     }
+
+    const removedLegacySend = await request.post(`${state.baseUrl}/api/admin/command/sendAbandonedCartEmail`, {
+      data: { cartId: 'runtime-certification', dryRun: true },
+    })
+    expect(removedLegacySend.status()).toBe(404)
   })
 
   test('requires the cron secret before resolving a job name', async ({ request }) => {

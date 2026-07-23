@@ -1,7 +1,6 @@
-// Pure helper used by the `notifyAbandonedCarts` command and its unit tests.
-// The command itself is the framework boundary (defineCommand + step.*
-// proxies); the eligibility/iteration/send-orchestration logic — which we
-// want covered by tests — lives here so we can drive it with plain mocks.
+// Legacy helper retained for characterization tests and shared Klaviyo event
+// shapes. It is not the production send path: both the command and cron use
+// `runAbandonedCartCampaign`.
 //
 // One email per cart, ever — `abandon_notified_count < 1` in the SQL where,
 // belt-and-braces in the marker code. There is no second tier.
