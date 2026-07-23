@@ -167,7 +167,7 @@ function materializeContactRecord(
 }
 
 async function fetchShopifyContactSignals(email: string): Promise<ContactSignal[]> {
-  const client = new ShopifyAdminClient({ domain: process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com' })
+  const client = new ShopifyAdminClient()
   const q = `email:"${email.replace(/"/g, '\\"')}"`
   const data = await client.query<{
     customers: {

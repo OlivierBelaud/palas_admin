@@ -197,10 +197,9 @@ describe('POST /api/cart-tracking/shopify-webhooks/orders-paid', () => {
   })
 
   it('distinguishes a Shopify outage from an unknown order id', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('unavailable', { status: 503 })),
-    )
+    const fetchMock = vi.fn(async () => new Response('unavailable', { status: 503 }))
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+    vi.stubGlobal('fetch', fetchMock)
 
     const req = signedRequest(JSON.stringify({ id: '9001' }))
     const { POST } = await routeModulePromise
@@ -209,6 +208,9 @@ describe('POST /api/cart-tracking/shopify-webhooks/orders-paid', () => {
     expect(res.status).toBe(502)
     expect(await res.text()).toBe('Shopify Unavailable')
     expect(upsertCalls).toHaveLength(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(timeoutSpy).toHaveBeenCalledWith(4_000)
+    timeoutSpy.mockRestore()
   })
 
   it('fails closed before reading the body when the webhook secret is missing', async () => {

@@ -17,6 +17,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { type ShopifyCustomerPayload, upsertShopifyCustomer } from '../src/modules/contact/upsert-shopify-customer'
+import { resolveShopifyAdminConfig, shopifyAdminJson } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -45,16 +46,7 @@ if (!DATABASE_URL) {
   process.exit(1)
 }
 
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const SHOPIFY_TOKEN =
-  process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-if (!SHOPIFY_TOKEN) {
-  console.error(
-    '[backfill-shopify-customers] missing SHOPIFY_ADMIN_TOKEN / SHOPIFY_ACCESS_TOKEN / SHOPIFY_ADMIN_ACCESS_TOKEN env',
-  )
-  process.exit(1)
-}
-const API_VER = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2024-10'
+const shopify = resolveShopifyAdminConfig()
 const PAGE_LIMIT = 250
 
 const needsSsl = useProd || /neon\.tech|amazonaws\.com|render\.com|railway\.app/.test(DATABASE_URL)
@@ -76,17 +68,8 @@ function parseNextLink(header: string | null): string | null {
 async function fetchCustomersPage(
   url: string,
 ): Promise<{ customers: ShopifyCustomerPayload[]; nextUrl: string | null }> {
-  const res = await fetch(url, {
-    headers: {
-      'X-Shopify-Access-Token': SHOPIFY_TOKEN as string,
-      'Content-Type': 'application/json',
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`Shopify ${res.status} ${await res.text()}`)
-  }
-  const body = (await res.json()) as ShopifyCustomersResponse
-  const nextUrl = parseNextLink(res.headers.get('link'))
+  const { data: body, response } = await shopifyAdminJson<ShopifyCustomersResponse>(url, {}, { maxAttempts: 2 })
+  const nextUrl = parseNextLink(response.headers.get('link'))
   return { customers: body.customers ?? [], nextUrl }
 }
 
@@ -94,7 +77,7 @@ try {
   console.log(`[backfill-shopify-customers] target: ${useProd ? 'PROD' : 'LOCAL'}  dryRun: ${dryRun}`)
   const t0 = Date.now()
 
-  let url: string | null = `https://${SHOPIFY_DOMAIN}/admin/api/${API_VER}/customers.json?limit=${PAGE_LIMIT}`
+  let url: string | null = `${shopify.endpoint}/customers.json?limit=${PAGE_LIMIT}`
 
   let scanned = 0
   let matchedByShopifyId = 0

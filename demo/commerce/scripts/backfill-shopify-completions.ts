@@ -19,6 +19,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
 import { type ShopifyOrderPayload, upsertShopifyOrder } from '../src/modules/cart-tracking/upsert-shopify-order'
+import { resolveShopifyAdminConfig, shopifyAdminJson } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -47,16 +48,7 @@ if (!DATABASE_URL) {
   process.exit(1)
 }
 
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-const SHOPIFY_TOKEN =
-  process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-if (!SHOPIFY_TOKEN) {
-  console.error(
-    '[backfill-shopify-completions] missing SHOPIFY_ADMIN_TOKEN / SHOPIFY_ACCESS_TOKEN / SHOPIFY_ADMIN_ACCESS_TOKEN env',
-  )
-  process.exit(1)
-}
-const API_VER = process.env.SHOPIFY_ADMIN_API_VERSION ?? '2024-10'
+const shopify = resolveShopifyAdminConfig()
 const WINDOW_DAYS = 60
 const PAGE_LIMIT = 250
 
@@ -77,17 +69,8 @@ function parseNextLink(header: string | null): string | null {
 }
 
 async function fetchOrdersPage(url: string): Promise<{ orders: ShopifyOrderPayload[]; nextUrl: string | null }> {
-  const res = await fetch(url, {
-    headers: {
-      'X-Shopify-Access-Token': SHOPIFY_TOKEN as string,
-      'Content-Type': 'application/json',
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`Shopify ${res.status} ${await res.text()}`)
-  }
-  const body = (await res.json()) as ShopifyOrdersResponse
-  const nextUrl = parseNextLink(res.headers.get('link'))
+  const { data: body, response } = await shopifyAdminJson<ShopifyOrdersResponse>(url, {}, { maxAttempts: 2 })
+  const nextUrl = parseNextLink(response.headers.get('link'))
   return { orders: body.orders ?? [], nextUrl }
 }
 
@@ -97,7 +80,7 @@ try {
 
   const sinceIso = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
   let url: string | null =
-    `https://${SHOPIFY_DOMAIN}/admin/api/${API_VER}/orders.json` +
+    `${shopify.endpoint}/orders.json` +
     `?status=any&financial_status=paid&created_at_min=${encodeURIComponent(sinceIso)}&limit=${PAGE_LIMIT}`
 
   let scanned = 0

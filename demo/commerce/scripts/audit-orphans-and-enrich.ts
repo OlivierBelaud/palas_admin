@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import postgres from 'postgres'
+import { shopifyAdminGraphql as requestShopifyAdminGraphql } from '../vercel-fast-functions/shopify-admin-transport.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -32,9 +33,6 @@ if (useProd) loadEnv('.env.production', true)
 const DATABASE_URL = process.env.DATABASE_URL!
 const PH_HOST = process.env.POSTHOG_HOST ?? 'https://eu.i.posthog.com'
 process.env.POSTHOG_API_KEY ?? process.env.POSTHOG_PERSONAL_API_KEY ?? ''
-const SHOPIFY_DOMAIN = 'fancy-palas.myshopify.com'
-process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? ''
-const API_VER = '2024-10'
 
 const sql = postgres(DATABASE_URL, { ssl: useProd ? 'require' : undefined, max: 4, prepare: false })
 
@@ -50,14 +48,7 @@ async function hogql<T = unknown[]>(query: string): Promise<{ columns: string[];
 }
 
 async function shopifyGraphql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/${API_VER}/graphql.json`, {
-    method: 'POST',
-    headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-  })
-  const data = (await res.json()) as { data?: T; errors?: unknown }
-  if (data.errors) throw new Error(`Shopify errors: ${JSON.stringify(data.errors)}`)
-  return data.data!
+  return await requestShopifyAdminGraphql<T>(query, variables)
 }
 
 function gidNum(gid: string): string {

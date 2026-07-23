@@ -1,10 +1,6 @@
 import { db, json, requireAdmin, unauthorized } from './runtime.mjs'
 import { observeCatalogProvider } from './catalog-publication-governance.mjs'
-
-class CatalogContentError extends Error {}
-
-const SHOPIFY_API_VERSION = process.env.SHOPIFY_ADMIN_API_VERSION || '2025-10'
-const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN || 'fancy-palas.myshopify.com'
+import { shopifyAdminGraphql } from './shopify-admin-transport.mjs'
 
 async function ensureSchema(sql) {
   await sql.unsafe(`
@@ -40,18 +36,7 @@ async function ensureSchema(sql) {
 }
 
 async function shopify(query, variables = {}) {
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-  if (!token) throw new CatalogContentError('SHOPIFY_ADMIN_ACCESS_TOKEN absent')
-  const response = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-    body: JSON.stringify({ query, variables }),
-  })
-  const body = await response.json()
-  if (!response.ok || body.errors?.length) {
-    throw new CatalogContentError(body.errors?.map((error) => error.message).join(', ') || `Shopify HTTP ${response.status}`)
-  }
-  return body.data
+  return await shopifyAdminGraphql(query, variables)
 }
 
 async function readCollections() {
@@ -273,7 +258,10 @@ export default {
       const result = await mutate(sql, await req.json())
       return json({ data: { result, ...(await readContent(sql)) } })
     } catch (error) {
-      return json({ message: error instanceof Error ? error.message : 'Catalog content action failed' }, { status: 400 })
+      return json(
+        { message: error instanceof Error ? error.message : 'Catalog content action failed' },
+        { status: 400 },
+      )
     }
   },
 }

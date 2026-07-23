@@ -4,9 +4,15 @@
 // queries, commands, or standalone maintenance scripts alike. Two env vars:
 //   SHOPIFY_SHOP_DOMAIN         — e.g. "fancy-palas.myshopify.com"
 //   SHOPIFY_ADMIN_ACCESS_TOKEN  — shpat_...
-// An optional SHOPIFY_ADMIN_API_VERSION (default '2025-10') lets us pin.
+// Transport configuration, timeouts and provider error classification live in
+// one framework-free module shared with scripts and Vercel fast functions.
 
-const DEFAULT_API_VERSION = '2025-10'
+import {
+  type ShopifyAdminOptions,
+  shopifyAdminGraphql,
+} from '../../../vercel-fast-functions/shopify-admin-transport.mjs'
+
+export { ShopifyAdminTransportError } from '../../../vercel-fast-functions/shopify-admin-transport.mjs'
 
 export interface ShopifyGraphQLError {
   message: string
@@ -16,17 +22,10 @@ export interface ShopifyGraphQLError {
 }
 
 export class ShopifyAdminClient {
-  private readonly endpoint: string
-  private readonly token: string
+  private readonly options: ShopifyAdminOptions
 
-  constructor(opts?: { domain?: string; token?: string; apiVersion?: string }) {
-    const domain = opts?.domain ?? process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-    const token = opts?.token ?? process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-    const apiVersion = opts?.apiVersion ?? process.env.SHOPIFY_ADMIN_API_VERSION ?? DEFAULT_API_VERSION
-    if (!domain) throw new MantaError('INVALID_DATA', '[shopify-admin] SHOPIFY_SHOP_DOMAIN not set')
-    if (!token) throw new MantaError('INVALID_DATA', '[shopify-admin] SHOPIFY_ADMIN_ACCESS_TOKEN not set')
-    this.endpoint = `https://${domain}/admin/api/${apiVersion}/graphql.json`
-    this.token = token
+  constructor(opts?: ShopifyAdminOptions) {
+    this.options = opts ?? {}
   }
 
   async query<T = Record<string, unknown>>(
@@ -34,27 +33,7 @@ export class ShopifyAdminClient {
     variables?: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<T> {
-    const res = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': this.token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: gql, variables }),
-      signal,
-    })
-    if (!res.ok) {
-      throw new MantaError('UNEXPECTED_STATE', `[shopify-admin] HTTP ${res.status} ${await res.text().catch(() => '')}`)
-    }
-    const body = (await res.json()) as { data?: T; errors?: ShopifyGraphQLError[] }
-    if (body.errors && body.errors.length > 0) {
-      throw new MantaError(
-        'UNEXPECTED_STATE',
-        `[shopify-admin] GraphQL error: ${body.errors.map((e) => e.message).join(' | ')}`,
-      )
-    }
-    if (!body.data) throw new MantaError('UNEXPECTED_STATE', '[shopify-admin] empty response')
-    return body.data
+    return await shopifyAdminGraphql<T>(gql, variables, { ...this.options, signal })
   }
 }
 

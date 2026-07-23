@@ -852,11 +852,7 @@ async function findShopifyOrderAfter(
   { status: 'found'; order: ShopifyOrderMatch } | { status: 'none' } | { status: 'unavailable'; error: string }
 > {
   try {
-    const token =
-      process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? process.env.SHOPIFY_ADMIN_TOKEN ?? process.env.SHOPIFY_ACCESS_TOKEN
-    const domain = process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com'
-    if (!token) return { status: 'unavailable', error: 'SHOPIFY_ADMIN_ACCESS_TOKEN missing' }
-    const client = new ShopifyAdminClient({ token, domain })
+    const client = new ShopifyAdminClient()
     const escapedEmail = email.replace(/"/g, '\\"')
     const query = `email:"${escapedEmail}" created_at:>=${since.toISOString()}`
     const data = await client.query<{

@@ -96,9 +96,7 @@ export async function runBackfillOrdersFromShopify(
         [remaining],
       )
 
-      const client = new ShopifyAdminClient({
-        domain: process.env.SHOPIFY_SHOP_DOMAIN ?? 'fancy-palas.myshopify.com',
-      })
+      const client = new ShopifyAdminClient()
       const progress: BackfillProgress = { ...previous, dry_run: input.dryRun, samples: [...previous.samples] }
 
       for (let offset = 0; offset < rows.length; offset += SHOPIFY_BATCH_SIZE) {
