@@ -227,6 +227,23 @@ describe('POST /api/cart-tracking/shopify-webhooks/customers', () => {
     expect(upsertCalls.length).toBe(0)
   })
 
+  it('leaves webhook retries to Shopify when the customer fetch-back is unavailable', async () => {
+    const fetchMock = vi.fn(async () => new Response('unavailable', { status: 503 }))
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { POST } = await routeModulePromise
+    const req = signedRequest(JSON.stringify({ id: SHOPIFY_REAL_ID }))
+    const res = await POST(req)
+
+    expect(res.status).toBe(502)
+    expect(await res.text()).toBe('Shopify Unavailable')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(timeoutSpy).toHaveBeenCalledWith(4_000)
+    timeoutSpy.mockRestore()
+    expect(upsertCalls).toEqual([])
+  })
+
   it('returns 409 and emits nothing when the email belongs to another Shopify identity', async () => {
     vi.stubGlobal(
       'fetch',

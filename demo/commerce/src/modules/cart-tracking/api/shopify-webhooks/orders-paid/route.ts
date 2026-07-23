@@ -34,7 +34,7 @@ async function fetchShopifyOrder(orderId: string | number): Promise<ShopifyOrder
     const { data } = await shopifyAdminJson<{ order?: ShopifyOrderPayload }>(
       `orders/${orderId}.json`,
       {},
-      { maxAttempts: 2 },
+      { maxAttempts: 1, timeoutMs: 4_000 },
     )
     return data.order
       ? { status: 'found', order: data.order }

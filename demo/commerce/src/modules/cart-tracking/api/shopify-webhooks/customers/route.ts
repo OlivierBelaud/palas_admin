@@ -31,7 +31,7 @@ async function fetchShopifyCustomer(customerId: string | number): Promise<Shopif
     const { data } = await shopifyAdminJson<{ customer?: ShopifyCustomerPayload }>(
       `customers/${customerId}.json`,
       {},
-      { maxAttempts: 2 },
+      { maxAttempts: 1, timeoutMs: 4_000 },
     )
     return data.customer
       ? { status: 'found', customer: data.customer }
