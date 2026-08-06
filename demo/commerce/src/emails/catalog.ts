@@ -5,6 +5,7 @@ import {
   renderDailyReportText,
 } from '../utils/daily-reporting'
 import { renderAbandonedCart } from './abandoned-cart/render'
+import { SUGGESTED_PRODUCTS_POOL } from './abandoned-cart/suggested-products'
 import { renderAdminInviteEmail } from './admin-invite/render'
 import type { EmailTemplatePreviewInput, RenderedEmailTemplatePreview, ReportStatus } from './catalog-contract'
 import { renderPaymentHelpEmail } from './payment-help/render'
@@ -78,17 +79,11 @@ function assertNever(value: never): never {
 }
 
 function previewItems(count: number) {
-  const items = [
-    ['Bague Sol', 'https://cdn.shopify.com/s/files/1/0560/3045/2608/files/Bague-sol.jpg'],
-    ['Boucles Flora', 'https://cdn.shopify.com/s/files/1/0560/3045/2608/files/Boucles-Flora.jpg'],
-    ['Collier Mia', 'https://cdn.shopify.com/s/files/1/0560/3045/2608/files/Collier-Mia.jpg'],
-    ['Bracelet Alma', 'https://cdn.shopify.com/s/files/1/0560/3045/2608/files/Bracelet-Alma.jpg'],
-  ] as const
-  return items.slice(0, Math.max(1, Math.min(4, Math.round(count)))).map(([title, image_url], index) => ({
+  return SUGGESTED_PRODUCTS_POOL.slice(0, Math.max(1, Math.min(4, Math.round(count)))).map((product, index) => ({
     id: `preview-${index + 1}`,
-    title,
+    title: product.title,
     quantity: 1,
-    image_url,
+    image_url: product.imageUrl,
   }))
 }
 

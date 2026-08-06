@@ -42,7 +42,7 @@ export const STRINGS: Record<Locale, AbandonedCartStrings> = {
   fr: {
     subject: 'Vos bijoux favoris vous attendent',
     preview: 'Mais pas pour longtemps !',
-    heading: 'Vos bijoux favoris vous attendent',
+    heading: 'VOS BIJOUX FAVORIS VOUS ATTENDENT',
     subHeading: 'Mais pas pour longtemps !',
     body: 'Votre panier est encore disponible. Revenez quand vous voulez pour finaliser votre commande.',
     discountIntro: 'Comme vous n’avez encore jamais commandé chez Palas, votre code de bienvenue 10% est disponible :',
@@ -68,9 +68,9 @@ export const STRINGS: Record<Locale, AbandonedCartStrings> = {
     unsubscribeLink: 'vous désabonner',
   },
   en: {
-    subject: 'Your favorite jewels are waiting',
+    subject: 'Your favourite jewellery is waiting for you',
     preview: 'But not for long!',
-    heading: 'Your favorite jewels are waiting',
+    heading: 'YOUR FAVOURITE JEWELLERY IS WAITING FOR YOU',
     subHeading: 'But not for long!',
     body: 'Your cart is still available. Come back whenever you want to complete your order.',
     discountIntro: 'Because this would be your first Palas order, your 10% welcome code is ready:',

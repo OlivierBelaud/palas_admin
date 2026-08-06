@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SUGGESTED_PRODUCTS_POOL } from '../src/emails/abandoned-cart/suggested-products'
 import { renderEmailTemplatePreview } from '../src/emails/catalog'
 import {
   EMAIL_TEMPLATE_CATALOG,
@@ -44,9 +45,10 @@ describe('email template preview catalog', () => {
       reportStatus: 'ready',
     })
 
-    expect(preview.subject).toBe('Your favorite jewels are waiting')
+    expect(preview.subject).toBe('Your favourite jewellery is waiting for you')
     expect(preview.html).toContain('PALAS-WELCOME-10')
     expect(preview.html).toContain('Because this would be your first Palas order')
+    expect(preview.html).toContain(SUGGESTED_PRODUCTS_POOL[0].imageUrl.replaceAll('&', '&amp;'))
     expect(preview.appliedBranches).toContain('Welcome promotion shown')
   })
 

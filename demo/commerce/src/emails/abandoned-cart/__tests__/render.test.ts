@@ -57,9 +57,15 @@ describe('renderAbandonedCart', () => {
 
     // Cloudfront assets present
     expect(out.html).toContain('3d0122af-ab8b-40df-b454-dad4088a01d8') // logo banner
-    expect(out.html).toContain('5133aaec-abc9-49b1-b93c-4feb18894cc1') // hero
     expect(out.html).toContain('d152e8a0-e093-4403-acf9-047d079d8abd') // decorative palm
     expect(out.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a') // footer palm
+    expect(out.html).toMatch(new RegExp(`<h1[^>]*>${STRINGS.fr.heading}</h1>`))
+    expect(out.html).not.toMatch(new RegExp(`<img[^>]*alt="${STRINGS.fr.heading}"`))
+    expect(out.html).toContain('class="email-container"')
+    expect(out.html).not.toMatch(/<a[^>]*><img[^>]*><p/i)
+    const productTitleLinkStyle = out.html.match(/<a[^>]*style="([^"]*)"[^>]*>Bracelet Solana<\/a>/)?.[1]
+    expect(productTitleLinkStyle).toContain('color:#000000')
+    expect(productTitleLinkStyle).toContain('text-decoration:underline')
     // Both items rendered
     expect(out.html).toContain('Bracelet Solana')
     expect(out.html).toContain('Collier Aurora')
@@ -109,7 +115,7 @@ describe('renderAbandonedCart', () => {
     })
 
     expect(out.subject).toBe(STRINGS.en.subject)
-    expect(out.html).toContain('Your favorite jewels are waiting')
+    expect(out.html).toContain(STRINGS.en.heading)
     expect(out.html).toContain('COMPLETE MY ORDER')
     expect(out.html).toContain('You may also like')
     expect(out.html).not.toMatch(/€\s*\d/)

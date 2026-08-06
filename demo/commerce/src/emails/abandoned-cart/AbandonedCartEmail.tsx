@@ -18,6 +18,7 @@ import {
   Column,
   Container,
   Head,
+  Heading,
   Hr,
   Html,
   Img,
@@ -33,7 +34,6 @@ import { pickSuggested, type SuggestedProduct, suggestedProductUrl } from './sug
 
 const ASSET_BASE = 'https://d3k81ch9hvuctc.cloudfront.net/company/VeFGwD/images'
 const LOGO = `${ASSET_BASE}/3d0122af-ab8b-40df-b454-dad4088a01d8.jpeg`
-const HERO = `${ASSET_BASE}/5133aaec-abc9-49b1-b93c-4feb18894cc1.jpeg`
 const DECO_PALM = `${ASSET_BASE}/d152e8a0-e093-4403-acf9-047d079d8abd.jpeg`
 const FOOTER_DECO = `${ASSET_BASE}/2982a0eb-5e22-4e4c-8bd2-da690775978a.jpeg`
 const USP_HANDMADE = `${ASSET_BASE}/d536e3d8-fd78-4ba2-8de0-66bec6f93772.jpeg`
@@ -45,13 +45,17 @@ const ITEM_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEA
 const CTA_COLOR = '#C89934'
 const CONTAINER_WIDTH = 600
 const BODY_FONT = 'Inter, Arial, sans-serif'
-const HEAD_FONT = '"Playfair Display", Palatino, serif'
+const HEAD_FONT = 'Didot, "Bodoni 72", "Cormorant Garamond", "Times New Roman", serif'
 const RETINA_IMAGE_SCALE = 2
 
 // Mobile responsive overlay.
 const MOBILE_CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&display=swap');
+body, .email-container { width: 100% !important; }
 @media only screen and (max-width: 600px) {
+  .email-container { width: 100% !important; max-width: 600px !important; }
   .px-tight { padding-left: 16px !important; padding-right: 16px !important; }
+  .hero-heading { font-size: 34px !important; line-height: 0.98 !important; }
 }
 @media only screen and (max-width: 480px) {
   .stack { display: block !important; width: 100% !important; padding: 12px 0 !important; }
@@ -98,7 +102,10 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
       </Head>
       <Preview>{t.preview}</Preview>
       <Body style={{ backgroundColor: '#ffffff', margin: 0, padding: 0, fontFamily: BODY_FONT, color: '#0e1f27' }}>
-        <Container style={{ width: CONTAINER_WIDTH, maxWidth: '100%', margin: '0 auto', padding: 0 }}>
+        <Container
+          className="email-container"
+          style={{ width: '100%', maxWidth: CONTAINER_WIDTH, margin: '0 auto', padding: 0 }}
+        >
           {/* ── Logo banner ──────────────────────────────────────────── */}
           <Section style={{ padding: 0, textAlign: 'center' }}>
             <Link href={recoveryUrl} style={{ display: 'block' }}>
@@ -111,21 +118,25 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
             </Link>
           </Section>
 
-          {/* ── Hero text image ──────────────────────────────────────── */}
+          {/* ── Live heading text: selectable, translatable and responsive ── */}
           <Section style={{ textAlign: 'center', padding: '48px 16px 24px' }}>
-            <Img
-              src={HERO}
-              alt={t.heading}
-              width="350"
+            <Heading
+              as="h1"
+              className="hero-heading"
               style={{
-                display: 'block',
+                fontFamily: HEAD_FONT,
+                fontSize: 43,
+                lineHeight: 0.98,
+                letterSpacing: '-0.02em',
                 margin: '0 auto',
-                width: '350px',
-                maxWidth: '100%',
-                height: 'auto',
-                border: 0,
+                maxWidth: 560,
+                fontWeight: 400,
+                color: '#000000',
+                textAlign: 'center',
               }}
-            />
+            >
+              {t.heading}
+            </Heading>
           </Section>
 
           {/* ── Body intro ───────────────────────────────────────────── */}
@@ -439,21 +450,27 @@ function ProductCard({
             border: 0,
           }}
         />
-        <Text
+      </Link>
+      <Text
+        style={{
+          fontFamily: BODY_FONT,
+          fontSize: 13,
+          lineHeight: 1.4,
+          margin: '10px 0 0',
+          fontWeight: 400,
+          textAlign: 'center',
+        }}
+      >
+        <Link
+          href={href}
           style={{
-            fontFamily: BODY_FONT,
-            fontSize: 13,
-            lineHeight: 1.4,
-            margin: '10px 0 0',
-            fontWeight: 400,
             color: '#000000',
-            textAlign: 'center',
             textDecoration: 'underline',
           }}
         >
           {title}
-        </Text>
-      </Link>
+        </Link>
+      </Text>
     </Column>
   )
 }
