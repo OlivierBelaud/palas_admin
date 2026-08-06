@@ -1,5 +1,6 @@
 import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
+import { renderPaymentHelpEmail } from '../emails/payment-help/render'
 import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
 import { buildEmailLinkTrackingParams } from './email-link-tracking'
@@ -693,28 +694,13 @@ async function renderMessage(opts: {
     return { ...rendered, locale, recoveryUrl, unsubscribeUrl, discountGrant: opts.discountGrant }
   }
 
-  const greeting = opts.cart.first_name ? `Bonjour ${opts.cart.first_name},` : 'Bonjour,'
-  const subject = locale === 'en' ? 'Need help finalising your order?' : 'Besoin d’aide pour finaliser votre commande ?'
-  const text =
-    locale === 'en'
-      ? `${greeting}\n\nWe noticed your order was not finalised. If something blocked you on the site, reply directly to this email and we will help.\n\nYou can also return to your cart here: ${recoveryUrl}\n\nUnsubscribe: ${unsubscribeUrl}`
-      : `${greeting}\n\nVotre commande n’a pas été finalisée. Si quelque chose vous a bloqué sur le site, répondez directement à cet email et on vous aidera.\n\nVous pouvez aussi retrouver votre panier ici : ${recoveryUrl}\n\nDésinscription : ${unsubscribeUrl}`
-  const html = `
-    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
-      <p>${greeting}</p>
-      <p>${
-        locale === 'en'
-          ? 'We noticed your order was not finalised. If something blocked you on the site, reply directly to this email and we will help.'
-          : 'Votre commande n’a pas été finalisée. Si quelque chose vous a bloqué sur le site, répondez directement à cet email et on vous aidera.'
-      }</p>
-      <p><a href="${recoveryUrl}" style="display:inline-block;background:#111;color:#fff;padding:12px 18px;text-decoration:none;border-radius:4px">${
-        locale === 'en' ? 'Return to my cart' : 'Retrouver mon panier'
-      }</a></p>
-      <p style="font-size:12px;color:#777"><a href="${unsubscribeUrl}">${
-        locale === 'en' ? 'Unsubscribe' : 'Se désinscrire'
-      }</a></p>
-    </div>`
-  return { subject, html, text, locale, recoveryUrl, unsubscribeUrl, discountGrant: opts.discountGrant }
+  const rendered = renderPaymentHelpEmail({
+    locale,
+    firstName: opts.cart.first_name,
+    recoveryUrl,
+    unsubscribeUrl,
+  })
+  return { ...rendered, locale, recoveryUrl, unsubscribeUrl, discountGrant: opts.discountGrant }
 }
 
 export async function reconcileAbandonedCartRecoveries(

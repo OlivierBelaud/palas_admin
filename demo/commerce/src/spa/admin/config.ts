@@ -51,6 +51,10 @@ export default defineSpa({
       icon: 'Mail',
       label: 'Emails',
       to: '/emails',
+      items: [
+        { label: 'Emails envoyés', to: '/emails' },
+        { label: 'Templates & scénarios', to: '/emails/templates' },
+      ],
     },
     {
       icon: 'BarChart3',

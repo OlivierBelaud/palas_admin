@@ -1,3 +1,5 @@
+import { renderAdminInviteEmail } from '../../../../emails/admin-invite/render'
+
 type RawDb = { raw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }
 type NotificationPort = {
   send: (input: {
@@ -163,12 +165,13 @@ async function sendInviteEmail(req: Request, notification: NotificationPort | un
   }
 
   const acceptUrl = inviteUrl(req, token)
+  const rendered = renderAdminInviteEmail(acceptUrl)
   const result = await notification.send({
     to: email,
     channel: 'email',
-    subject: 'Invitation Palas Admin',
-    text: `Tu as ete invite a rejoindre l'admin Palas. Utilise ce lien pour accepter l'invitation : ${acceptUrl}\n\nCe lien expire dans 7 jours.`,
-    html: `<p>Tu as ete invite a rejoindre l'admin Palas.</p><p><a href="${acceptUrl}">Accepter l'invitation</a></p><p>Ce lien expire dans 7 jours.</p>`,
+    subject: rendered.subject,
+    text: rendered.text,
+    html: rendered.html,
     idempotency_key: `palas:admin-invite:${email}:${token}`,
     tags: [{ name: 'palas_admin_invite', value: 'true' }],
   })

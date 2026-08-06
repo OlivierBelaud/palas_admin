@@ -424,10 +424,7 @@ export async function sendDailyReportEmail(options: SendDailyReportOptions): Pro
   const recipients = options.recipients ?? dailyReportRecipientsFromEnv()
   const html = renderDailyReportHtml(payload)
   const text = renderDailyReportText(payload)
-  const subject =
-    snapshotStatus === 'ready'
-      ? `Reporting Palas - ${formatLongDay(payload.day)}`
-      : `[PARTIEL] Reporting Palas - ${formatLongDay(payload.day)}`
+  const subject = dailyReportSubject(payload, snapshotStatus)
   const idempotencyScope = options.idempotencySuffix ? `:${options.idempotencySuffix}` : ''
   const sent: SendDailyReportResult['sent'] = []
 
@@ -473,6 +470,15 @@ export function dailyReportSnapshotStatus(payload: DailyReportPayload): 'ready' 
   if (payload.summary.unattributed_orders > 0) return 'partial'
   if (isSessionSourceStale(payload)) return 'partial'
   return 'ready'
+}
+
+export function dailyReportSubject(
+  payload: DailyReportPayload,
+  snapshotStatus: 'ready' | 'partial' = dailyReportSnapshotStatus(payload),
+): string {
+  return snapshotStatus === 'ready'
+    ? `Reporting Palas - ${formatLongDay(payload.day)}`
+    : `[PARTIEL] Reporting Palas - ${formatLongDay(payload.day)}`
 }
 
 export function renderDailyReportHtml(payload: DailyReportPayload): string {
