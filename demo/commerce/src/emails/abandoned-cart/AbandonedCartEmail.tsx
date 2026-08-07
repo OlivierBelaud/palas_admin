@@ -29,7 +29,7 @@ import {
   Text,
 } from '@react-email/components'
 import type * as React from 'react'
-import { type AbandonedCartMessageType, ASSISTANCE_COPY, REMINDER_COPY } from './sequence-strings'
+import { type AbandonedCartMessageType, ASSISTANCE_COPY, type DiscountKind, REMINDER_COPY } from './sequence-strings'
 import { type AbandonedCartStrings, type Locale, STRINGS } from './strings'
 import { pickSuggested, type SuggestedProduct, suggestedProductUrl } from './suggested-products'
 
@@ -50,17 +50,20 @@ const CTA_COLOR = '#C89934'
 const CONTAINER_WIDTH = 600
 const BODY_FONT = 'Inter, Arial, sans-serif'
 const HEAD_FONT = 'Didot, "Bodoni 72", "Cormorant Garamond", "Times New Roman", serif'
+const REMINDER_FONT = '"Nunito Sans", "Nunito-Sans-Klaviyo-Hosted", Arial, sans-serif'
+const ASSISTANCE_FONT = 'Times, "Times New Roman", serif'
 const RETINA_IMAGE_SCALE = 2
 
 // Mobile responsive overlay.
 const MOBILE_CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&family=Nunito+Sans:wght@400;700&display=swap');
 body { width: 100% !important; margin: 0 !important; padding: 0 !important; }
 .email-container { width: 100% !important; }
 @media only screen and (max-width: 600px) {
   .email-container { width: 100% !important; max-width: 600px !important; }
   .px-tight { padding-left: 16px !important; padding-right: 16px !important; }
   .hero-heading { font-size: 34px !important; line-height: 0.98 !important; }
+  .email-two-heading { font-size: 28px !important; line-height: 1.3 !important; }
 }
 @media only screen and (max-width: 480px) {
   .stack { display: block !important; width: 100% !important; padding: 12px 0 !important; }
@@ -86,6 +89,7 @@ export interface AbandonedCartEmailProps {
   recoveryUrl: string
   unsubscribeUrl: string
   discountCode?: string | null
+  discountKind?: DiscountKind | null
 }
 
 export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactElement {
@@ -97,6 +101,7 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
     recoveryUrl,
     unsubscribeUrl,
     discountCode,
+    discountKind = discountCode ? 'welcome' : null,
   } = props
   const t = STRINGS[locale]
   const showSuggested = messageType === 'abandoned_cart_1' && items.length >= 1 && items.length <= 2
@@ -131,17 +136,27 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
           {messageType === 'abandoned_cart_1' ? (
             <FirstReminderContent
               discountCode={discountCode}
+              discountKind={discountKind}
               items={items}
+              locale={locale}
               recoveryUrl={recoveryUrl}
               suggested={suggested}
               t={t}
             />
           ) : messageType === 'abandoned_cart_2' ? (
-            <SecondReminderContent discountCode={discountCode} locale={locale} recoveryUrl={recoveryUrl} />
+            <SecondReminderContent
+              discountCode={discountCode}
+              discountKind={discountKind}
+              items={items}
+              locale={locale}
+              recoveryUrl={recoveryUrl}
+            />
           ) : (
             <AssistanceContent
               discountCode={discountCode}
+              discountKind={discountKind}
               firstName={firstName}
+              items={items}
               locale={locale}
               recoveryUrl={recoveryUrl}
             />
@@ -265,13 +280,17 @@ function EmailHeader({
 
 function FirstReminderContent({
   discountCode,
+  discountKind,
   items,
+  locale,
   recoveryUrl,
   suggested,
   t,
 }: {
   discountCode?: string | null
+  discountKind: DiscountKind | null
   items: AbandonedCartItem[]
+  locale: Locale
   recoveryUrl: string
   suggested: SuggestedProduct[]
   t: AbandonedCartStrings
@@ -288,7 +307,9 @@ function FirstReminderContent({
           {t.bodyEmphasis ? <strong>{t.bodyEmphasis}</strong> : null}
         </Text>
       </Section>
-      {discountCode ? <DiscountCodeBlock code={discountCode} t={t} /> : null}
+      {discountCode ? (
+        <DiscountCodeBlock code={discountCode} discountKind={discountKind} locale={locale} t={t} />
+      ) : null}
       <Section style={{ textAlign: 'center', padding: '0 18px 24px' }}>
         <CTAButton href={recoveryUrl} label={t.cta1} />
       </Section>
@@ -305,32 +326,41 @@ function FirstReminderContent({
 
 function SecondReminderContent({
   discountCode,
+  discountKind,
+  items,
   locale,
   recoveryUrl,
 }: {
   discountCode?: string | null
+  discountKind: DiscountKind | null
+  items: AbandonedCartItem[]
   locale: Locale
   recoveryUrl: string
 }): React.ReactElement {
   const copy = REMINDER_COPY[locale]
+  const heading =
+    discountKind === 'welcome' ? copy.welcomeHeading : discountKind === 'recovery' ? copy.recoveryHeading : copy.heading
+  const promotionBody =
+    discountKind === 'welcome' ? copy.welcomeBody : discountKind === 'recovery' ? copy.recoveryBody : null
   return (
     <>
-      <LiveHeading>{discountCode ? copy.promotionHeading : copy.heading}</LiveHeading>
+      <LiveHeading variant="reminder">{heading}</LiveHeading>
       <Section className="px-tight" style={{ padding: '0 50px 20px', textAlign: 'center' }}>
-        <Text style={{ fontSize: 16, lineHeight: 1.55, margin: 0, color: '#000000' }}>
+        <Text style={{ fontFamily: REMINDER_FONT, fontSize: 16, lineHeight: 1.5, margin: 0, color: '#000000' }}>
           {copy.body}
-          {discountCode ? (
+          {promotionBody ? (
             <>
               <br />
               <br />
-              {copy.promotionBody}
+              {promotionBody}
             </>
           ) : null}
         </Text>
       </Section>
-      {discountCode ? <SequenceDiscountCode code={discountCode} locale={locale} /> : null}
+      {discountCode ? <SequenceDiscountCode code={discountCode} fontFamily={REMINDER_FONT} locale={locale} /> : null}
+      <CartSnapshot items={items} locale={locale} recoveryUrl={recoveryUrl} />
       <Section style={{ textAlign: 'center', padding: '4px 18px 40px' }}>
-        <CTAButton href={recoveryUrl} label={discountCode ? copy.promotionCta : copy.cta} />
+        <CTAButton fontFamily={REMINDER_FONT} href={recoveryUrl} label={discountCode ? copy.promotionCta : copy.cta} />
       </Section>
     </>
   )
@@ -338,41 +368,72 @@ function SecondReminderContent({
 
 function AssistanceContent({
   discountCode,
+  discountKind,
   firstName,
+  items,
   locale,
   recoveryUrl,
 }: {
   discountCode?: string | null
+  discountKind: DiscountKind | null
   firstName?: string | null
+  items: AbandonedCartItem[]
   locale: Locale
   recoveryUrl: string
 }): React.ReactElement {
   const copy = ASSISTANCE_COPY[locale]
   const greeting = firstName?.trim() ? `${copy.greeting} ${firstName.trim()},` : `${copy.greeting},`
+  const promotionCompletion =
+    discountKind === 'welcome' ? copy.welcomeCompletion : discountKind === 'recovery' ? copy.recoveryCompletion : null
   return (
     <>
       <Section className="px-tight" style={{ padding: '24px 50px 12px', textAlign: 'left' }}>
-        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 18px', color: '#000000' }}>{greeting}</Text>
-        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 18px', color: '#000000' }}>{copy.intro}</Text>
-        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 10px', color: '#000000' }}>
+        <Text
+          style={{ fontFamily: ASSISTANCE_FONT, fontSize: 18, lineHeight: 1.3, margin: '0 0 18px', color: '#000000' }}
+        >
+          {greeting}
+        </Text>
+        <Text
+          style={{ fontFamily: ASSISTANCE_FONT, fontSize: 18, lineHeight: 1.3, margin: '0 0 18px', color: '#000000' }}
+        >
+          {copy.intro}
+        </Text>
+        <Text
+          style={{ fontFamily: ASSISTANCE_FONT, fontSize: 18, lineHeight: 1.3, margin: '0 0 10px', color: '#000000' }}
+        >
           {copy.practicalIntro}
         </Text>
         {copy.benefits.map((benefit) => (
-          <Text key={benefit} style={{ fontSize: 15, lineHeight: 1.55, margin: '0 0 7px', color: '#000000' }}>
+          <Text
+            key={benefit}
+            style={{ fontFamily: ASSISTANCE_FONT, fontSize: 18, lineHeight: 1.3, margin: '0 0 7px', color: '#000000' }}
+          >
             • {benefit}
           </Text>
         ))}
-        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '20px 0 0', color: '#000000' }}>
+        <Text
+          style={{ fontFamily: ASSISTANCE_FONT, fontSize: 18, lineHeight: 1.3, margin: '20px 0 0', color: '#000000' }}
+        >
           {copy.completion}
-          {discountCode ? ` ${copy.promotionCompletion}` : ''}
+          {promotionCompletion ? ` ${promotionCompletion}` : ''}
         </Text>
       </Section>
-      {discountCode ? <SequenceDiscountCode code={discountCode} locale={locale} /> : null}
+      {discountCode ? <SequenceDiscountCode code={discountCode} fontFamily={ASSISTANCE_FONT} locale={locale} /> : null}
+      <CartSnapshot items={items} locale={locale} recoveryUrl={recoveryUrl} />
       <Section style={{ textAlign: 'center', padding: '8px 18px 28px' }}>
         <CTAButton href={recoveryUrl} label={copy.cta} />
       </Section>
       <Section className="px-tight" style={{ padding: '0 50px 34px', textAlign: 'left' }}>
-        <Text style={{ fontSize: 15, lineHeight: 1.55, margin: 0, color: '#000000', whiteSpace: 'pre-line' }}>
+        <Text
+          style={{
+            fontFamily: ASSISTANCE_FONT,
+            fontSize: 18,
+            lineHeight: 1.3,
+            margin: 0,
+            color: '#000000',
+            whiteSpace: 'pre-line',
+          }}
+        >
           {copy.signoff}
         </Text>
       </Section>
@@ -380,17 +441,24 @@ function AssistanceContent({
   )
 }
 
-function LiveHeading({ children }: { children: string }): React.ReactElement {
+function LiveHeading({
+  children,
+  variant = 'editorial',
+}: {
+  children: string
+  variant?: 'editorial' | 'reminder'
+}): React.ReactElement {
+  const reminder = variant === 'reminder'
   return (
     <Section style={{ textAlign: 'center', padding: '48px 16px 24px' }}>
       <Heading
         as="h1"
-        className="hero-heading"
+        className={reminder ? 'email-two-heading' : 'hero-heading'}
         style={{
-          fontFamily: HEAD_FONT,
-          fontSize: 43,
-          lineHeight: 0.98,
-          letterSpacing: '-0.02em',
+          fontFamily: reminder ? REMINDER_FONT : HEAD_FONT,
+          fontSize: reminder ? 44 : 43,
+          lineHeight: reminder ? 1.1 : 0.98,
+          letterSpacing: reminder ? 0 : '-0.02em',
           margin: '0 auto',
           maxWidth: 560,
           fontWeight: 400,
@@ -404,25 +472,57 @@ function LiveHeading({ children }: { children: string }): React.ReactElement {
   )
 }
 
-function DiscountCodeBlock({ code, t }: { code: string; t: AbandonedCartStrings }): React.ReactElement {
+function DiscountCodeBlock({
+  code,
+  discountKind,
+  locale,
+  t,
+}: {
+  code: string
+  discountKind: DiscountKind | null
+  locale: Locale
+  t: AbandonedCartStrings
+}): React.ReactElement {
+  const intro =
+    discountKind === 'recovery'
+      ? locale === 'fr'
+        ? 'Pour vous aider à finaliser ce panier, nous vous offrons exceptionnellement -10% :'
+        : 'To help you complete this basket, we’re offering you an exceptional 10% off:'
+      : t.discountIntro
   return (
     <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
-      <Text style={{ fontSize: 14, lineHeight: 1.5, margin: '0 0 10px', color: '#000000' }}>{t.discountIntro}</Text>
+      <Text style={{ fontSize: 14, lineHeight: 1.5, margin: '0 0 10px', color: '#000000' }}>{intro}</Text>
       <PromoCode code={code} label={t.discountCodeLabel} />
       <Text style={{ fontSize: 12, lineHeight: 1.5, margin: 0, color: '#555555' }}>{t.discountFootnote}</Text>
     </Section>
   )
 }
 
-function SequenceDiscountCode({ code, locale }: { code: string; locale: Locale }): React.ReactElement {
+function SequenceDiscountCode({
+  code,
+  fontFamily,
+  locale,
+}: {
+  code: string
+  fontFamily: string
+  locale: Locale
+}): React.ReactElement {
   return (
     <Section className="px-tight" style={{ padding: '0 50px 22px', textAlign: 'center' }}>
-      <PromoCode code={code} label={locale === 'fr' ? 'Code promo' : 'Promo code'} />
+      <PromoCode code={code} fontFamily={fontFamily} label={locale === 'fr' ? 'Code promo' : 'Promo code'} />
     </Section>
   )
 }
 
-function PromoCode({ code, label }: { code: string; label: string }): React.ReactElement {
+function PromoCode({
+  code,
+  fontFamily,
+  label,
+}: {
+  code: string
+  fontFamily?: string
+  label: string
+}): React.ReactElement {
   return (
     <Text
       style={{
@@ -432,7 +532,7 @@ function PromoCode({ code, label }: { code: string; label: string }): React.Reac
         color: '#000000',
         fontWeight: 700,
         letterSpacing: 0,
-        fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+        fontFamily: fontFamily ?? 'Arial, "Helvetica Neue", Helvetica, sans-serif',
       }}
     >
       {label} : {code}
@@ -440,7 +540,45 @@ function PromoCode({ code, label }: { code: string; label: string }): React.Reac
   )
 }
 
-function CTAButton({ href, label }: { href: string; label: string }): React.ReactElement {
+function CartSnapshot({
+  items,
+  locale,
+  recoveryUrl,
+}: {
+  items: AbandonedCartItem[]
+  locale: Locale
+  recoveryUrl: string
+}): React.ReactElement | null {
+  if (items.length === 0) return null
+  return (
+    <Section style={{ padding: '4px 0 20px', textAlign: 'center' }}>
+      <Text
+        style={{
+          fontFamily: BODY_FONT,
+          fontSize: 16,
+          lineHeight: 1.3,
+          margin: '0 0 16px',
+          color: '#000000',
+          fontWeight: 700,
+          textAlign: 'center',
+        }}
+      >
+        {locale === 'fr' ? 'VOTRE PANIER' : 'YOUR BASKET'}
+      </Text>
+      <ListLayout items={items} recoveryUrl={recoveryUrl} />
+    </Section>
+  )
+}
+
+function CTAButton({
+  fontFamily,
+  href,
+  label,
+}: {
+  fontFamily?: string
+  href: string
+  label: string
+}): React.ReactElement {
   return (
     <Button
       href={href}
@@ -453,7 +591,7 @@ function CTAButton({ href, label }: { href: string; label: string }): React.Reac
         textDecoration: 'none',
         borderRadius: 0,
         display: 'inline-block',
-        fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+        fontFamily: fontFamily ?? 'Arial, "Helvetica Neue", Helvetica, sans-serif',
       }}
     >
       {label}

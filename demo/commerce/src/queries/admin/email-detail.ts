@@ -334,6 +334,8 @@ async function renderPreview(message: MessageRow, cart: CartRow | null) {
     recoveryUrl,
     unsubscribeUrl,
     discountCode: message.discount_code,
+    discountKind:
+      message.discount_source === 'shopify_abandoned_cart' ? 'recovery' : message.discount_code ? 'welcome' : null,
   })
 
   return {

@@ -9,11 +9,19 @@ const resolveWelcomeDiscountForEmailMock = vi.hoisted(() =>
     shopifyDiscountId: 'gid://shopify/DiscountCodeNode/test',
   })),
 )
+const resolveAbandonedCartDiscountForEmailMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    code: 'PANIER10-TEST',
+    source: 'shopify_abandoned_cart' as const,
+    shopifyDiscountId: 'gid://shopify/DiscountCodeNode/recovery',
+  })),
+)
 
 vi.mock('../src/utils/discount-codes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/utils/discount-codes')>()
   return {
     ...actual,
+    resolveAbandonedCartDiscountForEmail: resolveAbandonedCartDiscountForEmailMock,
     resolveWelcomeDiscountForEmail: resolveWelcomeDiscountForEmailMock,
   }
 })
@@ -95,6 +103,7 @@ describe('runAbandonedCartCampaign supersession', () => {
 
 describe('runAbandonedCartCampaign guard checks', () => {
   beforeEach(() => {
+    resolveAbandonedCartDiscountForEmailMock.mockClear()
     resolveWelcomeDiscountForEmailMock.mockClear()
   })
 
@@ -324,11 +333,14 @@ describe('runAbandonedCartCampaign guard checks', () => {
     expect(firstQuery[0]).toContain('FROM cart_contact')
     expect(firstQuery[0]).toContain('FROM order_contact')
     expect(resolveWelcomeDiscountForEmailMock).not.toHaveBeenCalled()
+    expect(resolveAbandonedCartDiscountForEmailMock).not.toHaveBeenCalled()
     expect(result.sent).toBe(1)
     expect(sent).toHaveLength(1)
     expect(sent[0].html).not.toContain('PALAS10-TEST')
     expect(sent[0].text).not.toContain('PALAS10-TEST')
-    expect(sent[0].tags ?? []).not.toEqual(expect.arrayContaining([{ name: 'discount_source', value: 'shopify_generated' }]))
+    expect(sent[0].tags ?? []).not.toEqual(
+      expect.arrayContaining([{ name: 'discount_source', value: 'shopify_generated' }]),
+    )
     expect(writes).toContain('message')
     expect(writes).toContain('cart')
   })

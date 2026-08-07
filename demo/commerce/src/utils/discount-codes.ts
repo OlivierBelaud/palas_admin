@@ -1,6 +1,6 @@
 import { ShopifyAdminClient } from '../modules/shopify-admin/client'
 
-export type DiscountSource = 'klaviyo_welcome' | 'shopify_generated'
+export type DiscountSource = 'klaviyo_welcome' | 'shopify_generated' | 'shopify_abandoned_cart'
 
 export interface DiscountGrant {
   code: string
@@ -11,6 +11,7 @@ export interface DiscountGrant {
 export interface DiscountResolutionInput {
   email: string
   numberOfOrders: number
+  scopeKey?: string
   log: { info?: (m: string) => void; warn: (m: string) => void }
   signal?: AbortSignal
 }
@@ -91,29 +92,36 @@ async function lookupKlaviyoWelcomeCoupon(
   }
 }
 
-async function lookupShopifyNumberOfOrders(
+async function lookupShopifyCustomer(
   email: string,
   signal?: AbortSignal,
 ): Promise<
-  { status: 'found'; numberOfOrders: number } | { status: 'none' } | { status: 'unavailable'; error: string }
+  | { status: 'found'; id: string; numberOfOrders: number }
+  | { status: 'none' }
+  | { status: 'unavailable'; error: string }
 > {
   try {
     const client = new ShopifyAdminClient()
     const data = await client.query<{
-      customers: { edges: Array<{ node: { numberOfOrders: string | number | null } }> }
+      customers: { edges: Array<{ node: { id: string; numberOfOrders: string | number | null } }> }
     }>(
       `query ShopifyCustomerOrders($q: String!) {
         customers(first: 1, query: $q) {
-          edges { node { numberOfOrders } }
+          edges { node { id numberOfOrders } }
         }
       }`,
       { q: `email:"${email.replace(/"/g, '\\"')}"` },
       signal,
     )
-    const raw = data.customers?.edges?.[0]?.node?.numberOfOrders
-    if (raw === undefined || raw === null) return { status: 'none' }
+    const customer = data.customers?.edges?.[0]?.node
+    if (!customer?.id) return { status: 'none' }
+    const raw = customer.numberOfOrders
     const numberOfOrders = typeof raw === 'number' ? raw : Number(raw)
-    return { status: 'found', numberOfOrders: Number.isFinite(numberOfOrders) ? numberOfOrders : 0 }
+    return {
+      status: 'found',
+      id: customer.id,
+      numberOfOrders: Number.isFinite(numberOfOrders) ? numberOfOrders : 0,
+    }
   } catch (err) {
     return { status: 'unavailable', error: (err as Error).message }
   }
@@ -156,8 +164,8 @@ export async function lookupShopifyDiscountCode(
   return { active: node.codeDiscount.status === 'ACTIVE', id: node.id }
 }
 
-function buildGeneratedCode(email: string): string {
-  const prefix = (process.env.ABANDONED_CART_DISCOUNT_PREFIX ?? 'PALAS10').replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
+function buildGeneratedCode(email: string, rawPrefix: string): string {
+  const prefix = rawPrefix.replace(/[^A-Za-z0-9]/g, '').slice(0, 12)
   let hash = 2166136261
   for (const ch of email.toLowerCase()) {
     hash ^= ch.charCodeAt(0)
@@ -171,7 +179,7 @@ export async function createShopifyWelcomeDiscount(
   email: string,
   signal?: AbortSignal,
 ): Promise<{ code: string; id: string | null }> {
-  const code = buildGeneratedCode(email)
+  const code = buildGeneratedCode(email, process.env.ABANDONED_CART_DISCOUNT_PREFIX ?? 'PALAS10')
   const existing = await lookupShopifyDiscountCode(code, signal).catch(() => null)
   if (existing?.active) return { code, id: existing.id }
 
@@ -225,10 +233,73 @@ export async function createShopifyWelcomeDiscount(
   return { code: node?.codeDiscount?.codes?.nodes?.[0]?.code ?? code, id: node?.id ?? null }
 }
 
+export async function createShopifyAbandonedCartDiscount(
+  email: string,
+  customerId: string,
+  scopeKey = 'default',
+  signal?: AbortSignal,
+): Promise<{ code: string; id: string | null }> {
+  const code = buildGeneratedCode(
+    `${email}:${scopeKey}`,
+    process.env.ABANDONED_CART_RECOVERY_DISCOUNT_PREFIX ?? 'PANIER10',
+  )
+  const existing = await lookupShopifyDiscountCode(code, signal).catch(() => null)
+  if (existing?.active) return { code, id: existing.id }
+
+  const client = new ShopifyAdminClient()
+  const startsAt = new Date().toISOString()
+  const endsAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()
+  const data = await client.query<{
+    discountCodeBasicCreate: {
+      codeDiscountNode: {
+        id: string
+        codeDiscount: { codes?: { nodes?: Array<{ code: string }> } } | null
+      } | null
+      userErrors: Array<{ field?: string[] | null; message: string }>
+    }
+  }>(
+    `mutation CreateAbandonedCartDiscount($basicCodeDiscount: DiscountCodeBasicInput!) {
+      discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+        codeDiscountNode {
+          id
+          codeDiscount {
+            ... on DiscountCodeBasic {
+              codes(first: 1) { nodes { code } }
+            }
+          }
+        }
+        userErrors { field message }
+      }
+    }`,
+    {
+      basicCodeDiscount: {
+        title: `Palas abandoned cart 10% - ${email}`,
+        code,
+        startsAt,
+        endsAt,
+        customerSelection: { customers: { add: [customerId] } },
+        customerGets: {
+          value: { percentage: 0.1 },
+          items: { all: true },
+        },
+        usageLimit: 1,
+        appliesOncePerCustomer: true,
+      },
+    },
+    signal,
+  )
+  const errors = data.discountCodeBasicCreate.userErrors
+  if (errors.length > 0) {
+    throw new MantaError('UNEXPECTED_STATE', errors.map((error) => error.message).join(' | '))
+  }
+  const node = data.discountCodeBasicCreate.codeDiscountNode
+  return { code: node?.codeDiscount?.codes?.nodes?.[0]?.code ?? code, id: node?.id ?? null }
+}
+
 export async function resolveWelcomeDiscountForEmail(input: DiscountResolutionInput): Promise<DiscountGrant | null> {
   if (input.numberOfOrders > 0) return null
 
-  const shopifyCustomer = await lookupShopifyNumberOfOrders(input.email, input.signal)
+  const shopifyCustomer = await lookupShopifyCustomer(input.email, input.signal)
   if (shopifyCustomer.status === 'found' && shopifyCustomer.numberOfOrders > 0) return null
   if (shopifyCustomer.status === 'unavailable') {
     input.log.warn(`[discount] Shopify customer lookup failed email=${input.email}: ${shopifyCustomer.error}`)
@@ -257,6 +328,39 @@ export async function resolveWelcomeDiscountForEmail(input: DiscountResolutionIn
     return { code: created.code, source: 'shopify_generated', shopifyDiscountId: created.id }
   } catch (err) {
     input.log.warn(`[discount] Shopify welcome coupon create failed email=${input.email}: ${(err as Error).message}`)
+    return null
+  }
+}
+
+export async function resolveAbandonedCartDiscountForEmail(
+  input: DiscountResolutionInput,
+): Promise<DiscountGrant | null> {
+  if (input.numberOfOrders <= 0) return null
+
+  const shopifyCustomer = await lookupShopifyCustomer(input.email, input.signal)
+  if (shopifyCustomer.status === 'none') {
+    input.log.warn(`[discount] Shopify customer not found for returning email=${input.email}`)
+    return null
+  }
+  if (shopifyCustomer.status === 'unavailable') {
+    input.log.warn(`[discount] Shopify customer lookup failed email=${input.email}: ${shopifyCustomer.error}`)
+    return null
+  }
+  if (shopifyCustomer.numberOfOrders <= 0) return null
+
+  try {
+    const created = await createShopifyAbandonedCartDiscount(
+      input.email,
+      shopifyCustomer.id,
+      input.scopeKey,
+      input.signal,
+    )
+    input.log.info?.(`[discount] generated Shopify abandoned-cart coupon email=${input.email} code=${created.code}`)
+    return { code: created.code, source: 'shopify_abandoned_cart', shopifyDiscountId: created.id }
+  } catch (err) {
+    input.log.warn(
+      `[discount] Shopify abandoned-cart coupon create failed email=${input.email}: ${(err as Error).message}`,
+    )
     return null
   }
 }

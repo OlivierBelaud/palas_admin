@@ -2,7 +2,11 @@ import { pickLocale } from '../emails/abandoned-cart/pick-locale'
 import { renderAbandonedCart } from '../emails/abandoned-cart/render'
 import { renderPaymentHelpEmail } from '../emails/payment-help/render'
 import { ShopifyAdminClient } from '../modules/shopify-admin/client'
-import { type DiscountGrant, resolveWelcomeDiscountForEmail } from './discount-codes'
+import {
+  type DiscountGrant,
+  resolveAbandonedCartDiscountForEmail,
+  resolveWelcomeDiscountForEmail,
+} from './discount-codes'
 import { buildEmailLinkTrackingParams } from './email-link-tracking'
 import { archiveEmailSnapshot, type EmailSnapshotResult } from './email-snapshot'
 import type { RuntimeFilePort, RuntimeNotificationPort, RuntimeSql } from './manta-runtime'
@@ -32,6 +36,7 @@ export interface AbandonedCartCampaignOptions {
   dryRun?: boolean
   maxCaseAgeDays?: number
   recoveryWindowDays?: number
+  returningDiscountEnabled?: boolean
   log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void }
 }
 
@@ -691,6 +696,11 @@ async function renderMessage(opts: {
       recoveryUrl,
       unsubscribeUrl,
       discountCode: opts.discountGrant?.code ?? null,
+      discountKind: opts.discountGrant
+        ? opts.discountGrant.source === 'shopify_abandoned_cart'
+          ? 'recovery'
+          : 'welcome'
+        : null,
     })
     return { ...rendered, locale, recoveryUrl, unsubscribeUrl, discountGrant: opts.discountGrant }
   }
@@ -760,6 +770,7 @@ export async function runAbandonedCartCampaign(
     dryRun = false,
     maxCaseAgeDays = DEFAULT_MAX_CASE_AGE_DAYS,
     recoveryWindowDays = DEFAULT_RECOVERY_WINDOW_DAYS,
+    returningDiscountEnabled = process.env.ABANDONED_CART_RETURNING_DISCOUNT_ENABLED === 'true',
     log,
   } = opts
 
@@ -941,15 +952,25 @@ export async function runAbandonedCartCampaign(
     if (!dryRun && messageId) await logCheck(sql, cartCase.id, messageId, 'klaviyo_email', 'passed')
 
     const knownOrderCount = Number(c.live_orders_count ?? 0)
-    const discountGrant =
-      dryRun || next.type === 'payment_help_1' || knownOrderCount > 0
-        ? null
-        : await resolveWelcomeDiscountForEmail({
-            email: c.email,
-            numberOfOrders: knownOrderCount,
-            log,
-            signal,
-          })
+    let discountGrant: DiscountGrant | null = null
+    if (!dryRun && next.type !== 'payment_help_1') {
+      if (knownOrderCount <= 0) {
+        discountGrant = await resolveWelcomeDiscountForEmail({
+          email: c.email,
+          numberOfOrders: knownOrderCount,
+          log,
+          signal,
+        })
+      } else if (returningDiscountEnabled && (next.type === 'abandoned_cart_2' || next.type === 'abandoned_cart_3')) {
+        discountGrant = await resolveAbandonedCartDiscountForEmail({
+          email: c.email,
+          numberOfOrders: knownOrderCount,
+          scopeKey: c.cart_token,
+          log,
+          signal,
+        })
+      }
+    }
     const rendered = await renderMessage({
       cart: c,
       messageType: next.type,

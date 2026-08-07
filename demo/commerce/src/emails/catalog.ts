@@ -21,7 +21,15 @@ export async function renderEmailTemplatePreview(
     case 'abandoned_cart_1':
     case 'abandoned_cart_2':
     case 'abandoned_cart_3': {
-      const discountCode = input.customerStatus === 'new' && input.promotionActive ? 'PALAS-WELCOME-10' : null
+      const discountKind = input.promotionActive
+        ? input.customerStatus === 'new'
+          ? 'welcome'
+          : input.templateId === 'abandoned_cart_2' || input.templateId === 'abandoned_cart_3'
+            ? 'recovery'
+            : null
+        : null
+      const discountCode =
+        discountKind === 'welcome' ? 'PALAS-WELCOME-10' : discountKind === 'recovery' ? 'PANIER10-PREVIEW' : null
       const items = previewItems(input.itemCount)
       const rendered = await renderAbandonedCart({
         messageType: input.templateId,
@@ -32,16 +40,19 @@ export async function renderEmailTemplatePreview(
         recoveryUrl: RECOVERY_URL,
         unsubscribeUrl: UNSUBSCRIBE_URL,
         discountCode,
+        discountKind,
       })
       return {
         ...rendered,
         appliedBranches: [
           input.locale === 'en' ? 'English copy' : 'French copy',
-          discountCode
-            ? 'Welcome promotion shown'
-            : input.customerStatus === 'returning'
-              ? 'Welcome promotion hidden: existing customer'
-              : 'Welcome promotion hidden: campaign inactive',
+          discountKind === 'welcome'
+            ? 'Welcome discount reminder shown'
+            : discountKind === 'recovery'
+              ? 'Abandoned-cart discount offer shown (simulation)'
+              : input.promotionActive && input.customerStatus === 'returning'
+                ? 'Abandoned-cart discount not offered in Email 1'
+                : 'Promotion hidden: campaign inactive',
           `${items.length} cart item(s)`,
         ],
       }

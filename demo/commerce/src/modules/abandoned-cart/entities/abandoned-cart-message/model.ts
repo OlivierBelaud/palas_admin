@@ -19,7 +19,7 @@ export default defineModel('AbandonedCartMessage', {
   subject: field.text().nullable(),
   idempotency_key: field.text().nullable().index(),
   discount_code: field.text().nullable().index(),
-  discount_source: field.enum(['klaviyo_welcome', 'shopify_generated']).nullable().index(),
+  discount_source: field.enum(['klaviyo_welcome', 'shopify_generated', 'shopify_abandoned_cart']).nullable().index(),
   discount_shopify_id: field.text().nullable(),
   snapshot_html_key: field.text().nullable(),
   snapshot_html_url: field.text().nullable(),

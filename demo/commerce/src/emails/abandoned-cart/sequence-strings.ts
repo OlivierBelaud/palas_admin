@@ -1,14 +1,17 @@
 import type { Locale } from './strings'
 
 export type AbandonedCartMessageType = 'abandoned_cart_1' | 'abandoned_cart_2' | 'abandoned_cart_3'
+export type DiscountKind = 'welcome' | 'recovery'
 
 interface ReminderCopy {
   subject: string
   preview: string
   heading: string
-  promotionHeading: string
+  welcomeHeading: string
+  recoveryHeading: string
   body: string
-  promotionBody: string
+  welcomeBody: string
+  recoveryBody: string
   cta: string
   promotionCta: string
 }
@@ -21,7 +24,8 @@ interface AssistanceCopy {
   practicalIntro: string
   benefits: string[]
   completion: string
-  promotionCompletion: string
+  welcomeCompletion: string
+  recoveryCompletion: string
   cta: string
   signoff: string
 }
@@ -31,9 +35,11 @@ export const REMINDER_COPY: Record<Locale, ReminderCopy> = {
     subject: "Votre bijou Palas n'attend plus que vous 💗",
     preview: 'Profitez de -10% sur votre commande',
     heading: 'VOTRE BIJOU PALAS N’ATTEND PLUS QUE VOUS',
-    promotionHeading: '-10% SUR VOTRE COMMANDE',
+    welcomeHeading: 'VOTRE REMISE DE BIENVENUE VOUS ATTEND',
+    recoveryHeading: '-10% POUR FINALISER VOTRE PANIER',
     body: 'N’attendez plus pour recevoir votre nouveau bijou et tous les compliments qui vont avec !',
-    promotionBody: 'En plus, nous vous offrons -10% sur votre coup de cœur 💝',
+    welcomeBody: 'Votre remise de bienvenue de -10% est toujours disponible sur votre panier.',
+    recoveryBody: 'Pour vous aider à vous décider, nous vous offrons exceptionnellement -10% sur ce panier 💝',
     cta: 'JE FINALISE MA COMMANDE',
     promotionCta: '-10% SUR MA COMMANDE',
   },
@@ -41,9 +47,11 @@ export const REMINDER_COPY: Record<Locale, ReminderCopy> = {
     subject: 'Make it yours today 🌸',
     preview: '10% off your jewellery order',
     heading: 'MAKE IT YOURS TODAY',
-    promotionHeading: '10% OFF YOUR ORDER',
+    welcomeHeading: 'YOUR WELCOME DISCOUNT IS WAITING',
+    recoveryHeading: '10% OFF TO COMPLETE YOUR ORDER',
     body: 'Don’t wait to receive your new jewellery – and all the compliments that come with it!',
-    promotionBody: 'Enjoy 10% off the pieces that make your heart sing 💗',
+    welcomeBody: 'Your 10% welcome discount is still available on your basket.',
+    recoveryBody: 'To help you decide, we’re offering you an exceptional 10% off this basket 💗',
     cta: 'MAKE IT MINE',
     promotionCta: '10% OFF MY ORDER',
   },
@@ -64,7 +72,8 @@ export const ASSISTANCE_COPY: Record<Locale, AssistanceCopy> = {
       'Envie d’une pièce unique ? Contactez-nous pour créer votre bijou personnalisé.',
     ],
     completion: 'Pour finaliser votre commande, il vous suffit de retrouver votre panier.',
-    promotionCompletion: 'Vous bénéficierez de -10% avec le code indiqué ci-dessous.',
+    welcomeCompletion: 'Votre remise de bienvenue de -10% est toujours disponible avec le code ci-dessous.',
+    recoveryCompletion: 'Pour vous aider à finaliser ce panier, nous vous offrons -10% avec le code ci-dessous.',
     cta: 'JE FINALISE MA COMMANDE',
     signoff: 'Belle journée,\nLéa',
   },
@@ -82,7 +91,8 @@ export const ASSISTANCE_COPY: Record<Locale, AssistanceCopy> = {
       'Looking for something unique? Get in touch to create your personalised piece.',
     ],
     completion: 'To complete your order, simply return to your basket.',
-    promotionCompletion: 'You’ll get 10% off with the code shown below.',
+    welcomeCompletion: 'Your 10% welcome discount is still available with the code shown below.',
+    recoveryCompletion: 'To help you complete this basket, we’re offering you 10% off with the code shown below.',
     cta: 'COMPLETE MY ORDER',
     signoff: 'Wishing you a lovely day,\nLéa',
   },

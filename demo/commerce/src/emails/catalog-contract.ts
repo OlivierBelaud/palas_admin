@@ -68,7 +68,7 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateDefinition[] = [
     description: 'Deuxième relance de la séquence panier.',
     timing: '2 jours après l’Email 1',
     source: 'emails/abandoned-cart/AbandonedCartEmail.tsx',
-    controls: ['locale', 'customerStatus', 'promotionActive'],
+    controls: ['locale', 'customerStatus', 'promotionActive', 'itemCount'],
     sharedTemplate: 'Structure commune Palas avec contenu, objet et image de tête propres à l’Email 2.',
   },
   {
@@ -78,7 +78,7 @@ export const EMAIL_TEMPLATE_CATALOG: EmailTemplateDefinition[] = [
     description: 'Dernière relance de la séquence panier.',
     timing: '2 jours après l’Email 2',
     source: 'emails/abandoned-cart/AbandonedCartEmail.tsx',
-    controls: ['locale', 'customerStatus', 'promotionActive'],
+    controls: ['locale', 'customerStatus', 'promotionActive', 'itemCount'],
     sharedTemplate: 'Structure commune Palas avec contenu, objet et image de tête propres à l’Email 3.',
   },
   {

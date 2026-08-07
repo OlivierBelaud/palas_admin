@@ -150,11 +150,14 @@ describe('renderAbandonedCart', () => {
 
     expect(out.subject).toBe("Votre bijou Palas n'attend plus que vous 💗")
     expect(out.html).toContain('2ad06794-ddad-4fe8-a9f8-770c54dcf786')
-    expect(out.html).toContain('-10% SUR VOTRE COMMANDE')
+    expect(out.html).toContain('VOTRE REMISE DE BIENVENUE VOUS ATTEND')
+    expect(out.html).toContain('Nunito Sans')
     expect(out.html).toContain('PALAS10-ABC1234')
     expect(out.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
     expect(out.html).toContain('vous désabonner')
-    expect(out.html).not.toContain('Bracelet Solana')
+    expect(out.html).toContain('VOTRE PANIER')
+    expect(out.html).toContain('Bracelet Solana')
+    expect(out.html).toContain('Collier Aurora')
   })
 
   it('renders Email 3 as a personal assistance note with the shared reassurance and footer', async () => {
@@ -175,7 +178,27 @@ describe('renderAbandonedCart', () => {
     expect(out.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
     expect(out.html).toContain('unsubscribe')
     expect(out.html).not.toContain('PALAS10-ABC1234')
-    expect(out.html).not.toContain('Bracelet Solana')
+    expect(out.html).toContain('font-family:Times')
+    expect(out.html).toContain('YOUR BASKET')
+    expect(out.html).toContain('Bracelet Solana')
+    expect(out.html).toContain('Collier Aurora')
+  })
+
+  it('distinguishes a returning-customer recovery offer from a welcome discount', async () => {
+    const out = await renderAbandonedCart({
+      messageType: 'abandoned_cart_2',
+      locale: 'fr',
+      firstName: 'Alice',
+      items: FIXTURE_ITEMS,
+      recoveryUrl: `${RECOVERY}?discount=PANIER10-ABC1234`,
+      unsubscribeUrl: UNSUB,
+      discountCode: 'PANIER10-ABC1234',
+      discountKind: 'recovery',
+    })
+
+    expect(out.html).toContain('-10% POUR FINALISER VOTRE PANIER')
+    expect(out.html).toContain('PANIER10-ABC1234')
+    expect(out.html).not.toContain('REMISE DE BIENVENUE')
   })
 
   it('handles empty items array without crashing (no suggested grid)', async () => {

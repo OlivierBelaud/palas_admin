@@ -46,10 +46,11 @@ describe('email template preview catalog', () => {
 
     expect(preview.subject).toBe('Make it yours today 🌸')
     expect(preview.html).toContain('PALAS-WELCOME-10')
-    expect(preview.html).toContain('Enjoy 10% off the pieces that make your heart sing')
+    expect(preview.html).toContain('Your 10% welcome discount is still available on your basket.')
     expect(preview.html).toContain('2ad06794-ddad-4fe8-a9f8-770c54dcf786')
     expect(preview.html).not.toContain('santa-maria-necklace-red')
-    expect(preview.appliedBranches).toContain('Welcome promotion shown')
+    expect(preview.html).toContain('Santa Maria - Necklace Red')
+    expect(preview.appliedBranches).toContain('Welcome discount reminder shown')
   })
 
   it('renders a distinct assistance design for Email 3 while keeping scenario controls', async () => {
@@ -67,10 +68,12 @@ describe('email template preview catalog', () => {
     expect(preview.html).toContain('d5b52b1f-3aa4-480c-9280-f8de3944b486')
     expect(preview.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
     expect(preview.html).not.toContain('PALAS-WELCOME-10')
-    expect(preview.appliedBranches).toContain('Welcome promotion hidden: existing customer')
+    expect(preview.html).toContain('PANIER10-PREVIEW')
+    expect(preview.html).toContain('Santa Maria - Necklace Red')
+    expect(preview.appliedBranches).toContain('Abandoned-cart discount offer shown (simulation)')
   })
 
-  it('does not invent a welcome promotion for an existing customer', async () => {
+  it('does not offer the returning-customer recovery discount in Email 1', async () => {
     const preview = await renderEmailTemplatePreview({
       templateId: 'abandoned_cart_1',
       locale: 'fr',
@@ -81,7 +84,23 @@ describe('email template preview catalog', () => {
     })
 
     expect(preview.html).not.toContain('PALAS-WELCOME-10')
-    expect(preview.appliedBranches).toContain('Welcome promotion hidden: existing customer')
+    expect(preview.html).not.toContain('PANIER10-PREVIEW')
+    expect(preview.appliedBranches).toContain('Abandoned-cart discount not offered in Email 1')
+  })
+
+  it('hides all discount codes when the promotion campaign is inactive', async () => {
+    const preview = await renderEmailTemplatePreview({
+      templateId: 'abandoned_cart_2',
+      locale: 'fr',
+      customerStatus: 'returning',
+      promotionActive: false,
+      itemCount: 2,
+      reportStatus: 'ready',
+    })
+
+    expect(preview.html).not.toContain('PALAS-WELCOME-10')
+    expect(preview.html).not.toContain('PANIER10-PREVIEW')
+    expect(preview.appliedBranches).toContain('Promotion hidden: campaign inactive')
   })
 
   it('renders payment help in English without unrelated promotion copy', async () => {
