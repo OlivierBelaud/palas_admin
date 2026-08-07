@@ -29,11 +29,15 @@ import {
   Text,
 } from '@react-email/components'
 import type * as React from 'react'
-import { type Locale, STRINGS } from './strings'
+import { type AbandonedCartMessageType, ASSISTANCE_COPY, REMINDER_COPY } from './sequence-strings'
+import { type AbandonedCartStrings, type Locale, STRINGS } from './strings'
 import { pickSuggested, type SuggestedProduct, suggestedProductUrl } from './suggested-products'
 
 const ASSET_BASE = 'https://d3k81ch9hvuctc.cloudfront.net/company/VeFGwD/images'
-const LOGO = `${ASSET_BASE}/3d0122af-ab8b-40df-b454-dad4088a01d8.jpeg`
+// Source: Klaviyo flow "04 | Panier Abandonné" (templates XievGd, SC8bep and WjabxS).
+const EMAIL_1_HEADER = `${ASSET_BASE}/3d0122af-ab8b-40df-b454-dad4088a01d8.jpeg`
+const EMAIL_2_HEADER = `${ASSET_BASE}/2ad06794-ddad-4fe8-a9f8-770c54dcf786.jpeg`
+const EMAIL_3_HEADER = `${ASSET_BASE}/d5b52b1f-3aa4-480c-9280-f8de3944b486.jpeg`
 const DECO_PALM = `${ASSET_BASE}/d152e8a0-e093-4403-acf9-047d079d8abd.jpeg`
 const FOOTER_DECO = `${ASSET_BASE}/2982a0eb-5e22-4e4c-8bd2-da690775978a.jpeg`
 const USP_HANDMADE = `${ASSET_BASE}/d536e3d8-fd78-4ba2-8de0-66bec6f93772.jpeg`
@@ -51,7 +55,8 @@ const RETINA_IMAGE_SCALE = 2
 // Mobile responsive overlay.
 const MOBILE_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400&display=swap');
-body, .email-container { width: 100% !important; }
+body { width: 100% !important; margin: 0 !important; padding: 0 !important; }
+.email-container { width: 100% !important; }
 @media only screen and (max-width: 600px) {
   .email-container { width: 100% !important; max-width: 600px !important; }
   .px-tight { padding-left: 16px !important; padding-right: 16px !important; }
@@ -72,6 +77,7 @@ export interface AbandonedCartItem {
 }
 
 export interface AbandonedCartEmailProps {
+  messageType?: AbandonedCartMessageType
   locale: Locale
   firstName?: string | null
   items: AbandonedCartItem[]
@@ -83,9 +89,17 @@ export interface AbandonedCartEmailProps {
 }
 
 export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactElement {
-  const { locale, items, recoveryUrl, unsubscribeUrl, discountCode } = props
+  const {
+    messageType = 'abandoned_cart_1',
+    locale,
+    firstName,
+    items,
+    recoveryUrl,
+    unsubscribeUrl,
+    discountCode,
+  } = props
   const t = STRINGS[locale]
-  const showSuggested = items.length >= 1 && items.length <= 2
+  const showSuggested = messageType === 'abandoned_cart_1' && items.length >= 1 && items.length <= 2
   const suggested: SuggestedProduct[] = showSuggested
     ? pickSuggested(
         items.map((i) => i.title),
@@ -100,124 +114,44 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: required for inline <style> in email HTML; MOBILE_CSS is a static string */}
         <style dangerouslySetInnerHTML={{ __html: MOBILE_CSS }} />
       </Head>
-      <Preview>{t.preview}</Preview>
+      <Preview>
+        {messageType === 'abandoned_cart_2'
+          ? REMINDER_COPY[locale].preview
+          : messageType === 'abandoned_cart_3'
+            ? ASSISTANCE_COPY[locale].preview
+            : t.preview}
+      </Preview>
       <Body style={{ backgroundColor: '#ffffff', margin: 0, padding: 0, fontFamily: BODY_FONT, color: '#0e1f27' }}>
         <Container
           className="email-container"
           style={{ width: '100%', maxWidth: CONTAINER_WIDTH, margin: '0 auto', padding: 0 }}
         >
-          {/* ── Logo banner ──────────────────────────────────────────── */}
-          <Section style={{ padding: 0, textAlign: 'center' }}>
-            <Link href={recoveryUrl} style={{ display: 'block' }}>
-              <Img
-                src={LOGO}
-                alt="PALAS"
-                width={CONTAINER_WIDTH}
-                style={{ display: 'block', width: '100%', maxWidth: '100%', height: 'auto', border: 0 }}
-              />
-            </Link>
-          </Section>
+          <EmailHeader messageType={messageType} recoveryUrl={recoveryUrl} />
 
-          {/* ── Live heading text: selectable, translatable and responsive ── */}
-          <Section style={{ textAlign: 'center', padding: '48px 16px 24px' }}>
-            <Heading
-              as="h1"
-              className="hero-heading"
-              style={{
-                fontFamily: HEAD_FONT,
-                fontSize: 43,
-                lineHeight: 0.98,
-                letterSpacing: '-0.02em',
-                margin: '0 auto',
-                maxWidth: 560,
-                fontWeight: 400,
-                color: '#000000',
-                textAlign: 'center',
-              }}
-            >
-              {t.heading}
-            </Heading>
-          </Section>
-
-          {/* ── Body intro ───────────────────────────────────────────── */}
-          <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
-            <Text style={{ fontSize: 14, lineHeight: 1.5, margin: 0, color: '#000000' }}>
-              {t.subHeading}
-              <br />
-              <br />
-              {t.body}
-              {t.bodyEmphasis ? <strong>{t.bodyEmphasis}</strong> : null}
-            </Text>
-          </Section>
-
-          {discountCode && (
-            <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
-              <Text style={{ fontSize: 14, lineHeight: 1.5, margin: '0 0 10px', color: '#000000' }}>
-                {t.discountIntro}
-              </Text>
-              <Text
-                style={{
-                  fontSize: 18,
-                  lineHeight: 1.2,
-                  margin: '0 auto 10px',
-                  color: '#000000',
-                  fontWeight: 700,
-                  letterSpacing: 0,
-                  fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
-                }}
-              >
-                {t.discountCodeLabel} : {discountCode}
-              </Text>
-              <Text style={{ fontSize: 12, lineHeight: 1.5, margin: 0, color: '#555555' }}>{t.discountFootnote}</Text>
-            </Section>
+          {messageType === 'abandoned_cart_1' ? (
+            <FirstReminderContent
+              discountCode={discountCode}
+              items={items}
+              recoveryUrl={recoveryUrl}
+              suggested={suggested}
+              t={t}
+            />
+          ) : messageType === 'abandoned_cart_2' ? (
+            <SecondReminderContent discountCode={discountCode} locale={locale} recoveryUrl={recoveryUrl} />
+          ) : (
+            <AssistanceContent
+              discountCode={discountCode}
+              firstName={firstName}
+              locale={locale}
+              recoveryUrl={recoveryUrl}
+            />
           )}
 
-          {/* ── Primary CTA ──────────────────────────────────────────── */}
-          <Section style={{ textAlign: 'center', padding: '0 18px 24px' }}>
-            <CTAButton href={recoveryUrl} label={t.cta1} />
-          </Section>
-
-          {/* ── Cart items — adaptive layout ─────────────────────────── */}
-          {items.length === 1 && <HeroProduct item={items[0]} recoveryUrl={recoveryUrl} />}
-          {items.length === 2 && <DuoGrid items={items} recoveryUrl={recoveryUrl} />}
-          {items.length >= 3 && <ListLayout items={items} recoveryUrl={recoveryUrl} />}
-
-          {/* ── Secondary CTA ────────────────────────────────────────── */}
-          <Section style={{ textAlign: 'center', padding: '24px 18px 24px' }}>
-            <CTAButton href={recoveryUrl} label={t.cta2} />
-          </Section>
-
-          {/* ── Suggested products — IMMEDIATELY after CTA2, only if 1-2 cart items ── */}
-          {showSuggested && suggested.length > 0 && (
-            <SuggestedProductsSection heading={t.suggestedHeading} products={suggested} />
-          )}
-
-          {/* ── "Les bijoux Palas sont :" + USPs ─────────────────────── */}
+          {/* ── Shared reassurance title + USPs ───────────────────────── */}
           <Section style={{ padding: '24px 16px 0', textAlign: 'center' }}>
-            <Text
-              style={{
-                fontFamily: HEAD_FONT,
-                fontSize: 28,
-                lineHeight: 1.2,
-                margin: 0,
-                fontWeight: 400,
-                color: '#000000',
-                textAlign: 'center',
-              }}
-            >
-              {t.uspsHeading}
-            </Text>
-          </Section>
-          <Section className="px-tight" style={{ padding: '24px 75px 32px' }}>
-            <UspRow left={[USP_HANDMADE, t.usp1Title, t.usp1Body]} right={[USP_WATERPROOF, t.usp2Title, t.usp2Body]} />
-            <UspRow left={[USP_EXPRESS, t.usp3Title, t.usp3Body]} right={[USP_WARRANTY, t.usp4Title, t.usp4Body]} />
-          </Section>
-
-          {/* ── Decorative palm break ────────────────────────────────── */}
-          <Section style={{ padding: '0 0 24px', textAlign: 'center' }}>
             <Img
               src={DECO_PALM}
-              alt=""
+              alt={t.uspsHeading}
               width="250"
               style={{
                 display: 'block',
@@ -228,6 +162,10 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
                 border: 0,
               }}
             />
+          </Section>
+          <Section className="px-tight" style={{ padding: '24px 75px 32px' }}>
+            <UspRow left={[USP_HANDMADE, t.usp1Title, t.usp1Body]} right={[USP_WATERPROOF, t.usp2Title, t.usp2Body]} />
+            <UspRow left={[USP_EXPRESS, t.usp3Title, t.usp3Body]} right={[USP_WARRANTY, t.usp4Title, t.usp4Body]} />
           </Section>
 
           {/* ── Contact ─────────────────────────────────────────────── */}
@@ -287,6 +225,220 @@ export function AbandonedCartEmail(props: AbandonedCartEmailProps): React.ReactE
 export default AbandonedCartEmail
 
 // ───────────────────────── Sub-components ────────────────────────────
+
+function EmailHeader({
+  messageType,
+  recoveryUrl,
+}: {
+  messageType: AbandonedCartMessageType
+  recoveryUrl: string
+}): React.ReactElement {
+  const compact = messageType === 'abandoned_cart_3'
+  const src =
+    messageType === 'abandoned_cart_2'
+      ? EMAIL_2_HEADER
+      : messageType === 'abandoned_cart_3'
+        ? EMAIL_3_HEADER
+        : EMAIL_1_HEADER
+  const width = compact ? 160 : CONTAINER_WIDTH
+
+  return (
+    <Section style={{ padding: compact ? '36px 16px 20px' : 0, textAlign: 'center' }}>
+      <Link href={recoveryUrl} style={{ display: 'block' }}>
+        <Img
+          src={src}
+          alt="PALAS"
+          width={String(width)}
+          style={{
+            display: 'block',
+            margin: '0 auto',
+            width: compact ? `${width}px` : '100%',
+            maxWidth: '100%',
+            height: 'auto',
+            border: 0,
+          }}
+        />
+      </Link>
+    </Section>
+  )
+}
+
+function FirstReminderContent({
+  discountCode,
+  items,
+  recoveryUrl,
+  suggested,
+  t,
+}: {
+  discountCode?: string | null
+  items: AbandonedCartItem[]
+  recoveryUrl: string
+  suggested: SuggestedProduct[]
+  t: AbandonedCartStrings
+}): React.ReactElement {
+  return (
+    <>
+      <LiveHeading>{t.heading}</LiveHeading>
+      <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
+        <Text style={{ fontSize: 14, lineHeight: 1.5, margin: 0, color: '#000000' }}>
+          {t.subHeading}
+          <br />
+          <br />
+          {t.body}
+          {t.bodyEmphasis ? <strong>{t.bodyEmphasis}</strong> : null}
+        </Text>
+      </Section>
+      {discountCode ? <DiscountCodeBlock code={discountCode} t={t} /> : null}
+      <Section style={{ textAlign: 'center', padding: '0 18px 24px' }}>
+        <CTAButton href={recoveryUrl} label={t.cta1} />
+      </Section>
+      {items.length === 1 && <HeroProduct item={items[0]} recoveryUrl={recoveryUrl} />}
+      {items.length === 2 && <DuoGrid items={items} recoveryUrl={recoveryUrl} />}
+      {items.length >= 3 && <ListLayout items={items} recoveryUrl={recoveryUrl} />}
+      <Section style={{ textAlign: 'center', padding: '24px 18px' }}>
+        <CTAButton href={recoveryUrl} label={t.cta2} />
+      </Section>
+      {suggested.length > 0 ? <SuggestedProductsSection heading={t.suggestedHeading} products={suggested} /> : null}
+    </>
+  )
+}
+
+function SecondReminderContent({
+  discountCode,
+  locale,
+  recoveryUrl,
+}: {
+  discountCode?: string | null
+  locale: Locale
+  recoveryUrl: string
+}): React.ReactElement {
+  const copy = REMINDER_COPY[locale]
+  return (
+    <>
+      <LiveHeading>{discountCode ? copy.promotionHeading : copy.heading}</LiveHeading>
+      <Section className="px-tight" style={{ padding: '0 50px 20px', textAlign: 'center' }}>
+        <Text style={{ fontSize: 16, lineHeight: 1.55, margin: 0, color: '#000000' }}>
+          {copy.body}
+          {discountCode ? (
+            <>
+              <br />
+              <br />
+              {copy.promotionBody}
+            </>
+          ) : null}
+        </Text>
+      </Section>
+      {discountCode ? <SequenceDiscountCode code={discountCode} locale={locale} /> : null}
+      <Section style={{ textAlign: 'center', padding: '4px 18px 40px' }}>
+        <CTAButton href={recoveryUrl} label={discountCode ? copy.promotionCta : copy.cta} />
+      </Section>
+    </>
+  )
+}
+
+function AssistanceContent({
+  discountCode,
+  firstName,
+  locale,
+  recoveryUrl,
+}: {
+  discountCode?: string | null
+  firstName?: string | null
+  locale: Locale
+  recoveryUrl: string
+}): React.ReactElement {
+  const copy = ASSISTANCE_COPY[locale]
+  const greeting = firstName?.trim() ? `${copy.greeting} ${firstName.trim()},` : `${copy.greeting},`
+  return (
+    <>
+      <Section className="px-tight" style={{ padding: '24px 50px 12px', textAlign: 'left' }}>
+        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 18px', color: '#000000' }}>{greeting}</Text>
+        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 18px', color: '#000000' }}>{copy.intro}</Text>
+        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '0 0 10px', color: '#000000' }}>
+          {copy.practicalIntro}
+        </Text>
+        {copy.benefits.map((benefit) => (
+          <Text key={benefit} style={{ fontSize: 15, lineHeight: 1.55, margin: '0 0 7px', color: '#000000' }}>
+            • {benefit}
+          </Text>
+        ))}
+        <Text style={{ fontSize: 15, lineHeight: 1.65, margin: '20px 0 0', color: '#000000' }}>
+          {copy.completion}
+          {discountCode ? ` ${copy.promotionCompletion}` : ''}
+        </Text>
+      </Section>
+      {discountCode ? <SequenceDiscountCode code={discountCode} locale={locale} /> : null}
+      <Section style={{ textAlign: 'center', padding: '8px 18px 28px' }}>
+        <CTAButton href={recoveryUrl} label={copy.cta} />
+      </Section>
+      <Section className="px-tight" style={{ padding: '0 50px 34px', textAlign: 'left' }}>
+        <Text style={{ fontSize: 15, lineHeight: 1.55, margin: 0, color: '#000000', whiteSpace: 'pre-line' }}>
+          {copy.signoff}
+        </Text>
+      </Section>
+    </>
+  )
+}
+
+function LiveHeading({ children }: { children: string }): React.ReactElement {
+  return (
+    <Section style={{ textAlign: 'center', padding: '48px 16px 24px' }}>
+      <Heading
+        as="h1"
+        className="hero-heading"
+        style={{
+          fontFamily: HEAD_FONT,
+          fontSize: 43,
+          lineHeight: 0.98,
+          letterSpacing: '-0.02em',
+          margin: '0 auto',
+          maxWidth: 560,
+          fontWeight: 400,
+          color: '#000000',
+          textAlign: 'center',
+        }}
+      >
+        {children}
+      </Heading>
+    </Section>
+  )
+}
+
+function DiscountCodeBlock({ code, t }: { code: string; t: AbandonedCartStrings }): React.ReactElement {
+  return (
+    <Section className="px-tight" style={{ padding: '0 50px 24px', textAlign: 'center' }}>
+      <Text style={{ fontSize: 14, lineHeight: 1.5, margin: '0 0 10px', color: '#000000' }}>{t.discountIntro}</Text>
+      <PromoCode code={code} label={t.discountCodeLabel} />
+      <Text style={{ fontSize: 12, lineHeight: 1.5, margin: 0, color: '#555555' }}>{t.discountFootnote}</Text>
+    </Section>
+  )
+}
+
+function SequenceDiscountCode({ code, locale }: { code: string; locale: Locale }): React.ReactElement {
+  return (
+    <Section className="px-tight" style={{ padding: '0 50px 22px', textAlign: 'center' }}>
+      <PromoCode code={code} label={locale === 'fr' ? 'Code promo' : 'Promo code'} />
+    </Section>
+  )
+}
+
+function PromoCode({ code, label }: { code: string; label: string }): React.ReactElement {
+  return (
+    <Text
+      style={{
+        fontSize: 18,
+        lineHeight: 1.2,
+        margin: '0 auto 10px',
+        color: '#000000',
+        fontWeight: 700,
+        letterSpacing: 0,
+        fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+      }}
+    >
+      {label} : {code}
+    </Text>
+  )
+}
 
 function CTAButton({ href, label }: { href: string; label: string }): React.ReactElement {
   return (

@@ -269,6 +269,7 @@ export async function runAbandonedCartBackfill(opts: RunOptions): Promise<RunRes
     const unsubscribeUrl = `${adminBase}/api/contact/unsubscribe?t=${unsubscribeToken}`
 
     const { subject, html, text } = await renderAbandonedCart({
+      messageType: 'abandoned_cart_1',
       locale,
       firstName: c.first_name,
       items,

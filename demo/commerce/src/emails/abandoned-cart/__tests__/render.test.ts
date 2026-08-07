@@ -137,6 +137,47 @@ describe('renderAbandonedCart', () => {
     expect(out.text).toContain('PALAS10-ABC1234')
   })
 
+  it('renders Email 2 with the Klaviyo reminder design and shared footer', async () => {
+    const out = await renderAbandonedCart({
+      messageType: 'abandoned_cart_2',
+      locale: 'fr',
+      firstName: 'Alice',
+      items: FIXTURE_ITEMS,
+      recoveryUrl: RECOVERY,
+      unsubscribeUrl: UNSUB,
+      discountCode: 'PALAS10-ABC1234',
+    })
+
+    expect(out.subject).toBe("Votre bijou Palas n'attend plus que vous 💗")
+    expect(out.html).toContain('2ad06794-ddad-4fe8-a9f8-770c54dcf786')
+    expect(out.html).toContain('-10% SUR VOTRE COMMANDE')
+    expect(out.html).toContain('PALAS10-ABC1234')
+    expect(out.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
+    expect(out.html).toContain('vous désabonner')
+    expect(out.html).not.toContain('Bracelet Solana')
+  })
+
+  it('renders Email 3 as a personal assistance note with the shared reassurance and footer', async () => {
+    const out = await renderAbandonedCart({
+      messageType: 'abandoned_cart_3',
+      locale: 'en',
+      firstName: 'Alice',
+      items: FIXTURE_ITEMS,
+      recoveryUrl: RECOVERY,
+      unsubscribeUrl: UNSUB,
+    })
+
+    expect(out.subject).toBe("Got a question or not quite sure? I'm here to help ❤️")
+    expect(out.html).toContain('d5b52b1f-3aa4-480c-9280-f8de3944b486')
+    expect(out.text).toContain('Hello Alice,')
+    expect(out.text).toContain('Your order will be shipped within 48 hours.')
+    expect(out.html).toContain('51f1c760-8a3f-4140-8188-c1af2ac562ed')
+    expect(out.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
+    expect(out.html).toContain('unsubscribe')
+    expect(out.html).not.toContain('PALAS10-ABC1234')
+    expect(out.html).not.toContain('Bracelet Solana')
+  })
+
   it('handles empty items array without crashing (no suggested grid)', async () => {
     const out = await renderAbandonedCart({
       locale: 'fr',

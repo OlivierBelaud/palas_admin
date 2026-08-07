@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { SUGGESTED_PRODUCTS_POOL } from '../src/emails/abandoned-cart/suggested-products'
 import { renderEmailTemplatePreview } from '../src/emails/catalog'
 import {
   EMAIL_TEMPLATE_CATALOG,
@@ -45,11 +44,30 @@ describe('email template preview catalog', () => {
       reportStatus: 'ready',
     })
 
-    expect(preview.subject).toBe('Your favourite jewellery is waiting for you')
+    expect(preview.subject).toBe('Make it yours today 🌸')
     expect(preview.html).toContain('PALAS-WELCOME-10')
-    expect(preview.html).toContain('Because this would be your first Palas order')
-    expect(preview.html).toContain(SUGGESTED_PRODUCTS_POOL[0].imageUrl.replaceAll('&', '&amp;'))
+    expect(preview.html).toContain('Enjoy 10% off the pieces that make your heart sing')
+    expect(preview.html).toContain('2ad06794-ddad-4fe8-a9f8-770c54dcf786')
+    expect(preview.html).not.toContain('santa-maria-necklace-red')
     expect(preview.appliedBranches).toContain('Welcome promotion shown')
+  })
+
+  it('renders a distinct assistance design for Email 3 while keeping scenario controls', async () => {
+    const preview = await renderEmailTemplatePreview({
+      templateId: 'abandoned_cart_3',
+      locale: 'fr',
+      customerStatus: 'returning',
+      promotionActive: true,
+      itemCount: 2,
+      reportStatus: 'ready',
+    })
+
+    expect(preview.subject).toBe('Un doute ? Une question ? Je suis là pour vous ❤️')
+    expect(preview.text).toContain('Bonjour Camille,')
+    expect(preview.html).toContain('d5b52b1f-3aa4-480c-9280-f8de3944b486')
+    expect(preview.html).toContain('2982a0eb-5e22-4e4c-8bd2-da690775978a')
+    expect(preview.html).not.toContain('PALAS-WELCOME-10')
+    expect(preview.appliedBranches).toContain('Welcome promotion hidden: existing customer')
   })
 
   it('does not invent a welcome promotion for an existing customer', async () => {

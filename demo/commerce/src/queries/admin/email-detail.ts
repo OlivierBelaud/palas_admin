@@ -1,4 +1,5 @@
 import { renderAbandonedCart } from '../../emails/abandoned-cart/render'
+import type { AbandonedCartMessageType } from '../../emails/abandoned-cart/sequence-strings'
 import type { Locale } from '../../emails/abandoned-cart/strings'
 import { readRows } from '../../utils/drizzle-read'
 import { type RuntimeApp, type RuntimeFilePort, resolveFile } from '../../utils/manta-runtime'
@@ -325,6 +326,7 @@ async function renderPreview(message: MessageRow, cart: CartRow | null) {
   const locale = normalizeLocale(message.locale)
 
   const rendered = await renderAbandonedCart({
+    messageType: normalizeMessageType(message.message_type),
     locale,
     firstName: cart.first_name,
     items,
@@ -347,6 +349,11 @@ async function renderPreview(message: MessageRow, cart: CartRow | null) {
 
 function normalizeLocale(value: string | null): Locale {
   return value === 'en' ? 'en' : 'fr'
+}
+
+function normalizeMessageType(value: string): AbandonedCartMessageType {
+  if (value === 'abandoned_cart_2' || value === 'abandoned_cart_3') return value
+  return 'abandoned_cart_1'
 }
 
 function coerceItems(raw: unknown) {

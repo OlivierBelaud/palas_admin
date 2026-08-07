@@ -7,6 +7,7 @@
 import { render } from '@react-email/render'
 import * as React from 'react'
 import { AbandonedCartEmail, type AbandonedCartEmailProps } from './AbandonedCartEmail'
+import { ASSISTANCE_COPY, REMINDER_COPY } from './sequence-strings'
 import { STRINGS } from './strings'
 
 export interface RenderedEmail {
@@ -18,8 +19,15 @@ export interface RenderedEmail {
 export async function renderAbandonedCart(props: AbandonedCartEmailProps): Promise<RenderedEmail> {
   const node = React.createElement(AbandonedCartEmail, props)
   const [html, text] = await Promise.all([render(node), render(node, { plainText: true })])
+  const messageType = props.messageType ?? 'abandoned_cart_1'
+  const subject =
+    messageType === 'abandoned_cart_2'
+      ? REMINDER_COPY[props.locale].subject
+      : messageType === 'abandoned_cart_3'
+        ? ASSISTANCE_COPY[props.locale].subject
+        : STRINGS[props.locale].subject
   return {
-    subject: STRINGS[props.locale].subject,
+    subject,
     html,
     text,
   }

@@ -187,7 +187,9 @@ export async function sendAbandonedCartEmailForCart(
   }
 
   const idempotencyKey = input.idempotencyKey ?? `abandoned-cart:${cart.id}:${cart.abandon_notified_count ?? 0}`
-  const sequenceStep = Math.max(1, Math.floor(Number(cart.abandon_notified_count ?? 0)) + 1)
+  const sequenceStep = Math.min(3, Math.max(1, Math.floor(Number(cart.abandon_notified_count ?? 0)) + 1))
+  const messageType =
+    sequenceStep === 2 ? 'abandoned_cart_2' : sequenceStep === 3 ? 'abandoned_cart_3' : 'abandoned_cart_1'
   const recoveryUrl = buildRecoveryUrl(
     {
       checkout_token: cart.checkout_token,
@@ -198,7 +200,7 @@ export async function sendAbandonedCartEmailForCart(
       trackingParams: buildEmailLinkTrackingParams({
         email: cart.email,
         campaign: 'abandoned_cart',
-        messageType: `abandoned_cart_${sequenceStep}`,
+        messageType,
         messageId: idempotencyKey,
         sequenceVersion: 1,
         sequenceStep,
@@ -219,6 +221,7 @@ export async function sendAbandonedCartEmailForCart(
   //    Currency is still passed through for future template variants. V1 keeps
   //    product prices out of the email.
   const { subject, html, text } = await renderAbandonedCart({
+    messageType,
     locale,
     firstName: cart.first_name,
     items: itemsArr,

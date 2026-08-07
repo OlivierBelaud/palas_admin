@@ -24,6 +24,7 @@ export async function renderEmailTemplatePreview(
       const discountCode = input.customerStatus === 'new' && input.promotionActive ? 'PALAS-WELCOME-10' : null
       const items = previewItems(input.itemCount)
       const rendered = await renderAbandonedCart({
+        messageType: input.templateId,
         locale: input.locale,
         firstName: 'Camille',
         items,

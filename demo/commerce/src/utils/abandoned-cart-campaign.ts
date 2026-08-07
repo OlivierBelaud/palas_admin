@@ -683,6 +683,7 @@ async function renderMessage(opts: {
 
   if (opts.messageType !== 'payment_help_1') {
     const rendered = await renderAbandonedCart({
+      messageType: opts.messageType,
       locale,
       firstName: opts.cart.first_name,
       items,
