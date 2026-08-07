@@ -36,7 +36,6 @@ export interface AbandonedCartCampaignOptions {
   dryRun?: boolean
   maxCaseAgeDays?: number
   recoveryWindowDays?: number
-  returningDiscountEnabled?: boolean
   log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void }
 }
 
@@ -770,7 +769,6 @@ export async function runAbandonedCartCampaign(
     dryRun = false,
     maxCaseAgeDays = DEFAULT_MAX_CASE_AGE_DAYS,
     recoveryWindowDays = DEFAULT_RECOVERY_WINDOW_DAYS,
-    returningDiscountEnabled = process.env.ABANDONED_CART_RETURNING_DISCOUNT_ENABLED === 'true',
     log,
   } = opts
 
@@ -961,7 +959,7 @@ export async function runAbandonedCartCampaign(
           log,
           signal,
         })
-      } else if (returningDiscountEnabled && (next.type === 'abandoned_cart_2' || next.type === 'abandoned_cart_3')) {
+      } else if (next.type === 'abandoned_cart_2' || next.type === 'abandoned_cart_3') {
         discountGrant = await resolveAbandonedCartDiscountForEmail({
           email: c.email,
           numberOfOrders: knownOrderCount,
