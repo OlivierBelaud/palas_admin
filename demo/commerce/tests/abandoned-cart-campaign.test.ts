@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runAbandonedCartCampaign } from '../src/utils/abandoned-cart-campaign'
+import { abandonedCartDiscountKind, runAbandonedCartCampaign } from '../src/utils/abandoned-cart-campaign'
+import { pullAbandonEventsFromKlaviyo } from '../src/utils/klaviyo-abandon-event-sync'
 import type { RuntimeNotificationPort, RuntimeSql } from '../src/utils/manta-runtime'
 
 const resolveWelcomeDiscountForEmailMock = vi.hoisted(() =>
@@ -223,7 +224,7 @@ describe('runAbandonedCartCampaign guard checks', () => {
     expect(writes).toContain('message')
   })
 
-  it('never resolves or sends a discount when the contact already has orders', async () => {
+  it('does not resolve or send a discount to a returning customer in Email 1', async () => {
     vi.stubEnv('SHOPIFY_ADMIN_ACCESS_TOKEN', 'test_token')
     vi.stubEnv('SHOPIFY_SHOP_DOMAIN', 'fancy-palas.myshopify.com')
     vi.stubGlobal(
@@ -343,5 +344,115 @@ describe('runAbandonedCartCampaign guard checks', () => {
     )
     expect(writes).toContain('message')
     expect(writes).toContain('cart')
+  })
+})
+
+describe('abandonedCartDiscountKind', () => {
+  it.each([
+    ['abandoned_cart_1', 0, 'welcome'],
+    ['abandoned_cart_2', 0, 'welcome'],
+    ['abandoned_cart_3', 0, 'welcome'],
+    ['abandoned_cart_1', 3, null],
+    ['abandoned_cart_2', 3, 'recovery'],
+    ['abandoned_cart_3', 3, 'recovery'],
+    ['payment_help_1', 0, null],
+    ['payment_help_1', 3, null],
+  ] as const)('returns %s / order count %s => %s', (messageType, knownOrderCount, expected) => {
+    expect(abandonedCartDiscountKind(messageType, knownOrderCount)).toBe(expected)
+  })
+})
+
+describe('pullAbandonEventsFromKlaviyo', () => {
+  it('keeps cart/checkout events while excluding newsletters and browse abandonment', async () => {
+    const responses = [
+      {
+        data: [
+          { id: 'metric-received', attributes: { name: 'Received Email' } },
+          { id: 'metric-trigger', attributes: { name: 'Checkout Abandoned' } },
+        ],
+        links: { next: null },
+      },
+      {
+        data: [
+          {
+            id: 'event-abandon-email',
+            attributes: {
+              datetime: '2026-07-15T10:00:00Z',
+              event_properties: { Subject: 'Vous avez oublié quelque chose 👀' },
+            },
+            relationships: { profile: { data: { id: 'profile-1' } } },
+          },
+          {
+            id: 'event-newsletter',
+            attributes: {
+              datetime: '2026-07-15T10:01:00Z',
+              event_properties: { Subject: 'Nos nouveautés de juillet' },
+            },
+            relationships: { profile: { data: { id: 'profile-1' } } },
+          },
+          {
+            id: 'event-browse-abandonment',
+            attributes: {
+              datetime: '2026-07-15T10:02:00Z',
+              event_properties: { Subject: 'Vous y pensez encore ?' },
+            },
+            relationships: { profile: { data: { id: 'profile-1' } } },
+          },
+        ],
+        included: [{ id: 'profile-1', type: 'profile', attributes: { email: 'Client@Example.com' } }],
+        links: { next: null },
+      },
+      {
+        data: [
+          {
+            id: 'event-trigger',
+            attributes: {
+              datetime: '2026-07-15T09:00:00Z',
+              event_properties: { checkout_url: 'https://shop.test/checkouts/ac/token-123?key=x' },
+            },
+            relationships: { profile: { data: { id: 'profile-1' } } },
+          },
+        ],
+        included: [{ id: 'profile-1', type: 'profile', attributes: { email: 'Client@Example.com' } }],
+        links: { next: null },
+      },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify(responses.shift()), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    const rows = await pullAbandonEventsFromKlaviyo({
+      apiKey: 'test-key',
+      sinceIso: '2026-07-15T00:00:00Z',
+      untilIso: '2026-07-16T00:00:00Z',
+      now: () => new Date('2026-07-16T01:00:00Z'),
+    })
+
+    expect(rows.map((row) => row.klaviyo_event_id)).toEqual(['event-trigger', 'event-abandon-email'])
+    expect(rows[0]).toMatchObject({
+      email: 'client@example.com',
+      metric: 'Checkout Abandoned',
+      checkout_token: 'token-123',
+    })
+  })
+
+  it('fails closed when Klaviyo rejects the request', async () => {
+    class TestMantaError extends Error {
+      constructor(_code: string, message: string) {
+        super(message)
+      }
+    }
+    vi.stubGlobal('MantaError', TestMantaError)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('forbidden', { status: 403 })))
+
+    await expect(
+      pullAbandonEventsFromKlaviyo({ apiKey: 'bad-key', sinceIso: '2026-07-15T00:00:00Z' }),
+    ).rejects.toThrow('Klaviyo events API 403')
   })
 })

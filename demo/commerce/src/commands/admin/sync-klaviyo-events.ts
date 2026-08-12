@@ -1,4 +1,4 @@
-// Command: pull abandonment-flow Klaviyo events from PostHog DW into the
+// Command: pull abandonment-flow events directly from Klaviyo into the
 // local `klaviyo_events` table so abandoned-carts can read Postgres instead
 // of doing a synchronous HogQL roundtrip.
 //
@@ -13,16 +13,15 @@
 // 'klaviyo'` (only when not already notified) so that
 // `cart.abandon_notified_at` is a unified record across Manta + Klaviyo.
 
-import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
+import {
+  isKlaviyoCartOrCheckoutEmail,
+  pullAbandonEventsFromKlaviyo,
+} from '../../utils/klaviyo-abandon-event-sync'
 import { type CartMarkingRepo, markCartsFromKlaviyoEvents } from '../../utils/sync-klaviyo-events-mark-helper'
 
-const HOGQL_LIMIT = 5000
 const FALLBACK_LOOKBACK_MS = 365 * 86400 * 1000
 const OVERLAP_MS = 3600 * 1000 // 1h overlap to absorb Klaviyo eventual consistency
-
-function hogqlDateString(iso: string): string {
-  return iso.slice(0, 19)
-}
+const MAX_EVENT_WINDOW_MS = 6 * 3600 * 1000
 
 interface IngestResult {
   scanned: number
@@ -41,114 +40,26 @@ interface KlaviyoEventRow {
   synced_at: Date
 }
 
-async function pullEventsFromHogQL(args: {
+async function pullEventsFromKlaviyo(args: {
   sinceIso: string
+  untilIso: string
   signal?: AbortSignal
-  warn: (msg: string) => void
 }): Promise<KlaviyoEventRow[]> {
-  const phKey = posthogPrivateKey()
-  if (!phKey) {
-    args.warn('[sync-klaviyo-events] POSTHOG_API_KEY missing — skip')
-    return []
-  }
-
-  const out: KlaviyoEventRow[] = []
-  const seen = new Set<string>()
-  let offset = 0
-
-  while (true) {
-    if (args.signal?.aborted) break
-
-    // Same metric + subject filter as abandoned-carts.ts. Don't drift.
-    const sql = `
-      SELECT
-        ke.uuid AS klaviyo_event_id,
-        lower(kp.email) AS email,
-        km.name AS metric,
-        JSONExtractString(ke.event_properties, 'Subject') AS subject,
-        coalesce(
-          extract(
-            JSONExtractString(ke.event_properties, 'checkout_url'),
-            'checkouts/ac/([^/?"]+)'
-          ),
-          JSONExtractString(ke.event_properties, 'checkout_token'),
-          ''
-        ) AS checkout_token,
-        toString(ke.datetime) AS occurred_at
-      FROM klaviyo_events ke
-      JOIN klaviyo_profiles kp ON kp.id = JSONExtractString(ke.relationships, 'profile', 'data', 'id')
-      JOIN klaviyo_metrics km ON km.id = JSONExtractString(ke.relationships, 'metric', 'data', 'id')
-      WHERE ke.datetime >= '${hogqlDateString(args.sinceIso)}'
-        AND lower(kp.email) != ''
-        AND (
-          km.name = 'Shopify_Checkout_Abandonned'
-          OR km.name = 'Checkout Abandoned'
-          OR km.name = 'Ops Cart Abandoned'
-          OR (
-            km.name = 'Received Email'
-            AND (
-              positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'oubli') > 0
-              OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'pensez encore') > 0
-              OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'attend plus que vous') > 0
-              OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'commande palas vous attend') > 0
-              OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'valider votre commande') > 0
-              OR positionCaseInsensitive(JSONExtractString(ke.event_properties, 'Subject'), 'sélection de bijoux palas vous attend') > 0
-            )
-          )
-        )
-      ORDER BY ke.datetime ASC
-      LIMIT ${HOGQL_LIMIT} OFFSET ${offset}
-    `
-
-    let rows: unknown[][]
-    try {
-      rows = await runPosthogHogQL(sql, {
-        privateKey: phKey,
-        refresh: 'force_blocking',
-        signal: args.signal,
-      })
-    } catch (err) {
-      args.warn(`[sync-klaviyo-events] ${(err as Error).message} — abort`)
-      break
-    }
-    if (rows.length === 0) break
-
-    for (const r of rows) {
-      const row = r as Array<unknown>
-      const id = String(row[0] ?? '').trim()
-      if (!id || seen.has(id)) continue
-      seen.add(id)
-      const email = String(row[1] ?? '')
-        .trim()
-        .toLowerCase()
-      const metric = String(row[2] ?? '').trim()
-      const subjectRaw = row[3]
-      const tokenRaw = row[4]
-      const occurredAtStr = String(row[5] ?? '').trim()
-      if (!email || !metric || !occurredAtStr) continue
-      const occurredAt = new Date(occurredAtStr)
-      if (Number.isNaN(occurredAt.getTime())) continue
-      out.push({
-        klaviyo_event_id: id,
-        email,
-        metric,
-        subject: typeof subjectRaw === 'string' && subjectRaw.length > 0 ? subjectRaw : null,
-        checkout_token: typeof tokenRaw === 'string' && tokenRaw.length > 0 ? tokenRaw : null,
-        occurred_at: occurredAt,
-        synced_at: new Date(),
-      })
-    }
-
-    offset += rows.length
-    if (rows.length < HOGQL_LIMIT) break
-  }
-
-  return out
+  const key = process.env.KLAVIYO_API_KEY
+  if (!key) throw new MantaError('INVALID_STATE', 'KLAVIYO_API_KEY is required to sync Klaviyo events')
+  return pullAbandonEventsFromKlaviyo({
+    apiKey: key,
+    sinceIso: args.sinceIso,
+    untilIso: args.untilIso,
+    host: process.env.KLAVIYO_HOST,
+    revision: process.env.KLAVIYO_API_REVISION,
+    signal: args.signal,
+  })
 }
 
 export default defineCommand({
   name: 'syncKlaviyoEvents',
-  description: 'Mirror abandonment-flow Klaviyo events from PostHog DW into local klaviyo_events table',
+  description: 'Mirror abandonment-flow events directly from Klaviyo into local klaviyo_events table',
   input: z.object({
     fullRefresh: z.boolean().default(false),
   }),
@@ -170,18 +81,19 @@ export default defineCommand({
       sinceMs = maxAt ? maxAt - OVERLAP_MS : Date.now() - FALLBACK_LOOKBACK_MS
     }
     const sinceIso = new Date(sinceMs).toISOString()
-    log.info(`[syncKlaviyoEvents] since=${sinceIso} fullRefresh=${input.fullRefresh}`)
+    const untilIso = new Date(Math.min(Date.now(), sinceMs + MAX_EVENT_WINDOW_MS)).toISOString()
+    log.info(`[syncKlaviyoEvents] since=${sinceIso} until=${untilIso} fullRefresh=${input.fullRefresh}`)
 
-    // ── 2. Pull from PostHog DW (compensable network step) ───────────
+    // ── 2. Pull directly from Klaviyo (compensable network step) ─────
     const events = await step.action('pull-klaviyo-events', {
       invoke: async (_i: unknown, ctx) =>
-        pullEventsFromHogQL({
+        pullEventsFromKlaviyo({
           sinceIso,
+          untilIso,
           signal: ctx.signal,
-          warn: (msg) => log.warn(msg),
         }),
       compensate: async () => {
-        // Read-only on PostHog, idempotent locally — no compensation.
+        // Read-only on Klaviyo, idempotent locally — no compensation.
       },
     })({})
 
@@ -223,7 +135,7 @@ export default defineCommand({
           list: (where) => stepSvcAny.cart.listCarts(where as any) as Promise<never>,
           update: (patch) => stepSvcAny.cart.updateCarts(patch),
         }
-        return markCartsFromKlaviyoEvents(events, cartRepo, log)
+        return markCartsFromKlaviyoEvents(events.filter(isKlaviyoCartOrCheckoutEmail), cartRepo, log)
       },
       compensate: async () => {
         // Marking is idempotent and a side-effect on our own DB — no useful
