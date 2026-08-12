@@ -53,6 +53,41 @@ describe('email template preview catalog', () => {
     expect(preview.appliedBranches).toContain('Welcome discount reminder shown')
   })
 
+  it.each([
+    ['abandoned_cart_1', 'fr'],
+    ['abandoned_cart_1', 'en'],
+    ['abandoned_cart_2', 'fr'],
+    ['abandoned_cart_2', 'en'],
+    ['abandoned_cart_3', 'fr'],
+    ['abandoned_cart_3', 'en'],
+  ] as const)('renders %s in %s with the correct customer-status offer', async (templateId, locale) => {
+    const newCustomer = await renderEmailTemplatePreview({
+      templateId,
+      locale,
+      customerStatus: 'new',
+      promotionActive: true,
+      itemCount: 1,
+      reportStatus: 'ready',
+    })
+    const returningCustomer = await renderEmailTemplatePreview({
+      templateId,
+      locale,
+      customerStatus: 'returning',
+      promotionActive: true,
+      itemCount: 1,
+      reportStatus: 'ready',
+    })
+
+    expect(newCustomer.subject).toBeTruthy()
+    expect(newCustomer.html).toContain('PALAS-WELCOME-10')
+    expect(returningCustomer.subject).toBeTruthy()
+    if (templateId === 'abandoned_cart_1') {
+      expect(returningCustomer.html).not.toContain('PANIER10-PREVIEW')
+    } else {
+      expect(returningCustomer.html).toContain('PANIER10-PREVIEW')
+    }
+  })
+
   it('renders a distinct assistance design for Email 3 while keeping scenario controls', async () => {
     const preview = await renderEmailTemplatePreview({
       templateId: 'abandoned_cart_3',

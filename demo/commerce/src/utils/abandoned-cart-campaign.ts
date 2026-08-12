@@ -16,6 +16,7 @@ import { signUnsubscribeToken } from './unsubscribe-token'
 
 type CaseType = 'cart_abandoned' | 'checkout_abandoned' | 'payment_help'
 type MessageType = 'abandoned_cart_1' | 'abandoned_cart_2' | 'abandoned_cart_3' | 'payment_help_1'
+export type AbandonedCartDiscountKind = 'welcome' | 'recovery' | null
 type SkipReason =
   | 'shopify_order_found'
   | 'klaviyo_email_found'
@@ -126,8 +127,16 @@ const PAYMENT_HELP_AFTER_HOURS = 1
 const NEXT_EMAIL_AFTER_DAYS = 2
 const DEFAULT_MAX_CASE_AGE_DAYS = 14
 const DEFAULT_RECOVERY_WINDOW_DAYS = 7
-const KLAVIYO_ABANDON_METRICS = ['Shopify_Checkout_Abandonned', 'Checkout Abandoned']
 const GWP_TITLE_RX = /\b(?:gift|offert|free|charm offert)\b/i
+
+export function abandonedCartDiscountKind(
+  messageType: MessageType,
+  knownOrderCount: number,
+): AbandonedCartDiscountKind {
+  if (messageType === 'payment_help_1') return null
+  if (knownOrderCount <= 0) return 'welcome'
+  return messageType === 'abandoned_cart_2' || messageType === 'abandoned_cart_3' ? 'recovery' : null
+}
 
 function newId(prefix: string): string {
   const random =
@@ -634,13 +643,18 @@ async function hasRecentKlaviyoAbandon(sql: RuntimeSql, email: string, since: Da
     FROM klaviyo_events
     WHERE LOWER(email) = LOWER(${email})
       AND occurred_at >= ${since}
+      AND metric = 'Received Email'
       AND (
-        metric = ANY(${KLAVIYO_ABANDON_METRICS})
-        OR (metric = 'Received Email' AND (
-          subject ILIKE '%oublié quelque chose%'
-          OR subject ILIKE '%pensez encore%'
-          OR subject ILIKE '%attend plus que vous%'
-        ))
+        subject ILIKE '%oublié quelque chose%'
+        OR subject ILIKE '%attend plus que vous%'
+        OR subject ILIKE '%commande palas vous attend%'
+        OR subject ILIKE '%valider votre commande%'
+        OR subject ILIKE '%sélection de bijoux palas vous attend%'
+        OR subject ILIKE '%vos bijoux favoris vous attendent%'
+        OR subject ILIKE '%your favourite jewellery is waiting for you%'
+        OR subject ILIKE '%make it yours today%'
+        OR subject ILIKE '%got a question or not quite sure%'
+        OR subject ILIKE '%un doute%question%'
       )
     ORDER BY occurred_at DESC
     LIMIT 1`
@@ -951,15 +965,16 @@ export async function runAbandonedCartCampaign(
 
     const knownOrderCount = Number(c.live_orders_count ?? 0)
     let discountGrant: DiscountGrant | null = null
-    if (!dryRun && next.type !== 'payment_help_1') {
-      if (knownOrderCount <= 0) {
+    const discountKind = abandonedCartDiscountKind(next.type, knownOrderCount)
+    if (!dryRun) {
+      if (discountKind === 'welcome') {
         discountGrant = await resolveWelcomeDiscountForEmail({
           email: c.email,
           numberOfOrders: knownOrderCount,
           log,
           signal,
         })
-      } else if (next.type === 'abandoned_cart_2' || next.type === 'abandoned_cart_3') {
+      } else if (discountKind === 'recovery') {
         discountGrant = await resolveAbandonedCartDiscountForEmail({
           email: c.email,
           numberOfOrders: knownOrderCount,
