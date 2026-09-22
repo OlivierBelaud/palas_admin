@@ -6,6 +6,7 @@ export default defineModel('EventLog', {
   event_id: field.text().unique(),
   event_name: field.text().index(),
   source: field.text().index(),
+  dispatch_prepared_at: field.dateTime().nullable(),
   received_at: field.dateTime().index(),
 
   page_type: field.text().nullable().index(),

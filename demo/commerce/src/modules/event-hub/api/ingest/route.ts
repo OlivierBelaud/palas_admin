@@ -8,8 +8,8 @@ import {
 } from '../../canonical-contract'
 import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../dispatch-runner'
 import { ga4ContextFromHeaders, ga4DestinationConnector, mapCanonicalToGa4 } from '../../ga4-connector'
-import { mapCanonicalToGoogleAds } from '../../google-ads-connector'
-import { mapCanonicalToMetaCapi } from '../../meta-capi-connector'
+import { googleAdsDestinationConnector, mapCanonicalToGoogleAds } from '../../google-ads-connector'
+import { mapCanonicalToMetaCapi, metaCapiDestinationConnector } from '../../meta-capi-connector'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
@@ -520,21 +520,9 @@ export async function POST(req: Request) {
      ) VALUES (
        gen_random_uuid(), $1, $2, $3, NOW(), $4, $5,
        $6, $7, $8, $9,
-       $10::jsonb, $11::jsonb, NOW(), NOW()
+       $10::text::jsonb, $11::text::jsonb, NOW(), NOW()
      )
-     ON CONFLICT (event_id) DO UPDATE SET
-       event_name = EXCLUDED.event_name,
-       source = EXCLUDED.source,
-       received_at = EXCLUDED.received_at,
-       page_type = EXCLUDED.page_type,
-       market = EXCLUDED.market,
-       identity_muid = EXCLUDED.identity_muid,
-       identity_email_sha256 = EXCLUDED.identity_email_sha256,
-       distinct_id = EXCLUDED.distinct_id,
-       valid = EXCLUDED.valid,
-       validation_errors = EXCLUDED.validation_errors,
-       payload_normalized = EXCLUDED.payload_normalized,
-       updated_at = NOW()`,
+     ON CONFLICT (event_id) DO NOTHING`,
     [
       eventId,
       eventName,
@@ -561,19 +549,12 @@ export async function POST(req: Request) {
          gen_random_uuid(), $1, $2, $3, $4,
          'ga4', $5, $6, NULL, NULL,
          $7, NULL, 0, NULL, $8,
-         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+         $9, $10::text::jsonb, NULL, $11::text::jsonb, NOW(), NOW()
        )
        ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+         status = 'pending', next_attempt_at = NOW(), error_code = NULL, error_message = NULL,
+         request_payload = EXCLUDED.request_payload, metadata = EXCLUDED.metadata, updated_at = NOW()
+       WHERE dispatch_logs.status IN ('invalid', 'error') AND EXCLUDED.status = 'pending'`,
       [
         `${eventId}:ga4`,
         eventId,
@@ -601,19 +582,12 @@ export async function POST(req: Request) {
          gen_random_uuid(), $1, $2, $3, $4,
          'google_ads', $5, $6, NULL, NULL,
          $7, NULL, 0, NULL, $8,
-         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+         $9, $10::text::jsonb, NULL, $11::text::jsonb, NOW(), NOW()
        )
        ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+         status = 'pending', next_attempt_at = NOW(), error_code = NULL, error_message = NULL,
+         request_payload = EXCLUDED.request_payload, metadata = EXCLUDED.metadata, updated_at = NOW()
+       WHERE dispatch_logs.status IN ('invalid', 'error') AND EXCLUDED.status = 'pending'`,
       [
         `${eventId}:google_ads`,
         eventId,
@@ -641,19 +615,12 @@ export async function POST(req: Request) {
          gen_random_uuid(), $1, $2, $3, $4,
          'meta_capi', $5, $6, NULL, NULL,
          $7, NULL, 0, NULL, $8,
-         $9, $10::jsonb, NULL, $11::jsonb, NOW(), NOW()
+         $9, $10::text::jsonb, NULL, $11::text::jsonb, NOW(), NOW()
        )
        ON CONFLICT (event_destination_key) DO UPDATE SET
-         canonical_event_name = EXCLUDED.canonical_event_name,
-         source_event_name = EXCLUDED.source_event_name,
-         status = EXCLUDED.status,
-         event_received_at = EXCLUDED.event_received_at,
-         next_attempt_at = EXCLUDED.next_attempt_at,
-         error_code = EXCLUDED.error_code,
-         error_message = EXCLUDED.error_message,
-         request_payload = EXCLUDED.request_payload,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
+         status = 'pending', next_attempt_at = NOW(), error_code = NULL, error_message = NULL,
+         request_payload = EXCLUDED.request_payload, metadata = EXCLUDED.metadata, updated_at = NOW()
+       WHERE dispatch_logs.status IN ('invalid', 'error') AND EXCLUDED.status = 'pending'`,
       [
         `${eventId}:meta_capi`,
         eventId,
@@ -670,12 +637,18 @@ export async function POST(req: Request) {
     )
   }
 
+  await sql.unsafe(
+    `UPDATE event_logs SET dispatch_prepared_at = NOW()
+    WHERE event_id = $1 AND dispatch_prepared_at IS NULL`,
+    [eventId],
+  )
   const liveDispatch: Record<string, unknown> = {}
-  if (ga4.ok && isGa4CanonicalEventName(eventName)) {
-    liveDispatch.ga4 = await flushDispatchLogByEventDestinationKey({
+  for (const connector of [ga4DestinationConnector, googleAdsDestinationConnector, metaCapiDestinationConnector]) {
+    liveDispatch[connector.destination] = await flushDispatchLogByEventDestinationKey({
       db: dispatchDb(sql),
-      connector: ga4DestinationConnector,
-      eventDestinationKey: `${eventId}:ga4`,
+      connector,
+      eventDestinationKey: `${eventId}:${connector.destination}`,
+      signal: req.signal,
     })
   }
 

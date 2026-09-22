@@ -1,9 +1,9 @@
 import { isGa4CanonicalEventName } from '../../modules/event-hub/canonical-contract'
-import { normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
+import { isDispatchablePosthogEvent, normalizePosthogEventToCanonical } from '../../modules/event-hub/canonical-posthog'
 import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
 import { ga4DestinationConnector, mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
-import { mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
-import { mapCanonicalToMetaCapi } from '../../modules/event-hub/meta-capi-connector'
+import { googleAdsDestinationConnector, mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
+import { mapCanonicalToMetaCapi, metaCapiDestinationConnector } from '../../modules/event-hub/meta-capi-connector'
 import {
   compareIdentityResolvers,
   type IdentityServiceLike,
@@ -25,12 +25,13 @@ function toDate(value: string): Date {
 
 function isDuplicateError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
-  return /duplicate key|unique constraint|event_id/i.test(message)
+  return /duplicate key|unique constraint/i.test(message)
 }
 
 export default defineCommand({
   name: 'recordCanonicalEventLog',
-  description: 'Normalize one inbound PostHog event into Event Hub and immediately dispatch ready GA4 payloads.',
+  description:
+    'Normalize one inbound PostHog event into Event Hub and durably prepare and immediately dispatch configured destinations.',
   input: z.object({
     event: z.record(z.unknown()),
     posthog_forwarded: z.boolean().optional(),
@@ -39,6 +40,7 @@ export default defineCommand({
   }),
   workflow: async (input, { step }) => {
     const event = input.event as RawPosthogEvent
+    if (!isDispatchablePosthogEvent(event)) return { ok: true, skipped: true, reason: 'not_dispatchable' }
     const services = step.service as unknown as IdentityServiceLike & {
       eventLog: EventLogService
       dispatchLog: DispatchLogService
@@ -75,14 +77,14 @@ export default defineCommand({
         payload_normalized: canonical.payload_normalized,
       })
     } catch (err) {
-      if (isDuplicateError(err)) {
-        return { ok: true, duplicate: true, event_id: canonical.event_id, event_name: canonical.event_name }
-      }
-      throw err
+      // Continue provisioning: an earlier attempt may have failed between destination writes.
+      if (!isDuplicateError(err)) throw err
     }
 
+    const corrected: Array<{ destination: string; payload: unknown; metadata: unknown }> = []
     if (isGa4CanonicalEventName(canonical.event_name)) {
       const ga4 = mapCanonicalToGa4(canonical.event_name, canonical.payload_normalized)
+      if (ga4.ok) corrected.push({ destination: 'ga4', payload: ga4.payload, metadata: ga4.metadata })
       try {
         await services.dispatchLog.create({
           event_destination_key: `${canonical.event_id}:ga4`,
@@ -107,30 +109,12 @@ export default defineCommand({
       } catch (err) {
         if (!isDuplicateError(err)) throw err
       }
-
-      if (ga4.ok) {
-        await step.action('flush-live-ga4-dispatch', {
-          invoke: async (_i: unknown, ctx) => {
-            const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
-            if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
-
-            return flushDispatchLogByEventDestinationKey({
-              db,
-              connector: ga4DestinationConnector,
-              eventDestinationKey: `${canonical.event_id}:ga4`,
-              signal: ctx.signal,
-            })
-          },
-          compensate: async () => {
-            // Dispatch rows are idempotent by event_destination_key; the cron
-            // retry path resumes pending/retry rows after partial progress.
-          },
-        })({})
-      }
     }
 
     const googleAds = mapCanonicalToGoogleAds(canonical.event_name, canonical.payload_normalized)
     if (googleAds.supported) {
+      if (googleAds.ok)
+        corrected.push({ destination: 'google_ads', payload: googleAds.payload, metadata: googleAds.metadata })
       try {
         await services.dispatchLog.create({
           event_destination_key: `${canonical.event_id}:google_ads`,
@@ -159,6 +143,8 @@ export default defineCommand({
 
     const metaCapi = mapCanonicalToMetaCapi(canonical.event_name, canonical.payload_normalized)
     if (metaCapi.supported) {
+      if (metaCapi.ok)
+        corrected.push({ destination: 'meta_capi', payload: metaCapi.payload, metadata: metaCapi.metadata })
       try {
         await services.dispatchLog.create({
           event_destination_key: `${canonical.event_id}:meta_capi`,
@@ -184,6 +170,50 @@ export default defineCommand({
         if (!isDuplicateError(err)) throw err
       }
     }
+
+    // All outbox rows are durable before the first live external call.
+    await step.action('flush-live-destinations', {
+      invoke: async (_i: unknown, ctx) => {
+        const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
+        if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
+        for (const value of corrected) {
+          await db.raw(
+            `UPDATE dispatch_logs SET status='pending', next_attempt_at=NOW(),
+            error_code=NULL,error_message=NULL,request_payload=$2::text::jsonb,metadata=$3::text::jsonb,updated_at=NOW()
+            WHERE event_destination_key=$1 AND status IN ('invalid','error')`,
+            [
+              `${canonical.event_id}:${value.destination}`,
+              JSON.stringify(value.payload),
+              JSON.stringify(value.metadata),
+            ],
+          )
+        }
+        await db.raw(
+          `UPDATE event_logs SET dispatch_prepared_at = NOW()
+          WHERE event_id = $1 AND dispatch_prepared_at IS NULL`,
+          [canonical.event_id],
+        )
+        const results = []
+        for (const connector of [
+          ga4DestinationConnector,
+          googleAdsDestinationConnector,
+          metaCapiDestinationConnector,
+        ]) {
+          results.push(
+            await flushDispatchLogByEventDestinationKey({
+              db,
+              connector,
+              eventDestinationKey: `${canonical.event_id}:${connector.destination}`,
+              signal: ctx.signal,
+            }),
+          )
+        }
+        return results
+      },
+      compensate: async () => {
+        /* Durable outbox is resumed by scheduled retries. */
+      },
+    })({})
 
     return {
       ok: true,

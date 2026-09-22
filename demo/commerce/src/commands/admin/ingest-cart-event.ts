@@ -119,6 +119,7 @@ export default defineCommand({
     raw_properties: z.record(z.unknown()).nullable().optional(),
   }),
   workflow: async (input, { step }) => {
+    let recoveryPending = false
     // step.service is typed with module names (MantaGeneratedAppModules), but the runtime
     // Proxy also resolves entity names (cart) to per-entity CRUD. We describe
     // the shape we actually use below.
@@ -307,6 +308,7 @@ export default defineCommand({
           shopify_customer_id: input.shopify_customer_id ?? null,
         })
       } catch (err) {
+        recoveryPending = true
         // Swallow — the contact will be retried on the next event for the
         // same cart. Emit a structured signal so a subscriber can pick it
         // up later if needed.
@@ -336,6 +338,7 @@ export default defineCommand({
             order_id: input.shopify_order_id ?? null,
           })
         } catch (err) {
+          recoveryPending = true
           await step.emit('visitor_session.attribution_failed', {
             cart_id: cartId,
             message: (err as Error).message,
@@ -355,6 +358,6 @@ export default defineCommand({
       requested_at: new Date().toISOString(),
     })
 
-    return { cart_id: cartId }
+    return { cart_id: cartId, ...(recoveryPending ? { recovery_pending: true } : {}) }
   },
 })
