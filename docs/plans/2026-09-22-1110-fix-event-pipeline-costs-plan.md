@@ -55,3 +55,8 @@ Use pnpm frozen install with pinned beta.12, pnpm exec vitest run demo/commerce/
 
 ## Definition of Done
 All U1–U4 behaviors implemented and exercised; no unrelated edits or discarded user changes. No upgrade to central Manta. Tests and independent review recorded, abandoned approaches removed. Migration and rollback documented with retention caveats. PR concrete and reviewable, live rollout state explicit; do not claim savings or production changes from local tests. Any unmet production rollout gate remains explicitly outstanding.
+
+## Review follow-up: cart ordering and CI
+The independent review reproduced an older failed event overwriting a newer cart snapshot on retry. Extend U2 verification to execute the actual cart command, rather than only a mocked ingest callback. Preserve the latest snapshot atomically under reordered and concurrent writes, while retaining late completion and retryable contact/attribution work. Old identities must not replace a newer cart/contact association. Cover old/new/retry ordering, clear-cart events, late completion, concurrent writes and failed follow-ups using isolated PostgreSQL where persistence matters.
+
+U5 must also pass from a clean GitHub checkout. Fix the Docker health-check argument quoting, then inspect every CI step for further setup defects. Validate the application build and browser entry point; do not exercise mutation routes against a preview sharing production database credentials. Record any limitation of an isolated runtime's substitute adapters.

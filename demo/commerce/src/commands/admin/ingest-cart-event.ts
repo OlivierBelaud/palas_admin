@@ -1,4 +1,6 @@
+import { applyCartEvent } from '../../modules/cart-tracking/apply-cart-event'
 import { CART_EVENT_NAMES } from '../../modules/cart-tracking/events'
+import type { RawDb } from '../../modules/cart-tracking/refresh-cart'
 
 const ItemDiscountSchema = z.object({
   title: z.string(),
@@ -207,84 +209,80 @@ export default defineCommand({
     }
 
     const newStage = actionToStage(input.action)
-    const newStageIdx = STAGES.indexOf(newStage)
-    const currentStageIdx = existing ? STAGES.indexOf(existing.highest_stage) : -1
-    const highestStage = STAGES[Math.max(currentStageIdx, newStageIdx)]
-
-    // Status: completed if checkout:completed, otherwise active
-    // (abandonment is detected later by a scheduled job based on inactivity)
-    const status = input.action === 'checkout:completed' ? 'completed' : (existing?.status ?? 'active')
-
-    // Merge identity: keep existing values, fill in new ones progressively
-    const merge = <A, B>(newVal: A, existingVal: B): A | B | null => newVal ?? existingVal ?? null
-
-    // Base payload — shared between create and update. `cart_birth_at` and
-    // `completed_at` are deliberately omitted here: they have asymmetric
-    // semantics (set-once on create vs. conditional on update) and are
-    // handled below.
-    const cartData = {
-      cart_token: existing?.cart_token ?? input.cart_token,
-      distinct_id: merge(input.distinct_id, existing?.distinct_id),
-      email: merge(input.email, existing?.email),
-      first_name: merge(input.first_name, existing?.first_name),
-      last_name: merge(input.last_name, existing?.last_name),
-      phone: merge(input.phone, existing?.phone),
-      city: merge(input.city, existing?.city),
-      country_code: merge(input.country_code, existing?.country_code),
-      // Navigation language: refresh whenever a new event carries one (latest
-      // browse wins), else keep the previously captured value.
-      browser_locale: merge(input.browser_locale, existing?.browser_locale),
-      shopify_customer_id: merge(input.shopify_customer_id, existing?.shopify_customer_id),
-      checkout_token: merge(input.checkout_token, existing?.checkout_token),
-      items: input.items,
-      total_price: input.total_price,
-      item_count: input.items.length,
-      currency: input.currency,
-      last_action: input.action,
-      last_action_at: new Date(input.occurred_at),
-      highest_stage: highestStage,
-      status,
-      order_id: merge(input.order_id, existing?.order_id),
-      shopify_order_id: merge(input.shopify_order_id, existing?.shopify_order_id),
-      is_first_order: input.is_first_order ?? existing?.is_first_order ?? null,
-      shipping_method: merge(input.shipping_method, existing?.shipping_method),
-      shipping_price: input.shipping_price ?? existing?.shipping_price ?? null,
-      discounts_amount: input.discounts_amount ?? existing?.discounts_amount ?? null,
-      discounts: input.discounts ?? existing?.discounts ?? null,
-      subtotal_price: input.subtotal_price ?? existing?.subtotal_price ?? null,
-      total_tax: input.total_tax ?? existing?.total_tax ?? null,
-    }
-
     let cartId: string
+    let persisted: CartRow
+    const applyExisting = (id: string) =>
+      step.action('apply-ordered-cart-event', {
+        invoke: async (_i: unknown, ctx) => {
+          const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
+          if (!db) throw new Error('No database configured')
+          // Only incoming values enter the atomic merge. A stale service read must
+          // never reintroduce identity fields changed by a concurrent event.
+          return applyCartEvent<CartRow>(db, id, {
+            ...input,
+            item_count: input.items.length,
+            last_action: input.action,
+            last_action_at: input.occurred_at,
+            highest_stage: newStage,
+          })
+        },
+        compensate: async () => {},
+      })({})
     if (existing) {
-      // Update path — NEVER touch `cart_birth_at` (immutable). Only set
-      // `completed_at` on the first cart→completed transition: triple
-      // guard (`checkout:completed`, current stage isn't already
-      // 'completed', no existing `completed_at`) keeps the write
-      // idempotent across replays.
-      const shouldSetCompletedAt =
-        input.action === 'checkout:completed' && existing.highest_stage !== 'completed' && existing.completed_at == null
-      const updateData: Record<string, unknown> = { ...cartData }
-      if (shouldSetCompletedAt) updateData.completed_at = new Date(input.occurred_at)
-      await svc.cart.update(existing.id, updateData)
+      persisted = await applyExisting(existing.id)
       cartId = existing.id
     } else {
-      // Create path — write `cart_birth_at` from the event timestamp.
-      // This is the immutable "first time we ever heard from this cart"
-      // anchor used by cohort attribution and funnel analytics. It is
-      // distinct from `created_at` (which gets re-stamped by rebuilds).
       const createData: Record<string, unknown> = {
-        ...cartData,
+        cart_token: input.cart_token,
+        distinct_id: input.distinct_id ?? null,
+        email: input.email ?? null,
+        first_name: input.first_name ?? null,
+        last_name: input.last_name ?? null,
+        phone: input.phone ?? null,
+        city: input.city ?? null,
+        country_code: input.country_code ?? null,
+        browser_locale: input.browser_locale ?? null,
+        shopify_customer_id: input.shopify_customer_id ?? null,
+        checkout_token: input.checkout_token ?? null,
+        items: input.items,
+        total_price: input.total_price,
+        item_count: input.items.length,
+        currency: input.currency,
+        last_action: input.action,
+        last_action_at: new Date(input.occurred_at),
+        highest_stage: newStage,
+        status: input.action === 'checkout:completed' ? 'completed' : 'active',
+        order_id: input.order_id ?? null,
+        shopify_order_id: input.shopify_order_id ?? null,
+        is_first_order: input.is_first_order ?? null,
+        shipping_method: input.shipping_method ?? null,
+        shipping_price: input.shipping_price ?? null,
+        discounts_amount: input.discounts_amount ?? null,
+        discounts: input.discounts ?? null,
+        subtotal_price: input.subtotal_price ?? null,
+        total_tax: input.total_tax ?? null,
         cart_birth_at: new Date(input.occurred_at),
       }
-      // When the first event we see for a brand-new cart is already
-      // `checkout:completed` (rare but possible — e.g. Apple Pay / fast
-      // checkout), capture `completed_at` too. Otherwise leave NULL.
-      if (input.action === 'checkout:completed') {
-        createData.completed_at = new Date(input.occurred_at)
+      if (input.action === 'checkout:completed') createData.completed_at = new Date(input.occurred_at)
+      try {
+        const created = await svc.cart.create(createData)
+        // CRUD timestamp fields require Date (millisecond precision). Apply the
+        // original timestamp atomically before enrichment, retaining microseconds
+        // without overwriting a newer event that raced with creation.
+        persisted = await applyExisting(created.id)
+      } catch (error) {
+        // Two first events may both observe no cart. The unique cart token is
+        // the arbitration point; the loser still applies its event atomically.
+        if (
+          !(error && typeof error === 'object' && 'type' in error && error.type === 'DUPLICATE_ERROR') &&
+          !/duplicate key|unique constraint/i.test(String(error))
+        )
+          throw error
+        const raced = (await svc.cart.list({ cart_token: input.cart_token }))[0]
+        if (!raced) throw error
+        persisted = await applyExisting(raced.id)
       }
-      const created = await svc.cart.create(createData)
-      cartId = created.id
+      cartId = persisted.id
     }
 
     // 2. Upsert the Contact + cart -> contact link whenever we know an email.
@@ -294,18 +292,18 @@ export default defineCommand({
     //    truth, the contact mirror is best-effort enrichment.
     const commands = step.command as unknown as IngestCartEventCommands
 
-    if (input.email) {
+    if (persisted.email) {
       try {
         await commands.upsertContactFromCartSignal({
           cart_id: cartId,
-          email: input.email,
-          first_name: input.first_name ?? null,
-          last_name: input.last_name ?? null,
-          phone: input.phone ?? null,
-          city: input.city ?? null,
-          country_code: input.country_code ?? null,
-          distinct_id: input.distinct_id ?? null,
-          shopify_customer_id: input.shopify_customer_id ?? null,
+          email: persisted.email,
+          first_name: persisted.first_name ?? null,
+          last_name: persisted.last_name ?? null,
+          phone: persisted.phone ?? null,
+          city: persisted.city ?? null,
+          country_code: persisted.country_code ?? null,
+          distinct_id: persisted.distinct_id ?? null,
+          shopify_customer_id: persisted.shopify_customer_id ?? null,
         })
       } catch (err) {
         recoveryPending = true
@@ -314,7 +312,7 @@ export default defineCommand({
         // up later if needed.
         await step.emit('contact.upsert_failed', {
           cart_id: cartId,
-          email: input.email,
+          email: persisted.email,
           message: (err as Error).message,
         })
       }
@@ -350,9 +348,9 @@ export default defineCommand({
     await step.emit('cart.refresh-requested', {
       cart_id: cartId,
       cart_token: input.cart_token,
-      checkout_token: input.checkout_token ?? null,
-      shopify_order_id: input.shopify_order_id ?? null,
-      email: input.email?.trim().toLowerCase() ?? null,
+      checkout_token: persisted.checkout_token ?? null,
+      shopify_order_id: persisted.shopify_order_id ?? null,
+      email: persisted.email?.trim().toLowerCase() ?? null,
       reason: 'cart_event_ingested',
       source: 'ingestCartEvent',
       requested_at: new Date().toISOString(),

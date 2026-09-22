@@ -18,6 +18,7 @@ describe('ingest cart recovery result', () => {
       id: 'cart-1',
       highest_stage: 'completed',
       status: 'completed',
+      email: 'fixture@example.test',
       cart_birth_at: '2026-09-21T00:00:00Z',
     }
     const emit = vi.fn(async (_name: string, _payload: unknown) => undefined)
@@ -33,6 +34,7 @@ describe('ingest cart recovery result', () => {
       },
       {
         step: {
+          action: (_name: string, _definition: unknown) => async () => cart,
           service: { cart: { list: async () => [cart], update: async () => cart } },
           command: {
             upsertContactFromCartSignal: async () => {

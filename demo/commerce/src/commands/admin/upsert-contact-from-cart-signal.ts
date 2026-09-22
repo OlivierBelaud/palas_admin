@@ -1,3 +1,5 @@
+import { linkCurrentCartContact } from '../../modules/cart-tracking/link-current-cart-contact'
+import type { RawDb } from '../../modules/cart-tracking/refresh-cart'
 // Command: upsert a Contact from a cart-tracking signal + link the
 // originating cart to it.
 //
@@ -63,6 +65,15 @@ export default defineCommand({
     const commands = step.command as unknown as CartContactCommands
 
     const link: CartContactLinkOps = {
+      replace: (i) =>
+        step.action('link-current-cart-contact', {
+          invoke: async (_input: unknown, ctx) => {
+            const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
+            if (!db) throw new Error('No database configured')
+            return linkCurrentCartContact(db, i.cart_id, i.contact_id, input.email)
+          },
+          compensate: async () => {},
+        })({}),
       list: linkRead.list,
       link: (i) => commands.linkCartContact(i),
       unlink: (i) => commands.unlinkCartContact(i),
