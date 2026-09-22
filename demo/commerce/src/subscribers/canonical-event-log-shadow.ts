@@ -1,4 +1,5 @@
 import { extractPosthogEvents } from '../modules/cart-tracking/posthog-adapter'
+import { isDispatchablePosthogEvent } from '../modules/event-hub/canonical-posthog'
 
 export default defineSubscriber({
   event: 'posthog.events.received',
@@ -15,6 +16,7 @@ export default defineSubscriber({
     const posthog = data?.posthog ?? {}
 
     for (const evt of events) {
+      if (!isDispatchablePosthogEvent(evt)) continue
       try {
         // biome-ignore lint/suspicious/noExplicitAny: command registry is dynamically typed.
         await (command as any).recordCanonicalEventLog({

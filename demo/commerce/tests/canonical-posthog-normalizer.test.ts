@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { CanonicalValidationResult } from '../src/modules/event-hub/canonical-contract'
-import { inferPageType, normalizePosthogEventToCanonical } from '../src/modules/event-hub/canonical-posthog'
+import {
+  inferPageType,
+  isDispatchablePosthogEvent,
+  normalizePosthogEventToCanonical,
+} from '../src/modules/event-hub/canonical-posthog'
 import type { IdentityShadowComparison } from '../src/modules/identity/resolve-event-identity'
 
 function comparison(overrides: Partial<IdentityShadowComparison> = {}): IdentityShadowComparison {
@@ -305,4 +309,18 @@ describe('canonical PostHog normalizer', () => {
       },
     })
   })
+})
+
+it('filters non-advertising events before creating diagnostic workflows', () => {
+  for (const event of [
+    '$snapshot',
+    '$autocapture',
+    '$identify',
+    'cart:updated',
+    'cart:closed',
+    'checkout:address_info_submitted',
+  ])
+    expect(isDispatchablePosthogEvent({ event })).toBe(false)
+  for (const event of ['$pageview', 'checkout:completed', 'cart:product_added', 'purchase'])
+    expect(isDispatchablePosthogEvent({ event })).toBe(true)
 })

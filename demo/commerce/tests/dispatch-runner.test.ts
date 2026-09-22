@@ -16,7 +16,7 @@ function makeDb(rows: Array<Record<string, unknown>>) {
         return rows as T[]
       }
       updates.push({ query, params })
-      return [] as T[]
+      return rows.map((row) => ({ ...row, attempt_count: Number(row.attempt_count) + 1 })) as T[]
     },
   }
   return { db, updates, selects }
@@ -56,34 +56,25 @@ describe('Event Hub dispatch runner', () => {
     const result = await flushDestinationDispatches({ db, connector: connector(), batchLimit: 10 })
 
     expect(result).toMatchObject({ scanned: 1, invalid: 1, sent: 0 })
-    expect(updates[0].params).toEqual([
+    expect(updates[1].params?.slice(0, 5)).toEqual([
       'row_1',
-      1,
+      'invalid',
+      null,
       'ga4_payload_missing',
       'ga4 request_payload is empty or invalid JSON',
     ])
   })
 
-  it('keeps pending rows in not_configured until connector config is present', async () => {
-    const { db, updates } = makeDb([
-      {
-        id: 'row_1',
-        event_id: 'evt_1',
-        canonical_event_name: 'purchase',
-        status: 'pending',
-        attempt_count: 2,
-        request_payload: { ok: true },
-      },
-    ])
-
+  it('leaves disabled destinations untouched until connector config is present', async () => {
+    const { db, updates, selects } = makeDb([])
     const result = await flushDestinationDispatches({
       db,
       connector: connector({ isConfigured: () => false }),
       batchLimit: 10,
     })
-
-    expect(result).toMatchObject({ scanned: 1, not_configured: 1, configured: false })
-    expect(updates[0].params).toEqual(['row_1', 3, 'ga4_not_configured', 'Set GA4 env vars'])
+    expect(result).toMatchObject({ scanned: 0, configured: false })
+    expect(updates).toHaveLength(0)
+    expect(selects).toHaveLength(0)
   })
 
   it('persists connector delivery results with retry backoff', async () => {
@@ -113,7 +104,7 @@ describe('Event Hub dispatch runner', () => {
     })
 
     expect(result).toMatchObject({ scanned: 1, retry: 1 })
-    expect(updates[0].params).toEqual(['row_1', 2])
+    expect(updates[0].params?.slice(0, 2)).toEqual(['row_1', 1])
     expect(updates[1].params).toEqual([
       'row_1',
       'retry',
@@ -121,6 +112,7 @@ describe('Event Hub dispatch runner', () => {
       'rate_limited',
       'Too many requests',
       JSON.stringify({ error: 'rate_limited' }),
+      2,
       2,
     ])
   })
@@ -144,8 +136,8 @@ describe('Event Hub dispatch runner', () => {
     })
 
     expect(result).toMatchObject({ scanned: 1, sent: 1, configured: true })
-    expect(updates[0].params).toEqual(['row_live', 1])
-    expect(updates[1].params).toEqual(['row_live', 'sent', 204, null, null, JSON.stringify({}), null])
+    expect(updates[0].params?.slice(0, 2)).toEqual(['row_live', 0])
+    expect(updates[1].params).toEqual(['row_live', 'sent', 204, null, null, JSON.stringify({}), null, 1])
   })
 
   it('recovers stale sending rows during scheduled flushes', async () => {

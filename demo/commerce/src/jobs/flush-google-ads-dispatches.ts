@@ -1,3 +1,4 @@
+import { repairUnpreparedDispatches } from '../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../modules/event-hub/dispatch-runner'
 import { getGoogleAdsConfig, googleAdsDestinationConnector } from '../modules/event-hub/google-ads-connector'
 
@@ -35,6 +36,7 @@ export default defineJob('flush-google-ads-dispatches', '* * * * *', async ({ db
     return { ...EMPTY, error: 1 }
   }
 
+  await repairUnpreparedDispatches(runtimeDb, googleAdsDestinationConnector)
   const result = await flushDestinationDispatches({
     db: runtimeDb,
     connector: googleAdsDestinationConnector,

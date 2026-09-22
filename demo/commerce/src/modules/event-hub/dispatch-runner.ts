@@ -1,4 +1,4 @@
-import type { DestinationConnector, DispatchStatus } from './destination-connector'
+import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
 
 export type RawDispatchDb = {
   raw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
@@ -82,78 +82,76 @@ async function flushRows(
   for (const row of rows) {
     if (signal?.aborted) break
 
-    const attempt = Number(row.attempt_count ?? 0) + 1
-    const payload = parsePayload(row.request_payload)
-    const firstAttemptSql = row.attempt_count > 0 ? 'first_attempt_at' : 'NOW()'
-
-    if (!payload) {
-      counters.invalid += 1
-      await db.raw(
-        `UPDATE dispatch_logs
-            SET status = 'invalid',
-                first_attempt_at = COALESCE(first_attempt_at, NOW()),
-                last_attempt_at = NOW(),
-                next_attempt_at = NULL,
-                attempt_count = $2,
-                error_code = $3,
-                error_message = $4,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [
-          row.id,
-          attempt,
-          `${connector.destination}_payload_missing`,
-          `${connector.destination} request_payload is empty or invalid JSON`,
-        ],
-      )
-      continue
-    }
-
-    if (!configured) {
-      counters.not_configured += 1
-      await db.raw(
-        `UPDATE dispatch_logs
-            SET status = 'not_configured',
-                first_attempt_at = COALESCE(first_attempt_at, ${firstAttemptSql}),
-                last_attempt_at = NOW(),
-                next_attempt_at = NOW() + INTERVAL '5 minutes',
-                attempt_count = $2,
-                error_code = $3,
-                error_message = $4,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [row.id, attempt, connector.notConfiguredErrorCode, connector.notConfiguredMessage],
-      )
-      continue
-    }
-
-    await db.raw(
+    // Claim immediately before I/O: an old candidate cannot reclaim a newer attempt.
+    const [claimed] = await db.raw<DispatchRow>(
       `UPDATE dispatch_logs
-          SET status = 'sending',
-              first_attempt_at = COALESCE(first_attempt_at, ${firstAttemptSql}),
-              last_attempt_at = NOW(),
-              attempt_count = $2,
-              updated_at = NOW()
-        WHERE id = $1`,
-      [row.id, attempt],
+          SET status = 'sending', attempt_count = attempt_count + 1,
+              first_attempt_at = COALESCE(first_attempt_at, NOW()),
+              last_attempt_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND attempt_count = $2
+          AND ((status = ANY($3::text[]) AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
+            OR (status = 'sending' AND last_attempt_at <= NOW() - INTERVAL '2 minutes'))
+        RETURNING id, attempt_count, request_payload`,
+      [row.id, row.attempt_count, connector.pendingStatuses],
     )
-
-    const result = await connector.send(payload, signal)
-    countResult(result.status, counters)
+    if (!claimed) continue
+    const attempt = Number(claimed.attempt_count)
+    const payload = parsePayload(claimed.request_payload)
+    let result: DispatchSendResult
+    if (!payload) {
+      result = {
+        status: 'invalid',
+        http_status: null,
+        error_code: `${connector.destination}_payload_missing`,
+        error_message: `${connector.destination} request_payload is empty or invalid JSON`,
+        response_payload: null,
+      }
+    } else {
+      // Bound network work below the recovery lease; cancellation also leaves a durable retry.
+      const controller = new AbortController()
+      const abort = () => controller.abort(signal?.reason)
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) abort()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let onAbort: (() => void) | undefined
+      try {
+        const interrupted = new Promise<never>((_, reject) => {
+          onAbort = () => reject(new Error('Dispatch interrupted'))
+          controller.signal.addEventListener('abort', onAbort, { once: true })
+          timer = setTimeout(() => controller.abort(), 90_000)
+          if (controller.signal.aborted) onAbort()
+        })
+        result = await Promise.race([connector.send(payload, controller.signal), interrupted])
+      } catch {
+        // Provider errors may contain credentials or personal data: retain only a safe code.
+        result = {
+          status: 'retry',
+          http_status: null,
+          error_code: 'dispatch_transport_interrupted',
+          error_message: 'Delivery interrupted; scheduled retry retained',
+          response_payload: null,
+        }
+      } finally {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', abort)
+        if (onAbort) controller.signal.removeEventListener('abort', onAbort)
+      }
+    }
 
     const nextAttemptMinutes =
       result.status === 'retry' || result.status === 'not_configured' ? nextRetryDelayMinutes(attempt) : null
-    await db.raw(
+    const finished = await db.raw(
       `UPDATE dispatch_logs
           SET status = $2,
               http_status = $3,
               error_code = $4,
               error_message = $5,
-              response_payload = $6::jsonb,
+              response_payload = $6::text::jsonb,
               sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE sent_at END,
               next_attempt_at = CASE WHEN $7::int IS NULL THEN NULL ELSE NOW() + ($7::text || ' minutes')::interval END,
               updated_at = NOW()
-        WHERE id = $1`,
+        WHERE id = $1 AND status = 'sending' AND attempt_count = $8
+        RETURNING id`,
       [
         row.id,
         result.status,
@@ -162,8 +160,10 @@ async function flushRows(
         result.error_message,
         JSON.stringify(result.response_payload ?? {}),
         nextAttemptMinutes,
+        attempt,
       ],
     )
+    if (finished.length) countResult(result.status, counters)
   }
 
   return counters
@@ -176,8 +176,9 @@ export async function flushDestinationDispatches({
   signal,
 }: FlushDestinationDispatchesInput): Promise<FlushDestinationDispatchesResult> {
   const configured = connector.isConfigured()
+  if (!configured || signal?.aborted) return flushRows([], db, connector, configured, signal)
   const rows = await db.raw<DispatchRow>(
-    `SELECT id, event_id, canonical_event_name, status, attempt_count, request_payload
+    `SELECT id, attempt_count
        FROM dispatch_logs
       WHERE destination = $1
         AND ($2::text IS NULL OR canonical_event_name = $2)
@@ -200,8 +201,9 @@ export async function flushDispatchLogByEventDestinationKey({
   signal,
 }: FlushDispatchLogByKeyInput): Promise<FlushDestinationDispatchesResult> {
   const configured = connector.isConfigured()
+  if (!configured || signal?.aborted) return flushRows([], db, connector, configured, signal)
   const rows = await db.raw<DispatchRow>(
-    `SELECT id, event_id, canonical_event_name, status, attempt_count, request_payload
+    `SELECT id, attempt_count
        FROM dispatch_logs
       WHERE destination = $1
         AND event_destination_key = $2

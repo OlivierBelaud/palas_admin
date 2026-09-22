@@ -1,5 +1,6 @@
+import { repairUnpreparedDispatches } from '../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../modules/event-hub/dispatch-runner'
-import { ensureMissingGa4DispatchLogs, ga4DestinationConnector } from '../modules/event-hub/ga4-connector'
+import { ga4DestinationConnector } from '../modules/event-hub/ga4-connector'
 
 interface FlushGa4Result {
   reconciled: number
@@ -35,7 +36,7 @@ export default defineJob('flush-ga4-dispatches', '* * * * *', async ({ db, log }
     return { ...EMPTY, error: 1 }
   }
 
-  const reconciliation = await ensureMissingGa4DispatchLogs(runtimeDb)
+  const reconciliation = await repairUnpreparedDispatches(runtimeDb, ga4DestinationConnector)
   const result = await flushDestinationDispatches({
     db: runtimeDb,
     connector: ga4DestinationConnector,

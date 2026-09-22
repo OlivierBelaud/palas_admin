@@ -1,3 +1,4 @@
+import { repairUnpreparedDispatches } from '../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../modules/event-hub/dispatch-runner'
 import { metaCapiDestinationConnector } from '../modules/event-hub/meta-capi-connector'
 
@@ -33,6 +34,7 @@ export default defineJob('flush-meta-capi-dispatches', '* * * * *', async ({ db,
     return { ...EMPTY, error: 1 }
   }
 
+  await repairUnpreparedDispatches(runtimeDb, metaCapiDestinationConnector)
   const result = await flushDestinationDispatches({
     db: runtimeDb,
     connector: metaCapiDestinationConnector,

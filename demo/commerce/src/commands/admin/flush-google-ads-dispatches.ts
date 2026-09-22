@@ -1,3 +1,4 @@
+import { repairUnpreparedDispatches } from '../../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
 import { getGoogleAdsConfig, googleAdsDestinationConnector } from '../../modules/event-hub/google-ads-connector'
 
@@ -13,6 +14,7 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
+        await repairUnpreparedDispatches(db, googleAdsDestinationConnector, { signal: ctx.signal })
         const result = await flushDestinationDispatches({
           db,
           connector: googleAdsDestinationConnector,

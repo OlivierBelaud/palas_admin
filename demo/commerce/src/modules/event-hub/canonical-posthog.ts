@@ -7,7 +7,11 @@ import {
   type IdentityShadowComparison,
   type RawPosthogEvent,
 } from '../identity/resolve-event-identity'
-import { validateCanonicalEvent, validationErrorsForSupportedDestinations } from './canonical-contract'
+import {
+  isDispatchableCanonicalEventName,
+  validateCanonicalEvent,
+  validationErrorsForSupportedDestinations,
+} from './canonical-contract'
 
 export type CanonicalPosthogEvent = {
   event_id: string
@@ -51,6 +55,13 @@ const RAW_TO_CANONICAL: Record<string, string> = {
   add_shipping_info: 'add_shipping_info',
   add_payment_info: 'add_payment_info',
   purchase: 'purchase',
+}
+
+// Cheap preflight before identity lookups and durable workflow allocation.
+// CRM subscribers still receive these events independently.
+export function isDispatchablePosthogEvent(event: RawPosthogEvent): boolean {
+  const name = typeof event.event === 'string' ? event.event.trim() : ''
+  return name === '$pageview' || isDispatchableCanonicalEventName(RAW_TO_CANONICAL[name] ?? '')
 }
 
 const INTERNAL_EVENTS = new Set([

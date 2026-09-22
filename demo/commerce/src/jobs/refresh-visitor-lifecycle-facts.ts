@@ -1,6 +1,6 @@
 // Cron: every 5 minutes — keep the lifecycle dashboard fact cache fresh.
 //
-// We rebuild a rolling 35-day window because late PostHog/shopify attribution
+// We check a rolling 35-day window and rebuild only changed days because late PostHog/shopify attribution
 // can update recent visitor_sessions after the original browsing day. Older
 // ranges can be rebuilt manually with `refreshVisitorLifecycleFacts`.
 
@@ -32,7 +32,7 @@ export default defineJob('refresh-visitor-lifecycle-facts', '*/5 * * * *', async
 
   const to = new Date()
   const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate() - REFRESH_DAYS))
-  const result = await refreshLifecycleFacts(runtimeDb, { from, to })
+  const result = await refreshLifecycleFacts(runtimeDb, { from, to, onlyChanged: true })
 
   log.info(
     `[refresh-visitor-lifecycle-facts] from=${result.from} to=${result.to} days=${result.days} sessions=${result.sessions} facts=${result.facts} duration_ms=${result.duration_ms}`,

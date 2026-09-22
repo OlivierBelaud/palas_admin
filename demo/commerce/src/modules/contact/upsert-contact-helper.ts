@@ -47,6 +47,7 @@ export interface ContactRepo {
 }
 
 export interface CartContactLinkOps {
+  replace?: (input: { cart_id: string; contact_id: string }) => Promise<boolean>
   list: (where: Record<string, unknown>) => Promise<CartContactRow[]>
   link: (input: { cart_id: string; contact_id: string }) => Promise<unknown>
   unlink: (input: { cart_id: string; contact_id: string }) => Promise<unknown>
@@ -111,6 +112,11 @@ export async function upsertContactAndLink(args: {
   } else {
     const created = await args.contact.create(patch)
     contactId = created.id
+  }
+
+  if (args.link.replace) {
+    const linkChanged = await args.link.replace({ cart_id: args.input.cart_id, contact_id: contactId })
+    return { contact_id: contactId, created: !existing, link_changed: linkChanged }
   }
 
   const existingLinks = await args.link.list({ cart_id: args.input.cart_id })

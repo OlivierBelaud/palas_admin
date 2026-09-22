@@ -1,5 +1,6 @@
+import { repairUnpreparedDispatches } from '../../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
-import { ensureMissingGa4DispatchLogs, ga4DestinationConnector } from '../../modules/event-hub/ga4-connector'
+import { ga4DestinationConnector } from '../../modules/event-hub/ga4-connector'
 
 export default defineCommand({
   name: 'flushGa4Dispatches',
@@ -13,7 +14,7 @@ export default defineCommand({
         const db = ctx.app.resolve('IDatabasePort') as RawDispatchDb | undefined
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
-        const reconciliation = await ensureMissingGa4DispatchLogs(db)
+        const reconciliation = await repairUnpreparedDispatches(db, ga4DestinationConnector, { signal: ctx.signal })
         const result = await flushDestinationDispatches({
           db,
           connector: ga4DestinationConnector,

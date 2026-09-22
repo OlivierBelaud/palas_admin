@@ -59,7 +59,7 @@ export async function ensureLifecycleFactsTables(db: RawDb): Promise<void> {
 
 export async function refreshLifecycleFacts(
   db: RawDb,
-  input: { from: Date; to: Date },
+  input: { from: Date; to: Date; onlyChanged?: boolean },
 ): Promise<RefreshLifecycleFactsResult> {
   const started = Date.now()
   await ensureLifecycleFactsTables(db)
@@ -73,45 +73,21 @@ export async function refreshLifecycleFacts(
   let totalSessions = 0
   let totalFacts = 0
   let days = 0
-  const computedAt = new Date().toISOString()
-
   for (const day of enumerateDays(from, to)) {
-    days += 1
     const next = new Date(day.getTime() + MS_PER_DAY)
     const dayKey = toDayKey(day)
-    const sessions = await db.raw<LifecycleSessionFactSource>(
-      `SELECT distinct_id,
-              started_at,
-              last_event_at,
-              segment_at_session_start,
-              contact_id,
-              carts_viewed_in_session,
-              carts_created_in_session,
-              carts_updated_in_session,
-              cart_converted,
-              order_id,
-              became_customer_in_session,
-              email_acquired_in_session
-         FROM visitor_sessions
-        WHERE deleted_at IS NULL
-          AND started_at >= $1
-          AND started_at < $2
-        ORDER BY started_at ASC`,
-      [day.toISOString(), next.toISOString()],
-    )
-    const facts = buildLifecycleActorDailyFacts(sessions, dayKey, computedAt)
-    await replaceLifecycleFactsForDay(db, dayKey, facts)
-    await upsertLifecycleDaySnapshot(db, {
-      day: dayKey,
-      status: 'ready',
-      sessions_count: sessions.length,
-      facts_count: facts.length,
-      computed_at: computedAt,
-      source_max_last_event_at: maxIso(sessions.map((session) => session.last_event_at)),
-      error_message: null,
-    })
-    totalSessions += sessions.length
-    totalFacts += facts.length
+    // All source rows remain in PostgreSQL. The statement either publishes
+    // the entire day and its ready snapshot, or changes nothing on failure.
+    const rows = await db.raw<{ sessions: number; facts: number }>(REFRESH_DAY_SQL, [
+      dayKey,
+      day.toISOString(),
+      next.toISOString(),
+      input.onlyChanged === true,
+    ])
+    if (!rows.length) continue
+    days += 1
+    totalSessions += Number(rows[0].sessions)
+    totalFacts += Number(rows[0].facts)
   }
 
   return {
@@ -182,82 +158,78 @@ export function buildLifecycleActorDailyFacts(
   return [...facts.values()]
 }
 
-async function replaceLifecycleFactsForDay(db: RawDb, day: string, facts: LifecycleActorDailyFactRow[]): Promise<void> {
-  await db.raw(`DELETE FROM ${FACTS_TABLE} WHERE day = $1`, [day])
-  if (facts.length === 0) return
-
-  const params: unknown[] = []
-  const values = facts.map((fact, index) => {
-    const base = index * 18
-    params.push(
-      fact.day,
-      fact.actor_key,
-      fact.first_started_at,
-      fact.segment_at_day_start,
-      fact.sessions,
-      fact.cart_viewed,
-      fact.cart_initiated,
-      fact.cart_updated,
-      fact.converted,
-      fact.converted_sessions,
-      fact.became_known,
-      fact.became_customer,
-      fact.known_without_contact,
-      fact.converted_without_order_id,
-      fact.became_customer_without_contact,
-      JSON.stringify(fact.order_ids),
-      fact.computed_at,
-      fact.source_last_event_at,
-    )
-    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}, $${base + 14}, $${base + 15}, $${base + 16}::jsonb, $${base + 17}, $${base + 18})`
-  })
-
-  await db.raw(
-    `INSERT INTO ${FACTS_TABLE}
-        (day, actor_key, first_started_at, segment_at_day_start, sessions,
-         cart_viewed, cart_initiated, cart_updated, converted, converted_sessions, became_known,
-         became_customer, known_without_contact, converted_without_order_id, became_customer_without_contact,
-         order_ids, computed_at, source_last_event_at)
-     VALUES ${values.join(', ')}`,
-    params,
+// Disjoint upsert/delete sets avoid modifying the same row twice in one CTE.
+// Snapshot and facts share one PostgreSQL statement/transaction. No pooled
+// BEGIN/COMMIT calls and no client-side parameter list proportional to actors.
+const REFRESH_DAY_SQL = `
+WITH source AS MATERIALIZED (
+  SELECT distinct_id,started_at,last_event_at,segment_at_session_start,contact_id,
+    carts_viewed_in_session,carts_created_in_session,carts_updated_in_session,cart_converted,
+    order_id,became_customer_in_session,email_acquired_in_session,updated_at,deleted_at
+  FROM visitor_sessions WHERE started_at >= $2::timestamptz AND started_at < $3::timestamptz
+), version AS (
+  SELECT MD5(COALESCE(STRING_AGG(TO_JSONB(source)::text, '' ORDER BY TO_JSONB(source)::text), '')) AS signature FROM source
+), changed AS MATERIALIZED (
+  SELECT signature FROM version WHERE NOT $4::boolean OR NOT EXISTS (
+    SELECT 1 FROM visitor_lifecycle_day_snapshots d WHERE d.day = $1 AND d.status = 'ready'
+      AND d.source_signature = version.signature
   )
-}
-
-async function upsertLifecycleDaySnapshot(
-  db: RawDb,
-  row: {
-    day: string
-    status: 'ready' | 'failed'
-    sessions_count: number
-    facts_count: number
-    computed_at: string
-    source_max_last_event_at: string | null
-    error_message: string | null
-  },
-): Promise<void> {
-  await db.raw(
-    `INSERT INTO ${DAYS_TABLE}
-       (day, status, sessions_count, facts_count, computed_at, source_max_last_event_at, error_message)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (day) DO UPDATE SET
-       status = EXCLUDED.status,
-       sessions_count = EXCLUDED.sessions_count,
-       facts_count = EXCLUDED.facts_count,
-       computed_at = EXCLUDED.computed_at,
-       source_max_last_event_at = EXCLUDED.source_max_last_event_at,
-       error_message = EXCLUDED.error_message,
-       updated_at = now()`,
-    [
-      row.day,
-      row.status,
-      row.sessions_count,
-      row.facts_count,
-      row.computed_at,
-      row.source_max_last_event_at,
-      row.error_message,
-    ],
-  )
-}
+), live AS MATERIALIZED (
+  SELECT s.* FROM source s CROSS JOIN changed WHERE s.deleted_at IS NULL
+), facts AS MATERIALIZED (
+  SELECT distinct_id AS actor_key, MIN(started_at) AS first_started_at,
+    (ARRAY_AGG(segment_at_session_start ORDER BY started_at))[1] AS segment_at_day_start,
+    COUNT(*)::integer AS sessions,
+    BOOL_OR(COALESCE(carts_viewed_in_session,0) > 0) AS cart_viewed,
+    BOOL_OR(COALESCE(carts_created_in_session,0) > 0) AS cart_initiated,
+    BOOL_OR(COALESCE(carts_updated_in_session,0) > 0) AS cart_updated,
+    BOOL_OR(COALESCE(cart_converted,false)) AS converted,
+    COUNT(*) FILTER (WHERE cart_converted IS TRUE)::integer AS converted_sessions,
+    BOOL_OR(COALESCE(email_acquired_in_session,false)) AS became_known,
+    BOOL_OR(COALESCE(became_customer_in_session,false)) AS became_customer,
+    BOOL_OR(segment_at_session_start <> 'unknown' AND NULLIF(contact_id,'') IS NULL) AS known_without_contact,
+    BOOL_OR(COALESCE(cart_converted,false) AND NULLIF(order_id,'') IS NULL) AS converted_without_order_id,
+    BOOL_OR(COALESCE(became_customer_in_session,false) AND NULLIF(contact_id,'') IS NULL) AS became_customer_without_contact,
+    MAX(last_event_at) AS source_last_event_at
+  FROM live GROUP BY distinct_id
+), orders AS (
+  SELECT distinct_id, JSONB_AGG(order_id ORDER BY first_seen, order_id) AS ids FROM (
+    SELECT distinct_id, order_id, MIN(started_at) AS first_seen FROM live
+    WHERE NULLIF(order_id,'') IS NOT NULL GROUP BY distinct_id,order_id
+  ) o GROUP BY distinct_id
+), written AS (
+  INSERT INTO visitor_lifecycle_actor_daily_facts (
+    day,actor_key,first_started_at,segment_at_day_start,sessions,cart_viewed,cart_initiated,cart_updated,
+    converted,converted_sessions,became_known,became_customer,known_without_contact,
+    converted_without_order_id,became_customer_without_contact,order_ids,computed_at,source_last_event_at)
+  SELECT $1,f.actor_key,f.first_started_at,f.segment_at_day_start,f.sessions,f.cart_viewed,f.cart_initiated,f.cart_updated,
+    f.converted,f.converted_sessions,f.became_known,f.became_customer,f.known_without_contact,
+    f.converted_without_order_id,f.became_customer_without_contact,COALESCE(o.ids,'[]'::jsonb),NOW(),f.source_last_event_at
+  FROM facts f LEFT JOIN orders o ON o.distinct_id=f.actor_key
+  ON CONFLICT (day,actor_key) DO UPDATE SET
+    first_started_at=EXCLUDED.first_started_at,segment_at_day_start=EXCLUDED.segment_at_day_start,
+    sessions=EXCLUDED.sessions,cart_viewed=EXCLUDED.cart_viewed,cart_initiated=EXCLUDED.cart_initiated,
+    cart_updated=EXCLUDED.cart_updated,converted=EXCLUDED.converted,converted_sessions=EXCLUDED.converted_sessions,
+    became_known=EXCLUDED.became_known,became_customer=EXCLUDED.became_customer,
+    known_without_contact=EXCLUDED.known_without_contact,converted_without_order_id=EXCLUDED.converted_without_order_id,
+    became_customer_without_contact=EXCLUDED.became_customer_without_contact,order_ids=EXCLUDED.order_ids,
+    computed_at=EXCLUDED.computed_at,source_last_event_at=EXCLUDED.source_last_event_at,updated_at=NOW(),deleted_at=NULL
+  RETURNING actor_key
+), removed AS (
+  DELETE FROM visitor_lifecycle_actor_daily_facts f WHERE day=$1 AND EXISTS (SELECT 1 FROM changed)
+    AND NOT EXISTS (SELECT 1 FROM facts n WHERE n.actor_key=f.actor_key) RETURNING 1
+), snapshot AS (
+  INSERT INTO visitor_lifecycle_day_snapshots
+    (day,status,sessions_count,facts_count,computed_at,source_max_last_event_at,error_message,source_signature)
+  SELECT $1,'ready',(SELECT COUNT(*) FROM live),(SELECT COUNT(*) FROM written),NOW(),
+    (SELECT MAX(last_event_at) FROM live),NULL,signature FROM changed
+    WHERE (SELECT COUNT(*) FROM removed) >= 0
+  ON CONFLICT(day) DO UPDATE SET status='ready',sessions_count=EXCLUDED.sessions_count,
+    facts_count=EXCLUDED.facts_count,computed_at=EXCLUDED.computed_at,
+    source_max_last_event_at=EXCLUDED.source_max_last_event_at,error_message=NULL,
+    source_signature=EXCLUDED.source_signature,updated_at=NOW()
+  RETURNING sessions_count AS sessions,facts_count AS facts
+) SELECT * FROM snapshot`
 
 function enumerateDays(from: Date, to: Date): Date[] {
   const days: Date[] = []
@@ -283,16 +255,6 @@ function toMs(input: Date | string): number {
 
 function count(value: number | null | undefined): number {
   return Number(value ?? 0)
-}
-
-function maxIso(values: Array<Date | string | null>): string | null {
-  let max: string | null = null
-  for (const value of values) {
-    if (!value) continue
-    const iso = toIso(value)
-    if (!max || iso > max) max = iso
-  }
-  return max
 }
 
 const LIFECYCLE_FACTS_DDL = [
@@ -349,6 +311,7 @@ const LIFECYCLE_FACTS_DDL = [
      updated_at timestamptz NOT NULL DEFAULT now(),
      deleted_at timestamptz
    )`,
+  `ALTER TABLE ${DAYS_TABLE} ADD COLUMN IF NOT EXISTS source_signature text`,
   `CREATE INDEX IF NOT EXISTS visitor_lifecycle_day_snapshots_day_status_idx
      ON ${DAYS_TABLE}(day, status)`,
 ]

@@ -96,6 +96,7 @@ export async function resolveEmailByDistinctId(
     else metrics.misses += 1
     return email
   } catch {
+    metrics.misses += 1
     return null
   }
 }

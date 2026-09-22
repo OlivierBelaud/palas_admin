@@ -1,149 +1,44 @@
-// Command: continuous PostHog -> carts sync (5-min cron).
-//
-// PostHog is the source of truth for events. The `cart` snapshot table
-// holds the folded state. The subscriber catches what flows through our
-// proxy in real time; this loop rescues anything that reaches PostHog
-// directly from the storefront (or that we lose to a redeploy /
-// throttle).
-//
-// Strategy:
-//   1. Read per-class high-water marks from `cart.last_action_at`:
-//      MAX where last_action LIKE 'cart:%' and MAX where 'checkout:%'.
-//      Per-class (not global) because the cart:viewed firehose races
-//      ahead of checkout:* (Shopify Web Pixel emits checkouts 1–3 min
-//      after the cart event), so a single global mark would silently
-//      swallow completed checkouts.
-//   2. HogQL: pull every cart:* / checkout:* event with timestamp
-//      strictly greater than its class mark, ordered ASC, capped at
-//      5 000 events / run.
-//   3. Normalise via `posthog-sync` helper and dispatch through
-//      `step.command.ingestCartEvent`. Errors are counted, not thrown.
-//
-// Idempotence: ingestCartEvent upserts the cart row by cart/checkout token
-// and merges monotonically. `distinct_id` identifies the visitor, not the
-// cart; using it as a cart key merges separate carts from the same browser.
-// Replaying overlap is safe because the same cart tokens converge.
-
+// Five-minute safety net for events that bypass or outlive the live proxy.
+// Durable progress and compact receipts avoid replaying healthy workflows.
 import type { RawDb } from '../../modules/cart-tracking/apply-event'
-import { type HogQLEventRow, ingestHogQLRows } from '../../modules/cart-tracking/posthog-sync'
+import {
+  ingestRecoveredCartEvent,
+  type RecoveryCommands,
+  recoverPosthogEvents,
+} from '../../modules/cart-tracking/posthog-recovery'
+import type { HogQLEventRow } from '../../modules/cart-tracking/posthog-sync'
 import { posthogPrivateKey, runPosthogHogQL } from '../../utils/posthog-query'
-
-const MAX_EVENTS_PER_RUN = 5000
-const OVERLAP_HOURS = 24
-type SyncPosthogEventCommands = {
-  ingestCartEvent(input: Record<string, unknown>): Promise<unknown>
-}
 
 export default defineCommand({
   name: 'syncPosthogEvents',
-  description: 'Pull recent cart/checkout events from PostHog and dispatch ingestCartEvent for each',
+  description: 'Recover missing cart/checkout events with durable progress and deduplication',
   input: z.object({}),
   workflow: async (_input, { step, log }) => {
     const key = posthogPrivateKey()
-    if (!key) {
-      throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required for syncPosthogEvents')
-    }
-
+    if (!key) throw new MantaError('INVALID_STATE', 'POSTHOG_API_KEY is required for syncPosthogEvents')
     return await step.action('sync-posthog-events', {
       invoke: async (_i: unknown, ctx) => {
         const db = ctx.app.resolve('IDatabasePort') as RawDb | undefined
         if (!db) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
-
         const startedAt = Date.now()
-
-        // ── 1. Resolve high-water marks — one per event class ─────────
-        // Source: the `carts` snapshot (PostHog itself is the event log;
-        // `carts.last_action / last_action_at` is the deepest event that
-        // has already been folded in). Per-class marks because the
-        // cart:viewed firehose races ahead of checkout:* — a single
-        // global MAX would silently swallow completed checkouts.
-        const maxRows = await db.raw<{ kind: string; max_ts: Date | null }>(
-          `SELECT CASE WHEN last_action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
-                  MAX(last_action_at) AS max_ts
-             FROM carts
-            WHERE last_action LIKE 'cart:%' OR last_action LIKE 'checkout:%'
-            GROUP BY 1`,
-        )
-        const toIso = (ts: Date | null | undefined): string | null =>
-          ts ? (ts instanceof Date ? ts.toISOString() : String(ts)) : null
-        const cartSinceIso = toIso(maxRows.find((r) => r.kind === 'cart')?.max_ts)
-        const checkoutSinceIso = toIso(maxRows.find((r) => r.kind === 'checkout')?.max_ts)
-
-        const cartClause = cartSinceIso
-          ? `(event LIKE 'cart:%' AND timestamp > toDateTime('${cartSinceIso}') - INTERVAL ${OVERLAP_HOURS} HOUR)`
-          : `event LIKE 'cart:%'`
-        const checkoutClause = checkoutSinceIso
-          ? `(event LIKE 'checkout:%' AND timestamp > toDateTime('${checkoutSinceIso}') - INTERVAL ${OVERLAP_HOURS} HOUR)`
-          : `event LIKE 'checkout:%'`
-
-        log.info(
-          `[syncPosthogEvents] starting — cartSince=${cartSinceIso ?? 'genesis'} checkoutSince=${checkoutSinceIso ?? 'genesis'} overlapHours=${OVERLAP_HOURS}`,
-        )
-
-        // ── 2. HogQL query ────────────────────────────────────────────
-        const hogql = `SELECT uuid, event, distinct_id, timestamp, properties
-                         FROM events
-                        WHERE ${cartClause} OR ${checkoutClause}
-                        ORDER BY timestamp ASC
-                        LIMIT ${MAX_EVENTS_PER_RUN}`
-
-        // PostHog returns each row as `[uuid, event, distinct_id, timestamp, properties]`.
-        // The HogQL query above selects exactly those 5 columns so the tuple shape is
-        // guaranteed at runtime — go through `unknown` to satisfy the strict tuple type.
-        const rows = (await runPosthogHogQL(hogql, {
-          privateKey: key,
-          signal: ctx.signal,
-        })) as unknown as HogQLEventRow[]
-
-        log.info(`[syncPosthogEvents] HogQL returned ${rows.length} event(s)`)
-
-        // ── 3. Dispatch each event through ingestCartEvent ────────────
-        const commands = step.command as unknown as SyncPosthogEventCommands
-        const counters = await ingestHogQLRows(rows, {
-          ingest: (input) => commands.ingestCartEvent(input),
-          warn: (msg) => log.warn(`[syncPosthogEvents] ${msg}`),
+        const commands = step.command as unknown as RecoveryCommands
+        const result = await recoverPosthogEvents({
+          db,
+          fetchPage: (query) => runPosthogHogQL<HogQLEventRow[]>(query, { privateKey: key, signal: ctx.signal }),
+          ingest: (input) => ingestRecoveredCartEvent(input, commands),
           shouldStop: () => ctx.signal?.aborted ?? false,
         })
-
-        // Translate "stopped early because of cancel" into the canonical
-        // MantaError the workflow runner expects. We detect cancellation
-        // from `ctx.signal.aborted` (the ingestHogQLRows helper itself
-        // never throws — it stops the loop and returns partial counters).
         if (ctx.signal?.aborted) {
           throw new MantaError('CONFLICT', 'syncPosthogEvents cancelled', { code: 'WORKFLOW_CANCELLED' })
         }
-
         const durationMs = Date.now() - startedAt
-
-        // Re-read marks after ingest so logs reflect actual progress per class.
-        const finalRows = await db.raw<{ kind: string; max_ts: Date | null }>(
-          `SELECT CASE WHEN last_action LIKE 'cart:%' THEN 'cart' ELSE 'checkout' END AS kind,
-                  MAX(last_action_at) AS max_ts
-             FROM carts
-            WHERE last_action LIKE 'cart:%' OR last_action LIKE 'checkout:%'
-            GROUP BY 1`,
-        )
-        const cartFinalIso = toIso(finalRows.find((r) => r.kind === 'cart')?.max_ts)
-        const checkoutFinalIso = toIso(finalRows.find((r) => r.kind === 'checkout')?.max_ts)
-
         log.info(
-          `[syncPosthogEvents] done — fetched=${rows.length} ingested=${counters.ingested} skipped=${counters.skipped} errors=${counters.errors} duration_ms=${durationMs} cartMark=${cartSinceIso ?? 'genesis'}→${cartFinalIso ?? 'genesis'} checkoutMark=${checkoutSinceIso ?? 'genesis'}→${checkoutFinalIso ?? 'genesis'}`,
+          `[syncPosthogEvents] fetched=${result.fetched} ingested=${result.ingested} skipped=${result.skipped} errors=${result.errors} retried=${result.retried} busy=${result.busy} duration_ms=${durationMs}`,
         )
-
-        return {
-          fetched: rows.length,
-          ingested: counters.ingested,
-          skipped: counters.skipped,
-          errors: counters.errors,
-          duration_ms: durationMs,
-          cart_since: cartSinceIso,
-          checkout_since: checkoutSinceIso,
-        }
+        return { ...result, duration_ms: durationMs }
       },
       compensate: async () => {
-        // ingestCartEvent is idempotent at the cart row level. The cron is
-        // a safety net so partial progress is fine — the next tick resumes
-        // from the new MAX(last_action_at) per class.
+        // The durable cursor and retry receipts survive cancellation/redeploys.
       },
     })({})
   },
