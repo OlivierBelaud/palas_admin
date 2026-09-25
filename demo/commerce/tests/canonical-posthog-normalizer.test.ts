@@ -5,6 +5,8 @@ import {
   isDispatchablePosthogEvent,
   normalizePosthogEventToCanonical,
 } from '../src/modules/event-hub/canonical-posthog'
+import { mapCanonicalToMetaCapi } from '../src/modules/event-hub/meta-capi-connector'
+import { mapCanonicalToPinterest } from '../src/modules/event-hub/pinterest-connector'
 import type { IdentityShadowComparison } from '../src/modules/identity/resolve-event-identity'
 
 function comparison(overrides: Partial<IdentityShadowComparison> = {}): IdentityShadowComparison {
@@ -35,6 +37,43 @@ function comparison(overrides: Partial<IdentityShadowComparison> = {}): Identity
 }
 
 describe('canonical PostHog normalizer', () => {
+  it.each([true, false])('shares request context between Meta and Pinterest without changing consent (%s)', (ads) => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        uuid: 'evt_anonymous_view',
+        event: '$pageview',
+        distinct_id: 'anonymous_visitor',
+        timestamp: '2026-09-25T08:00:00.000Z',
+        properties: {
+          $current_url: 'https://fancypalas.com/products/bague-test',
+          palas_consent_ads: ads,
+          palas_consent_analytics: true,
+        },
+      },
+      comparison(),
+      { forwarded: true, status: 200 },
+      { client_ip: '203.0.113.10', user_agent: 'Mozilla/5.0 visitor-browser' },
+    )!
+    expect(event.payload_normalized.user).toMatchObject({
+      client_ip: '203.0.113.10',
+      user_agent: 'Mozilla/5.0 visitor-browser',
+      email_sha256: null,
+    })
+    for (const map of [mapCanonicalToMetaCapi, mapCanonicalToPinterest]) {
+      const result = map(event.event_name, event.payload_normalized)
+      expect(result.ok).toBe(ads)
+      if (ads) {
+        expect(result.payload).toMatchObject({
+          data: [
+            { user_data: { client_ip_address: '203.0.113.10', client_user_agent: 'Mozilla/5.0 visitor-browser' } },
+          ],
+        })
+      } else {
+        expect('errors' in result && result.errors.some((error) => error.includes('consent_not_granted'))).toBe(true)
+      }
+    }
+  })
+
   it('infers Shopify page types from URLs', () => {
     expect(inferPageType('https://fancypalas.com/')).toBe('home')
     expect(inferPageType('https://fancypalas.com/collections/bagues')).toBe('collection')
