@@ -213,6 +213,62 @@ describe('Google Ads Data Manager transport', () => {
     stubResponses(200, response)
     expect((await sendGoogleAdsPurchasePayload(body(), config)).status).toBe('retry')
   })
+  it('keeps actionable Google field errors without retaining echoed personal data or secrets', async () => {
+    stubResponses(400, {
+      error: {
+        status: 'INVALID_ARGUMENT',
+        message: 'secret email@example.com',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+            reason: 'INVALID_ARGUMENT',
+            metadata: { secret: 'refresh-token' },
+          },
+          {
+            '@type': 'type.googleapis.com/google.rpc.BadRequest',
+            fieldViolations: [
+              {
+                field: 'events.events[0].user_data.user_identifiers[0]',
+                reason: 'DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS',
+                description: 'email@example.com secret',
+              },
+              { field: 'events.EMAIL_PRIVATE', reason: 'EMAIL_PRIVATE', description: 'refresh-token' },
+            ],
+          },
+        ],
+      },
+    })
+    const result = await sendGoogleAdsPurchasePayload(body(), config)
+    expect(result).toMatchObject({
+      status: 'invalid',
+      http_status: 400,
+      error_code: 'google_ads_destination_account_not_enabled_enhanced_conversions_for_leads',
+      response_payload: {
+        error: {
+          status: 'INVALID_ARGUMENT',
+          reasons: ['DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS', 'INVALID_ARGUMENT'],
+          fieldViolations: [
+            {
+              reason: 'DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS',
+              field: 'events.events[0].user_data.user_identifiers[0]',
+            },
+          ],
+        },
+      },
+    })
+    expect(result.error_message).toContain('DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS')
+    for (const secret of ['email@example.com', 'secret', 'refresh-token', 'EMAIL_PRIVATE']) {
+      expect(JSON.stringify(result)).not.toContain(secret)
+    }
+  })
+  it('falls back to HTTP status for malformed or unknown Google error details', async () => {
+    stubResponses(400, {
+      error: { status: 'EMAIL_PRIVATE', details: [{ fieldViolations: 'bad', reason: 'EMAIL_PRIVATE' }] },
+    })
+    const result = await sendGoogleAdsPurchasePayload(body(), config)
+    expect(result.error_code).toBe('google_ads_http_400')
+    expect(JSON.stringify(result)).not.toContain('EMAIL_PRIVATE')
+  })
   it('marks validateOnly as validated even when the API returns no result', async () => {
     const fetcher = stubResponses(200, {})
     expect((await sendGoogleAdsPurchasePayload(body(), { ...config, validateOnly: true })).status).toBe('validated')

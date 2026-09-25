@@ -1,4 +1,5 @@
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
+import { googleAdsErrorDetails } from './google-ads-errors'
 
 export type GoogleAdsDispatchStatus = DispatchStatus
 
@@ -443,12 +444,17 @@ export async function sendGoogleAdsPurchasePayload(
           : response.status === 429 || response.status >= 500
             ? 'retry'
             : 'invalid'
-      return failure(
-        status,
-        `google_ads_http_${response.status}`,
-        `Google Data Manager returned HTTP ${response.status}`,
-        response.status,
-      )
+      const error = googleAdsErrorDetails(parsed)
+      const reason = error.reasons[0]
+      return {
+        ...failure(
+          status,
+          reason ? `google_ads_${reason.toLowerCase()}` : `google_ads_http_${response.status}`,
+          `Google Data Manager returned HTTP ${response.status}${reason ? `: ${reason}` : ''}`,
+          response.status,
+        ),
+        response_payload: { error },
+      }
     }
     const requestId = str(parsed?.requestId, 512)
     if (!parsed || parsed.error || (!config.validateOnly && !requestId)) {
