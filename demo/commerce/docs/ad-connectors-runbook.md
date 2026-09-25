@@ -66,6 +66,16 @@ Les anciens payloads Google non envoyés sont remappés, par lots bornés, à pa
 
 ## Validation, puis envoi réel
 
+### Refus Google avec coordonnées seules
+
+Le 25 septembre 2026, les envois avec identifiant de clic étaient acceptés, mais les envois avec coordonnées hachées seules étaient refusés en HTTP 400. Une reprise ciblée a confirmé le motif `DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS` : le suivi avancé était désactivé côté compte Google Ads.
+
+Activer le suivi avancé au niveau du compte dans **Objectifs → Paramètres → Utiliser les données client** (ou la rubrique **Suivi avancé des conversions pour les prospects** selon l'interface), puis enregistrer et examiner les conditions Google affichées. [Procédure Google](https://support.google.com/google-ads/answer/16884284?hl=fr). Ce réglage ne demande pas de recréer les six actions. Ne pas changer les consentements des visiteurs ni les objectifs d'enchères pour contourner ce refus.
+
+Le connecteur conserve uniquement des raisons d'erreur connues et des chemins de champs autorisés ; il exclut les descriptions, messages et métadonnées libres de Google, qui peuvent contenir des données personnelles. Ce refus précis est classé `not_configured` et bénéficie de la reprise avec délai croissant existante, plafonnée à une heure. Les autres erreurs de payload restent `invalid`. Les anciennes lignes déjà `invalid` doivent faire l'objet d'une reprise ciblée explicite ; une modification du compte ne les rouvre pas à elle seule. Ne jamais reprendre les lignes `sent` ou `validated` pour ce diagnostic.
+
+### Procédure de validation
+
 Toute modification des variables Vercel exige un nouveau déploiement utilisant ces valeurs. Respecter le déploiement Git du projet ; ne pas lancer de `vercel deploy` local.
 
 1. Déployer avec les deux modes de test activés.

@@ -438,19 +438,25 @@ export async function sendGoogleAdsPurchasePayload(
     })
     const parsed = await readJson(response)
     if (!response.ok) {
+      const error = googleAdsErrorDetails(parsed)
+      const enhancedConversionsDisabled = error.reasons.includes(
+        'DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS',
+      )
       const status =
-        response.status === 401 || response.status === 403
+        response.status === 401 || response.status === 403 || enhancedConversionsDisabled
           ? 'not_configured'
           : response.status === 429 || response.status >= 500
             ? 'retry'
             : 'invalid'
-      const error = googleAdsErrorDetails(parsed)
       const reason = error.reasons[0]
+      const action = enhancedConversionsDisabled
+        ? ' Activez le suivi avancé des conversions pour les prospects dans les paramètres Google Ads du compte destinataire. L’envoi sera retenté automatiquement.'
+        : ''
       return {
         ...failure(
           status,
           reason ? `google_ads_${reason.toLowerCase()}` : `google_ads_http_${response.status}`,
-          `Google Data Manager returned HTTP ${response.status}${reason ? `: ${reason}` : ''}`,
+          `Google Data Manager returned HTTP ${response.status}${reason ? `: ${reason}` : ''}${action}`,
           response.status,
         ),
         response_payload: { error },

@@ -240,7 +240,7 @@ describe('Google Ads Data Manager transport', () => {
     })
     const result = await sendGoogleAdsPurchasePayload(body(), config)
     expect(result).toMatchObject({
-      status: 'invalid',
+      status: 'not_configured',
       http_status: 400,
       error_code: 'google_ads_destination_account_not_enabled_enhanced_conversions_for_leads',
       response_payload: {
@@ -257,6 +257,7 @@ describe('Google Ads Data Manager transport', () => {
       },
     })
     expect(result.error_message).toContain('DESTINATION_ACCOUNT_NOT_ENABLED_ENHANCED_CONVERSIONS_FOR_LEADS')
+    expect(result.error_message).toContain('Activez le suivi avancé')
     for (const secret of ['email@example.com', 'secret', 'refresh-token', 'EMAIL_PRIVATE']) {
       expect(JSON.stringify(result)).not.toContain(secret)
     }
