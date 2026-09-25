@@ -1,3 +1,4 @@
+import { remapGoogleAdsDispatches } from '../../modules/event-hub/ad-dispatch-repair'
 import { repairUnpreparedDispatches } from '../../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../../modules/event-hub/dispatch-runner'
 import { getGoogleAdsConfig, googleAdsDestinationConnector } from '../../modules/event-hub/google-ads-connector'
@@ -15,6 +16,7 @@ export default defineCommand({
         if (!db?.raw) throw new MantaError('UNEXPECTED_STATE', 'No database configured')
 
         await repairUnpreparedDispatches(db, googleAdsDestinationConnector, { signal: ctx.signal })
+        await remapGoogleAdsDispatches(db, ctx.signal)
         const result = await flushDestinationDispatches({
           db,
           connector: googleAdsDestinationConnector,
@@ -28,7 +30,7 @@ export default defineCommand({
         }
 
         log.info(
-          `[flushGoogleAdsDispatches] scanned=${result.scanned} sent=${result.sent} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} validate_only=${config.validateOnly}`,
+          `[flushGoogleAdsDispatches] scanned=${result.scanned} sent=${result.sent} validated=${result.validated} invalid=${result.invalid} retry=${result.retry} error=${result.error} not_configured=${result.not_configured} validate_only=${config.validateOnly}`,
         )
 
         return {

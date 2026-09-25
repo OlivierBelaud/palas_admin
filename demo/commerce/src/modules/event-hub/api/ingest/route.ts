@@ -10,6 +10,7 @@ import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../..
 import { ga4ContextFromHeaders, ga4DestinationConnector, mapCanonicalToGa4 } from '../../ga4-connector'
 import { googleAdsDestinationConnector, mapCanonicalToGoogleAds } from '../../google-ads-connector'
 import { mapCanonicalToMetaCapi, metaCapiDestinationConnector } from '../../meta-capi-connector'
+import { mapCanonicalToPinterest, pinterestDestinationConnector } from '../../pinterest-connector'
 
 const COOKIE_NAME = 'muid'
 const COOKIE_MAX_AGE = 390 * 24 * 60 * 60
@@ -393,6 +394,7 @@ function summarizePayload(
       gbraid: str(user.gbraid, 512) || str(userData.gbraid, 512) || queryParamFromUrl(url, 'gbraid'),
       wbraid: str(user.wbraid, 512) || str(userData.wbraid, 512) || queryParamFromUrl(url, 'wbraid'),
       fbclid: str(user.fbclid, 512) || str(userData.fbclid, 512) || queryParamFromUrl(url, 'fbclid'),
+      epik: str(user.epik, 512) || str(userData.epik, 512) || str(props.epik, 512) || queryParamFromUrl(url, 'epik'),
       phone_sha256: str(user.phone_sha256, 128) || str(userData.phone_sha256, 128),
       user_agent: str(sourceContext.user_agent, 1024),
       client_ip: str(sourceContext.client_ip, 256),
@@ -503,6 +505,7 @@ export async function POST(req: Request) {
   const ga4 = mapCanonicalToGa4(eventName, normalized)
   const googleAds = mapCanonicalToGoogleAds(eventName, normalized)
   const metaCapi = mapCanonicalToMetaCapi(eventName, normalized)
+  const pinterest = mapCanonicalToPinterest(eventName, normalized)
   const errors = Array.from(
     new Set([
       ...validationErrorsForSupportedDestinations(validation),
@@ -636,6 +639,38 @@ export async function POST(req: Request) {
       ],
     )
   }
+  if (pinterest.supported) {
+    await sql.unsafe(
+      `INSERT INTO dispatch_logs (
+         id, event_destination_key, event_id, canonical_event_name, source_event_name,
+         destination, status, event_received_at, first_attempt_at, last_attempt_at,
+         next_attempt_at, sent_at, attempt_count, http_status, error_code,
+         error_message, request_payload, response_payload, metadata, created_at, updated_at
+       ) VALUES (
+         gen_random_uuid(), $1, $2, $3, $4,
+         'pinterest', $5, $6, NULL, NULL,
+         $7, NULL, 0, NULL, $8,
+         $9, $10::text::jsonb, NULL, $11::text::jsonb, NOW(), NOW()
+       )
+       ON CONFLICT (event_destination_key) DO UPDATE SET
+         status = 'pending', next_attempt_at = NOW(), error_code = NULL, error_message = NULL,
+         request_payload = EXCLUDED.request_payload, metadata = EXCLUDED.metadata, updated_at = NOW()
+       WHERE dispatch_logs.status IN ('invalid', 'error') AND EXCLUDED.status = 'pending'`,
+      [
+        `${eventId}:pinterest`,
+        eventId,
+        eventName,
+        str(body.raw_event_name, 128) || str(body.event, 128) || str(body.event_name, 128),
+        pinterest.ok ? 'pending' : 'invalid',
+        eventTime,
+        pinterest.ok ? new Date() : null,
+        pinterest.ok ? null : (pinterest.errors[0] ?? 'pinterest_invalid_payload'),
+        pinterest.ok ? null : pinterest.errors.join(', '),
+        JSON.stringify(pinterest.payload),
+        JSON.stringify({ ...pinterest.metadata, ready: pinterest.ok, errors: pinterest.ok ? [] : pinterest.errors }),
+      ],
+    )
+  }
 
   await sql.unsafe(
     `UPDATE event_logs SET dispatch_prepared_at = NOW()
@@ -643,7 +678,12 @@ export async function POST(req: Request) {
     [eventId],
   )
   const liveDispatch: Record<string, unknown> = {}
-  for (const connector of [ga4DestinationConnector, googleAdsDestinationConnector, metaCapiDestinationConnector]) {
+  for (const connector of [
+    ga4DestinationConnector,
+    googleAdsDestinationConnector,
+    metaCapiDestinationConnector,
+    pinterestDestinationConnector,
+  ]) {
     liveDispatch[connector.destination] = await flushDispatchLogByEventDestinationKey({
       db: dispatchDb(sql),
       connector,

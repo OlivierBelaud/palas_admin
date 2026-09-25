@@ -149,3 +149,23 @@ describe('Event Hub dispatch runner', () => {
     expect(selects[0].query).toContain("last_attempt_at <= NOW() - INTERVAL '2 minutes'")
   })
 })
+
+it('keeps validation-only receipts distinct from live delivery', async () => {
+  const { db, updates } = makeDb([{ id: 'test', attempt_count: 0, request_payload: { test: true } }])
+  const result = await flushDestinationDispatches({
+    db,
+    batchLimit: 10,
+    connector: connector({
+      send: async () => ({
+        status: 'validated',
+        http_status: 200,
+        error_code: null,
+        error_message: null,
+        response_payload: { test_mode: true },
+      }),
+    }),
+  })
+  expect(result).toMatchObject({ validated: 1, sent: 0, error: 0, retry: 0 })
+  expect(updates[1].params?.[1]).toBe('validated')
+  expect(updates[1].params?.[6]).toBeNull()
+})

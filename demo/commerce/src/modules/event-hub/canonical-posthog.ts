@@ -339,6 +339,12 @@ export function normalizePosthogEventToCanonical(
       gbraid: str(sourceContext.gbraid, 512) || str(props.gbraid, 512) || queryParamFromUrl(currentUrl, 'gbraid'),
       wbraid: str(sourceContext.wbraid, 512) || str(props.wbraid, 512) || queryParamFromUrl(currentUrl, 'wbraid'),
       fbclid: str(sourceContext.fbclid, 512) || str(props.fbclid, 512) || queryParamFromUrl(currentUrl, 'fbclid'),
+      epik:
+        str(sourceContext.epik, 512) ||
+        str(userProps.epik, 512) ||
+        str(userDataProps.epik, 512) ||
+        str(props.epik, 512) ||
+        queryParamFromUrl(currentUrl, 'epik'),
       ttclid: str(sourceContext.ttclid, 512) || str(props.ttclid, 512) || queryParamFromUrl(currentUrl, 'ttclid'),
       client_ip:
         str(sourceContext.client_ip, 256) || str(userProps.client_ip, 256) || str(userDataProps.client_ip, 256),

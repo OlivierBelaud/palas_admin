@@ -1,12 +1,10 @@
-import {
-  DISPATCHABLE_CANONICAL_EVENT_NAMES,
-} from '../../modules/event-hub/canonical-contract'
+import { DISPATCHABLE_CANONICAL_EVENT_NAMES } from '../../modules/event-hub/canonical-contract'
 import { type RawDb, resolveRawDb } from '../../utils/raw-db'
 import {
   AD_CONSENT_ERROR_CODES,
+  type DestinationSummary,
   isTrackingHealthValid,
   trackingHealthValidationErrors,
-  type DestinationSummary,
 } from './tracking-health-validity'
 
 type EventLogRow = {
@@ -182,11 +180,18 @@ export async function loadTrackingHealthData(
     const ga4Destination = destinationSummary('ga4', validationDestinations.ga4)
     const metaCapiDestination = destinationSummary('meta_capi', validationDestinations.meta_capi)
     const googleAdsDestination = destinationSummary('google_ads', validationDestinations.google_ads)
+    const pinterestDestination = destinationSummary('pinterest', validationDestinations.pinterest)
     const ga4 = (dispatch.ga4 ?? {}) as Record<string, unknown>
     const posthog = (dispatch.posthog ?? {}) as Record<string, unknown>
     const ga4Log = dispatchByKey.get(`${row.event_id}:ga4`)
     const metaCapiLog = dispatchByKey.get(`${row.event_id}:meta_capi`)
     const googleAdsLog = dispatchByKey.get(`${row.event_id}:google_ads`)
+    const pinterestLog = dispatchByKey.get(`${row.event_id}:pinterest`)
+    // Repair can create a receipt without refreshing the legacy event's destination summary.
+    if (pinterestLog) {
+      pinterestDestination.supported = true
+      pinterestDestination.ready = ['pending', 'sending', 'sent', 'retry'].includes(pinterestLog.status)
+    }
     const contactId = typeof user.contact_id === 'string' ? user.contact_id : null
     const cartToken = typeof cart.token === 'string' ? cart.token : null
     const checkoutToken = typeof checkout.token === 'string' ? checkout.token : null
@@ -284,6 +289,14 @@ export async function loadTrackingHealthData(
       google_ads_attempt_count: googleAdsLog?.attempt_count ?? 0,
       google_ads_sent_at: googleAdsLog?.sent_at ? new Date(googleAdsLog.sent_at).toISOString() : null,
       google_ads_blockers: googleAdsDestination.blockers,
+      pinterest_ready: pinterestDestination.supported && pinterestDestination.ready,
+      pinterest_status: pinterestDestination.supported ? (pinterestLog?.status ?? 'pending') : 'unsupported',
+      pinterest_http_status: pinterestLog?.http_status ?? null,
+      pinterest_error_code: pinterestLog?.error_code ?? null,
+      pinterest_error_message: pinterestLog?.error_message ?? null,
+      pinterest_attempt_count: pinterestLog?.attempt_count ?? 0,
+      pinterest_sent_at: pinterestLog?.sent_at ? new Date(pinterestLog.sent_at).toISOString() : null,
+      pinterest_blockers: pinterestDestination.blockers,
     }
   })
 
@@ -292,6 +305,8 @@ export async function loadTrackingHealthData(
   const statusCounts = countByDestinationStatus(dispatchStatRows)
   const ga4StatusCounts = statusCounts.get('ga4') ?? new Map<string, number>()
   const metaStatusCounts = statusCounts.get('meta_capi') ?? new Map<string, number>()
+  const googleAdsStatusCounts = statusCounts.get('google_ads') ?? new Map<string, number>()
+  const pinterestStatusCounts = statusCounts.get('pinterest') ?? new Map<string, number>()
   return {
     meta: {
       range: { from: from.toISOString(), to: to.toISOString() },
@@ -329,6 +344,22 @@ export async function loadTrackingHealthData(
         countStatus(metaStatusCounts, 'error') +
         countStatus(metaStatusCounts, 'not_configured') +
         countStatus(metaStatusCounts, 'sending'),
+      google_ads_pending: countStatus(googleAdsStatusCounts, 'pending') + countStatus(googleAdsStatusCounts, 'retry'),
+      google_ads_sent: countStatus(googleAdsStatusCounts, 'sent'),
+      google_ads_validated: countStatus(googleAdsStatusCounts, 'validated'),
+      google_ads_invalid: countStatus(googleAdsStatusCounts, 'invalid'),
+      google_ads_error:
+        countStatus(googleAdsStatusCounts, 'error') +
+        countStatus(googleAdsStatusCounts, 'not_configured') +
+        countStatus(googleAdsStatusCounts, 'sending'),
+      pinterest_pending: countStatus(pinterestStatusCounts, 'pending') + countStatus(pinterestStatusCounts, 'retry'),
+      pinterest_sent: countStatus(pinterestStatusCounts, 'sent'),
+      pinterest_validated: countStatus(pinterestStatusCounts, 'validated'),
+      pinterest_invalid: countStatus(pinterestStatusCounts, 'invalid'),
+      pinterest_error:
+        countStatus(pinterestStatusCounts, 'error') +
+        countStatus(pinterestStatusCounts, 'not_configured') +
+        countStatus(pinterestStatusCounts, 'sending'),
       posthog_forwarded: toNumber(stats.posthog_forwarded),
       consent_analytics_granted: toNumber(stats.consent_analytics_granted),
       consent_analytics_denied: total - toNumber(stats.consent_analytics_granted),
@@ -425,7 +456,7 @@ function loadDestinationStatusCounts(db: RawDb, from: Date, to: Date) {
             AND event_received_at <= $2
        ) AS normalized_dispatch_logs
       GROUP BY destination, normalized_status`,
-    [from.toISOString(), to.toISOString(), ['ga4', 'meta_capi', 'google_ads'], AD_CONSENT_ERROR_CODES],
+    [from.toISOString(), to.toISOString(), ['ga4', 'meta_capi', 'google_ads', 'pinterest'], AD_CONSENT_ERROR_CODES],
   )
 }
 
@@ -438,7 +469,7 @@ function loadPageDispatches(db: RawDb, eventIds: string[]) {
         AND destination = ANY($2::text[])
         AND event_id = ANY($1::text[])
       ORDER BY event_received_at DESC`,
-    [eventIds, ['ga4', 'meta_capi', 'google_ads']],
+    [eventIds, ['ga4', 'meta_capi', 'google_ads', 'pinterest']],
   )
 }
 

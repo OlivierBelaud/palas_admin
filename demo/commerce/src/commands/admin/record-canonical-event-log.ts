@@ -4,6 +4,7 @@ import { flushDispatchLogByEventDestinationKey, type RawDispatchDb } from '../..
 import { ga4DestinationConnector, mapCanonicalToGa4 } from '../../modules/event-hub/ga4-connector'
 import { googleAdsDestinationConnector, mapCanonicalToGoogleAds } from '../../modules/event-hub/google-ads-connector'
 import { mapCanonicalToMetaCapi, metaCapiDestinationConnector } from '../../modules/event-hub/meta-capi-connector'
+import { mapCanonicalToPinterest, pinterestDestinationConnector } from '../../modules/event-hub/pinterest-connector'
 import {
   compareIdentityResolvers,
   type IdentityServiceLike,
@@ -24,8 +25,10 @@ function toDate(value: string): Date {
 }
 
 function isDuplicateError(err: unknown): boolean {
+  if (err && typeof err === 'object' && 'code' in err && ['DUPLICATE_ERROR', '23505'].includes(String(err.code)))
+    return true
   const message = err instanceof Error ? err.message : String(err)
-  return /duplicate key|unique constraint/i.test(message)
+  return /duplicate key|unique constraint|Key \(.*\) already exists/i.test(message)
 }
 
 export default defineCommand({
@@ -171,6 +174,36 @@ export default defineCommand({
       }
     }
 
+    const pinterest = mapCanonicalToPinterest(canonical.event_name, canonical.payload_normalized)
+    if (pinterest.supported) {
+      if (pinterest.ok)
+        corrected.push({ destination: 'pinterest', payload: pinterest.payload, metadata: pinterest.metadata })
+      try {
+        await services.dispatchLog.create({
+          event_destination_key: `${canonical.event_id}:pinterest`,
+          event_id: canonical.event_id,
+          canonical_event_name: canonical.event_name,
+          source_event_name: canonical.raw_event_name,
+          destination: 'pinterest',
+          status: pinterest.ok ? 'pending' : 'invalid',
+          event_received_at: toDate(canonical.event_time),
+          first_attempt_at: null,
+          last_attempt_at: null,
+          next_attempt_at: pinterest.ok ? new Date() : null,
+          sent_at: null,
+          attempt_count: 0,
+          http_status: null,
+          error_code: pinterest.ok ? null : (pinterest.errors[0] ?? 'pinterest_invalid_payload'),
+          error_message: pinterest.ok ? null : pinterest.errors.join(', '),
+          request_payload: pinterest.payload,
+          response_payload: null,
+          metadata: { ...pinterest.metadata, ready: pinterest.ok, errors: pinterest.ok ? [] : pinterest.errors },
+        })
+      } catch (err) {
+        if (!isDuplicateError(err)) throw err
+      }
+    }
+
     // All outbox rows are durable before the first live external call.
     await step.action('flush-live-destinations', {
       invoke: async (_i: unknown, ctx) => {
@@ -198,6 +231,7 @@ export default defineCommand({
           ga4DestinationConnector,
           googleAdsDestinationConnector,
           metaCapiDestinationConnector,
+          pinterestDestinationConnector,
         ]) {
           results.push(
             await flushDispatchLogByEventDestinationKey({

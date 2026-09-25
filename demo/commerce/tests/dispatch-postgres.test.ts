@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { remapGoogleAdsDispatches, requeueValidatedAdDispatches } from '../src/modules/event-hub/ad-dispatch-repair'
 import { POST } from '../src/modules/event-hub/api/ingest/route'
 import type { DestinationConnector } from '../src/modules/event-hub/destination-connector'
 import { repairUnpreparedDispatches } from '../src/modules/event-hub/dispatch-repair'
@@ -8,6 +9,7 @@ import { flushDestinationDispatches, type RawDispatchDb } from '../src/modules/e
 import { ga4DestinationConnector } from '../src/modules/event-hub/ga4-connector'
 import { googleAdsDestinationConnector } from '../src/modules/event-hub/google-ads-connector'
 import { metaCapiDestinationConnector } from '../src/modules/event-hub/meta-capi-connector'
+import { pinterestDestinationConnector } from '../src/modules/event-hub/pinterest-connector'
 
 const url = process.env.PALAS_TEST_DATABASE_URL
 const suite = url ? describe : describe.skip
@@ -115,7 +117,12 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
     ])
   })
   it('HTTP replay preserves compact sent receipts and repairs a missing destination', async () => {
-    const connectors = [ga4DestinationConnector, googleAdsDestinationConnector, metaCapiDestinationConnector]
+    const connectors = [
+      ga4DestinationConnector,
+      googleAdsDestinationConnector,
+      metaCapiDestinationConnector,
+      pinterestDestinationConnector,
+    ]
     const sends = connectors.map((connector) => {
       vi.spyOn(connector, 'isConfigured').mockReturnValue(true)
       return vi.spyOn(connector, 'send').mockResolvedValue(sent)
@@ -145,7 +152,7 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
     }
     expect((await POST(request())).status).toBe(200)
     const first = await sql.unsafe("SELECT destination,status FROM dispatch_logs WHERE event_id='purchase123'")
-    expect(first).toHaveLength(3)
+    expect(first).toHaveLength(4)
     // Preserve terminal receipts even after payload compaction; a missing destination alone is repaired.
     await sql.unsafe("UPDATE dispatch_logs SET status='sent',request_payload=NULL WHERE event_id='purchase123'")
     await sql.unsafe("UPDATE event_logs SET payload_normalized=NULL WHERE event_id='purchase123'")
@@ -162,7 +169,7 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
     ).toMatchObject([{ payload_normalized: null, dispatch_prepared_at: expect.any(Date) }])
     expect(
       await sql.unsafe("SELECT count(*)::int AS count FROM dispatch_logs WHERE event_id='purchase123'"),
-    ).toMatchObject([{ count: 3 }])
+    ).toMatchObject([{ count: 4 }])
     await sql.unsafe(
       "UPDATE dispatch_logs SET status='invalid',request_payload=NULL WHERE event_destination_key='purchase123:ga4'",
     )
@@ -179,6 +186,50 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
     expect((await POST(request())).status).toBe(200)
     expect(sends[0]).toHaveBeenCalledTimes(2)
   })
+  it('Pinterest validation is terminal until explicitly requeued, then sends once', async () => {
+    await sql.unsafe("UPDATE dispatch_logs SET destination='pinterest',event_destination_key='evt:pinterest'")
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ ...sent, status: 'validated', http_status: 200 })
+      .mockResolvedValue(sent)
+    const connector = { ...c(send), destination: 'pinterest' as const }
+    expect(await flushDestinationDispatches({ db, connector, batchLimit: 10 })).toMatchObject({ validated: 1, sent: 0 })
+    expect(await sql.unsafe('SELECT status,sent_at,next_attempt_at FROM dispatch_logs')).toMatchObject([
+      { status: 'validated', sent_at: null, next_attempt_at: null },
+    ])
+    expect(await flushDestinationDispatches({ db, connector, batchLimit: 10 })).toMatchObject({ scanned: 0 })
+    expect(await requeueValidatedAdDispatches(db, 'pinterest', ['evt'])).toEqual({ requeued: 1 })
+    expect(await flushDestinationDispatches({ db, connector, batchLimit: 10 })).toMatchObject({ sent: 1 })
+    expect(await requeueValidatedAdDispatches(db, 'pinterest', ['evt'])).toEqual({ requeued: 0 })
+    expect(send).toHaveBeenCalledTimes(2)
+  })
+  it('remaps retained legacy Google rows but preserves terminal receipts', async () => {
+    vi.spyOn(googleAdsDestinationConnector, 'isConfigured').mockReturnValue(true)
+    vi.stubEnv('GOOGLE_ADS_CUSTOMER_ID', '1234567890')
+    vi.stubEnv('GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID', '123')
+    try {
+      const canonical = {
+        event_id: 'evt',
+        event_time: new Date().toISOString(),
+        user: { gclid: 'test-click' },
+        consent: { ad_storage: true, ad_user_data: true, ad_personalization: true },
+        ecommerce: { transaction_id: 'order123', value: 20, currency: 'EUR' },
+      }
+      await sql.unsafe(
+        "INSERT INTO event_logs(id,event_id,event_name,source,received_at,payload_normalized) VALUES('evt','evt','purchase','posthog_proxy',NOW(),$1::jsonb)",
+        [JSON.stringify(canonical)],
+      )
+      await sql.unsafe("UPDATE dispatch_logs SET destination='google_ads',request_payload='{\"conversions\":[]}'")
+      expect(await remapGoogleAdsDispatches(db)).toEqual({ scanned: 1, remapped: 1 })
+      const rows = await sql.unsafe('SELECT status,request_payload FROM dispatch_logs')
+      expect(rows[0].status).toBe('pending')
+      expect(rows[0].request_payload.events[0].transactionId).toBe('order123')
+      await sql.unsafe("UPDATE dispatch_logs SET status='sent',request_payload='{\"conversions\":[]}'")
+      expect(await remapGoogleAdsDispatches(db)).toEqual({ scanned: 0, remapped: 0 })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
   it('cron repairs every supported destination of old stranded envelopes without browser replay', async () => {
     const send = vi.fn(async () => sent)
     const connector = c(send)
@@ -186,7 +237,7 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
       VALUES('old','stranded','purchase','posthog_proxy',NOW()-INTERVAL '45 days',
       '{"event_time":"2026-08-01T00:00:00Z","user":{"ga_client_id":"client123"},"ecommerce":{"transaction_id":"order123","currency":"EUR","value":20}}')`)
     const result = await repairUnpreparedDispatches(db, connector)
-    expect(result).toEqual({ scanned: 1, inserted: 3 })
+    expect(result).toEqual({ scanned: 1, inserted: 4 })
     expect(send).not.toHaveBeenCalled()
     expect(await sql.unsafe("SELECT dispatch_prepared_at FROM event_logs WHERE event_id='stranded'")).toMatchObject([
       { dispatch_prepared_at: expect.any(Date) },
@@ -220,7 +271,7 @@ suite('dispatch PostgreSQL concurrency (isolated schema)', () => {
         db,
         c(async () => sent),
       ),
-    ).toMatchObject({ inserted: 3 })
+    ).toMatchObject({ inserted: 4 })
   })
   it('does not schedule permanent provider errors again but retains their payload', async () => {
     const send = vi.fn(async () => ({ ...sent, status: 'error' as const, http_status: 400, error_code: 'bad_request' }))

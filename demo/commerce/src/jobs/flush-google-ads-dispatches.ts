@@ -1,9 +1,11 @@
+import { remapGoogleAdsDispatches } from '../modules/event-hub/ad-dispatch-repair'
 import { repairUnpreparedDispatches } from '../modules/event-hub/dispatch-repair'
 import { flushDestinationDispatches, type RawDispatchDb } from '../modules/event-hub/dispatch-runner'
 import { getGoogleAdsConfig, googleAdsDestinationConnector } from '../modules/event-hub/google-ads-connector'
 
 interface FlushGoogleAdsResult {
   scanned: number
+  validated: number
   sent: number
   invalid: number
   retry: number
@@ -15,6 +17,7 @@ interface FlushGoogleAdsResult {
 
 const EMPTY: FlushGoogleAdsResult = {
   scanned: 0,
+  validated: 0,
   sent: 0,
   invalid: 0,
   retry: 0,
@@ -37,6 +40,7 @@ export default defineJob('flush-google-ads-dispatches', '* * * * *', async ({ db
   }
 
   await repairUnpreparedDispatches(runtimeDb, googleAdsDestinationConnector)
+  await remapGoogleAdsDispatches(runtimeDb)
   const result = await flushDestinationDispatches({
     db: runtimeDb,
     connector: googleAdsDestinationConnector,
@@ -48,7 +52,7 @@ export default defineJob('flush-google-ads-dispatches', '* * * * *', async ({ db
     validate_only: config.validateOnly,
   }
   log.info(
-    `[flush-google-ads-dispatches] scanned=${output.scanned} sent=${output.sent} invalid=${output.invalid} retry=${output.retry} error=${output.error} not_configured=${output.not_configured} configured=${output.configured} validate_only=${output.validate_only}`,
+    `[flush-google-ads-dispatches] scanned=${output.scanned} sent=${output.sent} validated=${output.validated} invalid=${output.invalid} retry=${output.retry} error=${output.error} not_configured=${output.not_configured} configured=${output.configured} validate_only=${output.validate_only}`,
   )
   return output
 })

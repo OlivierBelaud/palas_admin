@@ -23,7 +23,8 @@ describe('canonical delivery provisioning', () => {
           contact: { list: async () => [] },
           eventLog: {
             create: async (row: Record<string, unknown>) => {
-              if (events.has(String(row.event_id))) throw new Error('duplicate key')
+              if (events.has(String(row.event_id)))
+                throw Object.assign(new Error('Key (event_id) already exists'), { code: 'DUPLICATE_ERROR' })
               events.set(String(row.event_id), row)
             },
           },
@@ -31,7 +32,8 @@ describe('canonical delivery provisioning', () => {
             create: async (row: Record<string, unknown>) => {
               if (row.destination === 'meta_capi' && failMeta) throw new Error('database temporarily unavailable')
               const key = String(row.event_destination_key)
-              if (rows.has(key)) throw new Error('duplicate key')
+              if (rows.has(key))
+                throw Object.assign(new Error('Key (event_id) already exists'), { code: 'DUPLICATE_ERROR' })
               rows.set(key, row)
             },
           },
@@ -66,10 +68,10 @@ describe('canonical delivery provisioning', () => {
     ga4.request_payload = null // compacted receipt must not be rehydrated
     failMeta = false
     await command.workflow(input, context)
-    expect(rows.size).toBe(3)
+    expect(rows.size).toBe(4)
     expect(rows.get('evt_purchase:ga4')).toBe(ga4)
     expect(ga4).toMatchObject({ status: 'sent', request_payload: null })
-    expect(flush.mock.calls).toHaveLength(3)
+    expect(flush.mock.calls).toHaveLength(4)
     expect(raw.mock.calls.some((call) => String(call[0]).includes('dispatch_prepared_at'))).toBe(true)
     expect(events.size).toBe(1)
   })
