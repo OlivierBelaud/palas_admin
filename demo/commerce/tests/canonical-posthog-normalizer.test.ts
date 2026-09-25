@@ -132,6 +132,151 @@ describe('canonical PostHog normalizer', () => {
     expect(event?.payload_normalized.cart).toMatchObject({ token: 'cart_1' })
   })
 
+  it('uses explicit added items and value instead of the full cart snapshot', () => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        event: 'cart:product_added',
+        properties: {
+          cart: {
+            token: 'cart_delta',
+            currency: 'EUR',
+            total_price: 687.4,
+            item_count: 12,
+            items: [{ variant_id: 'existing', title: 'Existing products', price: 687.4, quantity: 12 }],
+          },
+          ecommerce: {
+            currency: 'EUR',
+            value: 55,
+            item_count: 1,
+            items: [{ item_id: 'claudette', item_name: 'Claudette', price: 55, quantity: 1 }],
+          },
+          changed_items: [{ variant_id: 'wrong_fallback', price: 95, quantity_change: 1 }],
+        },
+      },
+      comparison(),
+    )!
+    expect(event.payload_normalized.ecommerce).toMatchObject({
+      currency: 'EUR',
+      value: 55,
+      item_count: 1,
+      items: [{ item_id: 'claudette', price: 55, quantity: 1 }],
+    })
+  })
+
+  it('keeps the complete delta value and quantity when the item detail limit is reached', () => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        event: 'cart:product_added',
+        properties: {
+          changed_items: Array.from({ length: 25 }, (_, index) => ({
+            variant_id: `bulk_${index}`,
+            price: 10,
+            quantity_change: 2,
+          })),
+        },
+      },
+      comparison(),
+    )!
+    const ecommerce = event.payload_normalized.ecommerce as { value: number; item_count: number; items: unknown[] }
+    expect(ecommerce.value).toBe(500)
+    expect(ecommerce.item_count).toBe(50)
+    expect(ecommerce.items).toHaveLength(24)
+  })
+
+  it('removes automatic gift value from an explicit mixed addition', () => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        event: 'cart:product_added',
+        properties: {
+          ecommerce: {
+            currency: 'EUR',
+            value: 75,
+            items: [
+              { item_id: 'paid', price: 55, quantity: 1 },
+              { item_id: 'gift', price: 20, quantity: 1, properties: { _free_gift_auto: true } },
+            ],
+          },
+        },
+      },
+      comparison(),
+    )!
+    expect(event.payload_normalized.ecommerce).toMatchObject({
+      value: 55,
+      item_count: 1,
+      items: [{ item_id: 'paid', price: 55, quantity: 1 }],
+    })
+  })
+
+  it.each([
+    ['cart:product_added', 2, 110],
+    ['cart:product_removed', -2, 110],
+  ])('uses changed quantities for %s without counting other lines or marked free gifts', (name, delta, value) => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        event: name,
+        properties: {
+          cart: {
+            token: 'cart_delta',
+            currency: 'EUR',
+            total_price: 687.4,
+            item_count: 12,
+            items: [{ variant_id: 'existing', price: 687.4, quantity: 12 }],
+          },
+          changed_items: [
+            {
+              variant_id: 'claudette',
+              title: 'Claudette',
+              price: 60,
+              final_price: 55,
+              quantity: 5,
+              quantity_change: delta,
+            },
+            { variant_id: 'opposite', price: 95, quantity: 2, quantity_change: -delta },
+            {
+              variant_id: 'gift',
+              price: 20,
+              final_price: 0,
+              quantity: 1,
+              quantity_change: delta,
+              properties: { _free_gift: 'true' },
+            },
+          ],
+        },
+      },
+      comparison(),
+    )!
+    expect(event.payload_normalized.ecommerce).toMatchObject({
+      currency: 'EUR',
+      value,
+      item_count: 2,
+      items: [{ item_id: 'claudette', price: 55, quantity: 2 }],
+    })
+  })
+
+  it.each([
+    { changed_items: [] },
+    { ecommerce: { items: [], value: 0 } },
+  ])('does not turn an explicitly empty cart delta into the whole cart (%j)', (delta) => {
+    const event = normalizePosthogEventToCanonical(
+      {
+        event: 'cart:product_added',
+        properties: {
+          cart: {
+            token: 'cart_delta',
+            currency: 'EUR',
+            total_price: 687.4,
+            item_count: 12,
+            items: [{ variant_id: 'existing', price: 687.4, quantity: 12 }],
+          },
+          ...delta,
+        },
+      },
+      comparison(),
+    )!
+    expect(event.payload_normalized.ecommerce).toMatchObject({ value: 0, item_count: 0, items: [] })
+    expect(event.valid).toBe(false)
+  })
+
   it('maps PostHog ecommerce product events with items from properties.ecommerce', () => {
     const event = normalizePosthogEventToCanonical(
       {

@@ -171,8 +171,8 @@ function idStr(value: unknown, max = 160): string | null {
   return str(value, max)
 }
 
-function normalizeItems(items: unknown[]): Array<Record<string, unknown>> {
-  return items.slice(0, 24).map((item, index) => {
+function normalizeItems(items: unknown[], limit = 24): Array<Record<string, unknown>> {
+  return items.slice(0, limit).map((item, index) => {
     const row = obj(item)
     return {
       item_id:
@@ -189,6 +189,40 @@ function normalizeItems(items: unknown[]): Array<Record<string, unknown>> {
       index,
     }
   })
+}
+
+function isMarkedFreeGift(item: unknown): boolean {
+  const row = obj(item)
+  const properties = obj(row.properties)
+  return ['_free_gift', '_free_gift_auto', '_free_gift_threshold', '_free_gift_discount_code'].some(
+    (key) => bool(properties[key]) === true,
+  )
+}
+
+function cartMutationItems(
+  canonicalName: string,
+  props: Record<string, unknown>,
+  ecommerce: Record<string, unknown>,
+): Array<Record<string, unknown>> | null {
+  if (canonicalName !== 'add_to_cart' && canonicalName !== 'remove_from_cart') return null
+  // An explicit empty delta must stay empty, never expand to the full cart.
+  if (Array.isArray(ecommerce.items))
+    return normalizeItems(
+      ecommerce.items.filter((item) => !isMarkedFreeGift(item)),
+      ecommerce.items.length,
+    )
+  if (!Array.isArray(props.changed_items)) return null
+  const direction = canonicalName === 'add_to_cart' ? 1 : -1
+  return normalizeItems(
+    props.changed_items.flatMap((item) => {
+      const row = obj(item)
+      const delta = num(row.quantity_change)
+      return delta !== null && delta * direction > 0 && !isMarkedFreeGift(item)
+        ? [{ ...row, price: num(row.final_price) ?? row.price, quantity: Math.abs(delta) }]
+        : []
+    }),
+    props.changed_items.length,
+  )
 }
 
 function consentFromPosthogProperties(
@@ -264,15 +298,29 @@ export function normalizePosthogEventToCanonical(
   const cartItems = cartEvent ? normalizeItems(cartEvent.items) : []
   const ecommerceProps = obj(props.ecommerce)
   const ecommerceItems = Array.isArray(ecommerceProps.items) ? normalizeItems(ecommerceProps.items) : []
-  const eventItems = cartItems.length > 0 ? cartItems : ecommerceItems
+  const mutationItems = cartMutationItems(canonicalName, props, ecommerceProps)
+  const explicitMutationValue =
+    Array.isArray(ecommerceProps.items) && !ecommerceProps.items.some(isMarkedFreeGift)
+      ? num(ecommerceProps.value)
+      : null
+  const eventItems = mutationItems?.slice(0, 24) ?? (cartItems.length > 0 ? cartItems : ecommerceItems)
+  const mutationValue = mutationItems?.every((item) => num(item.price) !== null)
+    ? Number(mutationItems.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0).toFixed(6))
+    : null
   const eventIdFromSignal = signals.event_id
   const eventId =
     eventIdFromSignal ||
     `ph_${stableHash(`${rawEventName}|${signals.posthog_distinct_id ?? ''}|${signals.observed_at}|${currentUrl ?? ''}`).slice(0, 32)}`
 
   const ecommerce: Record<string, unknown> = {
-    currency: cartEvent?.currency ?? str(ecommerceProps.currency, 8) ?? str(props.currency, 8),
-    value: cartEvent?.total_price ?? num(ecommerceProps.value) ?? num(props.value) ?? num(props.total_price),
+    currency:
+      mutationItems !== null
+        ? (str(ecommerceProps.currency, 8) ?? cartEvent?.currency ?? str(props.currency, 8))
+        : (cartEvent?.currency ?? str(ecommerceProps.currency, 8) ?? str(props.currency, 8)),
+    value:
+      mutationItems !== null
+        ? (explicitMutationValue ?? mutationValue)
+        : (cartEvent?.total_price ?? num(ecommerceProps.value) ?? num(props.value) ?? num(props.total_price)),
     transaction_id:
       cartEvent?.shopify_order_id ?? str(ecommerceProps.transaction_id, 180) ?? str(props.transaction_id, 180) ?? null,
     coupon: cartEvent?.discount_code ?? str(ecommerceProps.coupon, 160) ?? str(props.coupon, 160) ?? null,
@@ -280,7 +328,10 @@ export function normalizePosthogEventToCanonical(
     tax: cartEvent?.total_tax ?? num(ecommerceProps.tax),
     item_list_id: str(ecommerceProps.item_list_id, 160),
     item_list_name: str(ecommerceProps.item_list_name, 240),
-    item_count: cartEvent?.item_count ?? num(ecommerceProps.item_count) ?? eventItems.length,
+    item_count:
+      mutationItems !== null
+        ? mutationItems.reduce((sum, item) => sum + Number(item.quantity), 0)
+        : (cartEvent?.item_count ?? num(ecommerceProps.item_count) ?? eventItems.length),
     items: eventItems,
   }
   const tokenMuid = muidFromMantaToken(
