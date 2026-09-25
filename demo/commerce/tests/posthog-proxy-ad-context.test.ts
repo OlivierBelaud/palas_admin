@@ -1,6 +1,6 @@
-import { POST } from '@mantajs/plugin-posthog-proxy/src/modules/posthog/api/[...path]/route.js'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { posthogWithVisitorContext } from '../src/server/posthog-visitor-context'
 
 vi.mock('../src/modules/event-hub/dispatch-runner', () => ({
   flushDispatchLogByEventDestinationKey: vi.fn(async () => ({})),
@@ -74,7 +74,7 @@ describe('published PostHog proxy to advertising dispatches', () => {
         },
       },
     )
-    await POST(req)
+    await posthogWithVisitorContext(req, req.app)
     await Promise.all(deliveries)
     expect(log.error).not.toHaveBeenCalled()
     expect(deliveries).toHaveLength(1)

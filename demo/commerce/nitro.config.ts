@@ -24,6 +24,7 @@ const mantaPackage = (name: string) => {
 export default {
   compatibilityDate: '2025-01-01',
   serverDir: '.manta/server',
+  handlers: [{ route: '/api/posthog/**', method: 'post', handler: './src/server/posthog-handler.ts' }],
   publicAssets: rootSpaBuildExists
     ? [{ dir: 'public', baseURL: '/' }]
     : adminBuildExists
