@@ -116,14 +116,16 @@ export function getGoogleAdsConfig(env: NodeJS.ProcessEnv = process.env): Google
     refreshToken: env.GOOGLE_ADS_REFRESH_TOKEN || null,
     customerId: digits(env.GOOGLE_ADS_CUSTOMER_ID || null),
     loginCustomerId: digits(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || null),
-    purchaseConversionActionId: digits(env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID || null),
-    addToCartConversionActionId: digits(env.GOOGLE_ADS_ADD_TO_CART_CONVERSION_ACTION_ID || null),
-    beginCheckoutConversionActionId: digits(env.GOOGLE_ADS_BEGIN_CHECKOUT_CONVERSION_ACTION_ID || null),
+    // Palas conversion actions created on 2026-09-25. Optional env overrides remain
+    // available for other accounts; these IDs must belong to the configured customer.
+    purchaseConversionActionId: digits(env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID || '7795320871'), // checkout:completed
+    addToCartConversionActionId: digits(env.GOOGLE_ADS_ADD_TO_CART_CONVERSION_ACTION_ID || '7795313739'), // cart:product_added
+    beginCheckoutConversionActionId: digits(env.GOOGLE_ADS_BEGIN_CHECKOUT_CONVERSION_ACTION_ID || '7795331743'), // checkout:started
     leadConversionActionId: digits(
-      env.GOOGLE_ADS_LEAD_CONVERSION_ACTION_ID || env.GOOGLE_ADS_ADD_CONTACT_INFO_CONVERSION_ACTION_ID || null,
-    ),
-    addShippingInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_SHIPPING_INFO_CONVERSION_ACTION_ID || null),
-    addPaymentInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_PAYMENT_INFO_CONVERSION_ACTION_ID || null),
+      env.GOOGLE_ADS_LEAD_CONVERSION_ACTION_ID || env.GOOGLE_ADS_ADD_CONTACT_INFO_CONVERSION_ACTION_ID || '7795191722',
+    ), // checkout:contact_info_submitted
+    addShippingInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_SHIPPING_INFO_CONVERSION_ACTION_ID || '7795323285'), // checkout:shipping_info_submitted
+    addPaymentInfoConversionActionId: digits(env.GOOGLE_ADS_ADD_PAYMENT_INFO_CONVERSION_ACTION_ID || '7795326363'), // checkout:payment_info_submitted
     validateOnly: env.GOOGLE_ADS_VALIDATE_ONLY === 'true',
     endpoint: env.GOOGLE_ADS_ENDPOINT || 'https://datamanager.googleapis.com/v1',
     oauthTokenEndpoint: env.GOOGLE_OAUTH_TOKEN_ENDPOINT || 'https://oauth2.googleapis.com/token',

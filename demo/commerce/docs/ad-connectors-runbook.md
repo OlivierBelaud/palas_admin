@@ -44,11 +44,23 @@ Pour ce pilote serveur, créer/configurer une action de type **`UPLOAD_CLICKS`**
 | `GOOGLE_ADS_CLIENT_SECRET` | Fichier OAuth privé |
 | `GOOGLE_ADS_REFRESH_TOKEN` | Fichier OAuth privé, scope Data Manager |
 | `GOOGLE_ADS_CUSTOMER_ID` | Compte Google Ads destinataire (tirets acceptés) |
-| `GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID` | ID numérique de l'action achat |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | Facultatif : compte administrateur utilisé pour accéder au compte cible |
 | `GOOGLE_ADS_VALIDATE_ONLY` | `true` d'abord, `false` après validation |
 
-Actions supplémentaires facultatives : `GOOGLE_ADS_ADD_TO_CART_CONVERSION_ACTION_ID`, `GOOGLE_ADS_BEGIN_CHECKOUT_CONVERSION_ACTION_ID`, `GOOGLE_ADS_LEAD_CONVERSION_ACTION_ID`, `GOOGLE_ADS_ADD_SHIPPING_INFO_CONVERSION_ACTION_ID`, `GOOGLE_ADS_ADD_PAYMENT_INFO_CONVERSION_ACTION_ID`. Une action manquante bloque seulement l'événement correspondant. Aucun developer token n'est requis par ce connecteur Data Manager. Supprimer d'anciens overrides `GOOGLE_ADS_ENDPOINT` / `GOOGLE_OAUTH_TOKEN_ENDPOINT` pour utiliser les origines officielles par défaut.
+Les six actions Palas sont configurées dans `src/modules/event-hub/google-ads-connector.ts`. Aucune variable d'action n'est nécessaire dans Vercel après déploiement de ce code.
+
+| Événement du site / nom de l'action | Événement canonique | ID Google Ads | Surcharge facultative |
+| --- | --- | --- | --- |
+| `cart:product_added` | `add_to_cart` | `7795313739` | `GOOGLE_ADS_ADD_TO_CART_CONVERSION_ACTION_ID` |
+| `checkout:started` | `begin_checkout` | `7795331743` | `GOOGLE_ADS_BEGIN_CHECKOUT_CONVERSION_ACTION_ID` |
+| `checkout:contact_info_submitted` | `add_contact_info` | `7795191722` | `GOOGLE_ADS_LEAD_CONVERSION_ACTION_ID` |
+| `checkout:shipping_info_submitted` | `add_shipping_info` | `7795323285` | `GOOGLE_ADS_ADD_SHIPPING_INFO_CONVERSION_ACTION_ID` |
+| `checkout:payment_info_submitted` | `add_payment_info` | `7795326363` | `GOOGLE_ADS_ADD_PAYMENT_INFO_CONVERSION_ACTION_ID` |
+| `checkout:completed` | `purchase` | `7795320871` | `GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID` |
+
+Ces IDs non secrets ont été fournis lors de la configuration du 25 septembre 2026. Pour le paiement, le lien fourni affichait le numéro des coordonnées dans son texte, mais sa destination contenait bien `ctId=7795326363`. Le panier a été associé au premier lien donné dans la séquence de création ; les noms des actions n'ont pas été relus dans le compte Google authentifié.
+
+Les variables d'action existantes restent prioritaires : les retirer si l'on veut utiliser uniquement le mapping du code. Une surcharge non vide mais invalide bloque l'événement au lieu de choisir silencieusement une action Palas. L'alias `GOOGLE_ADS_ADD_CONTACT_INFO_CONVERSION_ACTION_ID` reste accepté. Pour un autre compte Google Ads, fournir les six IDs appartenant à ce compte ; les IDs Palas ne sont pas portables. Les secrets OAuth et le compte destinataire restent obligatoires dans l'environnement. Aucun developer token n'est requis par ce connecteur Data Manager. Supprimer d'anciens overrides `GOOGLE_ADS_ENDPOINT` / `GOOGLE_OAUTH_TOKEN_ENDPOINT` pour utiliser les origines officielles par défaut.
 
 Les anciens payloads Google non envoyés sont remappés, par lots bornés, à partir de l'événement canonique encore conservé. Les reçus envoyés, les validations de test et les envois en cours ne sont pas rouverts. Un événement dont la source a été compactée ne peut pas être reconstruit.
 

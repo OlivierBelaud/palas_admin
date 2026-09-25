@@ -55,6 +55,21 @@ afterEach(() => {
 })
 
 describe('Google Ads Data Manager mapping', () => {
+  it.each([
+    ['add_to_cart', '7795313739'],
+    ['begin_checkout', '7795331743'],
+    ['add_contact_info', '7795191722'],
+    ['add_shipping_info', '7795323285'],
+    ['add_payment_info', '7795326363'],
+    ['purchase', '7795320871'],
+  ])('routes Palas %s without conversion-action environment variables', (name, actionId) => {
+    const defaults = getGoogleAdsConfig({ GOOGLE_ADS_CUSTOMER_ID: '1234567890' })
+    expect(mapCanonicalToGoogleAds(name, purchasePayload, defaults)).toMatchObject({
+      ok: true,
+      payload: { destinations: [{ productDestinationId: actionId }] },
+    })
+    expect(isGoogleAdsConfigured(defaults)).toBe(false)
+  })
   it('maps exact Data Manager schema and uses existing OAuth config without a developer token', () => {
     expect(isGoogleAdsConfigured(config)).toBe(true)
     expect(config.endpoint).toBe('https://datamanager.googleapis.com/v1')
