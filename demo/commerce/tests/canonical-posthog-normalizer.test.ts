@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CanonicalValidationResult } from '../src/modules/event-hub/canonical-contract'
+import { type CanonicalValidationResult, validateCanonicalEvent } from '../src/modules/event-hub/canonical-contract'
 import {
   inferPageType,
   isDispatchablePosthogEvent,
@@ -323,4 +323,38 @@ it('filters non-advertising events before creating diagnostic workflows', () => 
     expect(isDispatchablePosthogEvent({ event })).toBe(false)
   for (const event of ['$pageview', 'checkout:completed', 'cart:product_added', 'purchase'])
     expect(isDispatchablePosthogEvent({ event })).toBe(true)
+})
+
+describe('Pinterest canonical pipeline', () => {
+  it('keeps Pinterest click IDs for downstream purchase attribution', () => {
+    const base = comparison()
+    const result = normalizePosthogEventToCanonical(
+      { event: '$pageview', properties: { epik: 'pinterest-click', $current_url: 'https://fancypalas.com/' } },
+      base,
+    )
+    expect(result?.payload_normalized.user).toMatchObject({ epik: 'pinterest-click' })
+  })
+  it('declares purchases as Pinterest checkouts only with advertising consent', () => {
+    const payload = {
+      user: { email_sha256: 'a'.repeat(64) },
+      context: { url: 'https://fancypalas.com/thanks' },
+      ecommerce: { transaction_id: 'order-1', value: 20, currency: 'EUR' },
+      consent: { ad_storage: true, ad_user_data: true, ad_personalization: true },
+    }
+    const validate = (body: Record<string, unknown>) =>
+      validateCanonicalEvent({
+        eventName: 'purchase',
+        eventId: 'event-1',
+        eventTime: '2026-09-25T06:00:00Z',
+        payload: body,
+      })
+    expect(validate(payload).destinations).toHaveProperty('pinterest', {
+      supported: true,
+      event_name: 'checkout',
+      ready: true,
+      blockers: [],
+    })
+    expect(validate({ ...payload, consent: {} }).destinations).toHaveProperty('pinterest.ready', false)
+    expect(validate({ ...payload, user: { epik: 'click-only' } }).destinations).toHaveProperty('pinterest.ready', false)
+  })
 })

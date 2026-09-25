@@ -1,7 +1,11 @@
 import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@mantajs/ui'
 import * as React from 'react'
-import { isAdConsentErrorCode } from '../../../../queries/admin/tracking-health-validity'
+import {
+  formatDeliveryStatus,
+  isAdConsentErrorCode,
+  normalizedDeliveryStatus,
+} from '../../../../queries/admin/tracking-health-validity'
 
 interface TrackingHealthData {
   meta: {
@@ -34,6 +38,16 @@ interface TrackingHealthData {
     meta_sent: number
     meta_invalid: number
     meta_error: number
+    google_ads_pending?: number
+    google_ads_sent?: number
+    google_ads_validated?: number
+    google_ads_invalid?: number
+    google_ads_error?: number
+    pinterest_pending?: number
+    pinterest_sent?: number
+    pinterest_validated?: number
+    pinterest_invalid?: number
+    pinterest_error?: number
     posthog_forwarded: number
     consent_analytics_granted: number
     consent_analytics_denied: number
@@ -105,6 +119,14 @@ interface TrackingHealthData {
     google_ads_attempt_count: number
     google_ads_sent_at: string | null
     google_ads_blockers: string[]
+    pinterest_ready?: boolean
+    pinterest_status?: string
+    pinterest_http_status?: number | null
+    pinterest_error_code?: string | null
+    pinterest_error_message?: string | null
+    pinterest_attempt_count?: number
+    pinterest_sent_at?: string | null
+    pinterest_blockers?: string[]
     ad_destinations?: Array<{
       destination: string
       supported: boolean
@@ -276,6 +298,12 @@ function Kpis({ data }: { data: TrackingHealthData }) {
       detail: `${data.kpis.meta_pending} attente · ${data.kpis.meta_invalid + data.kpis.meta_error} à corriger`,
       mark: 'ME',
     },
+    ...(['google_ads', 'pinterest'] as const).map((destination) => ({
+      label: destination === 'google_ads' ? 'Google Ads · acceptés API' : 'Pinterest · acceptés API',
+      value: data.kpis[`${destination}_sent`] ?? 0,
+      detail: `${data.kpis[`${destination}_validated`] ?? 0} tests validés · ${data.kpis[`${destination}_pending`] ?? 0} attente · ${(data.kpis[`${destination}_invalid`] ?? 0) + (data.kpis[`${destination}_error`] ?? 0)} à corriger`,
+      mark: destination === 'google_ads' ? 'AD' : 'PI',
+    })),
     {
       label: 'Consentement',
       value: data.kpis.consent_analytics_granted,
@@ -376,10 +404,12 @@ function LiveEventTable({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Log live</CardTitle>
-        <span className="text-sm text-muted-foreground">50 lignes par page</span>
+        <span className="text-sm text-muted-foreground">
+          50 lignes par page · Accepté API : attribution non confirmée
+        </span>
       </CardHeader>
       <CardContent className="overflow-x-auto">
-        <Table className="min-w-[1920px]">
+        <Table className="min-w-[2100px]">
           <Table.Header>
             <Table.Row>
               <Table.Head>Reçu</Table.Head>
@@ -397,6 +427,7 @@ function LiveEventTable({
               <Table.Head>GA4</Table.Head>
               <Table.Head>Meta</Table.Head>
               <Table.Head>Google Ads</Table.Head>
+              <Table.Head>Pinterest</Table.Head>
               <Table.Head>Validité</Table.Head>
               <Table.Head>Event ID</Table.Head>
             </Table.Row>
@@ -533,10 +564,30 @@ function LiveEventTable({
                   </div>
                 </Table.Cell>
                 <Table.Cell>
+                  <div className="flex flex-col gap-1">
+                    <Badge
+                      variant={deliveryBadgeVariant(normalizedDeliveryStatus('pinterest', event))}
+                      title={asStringArray(event.pinterest_blockers).join(', ') || undefined}
+                    >
+                      {formatDeliveryStatus('pinterest', event)}
+                    </Badge>
+                    {event.pinterest_error_code && !isAdConsentErrorCode(event.pinterest_error_code) ? (
+                      <span
+                        className="max-w-[180px] truncate text-xs text-muted-foreground"
+                        title={event.pinterest_error_message ?? event.pinterest_error_code}
+                      >
+                        {event.pinterest_error_code}
+                      </span>
+                    ) : null}
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
                   {event.valid ? (
                     <Badge variant="secondary">ok</Badge>
                   ) : (
-                    <Badge variant="destructive">{asStringArray(event.validation_errors).join(', ') || 'invalid'}</Badge>
+                    <Badge variant="destructive">
+                      {asStringArray(event.validation_errors).join(', ') || 'invalid'}
+                    </Badge>
                   )}
                 </Table.Cell>
                 <Table.Cell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
@@ -546,7 +597,7 @@ function LiveEventTable({
             ))}
             {events.length === 0 ? (
               <Table.Row>
-                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={17}>
+                <Table.Cell className="py-6 text-center text-muted-foreground" colSpan={18}>
                   Aucun event reçu.
                 </Table.Cell>
               </Table.Row>
@@ -624,82 +675,6 @@ function deliveryBadgeVariant(status: string) {
   return 'outline'
 }
 
-function formatDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event: TrackingHealthData['events'][number]) {
-  const status = normalizedDeliveryStatus(destination, event)
-  const httpStatus =
-    destination === 'ga4'
-      ? event.ga4_http_status
-      : destination === 'meta'
-        ? event.meta_http_status
-        : event.google_ads_http_status
-  const attemptCount =
-    destination === 'ga4'
-      ? event.ga4_attempt_count
-      : destination === 'meta'
-        ? event.meta_attempt_count
-        : event.google_ads_attempt_count
-  if (httpStatus) return `${status} ${httpStatus}`
-  if (attemptCount > 0) return `${status} x${attemptCount}`
-  return deliveryStatusLabel(status)
-}
-
-function normalizedDeliveryStatus(
-  destination: 'ga4' | 'meta' | 'google_ads',
-  event: TrackingHealthData['events'][number],
-) {
-  const status =
-    destination === 'ga4' ? event.ga4_status : destination === 'meta' ? event.meta_status : event.google_ads_status
-  const normalizedStatus = nonEmptyString(status)
-  const errorCode =
-    destination === 'ga4'
-      ? event.ga4_error_code
-      : destination === 'meta'
-        ? event.meta_error_code
-        : event.google_ads_error_code
-  if (normalizedStatus === 'invalid' && isAdConsentErrorCode(errorCode)) return 'consent_blocked'
-  if (normalizedStatus) return normalizedStatus
-  return legacyDeliveryStatus(destination, event)
-}
-
-function deliveryStatusLabel(status: string) {
-  if (status === 'not_applicable') return 'Non applicable'
-  if (status === 'consent_blocked') return 'Consentement'
-  if (status === 'pending') return 'À envoyer'
-  if (status === 'sent') return 'Envoyé'
-  if (status === 'invalid') return 'Invalide'
-  if (status === 'error') return 'Erreur'
-  if (status === 'retry') return 'Retry'
-  if (status === 'not_configured') return 'Config'
-  if (status === 'unsupported') return 'Non applicable'
-  if (status === 'unknown') return 'N/A'
-  return status
-}
-
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null
-}
-
-function legacyDeliveryStatus(destination: 'ga4' | 'meta' | 'google_ads', event: TrackingHealthData['events'][number]) {
-  if (destination === 'ga4') return 'unknown'
-  const canonicalDestination = destination === 'meta' ? 'meta_capi' : destination
-  const legacyDestinations = Array.isArray(event.ad_destinations) ? event.ad_destinations : []
-  const legacy = legacyDestinations.find((row) => row?.destination === canonicalDestination)
-  if (!legacy) return 'unsupported'
-  const blockers = asStringArray(legacy.blockers)
-  if (blockers.some(isConsentBlocker)) return 'consent_blocked'
-  return legacy.ready ? 'pending' : 'invalid'
-}
-
-function isConsentBlocker(blocker: string) {
-  return (
-    blocker === 'analytics_consent_not_granted' ||
-    blocker === 'ad_storage_consent_not_granted' ||
-    blocker === 'ad_user_data_consent_not_granted' ||
-    blocker === 'ad_personalization_consent_not_granted' ||
-    isAdConsentErrorCode(blocker)
-  )
 }

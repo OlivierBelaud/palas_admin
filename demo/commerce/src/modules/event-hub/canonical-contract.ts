@@ -1,4 +1,4 @@
-export type CanonicalDestination = 'posthog' | 'ga4' | 'meta_capi' | 'google_ads' | 'tiktok'
+export type CanonicalDestination = 'posthog' | 'ga4' | 'meta_capi' | 'google_ads' | 'tiktok' | 'pinterest'
 
 export type CanonicalEventName =
   | 'page_view'
@@ -58,23 +58,41 @@ export const CANONICAL_CONTRACT_VERSION = 'event-hub-contract-2026-06-11'
 
 export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEventContract> = {
   page_view: {
-    destinations: { posthog: 'page_view', ga4: 'page_view', meta_capi: 'PageView', tiktok: 'Pageview' },
+    destinations: {
+      pinterest: 'page_visit',
+      posthog: 'page_view',
+      ga4: 'page_view',
+      meta_capi: 'PageView',
+      tiktok: 'Pageview',
+    },
     requires: { url: true },
   },
   view_item_list: {
-    destinations: { posthog: 'view_item_list', ga4: 'view_item_list', meta_capi: 'ViewContent' },
+    destinations: {
+      pinterest: 'view_category',
+      posthog: 'view_item_list',
+      ga4: 'view_item_list',
+      meta_capi: 'ViewContent',
+    },
     requires: { url: true, items: true },
   },
   view_item: {
-    destinations: { posthog: 'view_item', ga4: 'view_item', meta_capi: 'ViewContent', tiktok: 'ViewContent' },
+    destinations: {
+      pinterest: 'page_visit',
+      posthog: 'view_item',
+      ga4: 'view_item',
+      meta_capi: 'ViewContent',
+      tiktok: 'ViewContent',
+    },
     requires: { url: true, items: true },
   },
   search: {
-    destinations: { posthog: 'search', ga4: 'search', meta_capi: 'Search', tiktok: 'Search' },
+    destinations: { pinterest: 'search', posthog: 'search', ga4: 'search', meta_capi: 'Search', tiktok: 'Search' },
     requires: { url: true, searchTerm: true },
   },
   add_to_cart: {
     destinations: {
+      pinterest: 'add_to_cart',
       posthog: 'add_to_cart',
       ga4: 'add_to_cart',
       meta_capi: 'AddToCart',
@@ -92,6 +110,7 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
   },
   begin_checkout: {
     destinations: {
+      pinterest: 'initiate_checkout',
       posthog: 'begin_checkout',
       ga4: 'begin_checkout',
       meta_capi: 'InitiateCheckout',
@@ -114,6 +133,7 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
   },
   add_payment_info: {
     destinations: {
+      pinterest: 'add_payment_info',
       posthog: 'add_payment_info',
       ga4: 'add_payment_info',
       meta_capi: 'AddPaymentInfo',
@@ -123,6 +143,7 @@ export const CANONICAL_EVENT_CONTRACTS: Record<CanonicalEventName, CanonicalEven
   },
   purchase: {
     destinations: {
+      pinterest: 'checkout',
       posthog: 'purchase',
       ga4: 'purchase',
       meta_capi: 'Purchase',
@@ -247,6 +268,7 @@ function buildDestinationResults(
     meta_capi: destinationResult('meta_capi', eventName, contract, payload),
     google_ads: destinationResult('google_ads', eventName, contract, payload),
     tiktok: destinationResult('tiktok', eventName, contract, payload),
+    pinterest: destinationResult('pinterest', eventName, contract, payload),
   }
 }
 
@@ -284,7 +306,16 @@ function destinationResult(
   }
 
   if (destination === 'google_ads') {
-    if (!['purchase', 'add_to_cart', 'begin_checkout', 'add_contact_info'].includes(eventName)) {
+    if (
+      ![
+        'purchase',
+        'add_to_cart',
+        'begin_checkout',
+        'add_contact_info',
+        'add_shipping_info',
+        'add_payment_info',
+      ].includes(eventName)
+    ) {
       blockers.push('google_ads_conversion_not_supported')
     }
     if (eventName === 'purchase' && !str(ecommerce.transaction_id, 180) && !str(checkout.shopify_order_id, 180)) {
@@ -297,6 +328,16 @@ function destinationResult(
     if (!hasAny(user, ['gclid', 'gbraid', 'wbraid', 'email_sha256', 'phone_sha256'])) {
       blockers.push('google_ads_identifier_missing')
     }
+    addAdsConsentBlockers(blockers, consent)
+  }
+
+  if (destination === 'pinterest') {
+    if (!str(context.url, 4096)) blockers.push('event_source_url_missing')
+    if (
+      !/^[a-f0-9]{64}$/i.test(str(user.email_sha256, 64) ?? '') &&
+      !(str(user.client_ip, 256) && str(user.user_agent, 1024))
+    )
+      blockers.push('pinterest_user_data_missing')
     addAdsConsentBlockers(blockers, consent)
   }
 

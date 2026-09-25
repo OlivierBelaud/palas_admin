@@ -4,6 +4,7 @@ import type { RawDispatchDb } from './dispatch-runner'
 import { mapCanonicalToGa4 } from './ga4-connector'
 import { mapCanonicalToGoogleAds } from './google-ads-connector'
 import { mapCanonicalToMetaCapi } from './meta-capi-connector'
+import { mapCanonicalToPinterest } from './pinterest-connector'
 
 type Envelope = {
   event_id: string
@@ -42,6 +43,7 @@ export async function repairUnpreparedDispatches(
         : []),
       { destination: 'google_ads', ...mapCanonicalToGoogleAds(row.event_name, payload) },
       { destination: 'meta_capi', ...mapCanonicalToMetaCapi(row.event_name, payload) },
+      { destination: 'pinterest', ...mapCanonicalToPinterest(row.event_name, payload) },
     ].filter((value) => !('supported' in value) || value.supported)
     const eventTime = new Date(typeof payload.event_time === 'string' ? payload.event_time : row.received_at)
     const entries = mapped.map((value) => ({

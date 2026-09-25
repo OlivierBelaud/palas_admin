@@ -16,6 +16,7 @@ type DispatchRow = {
 export type FlushDestinationDispatchesResult = {
   scanned: number
   sent: number
+  validated: number
   invalid: number
   retry: number
   error: number
@@ -56,6 +57,7 @@ function nextRetryDelayMinutes(attemptCount: number) {
 
 function countResult(status: DispatchStatus, counters: FlushDestinationDispatchesResult) {
   if (status === 'sent') counters.sent += 1
+  else if (status === 'validated') counters.validated += 1
   else if (status === 'invalid') counters.invalid += 1
   else if (status === 'retry') counters.retry += 1
   else if (status === 'not_configured') counters.not_configured += 1
@@ -72,6 +74,7 @@ async function flushRows(
   const counters: FlushDestinationDispatchesResult = {
     scanned: rows.length,
     sent: 0,
+    validated: 0,
     invalid: 0,
     retry: 0,
     error: 0,
