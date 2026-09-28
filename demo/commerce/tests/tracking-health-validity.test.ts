@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   type DestinationSummary,
+  deliveryErrorCode,
   formatDeliveryStatus,
   isAdConsentErrorCode,
   isTrackingHealthValid,
@@ -96,4 +97,68 @@ describe('tracking health delivery labels', () => {
     expect(formatDeliveryStatus('ga4', { ga4_status: 'sent' })).toBe('Envoyé')
     expect(formatDeliveryStatus('meta', { meta_status: 'sent' })).toBe('Envoyé')
   })
+})
+
+describe('tracking health eligibility regression', () => {
+  it('shows GA4 consent refusal without marking it invalid', () => {
+    expect(
+      formatDeliveryStatus('ga4', { ga4_status: 'invalid', ga4_error_code: 'ga4_analytics_consent_not_granted' }),
+    ).toBe('Consentement')
+  })
+  it('prioritizes consent over a missing Google identifier', () => {
+    expect(
+      formatDeliveryStatus('google_ads', {
+        google_ads_status: 'invalid',
+        google_ads_error_code: 'google_ads_identifier_missing',
+        google_ads_blockers: ['google_ads_identifier_missing', 'ad_storage_consent_not_granted'],
+      }),
+    ).toBe('Consentement')
+  })
+  it('keeps missing Google identity visible as an eligibility limit', () => {
+    expect(
+      formatDeliveryStatus('google_ads', {
+        google_ads_status: 'invalid',
+        google_ads_error_code: 'google_ads_identifier_missing',
+        google_ads_blockers: ['google_ads_identifier_missing'],
+      }),
+    ).toBe('Identifiant Google absent')
+  })
+  it('does not hide other payload faults behind a missing Google identity', () => {
+    expect(
+      normalizedDeliveryStatus('google_ads', {
+        google_ads_status: 'invalid',
+        google_ads_error_code: 'google_ads_identifier_missing',
+        google_ads_blockers: ['google_ads_identifier_missing', 'currency_missing'],
+      }),
+    ).toBe('invalid')
+  })
+  it('preserves actual receipts even when old validation metadata was blocked', () => {
+    expect(
+      formatDeliveryStatus('google_ads', {
+        google_ads_status: 'sent',
+        google_ads_http_status: 200,
+        google_ads_blockers: ['ad_storage_consent_not_granted'],
+      }),
+    ).toBe('Accepté API 200')
+  })
+})
+
+it('keeps malformed GA4 payloads actionable even when consent also blocks sending', () => {
+  expect(
+    normalizedDeliveryStatus('ga4', {
+      ga4_status: 'invalid',
+      ga4_error_code: 'ga4_analytics_consent_not_granted',
+      ga4_blockers: ['ga4_analytics_consent_not_granted', 'ga4_currency_missing'],
+    }),
+  ).toBe('invalid')
+})
+
+it('shows the actionable payload fault rather than the first consent code', () => {
+  expect(
+    deliveryErrorCode('ga4', {
+      ga4_status: 'invalid',
+      ga4_error_code: 'ga4_analytics_consent_not_granted',
+      ga4_blockers: ['ga4_analytics_consent_not_granted', 'ga4_currency_missing'],
+    }),
+  ).toBe('ga4_currency_missing')
 })
