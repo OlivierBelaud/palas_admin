@@ -1,5 +1,6 @@
 import { getGa4Config, isGa4Configured } from '../event-hub/ga4-connector'
 import { conversionActionIdFor, getGoogleAdsConfig } from '../event-hub/google-ads-connector'
+import { parisDate } from './calendar'
 import {
   bearer,
   eventName,
@@ -97,13 +98,15 @@ export async function readGoogleAds(
     result.sections = [missing(base, 'Configurer le compte Google Ads et les accès OAuth Data Manager du connecteur.')]
     return result
   }
+  const limit = Math.min(60, Math.max(1, input.google_limit || 10))
+  base.limitations[1] = `Maximum ${limit} requêtes distinctes relues ; détails conservés 24 h.`
   const ids = [
     ...new Map(
       input.google_requests
         .filter((request) => /^[a-zA-Z0-9_.:~+/=-]{1,512}$/.test(request.request_id))
         .map((request) => [request.request_id, request]),
     ).values(),
-  ].slice(0, 10)
+  ].slice(0, limit)
   if (!ids.length) {
     result.sections = [
       {
@@ -184,11 +187,12 @@ export async function readGoogleAds(
           )
         }
       }
-      // Three workers, never ten simultaneous requests.
+      // Bound concurrency and stop scheduling before the server request budget expires.
+      const deadline = Date.now() + 20_000
       let next = 0
       await Promise.all(
-        Array.from({ length: Math.min(3, ids.length) }, async () => {
-          while (next < ids.length) {
+        Array.from({ length: Math.min(input.google_limit ? 6 : 3, ids.length) }, async () => {
+          while (next < ids.length && Date.now() < deadline) {
             const request = ids[next++]
             await read(request)
           }
@@ -273,8 +277,8 @@ export async function readGa4(
           env.GA4_OAUTH_REFRESH_TOKEN!,
           fetcher,
         ))
-      const from = input.window.from.slice(0, 10)
-      const to = new Date(Date.parse(input.window.to) - 1).toISOString().slice(0, 10)
+      const from = parisDate(new Date(input.window.from))
+      const to = parisDate(new Date(Date.parse(input.window.to) - 1))
       const payload = object(
         await readJson(
           new URL(`https://analyticsdata.googleapis.com/v1beta/properties/${property}:runReport`),
@@ -335,7 +339,7 @@ export async function readGa4(
         state: partial ? 'partial' : 'available',
         rows,
         window: { from, to, timezone },
-        message: `Rapport du ${from} au ${to} inclus, selon le fuseau de la propriété. Les dates UTC sélectionnées sont utilisées comme journées GA4 ; la fenêtre horaire exacte n’est pas reproduite.`,
+        message: `Rapport du ${from} au ${to} inclus, selon le fuseau de la propriété. Les dates du contrôle en heure de Paris sont utilisées comme journées GA4 ; la fenêtre horaire exacte n’est pas reproduite.`,
         limitations: [
           ...base.limitations,
           ...(sampling ? ['Échantillonnage signalé par Google.'] : []),

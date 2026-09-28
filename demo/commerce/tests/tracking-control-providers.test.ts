@@ -121,8 +121,10 @@ describe('tracking control provider evidence', () => {
     expect(result.sections.find((s) => s.key === 'meta_server')?.state).toBe('unavailable')
   })
 
-  it('bounds Google status reads and exposes mixed outcomes without claiming event totals', async () => {
-    const requests = Array.from({ length: 12 }, (_, i) => ({
+  it.each([
+    10, 60,
+  ])('bounds Google status reads to %s and exposes mixed outcomes without claiming event totals', async (limit) => {
+    const requests = Array.from({ length: limit + 2 }, (_, i) => ({
       request_id: `r${i}`,
       event_name: 'add_to_cart',
     }))
@@ -143,7 +145,12 @@ describe('tracking control provider evidence', () => {
       })
     })
     const result = await readProviderEvidence(
-      { ...input('google_ads'), google_requests: requests, google_request_count: 12 },
+      {
+        ...input('google_ads'),
+        google_requests: requests,
+        google_request_count: limit + 2,
+        google_limit: limit === 60 ? 60 : undefined,
+      },
       {
         GOOGLE_ADS_CUSTOMER_ID: '123',
         GOOGLE_ADS_CLIENT_ID: 'client',
@@ -152,10 +159,10 @@ describe('tracking control provider evidence', () => {
       },
       fetcher,
     )
-    expect(fetcher).toHaveBeenCalledTimes(11)
+    expect(fetcher).toHaveBeenCalledTimes(limit + 1)
     expect(result.sections[0].state).toBe('partial')
-    expect(result.sections[0].rows.some((r) => r.label === 'SUCCESS' && r.value === 9)).toBe(true)
-    expect(result.sections[0].message).toContain('10 / 12')
+    expect(result.sections[0].rows.some((r) => r.label === 'SUCCESS' && r.value === limit - 1)).toBe(true)
+    expect(result.sections[0].message).toContain(`${limit} / ${limit + 2}`)
     expect(JSON.stringify(result)).not.toContain('oauth-secret')
   })
 
@@ -380,5 +387,54 @@ describe('tracking control provider evidence', () => {
     )
     expect(result.sections.find((s) => s.key === 'meta_server')?.state).toBe('unavailable')
     expect(JSON.stringify(result)).not.toContain('never-expose-me')
+  })
+})
+
+describe('Meta safe Graph errors', () => {
+  it('classifies a Graph permission error carried by HTTP400 without leaking its message', async () => {
+    const result = await readProviderEvidence(
+      input('meta_capi'),
+      metaEnv,
+      vi.fn(async () => json({ error: { code: 190, message: 'secret-token-private' } }, 400)),
+    )
+    expect(result.sections.find((s) => s.key === 'meta_server')?.state).toBe('permission_denied')
+    expect(JSON.stringify(result)).not.toContain('secret-token-private')
+  })
+})
+
+describe('matrix provider reads', () => {
+  it('reads only Meta server stats for the matrix, without requiring bucket end_time', async () => {
+    const fetcher = vi.fn(async (url: URL | RequestInfo) => {
+      const u = new URL(String(url))
+      expect(u.pathname).toMatch(/\/12345\/stats$/)
+      expect(u.searchParams.get('event_source')).toBe('SERVER_ONLY')
+      return json({ data: [{ start_time: '2026-09-28T01:00:00Z', data: [{ event: 'PageView', count: 42 }] }] })
+    })
+    const result = await readProviderEvidence({ ...input('meta_capi'), counts_only: true }, metaEnv, fetcher)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(result.sections).toHaveLength(1)
+    expect(result.sections[0]).toMatchObject({
+      state: 'available',
+      window: null,
+      rows: [{ event_name: 'PageView', value: 42 }],
+    })
+  })
+  it('requests September 28, not September 27, for a Paris calendar day in GA4', async () => {
+    const fetcher = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body)).dateRanges).toEqual([{ startDate: '2026-09-28', endDate: '2026-09-28' }])
+      return json({
+        dimensionHeaders: [{ name: 'eventName' }],
+        metricHeaders: [{ name: 'eventCount' }],
+        rows: [],
+        metadata: { timeZone: 'Europe/Paris' },
+      })
+    })
+    const result = await readProviderEvidence(
+      { ...input('ga4'), window: { from: '2026-09-27T22:00:00Z', to: '2026-09-28T22:00:00Z', timezone: 'UTC' } },
+      { GA4_PROPERTY_ID: '123', GA4_READ_ACCESS_TOKEN: 'secret' },
+      fetcher,
+    )
+    expect(result.sections[0].state).toBe('available')
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 })

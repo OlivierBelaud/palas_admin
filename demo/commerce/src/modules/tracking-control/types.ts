@@ -88,6 +88,8 @@ export type ProviderReadInput = {
   destination: ControlDestination
   window: ControlWindow
   google_requests: Array<{ request_id: string; event_name: string }>
+  google_limit?: number
+  counts_only?: boolean
   google_request_count: number
 }
 
