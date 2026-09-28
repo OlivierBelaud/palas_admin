@@ -80,6 +80,11 @@ export default {
     const valid = toNumber(stats.valid)
     const identified = toNumber(stats.identified)
     const data = {
+      // Public identifiers only; never return the token or the full environment.
+      meta_capi: {
+        pixel_id: process.env.META_PIXEL_ID || process.env.FACEBOOK_PIXEL_ID || null,
+        api_version: (process.env.META_CAPI_API_VERSION || process.env.META_API_VERSION || 'v25.0').trim(),
+      },
       meta: {
         range: { from: from.toISOString(), to: to.toISOString() },
         generated_at: new Date().toISOString(),

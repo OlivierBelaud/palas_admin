@@ -8,6 +8,7 @@ import {
 } from '../../../../queries/admin/tracking-health-validity'
 
 interface TrackingHealthData {
+  meta_capi?: { pixel_id: string | null; api_version: string }
   meta: {
     range: { from: string; to: string }
     generated_at: string
@@ -266,12 +267,48 @@ export default function TrackingHealthPage() {
       {error ? <ErrorState message={error.message} /> : null}
       {data ? (
         <>
+          <MetaConnection configuration={data.meta_capi} />
           <Kpis data={data} />
           <EventTypeTable rows={data.event_types} active={eventName} setActive={selectEventName} />
           <LiveEventTable data={data} pageIndex={pageIndex} setPageIndex={setPageIndex} />
         </>
       ) : null}
     </div>
+  )
+}
+
+function MetaConnection({ configuration }: { configuration: TrackingHealthData['meta_capi'] }) {
+  const pixelId = configuration?.pixel_id
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Destination Meta · Conversions API</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1 text-sm">
+          <p>
+            Pixel / jeu de données :{' '}
+            <span className="break-all font-mono font-medium select-all">
+              {pixelId || (configuration ? 'Non renseigné' : 'Configuration indisponible')}
+            </span>
+          </p>
+          {configuration ? <p>Version API : {configuration.api_version}</p> : null}
+          <p className="text-muted-foreground">
+            Destination configurée sur ce serveur. La réception se vérifie dans Meta.
+          </p>
+        </div>
+        {pixelId ? (
+          <a
+            href={`https://business.facebook.com/events_manager2/list/pixel/${encodeURIComponent(pixelId)}/overview`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-sm font-medium underline underline-offset-4"
+          >
+            Ouvrir dans Meta ↗
+          </a>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }
 
