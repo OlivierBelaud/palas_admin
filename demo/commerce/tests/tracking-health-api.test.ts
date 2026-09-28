@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { RawDb } from '../src/utils/raw-db'
 
@@ -19,6 +19,7 @@ describe('tracking health provider diagnostics API parity', () => {
     fast = (await import('../vercel-fast-functions/admin-tracking-health.mjs')).default
   })
   afterAll(() => vi.unstubAllGlobals())
+  afterEach(() => vi.unstubAllEnvs())
   beforeEach(() => {
     raw.mockReset()
     authorized.value = true
@@ -158,6 +159,27 @@ describe('tracking health provider diagnostics API parity', () => {
           blockers: [],
         })
       }
+    }
+  })
+
+  it.each([
+    ['964292419711028', 'v26.0', '2171485343672971', 'v25.0', '964292419711028', 'v26.0'],
+    ['', '', '2171485343672971', 'v24.0', '2171485343672971', 'v24.0'],
+    ['', '', '', '', null, 'v25.0'],
+  ])('exposes only the effective Meta pixel and API version on both endpoints', async (pixel, version, fallbackPixel, fallbackVersion, expectedPixel, expectedVersion) => {
+    vi.stubEnv('META_PIXEL_ID', pixel!)
+    vi.stubEnv('META_CAPI_API_VERSION', version!)
+    vi.stubEnv('FACEBOOK_PIXEL_ID', fallbackPixel!)
+    vi.stubEnv('META_API_VERSION', fallbackVersion!)
+    vi.stubEnv('META_ACCESS_TOKEN', 'private-meta-token')
+    vi.stubEnv('FACEBOOK_ACCESS_TOKEN', 'private-facebook-token')
+    vi.stubEnv('META_TEST_EVENT_CODE', 'private-test-code')
+    vi.stubEnv('META_CAPI_ENDPOINT', 'https://custom.example/private-endpoint')
+    fixture('sent')
+    for (const data of await both()) {
+      expect(data.meta_capi).toEqual({ pixel_id: expectedPixel, api_version: expectedVersion })
+      const serialized = JSON.stringify(data)
+      expect(serialized).not.toContain('private-')
     }
   })
 

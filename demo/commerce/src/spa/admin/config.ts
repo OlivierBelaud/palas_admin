@@ -71,6 +71,12 @@ export default defineSpa({
       icon: 'Radio',
       label: 'Tracking',
       to: '/tracking-health',
+      items: [
+        { label: 'Contrôle Meta', to: '/tracking-health/meta' },
+        { label: 'Contrôle Google Ads', to: '/tracking-health/google-ads' },
+        { label: 'Contrôle Pinterest', to: '/tracking-health/pinterest' },
+        { label: 'Contrôle GA4', to: '/tracking-health/ga4' },
+      ],
     },
   ],
 

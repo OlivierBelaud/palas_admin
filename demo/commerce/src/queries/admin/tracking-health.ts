@@ -1,4 +1,5 @@
 import { DISPATCHABLE_CANONICAL_EVENT_NAMES } from '../../modules/event-hub/canonical-contract'
+import { getMetaCapiConfig } from '../../modules/event-hub/meta-capi-connector'
 import { type RawDb, resolveRawDb } from '../../utils/raw-db'
 import {
   AD_CONSENT_ERROR_CODES,
@@ -307,7 +308,9 @@ export async function loadTrackingHealthData(
   const metaStatusCounts = statusCounts.get('meta_capi') ?? new Map<string, number>()
   const googleAdsStatusCounts = statusCounts.get('google_ads') ?? new Map<string, number>()
   const pinterestStatusCounts = statusCounts.get('pinterest') ?? new Map<string, number>()
+  const metaCapi = getMetaCapiConfig()
   return {
+    meta_capi: { pixel_id: metaCapi.pixelId, api_version: metaCapi.apiVersion },
     meta: {
       range: { from: from.toISOString(), to: to.toISOString() },
       generated_at: new Date().toISOString(),
