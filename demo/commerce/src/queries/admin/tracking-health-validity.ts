@@ -24,6 +24,8 @@ export const AD_CONSENT_ERROR_CODES = [
   'pinterest_ad_personalization_consent_not_granted',
 ]
 
+export const DELIVERY_CONSENT_ERROR_CODES = ['ga4_analytics_consent_not_granted', ...AD_CONSENT_ERROR_CODES]
+
 export function trackingHealthValidationErrors(
   validation: Record<string, unknown>,
   ga4Destination: DestinationSummary,
@@ -61,6 +63,10 @@ type DeliveryEvent = Partial<
 > &
   Partial<Record<`${DeliveryDestination}_http_status` | `${DeliveryDestination}_attempt_count`, number | null>> & {
     ad_destinations?: DestinationSummary[]
+    ga4_blockers?: string[]
+    meta_blockers?: string[]
+    google_ads_blockers?: string[]
+    pinterest_blockers?: string[]
   }
 
 export function formatDeliveryStatus(destination: DeliveryDestination, event: DeliveryEvent) {
@@ -79,7 +85,19 @@ export function formatDeliveryStatus(destination: DeliveryDestination, event: De
 export function normalizedDeliveryStatus(destination: DeliveryDestination, event: DeliveryEvent) {
   const value = event[`${destination}_status`]
   const status = typeof value === 'string' ? value.trim() : null
-  if (status === 'invalid' && isAdConsentErrorCode(event[`${destination}_error_code`])) return 'consent_blocked'
+  if (status === 'invalid') {
+    const blockers = [event[`${destination}_error_code`], ...(event[`${destination}_blockers`] ?? [])].filter(
+      (value): value is string => typeof value === 'string',
+    )
+    if (blockers.some(isDeliveryConsentBlocker) && blockers.every(isDeliveryEligibilityBlocker))
+      return 'consent_blocked'
+    if (
+      destination === 'google_ads' &&
+      blockers.length > 0 &&
+      blockers.every((code) => code === 'google_ads_identifier_missing')
+    )
+      return 'identifier_missing'
+  }
   if (status) return status
   if (destination === 'ga4') return 'unknown'
   const canonicalDestination = destination === 'meta' ? 'meta_capi' : destination
@@ -94,6 +112,7 @@ export function normalizedDeliveryStatus(destination: DeliveryDestination, event
 
 function deliveryStatusLabel(status: string) {
   if (status === 'not_applicable' || status === 'unsupported') return 'Non applicable'
+  if (status === 'identifier_missing') return 'Identifiant Google absent'
   if (status === 'consent_blocked') return 'Consentement'
   if (status === 'pending') return 'À envoyer'
   if (status === 'sent') return 'Envoyé'
@@ -104,4 +123,17 @@ function deliveryStatusLabel(status: string) {
   if (status === 'not_configured') return 'Config'
   if (status === 'unknown') return 'N/A'
   return status
+}
+
+function isDeliveryConsentBlocker(code: string) {
+  return isConsentBlocker(code) || DELIVERY_CONSENT_ERROR_CODES.includes(code)
+}
+function isDeliveryEligibilityBlocker(code: string) {
+  return isDeliveryConsentBlocker(code) || code === 'google_ads_identifier_missing'
+}
+export function deliveryErrorCode(destination: DeliveryDestination, event: DeliveryEvent) {
+  return (
+    event[`${destination}_blockers`]?.find((code) => !isDeliveryEligibilityBlocker(code)) ??
+    event[`${destination}_error_code`]
+  )
 }

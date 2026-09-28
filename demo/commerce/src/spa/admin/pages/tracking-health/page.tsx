@@ -2,8 +2,8 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton, Table } from '@mantajs/ui'
 import * as React from 'react'
 import {
+  deliveryErrorCode,
   formatDeliveryStatus,
-  isAdConsentErrorCode,
   normalizedDeliveryStatus,
 } from '../../../../queries/admin/tracking-health-validity'
 
@@ -33,6 +33,11 @@ interface TrackingHealthData {
     ga4_ready: number
     ga4_pending: number
     ga4_sent: number
+    ga4_consent_blocked?: number
+    meta_consent_blocked?: number
+    google_ads_consent_blocked?: number
+    pinterest_consent_blocked?: number
+    google_ads_identifier_missing?: number
     ga4_invalid: number
     ga4_error: number
     meta_pending: number
@@ -100,6 +105,7 @@ interface TrackingHealthData {
     ga4_ready: boolean
     ga4_status: string
     ga4_http_status: number | null
+    ga4_blockers?: string[]
     ga4_error_code: string | null
     ga4_error_message: string | null
     ga4_attempt_count: number
@@ -326,19 +332,19 @@ function Kpis({ data }: { data: TrackingHealthData }) {
     {
       label: 'GA4',
       value: data.kpis.ga4_sent,
-      detail: `${data.kpis.ga4_pending} attente · ${data.kpis.ga4_invalid + data.kpis.ga4_error} à corriger`,
+      detail: `${data.kpis.ga4_pending} attente · ${data.kpis.ga4_consent_blocked ?? 0} consentement · ${data.kpis.ga4_invalid + data.kpis.ga4_error} à corriger`,
       mark: 'G4',
     },
     {
       label: 'Meta',
       value: data.kpis.meta_sent,
-      detail: `${data.kpis.meta_pending} attente · ${data.kpis.meta_invalid + data.kpis.meta_error} à corriger`,
+      detail: `${data.kpis.meta_pending} attente · ${data.kpis.meta_consent_blocked ?? 0} consentement · ${data.kpis.meta_invalid + data.kpis.meta_error} à corriger`,
       mark: 'ME',
     },
     ...(['google_ads', 'pinterest'] as const).map((destination) => ({
       label: destination === 'google_ads' ? 'Google Ads · acceptés API' : 'Pinterest · acceptés API',
       value: data.kpis[`${destination}_sent`] ?? 0,
-      detail: `${data.kpis[`${destination}_validated`] ?? 0} tests validés · ${data.kpis[`${destination}_pending`] ?? 0} attente · ${(data.kpis[`${destination}_invalid`] ?? 0) + (data.kpis[`${destination}_error`] ?? 0)} à corriger`,
+      detail: `${data.kpis[`${destination}_validated`] ?? 0} tests validés · ${data.kpis[`${destination}_pending`] ?? 0} attente · ${data.kpis[`${destination}_consent_blocked`] ?? 0} consentement · ${destination === 'google_ads' ? `${data.kpis.google_ads_identifier_missing ?? 0} sans identifiant Google · ` : ''}${(data.kpis[`${destination}_invalid`] ?? 0) + (data.kpis[`${destination}_error`] ?? 0)} à corriger`,
       mark: destination === 'google_ads' ? 'AD' : 'PI',
     })),
     {
@@ -554,12 +560,13 @@ function LiveEventTable({
                     <Badge variant={deliveryBadgeVariant(normalizedDeliveryStatus('ga4', event))}>
                       {formatDeliveryStatus('ga4', event)}
                     </Badge>
-                    {event.ga4_error_code ? (
+                    {event.ga4_error_code &&
+                    !['consent_blocked', 'identifier_missing'].includes(normalizedDeliveryStatus('ga4', event)) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
-                        title={event.ga4_error_message ?? event.ga4_error_code}
+                        title={event.ga4_error_message ?? deliveryErrorCode('ga4', event) ?? undefined}
                       >
-                        {event.ga4_error_code}
+                        {deliveryErrorCode('ga4', event)}
                       </span>
                     ) : null}
                   </div>
@@ -572,12 +579,13 @@ function LiveEventTable({
                     >
                       {formatDeliveryStatus('meta', event)}
                     </Badge>
-                    {event.meta_error_code && !isAdConsentErrorCode(event.meta_error_code) ? (
+                    {event.meta_error_code &&
+                    !['consent_blocked', 'identifier_missing'].includes(normalizedDeliveryStatus('meta', event)) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
-                        title={event.meta_error_message ?? event.meta_error_code}
+                        title={event.meta_error_message ?? deliveryErrorCode('meta', event) ?? undefined}
                       >
-                        {event.meta_error_code}
+                        {deliveryErrorCode('meta', event)}
                       </span>
                     ) : null}
                   </div>
@@ -586,16 +594,23 @@ function LiveEventTable({
                   <div className="flex flex-col gap-1">
                     <Badge
                       variant={deliveryBadgeVariant(normalizedDeliveryStatus('google_ads', event))}
-                      title={asStringArray(event.google_ads_blockers).join(', ') || undefined}
+                      title={
+                        normalizedDeliveryStatus('google_ads', event) === 'identifier_missing'
+                          ? 'Non envoyé : aucun identifiant de clic ni email/téléphone haché exploitable par le connecteur. Ce statut ne prouve pas une panne Google.'
+                          : asStringArray(event.google_ads_blockers).join(', ') || undefined
+                      }
                     >
                       {formatDeliveryStatus('google_ads', event)}
                     </Badge>
-                    {event.google_ads_error_code && !isAdConsentErrorCode(event.google_ads_error_code) ? (
+                    {event.google_ads_error_code &&
+                    !['consent_blocked', 'identifier_missing'].includes(
+                      normalizedDeliveryStatus('google_ads', event),
+                    ) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
-                        title={event.google_ads_error_message ?? event.google_ads_error_code}
+                        title={event.google_ads_error_message ?? deliveryErrorCode('google_ads', event) ?? undefined}
                       >
-                        {event.google_ads_error_code}
+                        {deliveryErrorCode('google_ads', event)}
                       </span>
                     ) : null}
                   </div>
@@ -608,12 +623,15 @@ function LiveEventTable({
                     >
                       {formatDeliveryStatus('pinterest', event)}
                     </Badge>
-                    {event.pinterest_error_code && !isAdConsentErrorCode(event.pinterest_error_code) ? (
+                    {event.pinterest_error_code &&
+                    !['consent_blocked', 'identifier_missing'].includes(
+                      normalizedDeliveryStatus('pinterest', event),
+                    ) ? (
                       <span
                         className="max-w-[180px] truncate text-xs text-muted-foreground"
-                        title={event.pinterest_error_message ?? event.pinterest_error_code}
+                        title={event.pinterest_error_message ?? deliveryErrorCode('pinterest', event) ?? undefined}
                       >
-                        {event.pinterest_error_code}
+                        {deliveryErrorCode('pinterest', event)}
                       </span>
                     ) : null}
                   </div>

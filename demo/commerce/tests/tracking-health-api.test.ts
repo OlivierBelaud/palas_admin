@@ -1,3 +1,4 @@
+import postgres from 'postgres'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { RawDb } from '../src/utils/raw-db'
@@ -182,6 +183,74 @@ describe('tracking health provider diagnostics API parity', () => {
       expect(serialized).not.toContain('private-')
     }
   })
+
+  it('passes the selected event to both destination-counter queries', async () => {
+    fixture('sent')
+    await load({ event_name: 'add_to_cart' }, { raw } as RawDb)
+    await fast.fetch(
+      new Request('https://admin.example/api/cart-tracking/admin-tracking-health?event_name=add_to_cart'),
+    )
+    const calls = raw.mock.calls.filter(([query]) => query.includes('normalized_dispatch_logs'))
+    expect(calls).toHaveLength(2)
+    for (const [query, params] of calls) {
+      expect(params[4]).toBe('add_to_cart')
+      expect(query).toContain('canonical_event_name = $5')
+      expect(params[3]).toContain('ga4_analytics_consent_not_granted')
+    }
+  })
+
+  it.skipIf(!process.env.CONTROL_TEST_DATABASE_URL)(
+    'executes both counter queries with consent, identity gaps and real errors in PostgreSQL',
+    async () => {
+      const url = process.env.CONTROL_TEST_DATABASE_URL!
+      if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname)) throw new Error('Isolated database required')
+      fixture('sent')
+      await load({ event_name: 'add_to_cart' }, { raw } as RawDb)
+      await fast.fetch(
+        new Request('https://admin.example/api/cart-tracking/admin-tracking-health?event_name=add_to_cart'),
+      )
+      const queries = raw.mock.calls.filter(([query]) => query.includes('normalized_dispatch_logs'))
+      const statQueries = raw.mock.calls.filter(([query]) => query.includes('AS consent_analytics_granted'))
+      const sql = postgres(url, { max: 1, prepare: false })
+      try {
+        await sql.unsafe(`CREATE TEMP TABLE dispatch_logs (destination text,status text,error_code text,metadata jsonb,deleted_at timestamptz,event_received_at timestamptz,canonical_event_name text);
+        INSERT INTO dispatch_logs VALUES
+        ('ga4','invalid','ga4_analytics_consent_not_granted','{}',null,now()-interval '1 minute','add_to_cart'),
+        ('ga4','sent',null,'{}',null,now()-interval '1 minute','purchase'),
+        ('ga4','invalid','ga4_analytics_consent_not_granted','{"errors":["ga4_analytics_consent_not_granted","ga4_currency_missing"]}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','invalid','google_ads_identifier_missing','{"errors":["google_ads_identifier_missing","google_ads_ad_storage_consent_not_granted"]}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','invalid','google_ads_identifier_missing','{"errors":["google_ads_identifier_missing"]}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','invalid','google_ads_identifier_missing','{"errors":["google_ads_identifier_missing","google_ads_currency_code_missing"]}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','error','GOOGLE_DOWN','{}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','sent','google_ads_ad_storage_consent_not_granted','{}',null,now()-interval '1 minute','add_to_cart'),
+        ('google_ads','sent',null,'{}',now(),now()-interval '1 minute','add_to_cart');
+        CREATE TEMP TABLE event_logs (payload_normalized jsonb, identity_email_sha256 text, identity_muid text, distinct_id text, deleted_at timestamptz, received_at timestamptz, event_name text);
+        INSERT INTO event_logs (payload_normalized,received_at,event_name) VALUES
+        ('{"validation":{"errors":[],"destinations":{"ga4":{"supported":true,"ready":false,"blockers":["analytics_consent_not_granted"]}}}}',now()-interval '1 minute','add_to_cart'),
+        ('{"validation":{"errors":[],"destinations":{"ga4":{"supported":true,"ready":false,"blockers":["ga4_client_id_missing"]}}}}',now()-interval '1 minute','add_to_cart');`)
+        for (const [query, params] of queries) {
+          const rows = await sql.unsafe(query, params)
+          const counts = Object.fromEntries(rows.map((r) => [`${r.destination}:${r.status}`, Number(r.count)]))
+          expect(counts).toEqual({
+            'ga4:consent_blocked': 1,
+            'ga4:invalid': 1,
+            'google_ads:consent_blocked': 1,
+            'google_ads:identifier_missing': 1,
+            'google_ads:invalid': 1,
+            'google_ads:error': 1,
+            'google_ads:sent': 1,
+          })
+        }
+        for (const [query, params] of statQueries) {
+          const [counts] = await sql.unsafe(query, params)
+          expect(Number(counts.total)).toBe(2)
+          expect(Number(counts.valid)).toBe(1)
+        }
+      } finally {
+        await sql.end()
+      }
+    },
+  )
 
   it('keeps the deployed endpoint admin-only', async () => {
     authorized.value = false

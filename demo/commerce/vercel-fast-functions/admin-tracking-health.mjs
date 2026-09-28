@@ -22,7 +22,8 @@ const CONSENT_BLOCKERS = [
   'ad_user_data_consent_not_granted',
   'ad_personalization_consent_not_granted',
 ]
-const AD_CONSENT_ERROR_CODES = [
+const DELIVERY_CONSENT_ERROR_CODES = [
+  'ga4_analytics_consent_not_granted',
   'meta_capi_ad_storage_consent_not_granted',
   'meta_capi_ad_user_data_consent_not_granted',
   'meta_capi_ad_personalization_consent_not_granted',
@@ -38,6 +39,8 @@ const TRACKING_HEALTH_VALID_SQL = `(
   AND (
     COALESCE(payload_normalized #>> '{validation,destinations,ga4,supported}', 'false') <> 'true'
     OR COALESCE(payload_normalized #>> '{validation,destinations,ga4,ready}', 'false') = 'true'
+    OR COALESCE(payload_normalized #> '{validation,destinations,ga4,blockers}', '[]'::jsonb)
+      <@ '["analytics_consent_not_granted"]'::jsonb
   )
 )`
 
@@ -61,7 +64,7 @@ export default {
       loadPageRows(from, to, filterEventName, limit, offset),
       loadEventTypes(from, to),
       loadStats(from, to, filterEventName),
-      loadDestinationStatusCounts(from, to),
+      loadDestinationStatusCounts(from, to, filterEventName),
     ])
     const queryDone = nowMs()
 
@@ -110,6 +113,7 @@ export default {
         ga4_pending: countStatus(ga4StatusCounts, 'pending') + countStatus(ga4StatusCounts, 'retry'),
         ga4_sent: countStatus(ga4StatusCounts, 'sent'),
         ga4_invalid: countStatus(ga4StatusCounts, 'invalid'),
+        ga4_consent_blocked: countStatus(ga4StatusCounts, 'consent_blocked'),
         ga4_error:
           countStatus(ga4StatusCounts, 'error') +
           countStatus(ga4StatusCounts, 'not_configured') +
@@ -117,6 +121,7 @@ export default {
         meta_pending: countStatus(metaStatusCounts, 'pending') + countStatus(metaStatusCounts, 'retry'),
         meta_sent: countStatus(metaStatusCounts, 'sent'),
         meta_invalid: countStatus(metaStatusCounts, 'invalid'),
+        meta_consent_blocked: countStatus(metaStatusCounts, 'consent_blocked'),
         meta_error:
           countStatus(metaStatusCounts, 'error') +
           countStatus(metaStatusCounts, 'not_configured') +
@@ -125,6 +130,8 @@ export default {
         google_ads_sent: countStatus(googleAdsStatusCounts, 'sent'),
         google_ads_validated: countStatus(googleAdsStatusCounts, 'validated'),
         google_ads_invalid: countStatus(googleAdsStatusCounts, 'invalid'),
+        google_ads_consent_blocked: countStatus(googleAdsStatusCounts, 'consent_blocked'),
+        google_ads_identifier_missing: countStatus(googleAdsStatusCounts, 'identifier_missing'),
         google_ads_error:
           countStatus(googleAdsStatusCounts, 'error') +
           countStatus(googleAdsStatusCounts, 'not_configured') +
@@ -133,6 +140,7 @@ export default {
         pinterest_sent: countStatus(pinterestStatusCounts, 'sent'),
         pinterest_validated: countStatus(pinterestStatusCounts, 'validated'),
         pinterest_invalid: countStatus(pinterestStatusCounts, 'invalid'),
+        pinterest_consent_blocked: countStatus(pinterestStatusCounts, 'consent_blocked'),
         pinterest_error:
           countStatus(pinterestStatusCounts, 'error') +
           countStatus(pinterestStatusCounts, 'not_configured') +
@@ -244,27 +252,34 @@ function loadStats(from, to, eventName) {
   )
 }
 
-function loadDestinationStatusCounts(from, to) {
+function loadDestinationStatusCounts(from, to, eventName) {
   return db().unsafe(
     `SELECT destination, normalized_status AS status, COUNT(*)::text AS count
        FROM (
          SELECT destination,
-                CASE WHEN error_code = ANY($4::text[]) THEN 'not_applicable' ELSE status END AS normalized_status
+                CASE
+                  WHEN status = 'invalid' AND (error_code = ANY($4::text[]) OR COALESCE(metadata->'errors', '[]'::jsonb) ?| $4::text[])
+                    AND (error_code IS NULL OR error_code = ANY($4::text[] || ARRAY['google_ads_identifier_missing']))
+                    AND COALESCE(metadata->'errors', '[]'::jsonb) <@ to_jsonb($4::text[] || ARRAY['google_ads_identifier_missing']) THEN 'consent_blocked'
+                  WHEN status = 'invalid' AND destination = 'google_ads' AND error_code = 'google_ads_identifier_missing'
+                    AND COALESCE(metadata->'errors', '[]'::jsonb) <@ '["google_ads_identifier_missing"]'::jsonb THEN 'identifier_missing'
+                  ELSE status END AS normalized_status
            FROM dispatch_logs
           WHERE deleted_at IS NULL
             AND destination = ANY($3::text[])
             AND event_received_at >= $1
             AND event_received_at <= $2
+            AND ($5::text IS NULL OR canonical_event_name = $5)
        ) AS normalized_dispatch_logs
       GROUP BY destination, normalized_status`,
-    [from.toISOString(), to.toISOString(), DESTINATIONS, AD_CONSENT_ERROR_CODES],
+    [from.toISOString(), to.toISOString(), DESTINATIONS, DELIVERY_CONSENT_ERROR_CODES, eventName],
   )
 }
 
 function loadPageDispatches(eventIds) {
   return db().unsafe(
     `SELECT event_id, destination, status, http_status, error_code, error_message,
-            attempt_count, sent_at, last_attempt_at
+            attempt_count, sent_at, last_attempt_at, metadata->'errors' AS errors
       FROM dispatch_logs
       WHERE deleted_at IS NULL
         AND destination = ANY($2::text[])
@@ -355,6 +370,7 @@ function eventDto(row, { ga4Log, metaCapiLog, googleAdsLog, pinterestLog }) {
       : 'unsupported',
     ga4_http_status: ga4Log?.http_status ?? null,
     ga4_error_code: ga4Log?.error_code ?? null,
+    ga4_blockers: deliveryBlockers(ga4Log, ga4Destination),
     ga4_error_message: ga4Log?.error_message ?? null,
     ga4_attempt_count: ga4Log?.attempt_count ?? 0,
     ga4_sent_at: ga4Log?.sent_at ? iso(ga4Log.sent_at) : null,
@@ -369,7 +385,7 @@ function eventDto(row, { ga4Log, metaCapiLog, googleAdsLog, pinterestLog }) {
     meta_error_message: metaCapiLog?.error_message ?? null,
     meta_attempt_count: metaCapiLog?.attempt_count ?? 0,
     meta_sent_at: metaCapiLog?.sent_at ? iso(metaCapiLog.sent_at) : null,
-    meta_blockers: metaCapiDestination.blockers,
+    meta_blockers: deliveryBlockers(metaCapiLog, metaCapiDestination),
     google_ads_ready: googleAdsDestination.supported
       ? googleAdsLog
         ? ['pending', 'sending', 'sent', 'retry'].includes(googleAdsLog.status)
@@ -381,7 +397,7 @@ function eventDto(row, { ga4Log, metaCapiLog, googleAdsLog, pinterestLog }) {
     google_ads_error_message: googleAdsLog?.error_message ?? null,
     google_ads_attempt_count: googleAdsLog?.attempt_count ?? 0,
     google_ads_sent_at: googleAdsLog?.sent_at ? iso(googleAdsLog.sent_at) : null,
-    google_ads_blockers: googleAdsDestination.blockers,
+    google_ads_blockers: deliveryBlockers(googleAdsLog, googleAdsDestination),
     pinterest_ready: pinterestDestination.supported && pinterestDestination.ready,
     pinterest_status: pinterestDestination.supported ? (pinterestLog?.status ?? 'pending') : 'unsupported',
     pinterest_http_status: pinterestLog?.http_status ?? null,
@@ -389,7 +405,7 @@ function eventDto(row, { ga4Log, metaCapiLog, googleAdsLog, pinterestLog }) {
     pinterest_error_message: pinterestLog?.error_message ?? null,
     pinterest_attempt_count: pinterestLog?.attempt_count ?? 0,
     pinterest_sent_at: pinterestLog?.sent_at ? iso(pinterestLog.sent_at) : null,
-    pinterest_blockers: pinterestDestination.blockers,
+    pinterest_blockers: deliveryBlockers(pinterestLog, pinterestDestination),
     ad_destinations: ['meta_capi', 'google_ads', 'pinterest', 'tiktok']
       .map((destination) =>
         destination === 'pinterest'
@@ -469,4 +485,8 @@ function trackingHealthValidationErrors(validation, ga4Destination) {
 
 function isTrackingHealthValid(validation, ga4Destination) {
   return trackingHealthValidationErrors(validation, ga4Destination).length === 0
+}
+
+function deliveryBlockers(log, destination) {
+  return Array.isArray(log?.errors) && log.errors.length > 0 ? log.errors : destination.blockers
 }
