@@ -20,5 +20,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@mantajs/*'
 patchedDependencies:
+  '@mantajs/adapter-database-pg@0.2.0-beta.12': patches/@mantajs__adapter-database-pg@0.2.0-beta.12.patch
+  '@mantajs/cli@0.2.0-beta.12': patches/@mantajs__cli@0.2.0-beta.12.patch
   '@mantajs/core@0.2.0-beta.12': patches/@mantajs__core@0.2.0-beta.12.patch
   '@mantajs/dashboard@0.2.0-beta.12': patches/@mantajs__dashboard@0.2.0-beta.12.patch
