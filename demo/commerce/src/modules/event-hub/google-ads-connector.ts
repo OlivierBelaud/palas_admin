@@ -148,7 +148,7 @@ export function isGoogleAdsConfigured(config: GoogleAdsConfig = getGoogleAdsConf
   )
 }
 
-function conversionActionIdFor(
+export function conversionActionIdFor(
   canonicalEventName: string,
   config: Pick<
     GoogleAdsConfig,

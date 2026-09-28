@@ -87,7 +87,7 @@ export type TrackingControlData = {
 export type ProviderReadInput = {
   destination: ControlDestination
   window: ControlWindow
-  google_requests: Array<{ request_id: string; event_name: string; event_id: string }>
+  google_requests: Array<{ request_id: string; event_name: string }>
   google_request_count: number
 }
 
