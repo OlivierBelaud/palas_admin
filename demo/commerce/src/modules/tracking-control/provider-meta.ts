@@ -135,7 +135,7 @@ export async function readMeta(
     'Un score de correspondance ne prouve ni réception exhaustive ni attribution publicitaire.',
   ]
   const quality =
-    !pixel || !token
+    input.counts_only || !pixel || !token
       ? Promise.resolve(missing(qualityBase, 'Configurer le pixel et un token autorisé à lire Dataset Quality.'))
       : evidence(qualityBase, async () => {
           const data = await remote('dataset_quality', {
@@ -183,7 +183,7 @@ export async function readMeta(
     'Ne démontre pas l’utilisation de chaque événement dans l’algorithme publicitaire.',
   ]
   const ads =
-    !account || !token
+    input.counts_only || !account || !token
       ? Promise.resolve(
           missing(adsBase, 'Configurer META_AD_ACCOUNT_ID et un token autorisé à lire les statistiques publicitaires.'),
         )
@@ -244,10 +244,14 @@ export async function readMeta(
     },
     sections: await Promise.all([
       stats('meta_server', 'Événements serveur', 'SERVER_ONLY'),
-      stats('meta_browser', 'Événements navigateur', 'WEB_ONLY'),
-      stats('meta_processing', 'Traitement serveur', 'SERVER_ONLY', 'event_processing_results'),
-      quality,
-      ads,
+      ...(input.counts_only
+        ? []
+        : [
+            stats('meta_browser', 'Événements navigateur', 'WEB_ONLY'),
+            stats('meta_processing', 'Traitement serveur', 'SERVER_ONLY', 'event_processing_results'),
+            quality,
+            ads,
+          ]),
     ]),
   }
 }

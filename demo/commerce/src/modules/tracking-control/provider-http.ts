@@ -39,7 +39,8 @@ export async function readJson(url: URL, init: RequestInit, fetcher: typeof fetc
     return await Promise.race([
       (async () => {
         const response = await fetcher(url, { ...init, redirect: 'error', signal: controller.signal })
-        if (!response.ok) {
+        const graphError = url.origin === 'https://graph.facebook.com' && response.status === 400
+        if (!response.ok && !graphError) {
           if (response.status === 401 || response.status === 403)
             throw new ReadError(
               'permission_denied',
@@ -75,8 +76,26 @@ export async function readJson(url: URL, init: RequestInit, fetcher: typeof fetc
           activeReader = undefined
         }
         try {
-          return JSON.parse(raw) as unknown
-        } catch {
+          const parsed: unknown = JSON.parse(raw)
+          if (graphError) {
+            const code = number(object(object(parsed).error).code)
+            if ([10, 190, 200].includes(code ?? -1))
+              throw new ReadError(
+                'permission_denied',
+                'Meta refuse la lecture. Vérifier le token et son accès au pixel.',
+              )
+            if ([4, 17, 32, 613].includes(code ?? -1))
+              throw new ReadError('rate_limited', 'Quota de lecture Meta atteint. Réessayer plus tard.')
+            if (code === 100)
+              throw new ReadError(
+                'unavailable',
+                'Meta ne permet pas cette lecture pour ce pixel ou ces paramètres (code 100).',
+              )
+            throw new ReadError('error', 'Lecture Meta refusée (HTTP 400). Vérifier la configuration de lecture.')
+          }
+          return parsed
+        } catch (error) {
+          if (error instanceof ReadError) throw error
           throw new ReadError('error', 'Réponse distante non interprétable.')
         }
       })(),

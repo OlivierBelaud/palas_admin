@@ -13,6 +13,14 @@ export function MetaComparison({ data }: { data: TrackingControlData }) {
   for (const row of server?.rows ?? []) {
     if (row.label === 'Événements rapportés' && typeof row.value === 'number') remote.set(row.event_name, row.value)
   }
+  const unavailable =
+    server?.state === 'permission_denied'
+      ? 'Accès de lecture refusé'
+      : server?.state === 'not_configured'
+        ? 'Lecture à configurer'
+        : server?.state === 'available'
+          ? 'Non rapporté par Meta'
+          : 'Lecture indisponible'
   const names = [...new Set([...ours.keys(), ...remote.keys()])].sort()
   return (
     <Card>
@@ -24,6 +32,11 @@ export function MetaComparison({ data }: { data: TrackingControlData }) {
         </p>
       </CardHeader>
       <CardContent>
+        {server && !['available', 'partial'].includes(server.state) ? (
+          <p role="status" className="mb-3 text-sm text-amber-800">
+            {server.message} Les accusés de réception restent consultables dans le tableau de contrôle Tracking.
+          </p>
+        ) : null}
         {names.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[460px] text-left text-sm">
@@ -40,7 +53,7 @@ export function MetaComparison({ data }: { data: TrackingControlData }) {
                     <td className="py-3 pr-3 font-medium">{name}</td>
                     <td className="py-3 pr-3 tabular-nums">{formatCount(ours.get(name) ?? 0)}</td>
                     <td className="py-3 tabular-nums">
-                      {remote.has(name) ? formatCount(remote.get(name)!) : 'Inconnu'}
+                      {remote.has(name) ? formatCount(remote.get(name)!) : unavailable}
                       {server?.state === 'partial' && remote.has(name) ? ' (partiel)' : ''}
                     </td>
                   </tr>

@@ -1,5 +1,6 @@
-import { ControlInputError, parseControlRequest } from '../../../tracking-control/local-query'
 import { loadTrackingControl } from '../../../tracking-control/loader'
+import { ControlInputError, parseControlRequest } from '../../../tracking-control/local-query'
+import { loadTrackingMatrix } from '../../../tracking-control/matrix'
 import { type AdminApiRequest, dbFrom, requireAdmin } from '../_shared'
 
 export async function GET(req: AdminApiRequest) {
@@ -7,8 +8,17 @@ export async function GET(req: AdminApiRequest) {
   if (unauthorized) return unauthorized
   const headers = { 'Cache-Control': 'private, no-store' }
   try {
-    const input = parseControlRequest(new URL(req.url).searchParams)
-    return Response.json({ data: await loadTrackingControl(input, dbFrom(req)) }, { headers })
+    const params = new URL(req.url).searchParams
+    const input = parseControlRequest(params)
+    return Response.json(
+      {
+        data:
+          params.get('view') === 'matrix'
+            ? await loadTrackingMatrix(input, dbFrom(req), process.env, fetch, params.get('remote') !== '0')
+            : await loadTrackingControl(input, dbFrom(req)),
+      },
+      { headers },
+    )
   } catch (error) {
     if (error instanceof ControlInputError) {
       return Response.json({ message: error.message }, { status: 400, headers })

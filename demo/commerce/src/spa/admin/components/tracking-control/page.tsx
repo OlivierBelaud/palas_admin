@@ -2,6 +2,7 @@ import { useDashboardContext } from '@mantajs/dashboard'
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@mantajs/ui'
 import * as React from 'react'
 import { Link } from 'react-router-dom'
+import { earliestParisDate, parisDate } from '../../../../modules/tracking-control/calendar'
 import type { ControlDestination, TrackingControlData } from '../../../../modules/tracking-control/types'
 import { MetaComparison } from './comparison'
 import { formatTime, RemoteEvidence } from './evidence'
@@ -45,6 +46,7 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
   const { dataSource } = useDashboardContext()
   const name = destinations.find((item) => item.key === destination)?.name || destination
   const [period, setPeriod] = React.useState('4')
+  const [day, setDay] = React.useState(parisDate())
   const [customFrom, setCustomFrom] = React.useState(() => inputTime(Date.now() - 4 * 60 * 60 * 1000))
   const [customTo, setCustomTo] = React.useState(() => inputTime(Date.now()))
   const [customWindow, setCustomWindow] = React.useState<CustomWindow | null>(null)
@@ -77,6 +79,8 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
     if (period === 'custom' && customWindow) {
       search.set('from', customWindow.from)
       search.set('to', customWindow.to)
+    } else if (period === 'day') {
+      search.set('date', day)
     } else {
       search.set('hours', period)
     }
@@ -104,7 +108,7 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
     return () => {
       cancelled = true
     }
-  }, [dataSource, destination, period, customWindow, refresh])
+  }, [dataSource, destination, period, day, customWindow, refresh])
 
   const applyCustom = () => {
     invalidate()
@@ -125,7 +129,8 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
       <div>
         <h1 className="text-2xl font-semibold tracking-normal">Contrôle tracking · {name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Comparez les traces du CRM aux preuves disponibles chez {name}, sur les dernières 24 heures.
+          Comparez les traces du CRM aux preuves disponibles chez {name}, sur la période choisie. Les détails des
+          accusés sont conservés 24 heures.
         </p>
       </div>
       <nav aria-label="Destinations tracking" className="flex flex-wrap gap-2 rounded-lg border bg-muted/25 p-1.5">
@@ -166,9 +171,26 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
                     Dernières {hours} h
                   </option>
                 ))}
+                <option value="day">Une journée (Paris)</option>
                 <option value="custom">Période personnalisée</option>
               </select>
             </label>
+            {period === 'day' ? (
+              <label className="flex flex-col gap-1 text-sm">
+                <span>Journée (heure de Paris)</span>
+                <input
+                  className={inputClass}
+                  type="date"
+                  value={day}
+                  max={parisDate()}
+                  min={earliestParisDate()}
+                  onChange={(event) => {
+                    invalidate()
+                    setDay(event.target.value)
+                  }}
+                />
+              </label>
+            ) : null}
             <button
               type="button"
               className={buttonClass}
@@ -183,7 +205,9 @@ export function TrackingControlPage({ destination }: { destination: ControlDesti
             >
               Actualiser
             </button>
-            <span className="pb-2 text-xs text-muted-foreground">Heures en UTC · actualisation manuelle</span>
+            <span className="pb-2 text-xs text-muted-foreground">
+              {period === 'day' ? 'Journée en heure de Paris' : 'Heures en UTC'} · actualisation manuelle
+            </span>
           </div>
           {period === 'custom' ? (
             <form

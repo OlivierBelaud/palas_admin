@@ -9,10 +9,13 @@ describe('tracking control admin endpoint', () => {
     vi.stubEnv('JWT_SECRET', '')
     const raw = vi.fn()
     for (const type of [undefined, 'customer']) {
-      const request = Object.assign(new Request('https://crm.test/api/admin/tracking-control?destination=meta_capi'), {
-        app: { infra: { db: { raw } } },
-        authContext: type ? { type, id: 'test' } : undefined,
-      }) as AdminApiRequest
+      const request = Object.assign(
+        new Request('https://crm.test/api/admin/tracking-control?destination=meta_capi&view=matrix'),
+        {
+          app: { infra: { db: { raw } } },
+          authContext: type ? { type, id: 'test' } : undefined,
+        },
+      ) as AdminApiRequest
       expect((await GET(request)).status).toBe(401)
     }
     expect(raw).not.toHaveBeenCalled()
@@ -57,4 +60,23 @@ describe('tracking control admin endpoint', () => {
     expect(data.destination).toBe('meta_capi')
     expect(data.config.send_configured).toBe(false)
   })
+})
+
+it('returns a private matrix without provider calls for the first local read', async () => {
+  const raw = vi.fn(async () => [])
+  const request = Object.assign(
+    new Request('https://crm.test/api/admin/tracking-control?destination=meta_capi&view=matrix&remote=0&hours=4'),
+    {
+      app: { infra: { db: { raw } } },
+      authContext: { type: 'admin', id: 'test' },
+    },
+  ) as AdminApiRequest
+  const response = await GET(request)
+  expect(response.status).toBe(200)
+  expect(response.headers.get('cache-control')).toBe('private, no-store')
+  const { data } = await response.json()
+  expect(data.remote_loaded).toBe(false)
+  expect(data.providers).toEqual({})
+  expect(data.rows.find((r: { event_name: string }) => r.event_name === 'page_view').platforms.google_ads).toBeNull()
+  expect(raw).toHaveBeenCalledTimes(2)
 })

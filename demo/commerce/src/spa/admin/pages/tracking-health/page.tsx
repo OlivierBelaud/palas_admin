@@ -6,6 +6,7 @@ import {
   formatDeliveryStatus,
   normalizedDeliveryStatus,
 } from '../../../../queries/admin/tracking-health-validity'
+import { TrackingMatrixCard } from '../../components/tracking-control/matrix'
 
 interface TrackingHealthData {
   meta_capi?: { pixel_id: string | null; api_version: string }
@@ -275,7 +276,7 @@ export default function TrackingHealthPage() {
         <>
           <MetaConnection configuration={data.meta_capi} />
           <Kpis data={data} />
-          <EventTypeTable rows={data.event_types} active={eventName} setActive={selectEventName} />
+          <TrackingMatrixCard hours={hours} active={eventName} onSelect={selectEventName} />
           <LiveEventTable data={data} pageIndex={pageIndex} setPageIndex={setPageIndex} />
         </>
       ) : null}
@@ -369,65 +370,6 @@ function Kpis({ data }: { data: TrackingHealthData }) {
         </Card>
       ))}
     </div>
-  )
-}
-
-function EventTypeTable({
-  rows,
-  active,
-  setActive,
-}: {
-  rows: TrackingHealthData['event_types']
-  active: string
-  setActive: (value: string) => void
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Types d'events envoyables</CardTitle>
-      </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-sm">
-          <thead className="border-b text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="py-2 pr-4 font-medium">Event</th>
-              <th className="py-2 pr-4 font-medium">Total</th>
-              <th className="py-2 pr-4 font-medium">Valides</th>
-              <th className="py-2 pr-4 font-medium">Invalides</th>
-              <th className="py-2 pr-4 font-medium">Dernier reçu</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.event_name} className="border-b last:border-0">
-                <td className="py-2 pr-4">
-                  <button
-                    className={active === row.event_name ? 'font-semibold text-foreground' : 'text-primary'}
-                    onClick={() => setActive(row.event_name)}
-                    type="button"
-                  >
-                    {row.event_name}
-                  </button>
-                </td>
-                <td className="py-2 pr-4">{fmtNumber(row.count)}</td>
-                <td className="py-2 pr-4">{fmtNumber(row.valid)}</td>
-                <td className="py-2 pr-4">{fmtNumber(row.invalid)}</td>
-                <td className="py-2 pr-4 text-muted-foreground">
-                  {row.latest_at ? formatDateTime(row.latest_at) : '-'}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 ? (
-              <tr>
-                <td className="py-6 text-center text-muted-foreground" colSpan={5}>
-                  Aucun event reçu sur cette fenêtre.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
   )
 }
 

@@ -4,18 +4,27 @@ import {
   type CanonicalEventName,
   DISPATCHABLE_CANONICAL_EVENT_NAMES,
 } from '../event-hub/canonical-contract'
+import { calendarWindow, earliestParisDate } from './calendar'
 import type { ControlDestination, ControlReceipt, ControlWindow, LocalControl, ProviderReadInput } from './types'
 
 export class ControlInputError extends Error {}
 export type ControlInput = { destination: ControlDestination; window: ControlWindow }
 const DAY_MS = 86_400_000
 const RECENT_LIMIT = 50
-const GOOGLE_LIMIT = 10
+const GOOGLE_LIMIT = 60
 const DESTINATIONS = new Set(['meta_capi', 'google_ads', 'pinterest', 'ga4'])
 
 export function parseControlRequest(params: URLSearchParams, now = new Date()): ControlInput {
   const destination = params.get('destination')
   if (!destination || !DESTINATIONS.has(destination)) throw new ControlInputError('Destination inconnue.')
+  if (params.has('date')) {
+    if (['hours', 'from', 'to'].some((key) => params.has(key)))
+      throw new ControlInputError('Choisissez une journée ou une durée.')
+    const window = calendarWindow(params.get('date')!, now)
+    if (!window)
+      throw new ControlInputError('Choisissez une journée valide parmi les sept derniers jours, en heure de Paris.')
+    return { destination: destination as ControlDestination, window }
+  }
   const start = params.get('from')
   const end = params.get('to')
   let from: Date
@@ -45,9 +54,17 @@ export function parseControlRequest(params: URLSearchParams, now = new Date()): 
     !Number.isFinite(to.getTime()) ||
     from >= to ||
     to.getTime() > now.getTime() ||
-    from.getTime() < now.getTime() - DAY_MS
+    from.getTime() <
+      (params.get('view') === 'matrix'
+        ? Date.parse(calendarWindow(earliestParisDate(now), now)!.from)
+        : now.getTime() - DAY_MS) ||
+    to.getTime() - from.getTime() > (params.get('view') === 'matrix' ? 25 : 24) * 3_600_000
   ) {
-    throw new ControlInputError('Choisissez un intervalle passé, dans les dernières 24 heures.')
+    throw new ControlInputError(
+      params.get('view') === 'matrix'
+        ? 'Choisissez un intervalle passé de 25 heures maximum parmi les sept derniers jours.'
+        : 'Choisissez un intervalle passé, dans les dernières 24 heures.',
+    )
   }
   return {
     destination: destination as ControlDestination,
@@ -209,6 +226,7 @@ export async function loadLocalControl(
           request_id: String(row.request_id),
           event_name: String(row.event_name),
         })),
+      google_limit: GOOGLE_LIMIT,
       google_request_count: count(totals[0]?.google_request_count),
     },
   }
