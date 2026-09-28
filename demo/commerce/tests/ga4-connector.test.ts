@@ -15,6 +15,7 @@ describe('GA4 connector mapping', () => {
 
   it('marks events invalid when client_id is missing', () => {
     const mapped = mapCanonicalToGa4('add_to_cart', {
+      consent: { analytics_storage: true },
       user: {},
       context: { url: 'https://fancypalas.com/products/bague' },
       ecommerce: {
@@ -30,6 +31,7 @@ describe('GA4 connector mapping', () => {
 
   it('preserves numeric Shopify item identifiers in GA4 item arrays', () => {
     const mapped = mapCanonicalToGa4('view_item_list', {
+      consent: { analytics_storage: true },
       user: { ga_client_id: '123456789.987654321' },
       context: { url: 'https://fancypalas.com/fr/collections/tous-les-bijoux' },
       ecommerce: {
@@ -74,6 +76,7 @@ describe('GA4 connector mapping', () => {
 
   it('maps purchase payloads to GA4 Measurement Protocol shape', () => {
     const mapped = mapCanonicalToGa4('purchase', {
+      consent: { analytics_storage: true },
       user: {
         ga_client_id: '123456789.987654321',
         contact_id: 'contact_1',
@@ -160,8 +163,9 @@ describe('GA4 connector mapping', () => {
     })
   })
 
-  it('uses MUID as GA4 user_id when contact_id is not resolved yet', () => {
+  it('does not invent a known GA4 user_id from an anonymous MUID', () => {
     const mapped = mapCanonicalToGa4('page_view', {
+      consent: { analytics_storage: true },
       user: {
         ga_client_id: 'muid_1',
         muid: 'muid_1',
@@ -172,9 +176,9 @@ describe('GA4 connector mapping', () => {
     })
 
     expect(mapped.ok).toBe(true)
+    expect(mapped.payload).not.toHaveProperty('user_id')
     expect(mapped.payload).toMatchObject({
       client_id: 'muid_1',
-      user_id: 'muid_1',
     })
   })
 
@@ -201,6 +205,7 @@ describe('GA4 connector mapping', () => {
               source_event_name: 'page_view',
               received_at: '2026-06-18T08:30:00.000Z',
               payload_normalized: {
+                consent: { analytics_storage: true },
                 user: { ga_client_id: 'muid_1', muid: 'muid_1', distinct_id: 'ph_1' },
                 context: { url: 'https://fancypalas.com/products/bague' },
                 ecommerce: {},

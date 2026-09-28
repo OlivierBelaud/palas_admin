@@ -12,6 +12,7 @@ import {
   validateCanonicalEvent,
   validationErrorsForSupportedDestinations,
 } from './canonical-contract'
+import { googleEmailSha256, numericSessionId, posthogSessionAsNumeric } from './tracking-identity'
 
 export type CanonicalPosthogEvent = {
   event_id: string
@@ -258,6 +259,7 @@ function consentFromPosthogProperties(
     adsConsent
 
   return {
+    state: str(consent.state, 20) || (analyticsStorage == null && adsConsent == null ? 'unknown' : 'resolved'),
     analytics_storage: analyticsStorage,
     ad_storage: adsConsent,
     ad_user_data: adUserData,
@@ -352,6 +354,18 @@ export function normalizePosthogEventToCanonical(
     str(setProps.palas_muid, 128) ||
     null
 
+  // Browser identity is independent from resolved contact/MUID identity.
+  const visitorId = str(props.$device_id, 180) || str(props.visitor_id, 180) || signals.posthog_distinct_id || muid
+  const nativeGaClientId =
+    str(props.ga_client_id, 128) || str(props.$ga_client_id, 128) || str(sourceContext.ga_client_id, 128)
+  const measurementId = process.env.GA4_MEASUREMENT_ID || process.env.GOOGLE_ANALYTICS_MEASUREMENT_ID || ''
+  const nativeGaSessionId =
+    numericSessionId(obj(props.ga_session_ids)[measurementId]) ||
+    numericSessionId(props.ga_session_id) ||
+    numericSessionId(props.$ga_session_id) ||
+    numericSessionId(sourceContext.ga_session_id)
+  const gaSessionId = nativeGaSessionId || (!nativeGaClientId ? posthogSessionAsNumeric(signals.session_id) : null)
+
   const payload: Record<string, unknown> = {
     event_id: eventId,
     raw_event_name: rawEventName,
@@ -360,19 +374,18 @@ export function normalizePosthogEventToCanonical(
     search_term: str(props.search_term, 300) || str(ecommerceProps.search_term, 300),
     user: {
       muid,
+      visitor_id: visitorId,
       identity_status: comparison.status,
       identity_source: comparison.v2.source,
       contact_id: comparison.v2.contact_id,
       email_sha256: emailSha256(comparison.v2.email),
+      google_email_sha256: googleEmailSha256(comparison.v2.email),
       distinct_id: signals.posthog_distinct_id,
       session_id: signals.session_id,
-      ga_client_id:
-        str(sourceContext.ga_client_id, 128) ||
-        str(props.ga_client_id, 128) ||
-        str(props.$ga_client_id, 128) ||
-        muid ||
-        str(signals.posthog_distinct_id, 128),
-      ga_session_id: str(props.ga_session_id, 128) || str(props.$ga_session_id, 128),
+      ga_client_id: nativeGaClientId || visitorId,
+      ga_client_id_source: nativeGaClientId ? 'google_tag' : 'posthog_visitor',
+      ga_session_id: gaSessionId,
+      ga_session_id_source: nativeGaSessionId ? 'google_tag' : gaSessionId ? 'posthog_session' : 'missing',
       fbp:
         str(sourceContext.fbp, 256) ||
         str(userProps.fbp, 256) ||

@@ -219,7 +219,7 @@ export function mapCanonicalToGoogleAds(
   const gclid = pickClickId(user.gclid) || clickIdFromUrl(context.url, 'gclid')
   const gbraid = pickClickId(user.gbraid) || clickIdFromUrl(context.url, 'gbraid')
   const wbraid = pickClickId(user.wbraid) || clickIdFromUrl(context.url, 'wbraid')
-  const hashedEmail = str(user.email_sha256, 128)
+  const hashedEmail = str(user.google_email_sha256, 128) || str(user.email_sha256, 128)
   const hashedPhone = str(user.phone_sha256, 128)
   const eventId = str(canonicalPayload.event_id, 180)
 

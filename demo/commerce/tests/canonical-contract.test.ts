@@ -118,7 +118,7 @@ describe('canonical event contract', () => {
     expect(result.errors).not.toContain('event_id_server_generated')
   })
 
-  it('keeps denied analytics consent out of the GA4 readiness decision', () => {
+  it('blocks GA4 when analytics consent is denied', () => {
     const result = validateCanonicalEvent({
       eventName: 'view_item',
       eventId: 'evt_denied_consent',
@@ -136,7 +136,11 @@ describe('canonical event contract', () => {
     })
 
     expect(result.valid).toBe(true)
-    expect(result.destinations.ga4).toMatchObject({ supported: true, ready: true, blockers: [] })
+    expect(result.destinations.ga4).toMatchObject({
+      supported: true,
+      ready: false,
+      blockers: ['analytics_consent_not_granted'],
+    })
     expect(result.destinations.meta_capi.blockers).toContain('ad_storage_consent_not_granted')
     expect(validationErrorsForSupportedDestinations(result)).toEqual([])
   })

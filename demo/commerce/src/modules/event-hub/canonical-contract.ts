@@ -293,6 +293,7 @@ function destinationResult(
   }
 
   if (destination === 'ga4') {
+    if (consent.analytics_storage !== true) blockers.push('analytics_consent_not_granted')
     if (!str(user.ga_client_id, 128)) blockers.push('ga4_client_id_missing')
   }
 

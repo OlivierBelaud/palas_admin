@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { CANONICAL_EVENT_CONTRACTS, isCanonicalEventName } from './canonical-contract'
 import type { DestinationConnector, DispatchSendResult } from './destination-connector'
+import { externalIdentityHashes } from './tracking-identity'
 
 export type PinterestConfig = {
   adAccountId: string | null
@@ -121,6 +122,7 @@ export function mapCanonicalToPinterest(
     str(user.shopify_customer_id, 180) ||
     str(user.distinct_id, 180)
   const externalId = external ? hash(external) || digest(external) : null
+  const externalIds = externalIdentityHashes(user, externalId)
   const phone = hash(user.phone_sha256)
   const ip = str(user.client_ip, 64)
   const validIp = ip && isIP(ip) && ip !== '0.0.0.0' && ip !== '::' ? ip : null
@@ -190,7 +192,7 @@ export function mapCanonicalToPinterest(
     user_data: compact({
       em: email ? [email] : null,
       ph: phone ? [phone] : null,
-      external_id: externalId ? [externalId] : null,
+      external_id: externalIds.length ? externalIds : null,
       click_id: clickId,
       client_ip_address: validIp,
       client_user_agent: agent,

@@ -285,6 +285,7 @@ describe('canonical PostHog normalizer', () => {
         distinct_id: 'ph_1',
         timestamp: '2026-06-09T10:00:00.000Z',
         properties: {
+          palas_consent_analytics: true,
           $current_url: 'https://fancypalas.com/products/bague-test',
           ecommerce: {
             currency: 'EUR',
@@ -313,6 +314,7 @@ describe('canonical PostHog normalizer', () => {
         distinct_id: 'ph_1',
         timestamp: '2026-06-09T10:00:00.000Z',
         properties: {
+          palas_consent_analytics: true,
           $current_url: 'https://fancypalas.com/fr/collections/tous-les-bijoux',
           ecommerce: {
             currency: 'EUR',
@@ -399,7 +401,7 @@ describe('canonical PostHog normalizer', () => {
     })
   })
 
-  it('propagates PostHog consent properties for ads gating without blocking GA4', () => {
+  it('gates GA4 and ads independently using their respective consent', () => {
     const event = normalizePosthogEventToCanonical(
       {
         uuid: 'evt_consent',
@@ -440,7 +442,7 @@ describe('canonical PostHog normalizer', () => {
       source: 'shopify_customer_privacy',
     })
     const validation = event?.payload_normalized.validation as CanonicalValidationResult
-    expect(validation.destinations.ga4.ready).toBe(true)
+    expect(validation.destinations.ga4.ready).toBe(false)
     expect(validation.destinations.google_ads.ready).toBe(true)
   })
 
@@ -466,7 +468,7 @@ describe('canonical PostHog normalizer', () => {
 
     expect(event?.payload_normalized.user).toMatchObject({
       muid: 'muid_1',
-      ga_client_id: 'muid_1',
+      ga_client_id: 'ph_1',
       gclid: 'gclid_url',
       gbraid: 'gbraid_url',
       wbraid: 'wbraid_url',

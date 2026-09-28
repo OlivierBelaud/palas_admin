@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
+import { externalIdentityHashes } from './tracking-identity'
 
 export type MetaCapiDispatchStatus = DispatchStatus
 
@@ -170,10 +171,11 @@ export function mapCanonicalToMetaCapi(
   const currency = str(ecommerce.currency, 8)
   const orderId = str(ecommerce.transaction_id, 180) || str(checkout.shopify_order_id, 180)
 
+  const externalIds = externalIdentityHashes(user, externalId)
   const userData = compact({
     em: isSha256(emailSha256) ? [emailSha256] : null,
     ph: isSha256(phoneSha256) ? [phoneSha256] : null,
-    external_id: externalId ? [externalId] : null,
+    external_id: externalIds.length ? externalIds : null,
     fbp,
     fbc,
     client_ip_address: clientIpAddress,

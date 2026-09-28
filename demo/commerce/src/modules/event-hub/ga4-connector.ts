@@ -1,6 +1,7 @@
 import { GA4_CANONICAL_EVENT_NAMES } from './canonical-contract'
 import type { DestinationConnector, DispatchSendResult, DispatchStatus } from './destination-connector'
 import type { RawDispatchDb } from './dispatch-runner'
+import { numericSessionId } from './tracking-identity'
 
 export type Ga4DispatchStatus = DispatchStatus
 
@@ -120,7 +121,8 @@ function mapItems(items: unknown[]): Array<Record<string, unknown>> {
   return items.slice(0, 200).map((item) => {
     const row = obj(item)
     return compact({
-      item_id: idStr(row.item_id, 160) || idStr(row.id, 160) || idStr(row.variant_id, 160) || idStr(row.product_id, 160),
+      item_id:
+        idStr(row.item_id, 160) || idStr(row.id, 160) || idStr(row.variant_id, 160) || idStr(row.product_id, 160),
       item_name: str(row.item_name, 240),
       item_variant: str(row.item_variant, 160),
       price: num(row.price),
@@ -132,6 +134,7 @@ function mapItems(items: unknown[]): Array<Record<string, unknown>> {
 
 export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: Record<string, unknown>): Ga4MapResult {
   const errors: string[] = []
+  if (obj(canonicalPayload.consent).analytics_storage !== true) errors.push('ga4_analytics_consent_not_granted')
   const user = obj(canonicalPayload.user)
   const context = obj(canonicalPayload.context)
   const ecommerce = obj(canonicalPayload.ecommerce)
@@ -167,6 +170,7 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
     errors.push('ga4_transaction_id_missing')
   }
 
+  const sessionId = numericSessionId(user.ga_session_id) || numericSessionId(user.session_id)
   const params = compact({
     page_location: str(context.url, 2048),
     page_referrer: str(context.referrer, 2048),
@@ -181,7 +185,8 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
     items: items.length > 0 ? items : null,
     item_list_id: str(ecommerce.item_list_id, 160),
     item_list_name: str(ecommerce.item_list_name, 240),
-    session_id: int(user.ga_session_id) ?? int(user.session_id),
+    session_id: sessionId ? Number(sessionId) : null,
+    event_id: str(canonicalPayload.event_id, 180),
     engagement_time_msec: 1,
     source: str(utm.source, 160),
     medium: str(utm.medium, 160),
@@ -213,7 +218,7 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
     matchtype: str(ads.matchtype, 80),
   })
 
-  const emailSha256 = str(user.email_sha256, 128)
+  const emailSha256 = str(user.google_email_sha256, 128) || str(user.email_sha256, 128)
   const phoneSha256 = str(user.phone_sha256, 128)
   const userData = compact({
     sha256_email_address: isSha256(emailSha256) ? [emailSha256] : null,
@@ -226,9 +231,12 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
     posthog_distinct_id: { value: str(user.distinct_id, 180) },
   })
 
+  const eventTime =
+    typeof canonicalPayload.event_time === 'string' ? Date.parse(canonicalPayload.event_time) : Number.NaN
   const payload = compact({
+    timestamp_micros: Number.isFinite(eventTime) ? eventTime * 1000 : null,
     client_id: clientId,
-    user_id: str(user.contact_id, 180) || str(user.muid, 128) || str(user.distinct_id, 180),
+    user_id: str(user.contact_id, 180),
     user_properties: Object.keys(userProperties).length > 0 ? userProperties : null,
     user_data: Object.keys(userData).length > 0 ? userData : null,
     events: [
@@ -241,6 +249,9 @@ export function mapCanonicalToGa4(canonicalEventName: string, canonicalPayload: 
 
   const metadata = compact({
     event_name: canonicalEventName,
+    client_id_source: str(user.ga_client_id_source, 80),
+    session_id_source: str(user.ga_session_id_source, 80),
+    session_id_present: params.session_id != null,
     client_id_present: Boolean(clientId),
     user_id_present: Boolean(payload.user_id),
     item_count: items.length,
