@@ -60,7 +60,8 @@ export async function compactTrackingHistory(db: RawDispatchDb) {
          ORDER BY started_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED
        ) r
      ), checkpoints AS (
-       DELETE FROM workflow_checkpoints WHERE transaction_id IN (SELECT id FROM candidates) RETURNING 1
+       DELETE FROM workflow_checkpoints
+       WHERE transaction_id = ANY(ARRAY(SELECT id FROM candidates)) RETURNING 1
      ), removed AS (
        DELETE FROM workflow_runs WHERE id IN (SELECT id FROM candidates)
          AND (SELECT COUNT(*) FROM checkpoints) >= 0 RETURNING 1

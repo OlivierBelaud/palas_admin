@@ -77,4 +77,75 @@ suite('tracking retention on isolated PostgreSQL', () => {
       (await sql`SELECT transaction_id FROM workflow_checkpoints ORDER BY transaction_id`).map((r) => r.transaction_id),
     ).toEqual(['active', 'business', 'failed'])
   })
+
+  it('does not scan the entire checkpoint history to prune a bounded workflow batch', async () => {
+    await sql`TRUNCATE event_logs, dispatch_logs, workflow_runs, workflow_checkpoints`
+    await sql`CREATE INDEX IF NOT EXISTS retention_checkpoint_tx_idx ON workflow_checkpoints(transaction_id)`
+    await sql`INSERT INTO workflow_runs(id,command_name,status,started_at,completed_at)
+      SELECT 'eligible-' || n, 'cmd:ingestCartEvent', 'succeeded',
+        NOW()-INTERVAL '3 days', NOW()-INTERVAL '2 days'
+      FROM generate_series(1,1000) n`
+    await sql`INSERT INTO workflow_checkpoints(transaction_id,data)
+      SELECT 'eligible-' || n, '{}'::jsonb FROM generate_series(1,1000) n`
+    await sql`INSERT INTO workflow_checkpoints(transaction_id,data)
+      SELECT 'unrelated-' || (n % 12000), '{}'::jsonb FROM generate_series(1,600000) n`
+    await sql`ANALYZE workflow_runs`
+    await sql`ANALYZE workflow_checkpoints`
+
+    const scans: string[] = []
+    type PlanNode = { 'Node Type': string; 'Relation Name'?: string; Plans?: PlanNode[] }
+    function collectScans(node: PlanNode) {
+      if (node['Relation Name'] === 'workflow_checkpoints') scans.push(node['Node Type'])
+      for (const child of node.Plans ?? []) collectScans(child)
+    }
+    const measuredDb = {
+      raw: async <T>(query: string, params: unknown[] = []) => {
+        if (query.includes('DELETE FROM workflow_checkpoints')) {
+          const plan = await sql.unsafe(`EXPLAIN (FORMAT JSON) ${query}`, params as never[])
+          collectScans(plan[0]['QUERY PLAN'][0].Plan)
+        }
+        return [...(await sql.unsafe(query, params as never[]))] as T[]
+      },
+    }
+    const result = await compactTrackingHistory(measuredDb)
+    expect(result.workflows_deleted).toBe(200)
+    expect(scans).not.toContain('Seq Scan')
+    expect((await sql`SELECT COUNT(*)::int AS count FROM workflow_runs`)[0].count).toBe(800)
+    expect(
+      (await sql`SELECT COUNT(*)::int AS count FROM workflow_checkpoints WHERE transaction_id LIKE 'unrelated-%'`)[0]
+        .count,
+    ).toBe(600000)
+  }, 30_000)
+
+  it('selects a diagnostic batch from a large backlog using the retention index', async () => {
+    await sql`TRUNCATE event_logs, dispatch_logs, workflow_runs, workflow_checkpoints`
+    await sql`INSERT INTO dispatch_logs(id,event_destination_key,event_id,canonical_event_name,
+      destination,status,event_received_at,updated_at,request_payload)
+      SELECT n::text,n::text,n::text,'purchase','meta_capi',
+        CASE WHEN n <= 20000 THEN 'sent' ELSE 'pending' END,
+        NOW()-INTERVAL '3 days',NOW()-INTERVAL '2 days','{"diagnostic":true}'::jsonb
+      FROM generate_series(1,30000) n`
+    const migration = readFileSync(new URL('../scripts/neon-retention-indexes.sql', import.meta.url), 'utf8')
+    for (const statement of migration.split(';').filter((part) => part.trim())) await sql.unsafe(statement)
+    await sql`ANALYZE dispatch_logs`
+
+    let planText = ''
+    const measuredDb = {
+      raw: async <T>(query: string, params: unknown[] = []) => {
+        if (query.includes('UPDATE dispatch_logs SET request_payload')) {
+          const plan = await sql.unsafe(`EXPLAIN (FORMAT JSON) ${query}`, params as never[])
+          planText = JSON.stringify(plan[0]['QUERY PLAN'])
+        }
+        return [...(await sql.unsafe(query, params as never[]))] as T[]
+      },
+    }
+    const result = await compactTrackingHistory(measuredDb)
+    expect(result.dispatches_compacted).toBe(1000)
+    expect(planText).toContain('dispatch_logs_retention_pending_idx')
+    expect(
+      (
+        await sql`SELECT COUNT(*)::int AS count FROM dispatch_logs WHERE status='pending' AND request_payload IS NOT NULL`
+      )[0].count,
+    ).toBe(10000)
+  }, 30_000)
 })
