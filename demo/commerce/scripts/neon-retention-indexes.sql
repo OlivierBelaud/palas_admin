@@ -12,3 +12,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS event_logs_retention_pending_idx
   ON event_logs (received_at, id)
   WHERE dispatch_prepared_at IS NOT NULL
     AND (payload_normalized IS NOT NULL OR distinct_id IS NOT NULL OR identity_muid IS NOT NULL);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS workflow_runs_retention_succeeded_idx
+  ON workflow_runs (command_name, started_at, id)
+  WHERE status = 'succeeded' AND completed_at IS NOT NULL;

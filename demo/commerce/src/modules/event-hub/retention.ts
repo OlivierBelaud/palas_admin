@@ -48,6 +48,21 @@ export async function compactTrackingHistory(db: RawDispatchDb) {
      ) SELECT COUNT(*)::text AS count FROM compacted`,
     [BATCH_SIZE],
   )
+  const workflowsDeleted = await purgeTrackingWorkflows(db)
+  return {
+    events_compacted: Number(events[0]?.count ?? 0),
+    dispatches_compacted: Number(dispatches[0]?.count ?? 0),
+    workflows_deleted: workflowsDeleted,
+  }
+}
+
+export async function purgeTrackingWorkflows(
+  db: RawDispatchDb,
+  perCommandLimit = Math.floor(BATCH_SIZE / TRACKING_COMMANDS.length),
+) {
+  if (!Number.isSafeInteger(perCommandLimit) || perCommandLimit < 1 || perCommandLimit > 5000) {
+    throw new RangeError('Workflow retention batch must be an integer between 1 and 5000 per command')
+  }
   // beta.12 checkpoints are owned by workflow_runs.id = transaction_id.
   // Successful workflows cannot be resumed (manager.resume rejects terminal
   // statuses). Delete their checkpoints and run together in one SQL statement.
@@ -63,14 +78,10 @@ export async function compactTrackingHistory(db: RawDispatchDb) {
        DELETE FROM workflow_checkpoints
        WHERE transaction_id = ANY(ARRAY(SELECT id FROM candidates)) RETURNING 1
      ), removed AS (
-       DELETE FROM workflow_runs WHERE id IN (SELECT id FROM candidates)
+       DELETE FROM workflow_runs WHERE id = ANY(ARRAY(SELECT id FROM candidates))
          AND (SELECT COUNT(*) FROM checkpoints) >= 0 RETURNING 1
      ) SELECT COUNT(*)::text AS count FROM removed`,
-    [TRACKING_COMMANDS, Math.floor(BATCH_SIZE / TRACKING_COMMANDS.length)],
+    [TRACKING_COMMANDS, perCommandLimit],
   )
-  return {
-    events_compacted: Number(events[0]?.count ?? 0),
-    dispatches_compacted: Number(dispatches[0]?.count ?? 0),
-    workflows_deleted: Number(workflows[0]?.count ?? 0),
-  }
+  return Number(workflows[0]?.count ?? 0)
 }

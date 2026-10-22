@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { compactTrackingHistory } from '../src/modules/event-hub/retention'
+import { compactTrackingHistory, purgeTrackingWorkflows } from '../src/modules/event-hub/retention'
 
 const url = process.env.PALAS_TEST_DATABASE_URL
 const suite = url ? describe : describe.skip
@@ -148,4 +148,50 @@ suite('tracking retention on isolated PostgreSQL', () => {
       )[0].count,
     ).toBe(10000)
   }, 30_000)
+  it('drains a larger explicit batch without deleting active, failed, recent or business workflows', async () => {
+    await sql`TRUNCATE event_logs, dispatch_logs, workflow_runs, workflow_checkpoints`
+    await sql`INSERT INTO workflow_runs(id,command_name,status,started_at,completed_at)
+      SELECT 'backlog-' || n, 'cmd:ingestCartEvent', 'succeeded',
+        NOW()-INTERVAL '3 days', NOW()-INTERVAL '2 days' FROM generate_series(1,1500) n`
+    await sql`INSERT INTO workflow_checkpoints(transaction_id,data)
+      SELECT 'backlog-' || n, '{}'::jsonb FROM generate_series(1,1500) n`
+    for (const [id, command, status, completed] of [
+      ['active', 'cmd:ingestCartEvent', 'running', '2026-01-01'],
+      ['failed', 'cmd:ingestCartEvent', 'failed', '2026-01-01'],
+      ['business', 'cmd:placeOrder', 'succeeded', '2026-01-01'],
+      ['incomplete', 'cmd:ingestCartEvent', 'succeeded', null],
+      ['recent', 'cmd:ingestCartEvent', 'succeeded', new Date().toISOString()],
+    ]) {
+      await sql`INSERT INTO workflow_runs(id,command_name,status,completed_at)
+        VALUES(${id},${command},${status},${completed})`
+      await sql`INSERT INTO workflow_checkpoints VALUES(${id},'{}'::jsonb)`
+    }
+    expect(await purgeTrackingWorkflows(db, 1000)).toBe(1000)
+    expect((await sql`SELECT count(*)::int AS n FROM workflow_runs WHERE id LIKE 'backlog-%'`)[0].n).toBe(500)
+    for (const id of ['active', 'failed', 'business', 'incomplete', 'recent']) {
+      expect(await sql`SELECT id FROM workflow_runs WHERE id=${id}`).toHaveLength(1)
+      expect(await sql`SELECT transaction_id FROM workflow_checkpoints WHERE transaction_id=${id}`).toHaveLength(1)
+    }
+    expect(
+      (await sql`SELECT count(*)::int AS n FROM workflow_checkpoints WHERE transaction_id LIKE 'backlog-%'`)[0].n,
+    ).toBe(500)
+  })
+  it.each([
+    0,
+    -1,
+    5001,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])('rejects unsafe operator batch size %s before issuing SQL', async (limit) => {
+    let calls = 0
+    const guardedDb = {
+      raw: async <T>(): Promise<T[]> => {
+        calls += 1
+        return []
+      },
+    }
+    await expect(purgeTrackingWorkflows(guardedDb, limit)).rejects.toThrow(RangeError)
+    expect(calls).toBe(0)
+  })
 })
