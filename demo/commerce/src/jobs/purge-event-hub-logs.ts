@@ -2,8 +2,7 @@ import type { RawDispatchDb } from '../modules/event-hub/dispatch-runner'
 import { compactTrackingHistory } from '../modules/event-hub/retention'
 
 // Bound every pass; preserve pending work and compact deduplication receipts.
-// Scheduling is unchanged. Old history drains gradually without a bulk delete.
-export default defineJob('purge-event-hub-logs', '0 */4 * * *', async ({ db, log }) => {
+export default defineJob('purge-event-hub-logs', '*/10 * * * *', async ({ db, log }) => {
   const runtimeDb = db as RawDispatchDb | undefined
   if (!runtimeDb?.raw) {
     log.error('[purge-event-hub-logs] IDatabasePort missing')
